@@ -56,6 +56,10 @@ This project is structured to facilitate future migration to a compiled language
 - **Boid simulation** – The `Boid` class and flocking forces are pure math with no DOM dependencies, making them straightforward to port.
 - **Parameter system** – All brush parameters are centralized in `getP()` and `controlDefs`, providing a clear schema for native UI bindings.
 
+## Native Prototype (C++ / SDL2 / Vulkan)
+
+A Phase 1 native port lives in the [`native/`](native/) directory. It implements the core boid-flocking brush with a minimal C++17 / SDL2 / Vulkan stack — canvas, mouse/touch input, boid simulation, and circle stamps — without layers, presets, or advanced features. See [`native/README.md`](native/README.md) for build instructions.
+
 ## Future Plans
 
 This project is intended as a learning sandbox and creative tool. The long-term goal is to port the core brush and boid simulation to a more robust, performance-oriented environment such as **C#**, **C++**, or a similar compiled language, enabling real-time performance with much larger swarm counts, higher resolution canvases, and tighter integration with professional digital art workflows.
