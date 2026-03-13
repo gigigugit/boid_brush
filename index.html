@@ -343,12 +343,12 @@ const BLEND_MODE_MAP={
 function glCompile(src,type){
   const s=gl.createShader(type);
   gl.shaderSource(s,src);gl.compileShader(s);
-  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){console.error('Shader:',gl.getShaderInfoLog(s));gl.deleteShader(s);return null;}
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){console.error('Shader compilation failed ('+(type===gl.VERTEX_SHADER?'vertex':'fragment')+'):',gl.getShaderInfoLog(s));gl.deleteShader(s);return null;}
   return s;
 }
 function glLink(vs,fs){
   const p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);
-  if(!gl.getProgramParameter(p,gl.LINK_STATUS)){console.error('Program:',gl.getProgramInfoLog(p));return null;}
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)){console.error('WebGL program linking failed:',gl.getProgramInfoLog(p));return null;}
   return p;
 }
 
@@ -431,9 +431,9 @@ function initGPU(){
 
   const bvs=glCompile(GL_VERT,gl.VERTEX_SHADER),bfs=glCompile(GL_BLEND_FRAG,gl.FRAGMENT_SHADER);
   const cvs=glCompile(GL_VERT,gl.VERTEX_SHADER),cfs=glCompile(GL_CHECKER_FRAG,gl.FRAGMENT_SHADER);
-  if(!bvs||!bfs||!cvs||!cfs){gl=null;return;}
+  if(!bvs||!bfs||!cvs||!cfs){gl=null;console.warn('WebGL2 shader compilation failed — falling back to CPU compositing');return;}
   glProgram=glLink(bvs,bfs);glCheckerProgram=glLink(cvs,cfs);
-  if(!glProgram||!glCheckerProgram){gl=null;return;}
+  if(!glProgram||!glCheckerProgram){gl=null;console.warn('WebGL2 program linking failed — falling back to CPU compositing');return;}
 
   // Full-screen quad
   const vbo=gl.createBuffer();
@@ -476,10 +476,10 @@ function resizeGPU(){
 // Each brush: { name, icon, onDown, onMove, onUp, onFrame, renderOverlay }
 // ============================================================
 const BrushRegistry={
-  _b:{},
-  register(id,brush){this._b[id]=brush;},
-  get(id){return this._b[id];},
-  list(){return Object.entries(this._b).map(([id,b])=>({id,...b}));}
+  _brushes:{},
+  register(id,brush){this._brushes[id]=brush;},
+  get(id){return this._brushes[id];},
+  list(){return Object.entries(this._brushes).map(([id,b])=>({id,...b}));}
 };
 
 // ============================================================
