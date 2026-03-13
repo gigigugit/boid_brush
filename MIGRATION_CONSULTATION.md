@@ -240,7 +240,7 @@ Before comparing candidates, it helps to understand which Boid Brush components 
 | UI controls (sliders, panels) | Application | ✗ Must rebuild | ✓ (host apps have settings widgets) |
 | File I/O, persistence | Application | ✗ Not needed | ✓ (host apps handle files) |
 
-**Key insight:** Roughly 60-70% of Boid Brush's code is "application shell" (layers, UI, undo, compositing) that a host app already provides. The novel ~30-40% — boid physics, spawn shapes, flocking forces, and the brush behavior logic — is pure math that ports to any language.
+**Key insight:** Based on the current ~1,070-line codebase, roughly 60-70% of the code is "application shell" (layers, UI, undo, compositing, input handling) that a host app already provides. The novel ~30-40% — boid physics, spawn shapes, flocking forces, and the brush behavior logic — is pure math that ports to any language. (These are approximate line-count estimates; actual effort may vary.)
 
 ---
 
