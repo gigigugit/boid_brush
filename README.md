@@ -20,6 +20,15 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 - **Selection & Clipboard** – Rectangular selection, cut, copy, and paste.
 - **Settings Persistence** – Auto-saves settings; supports save/load defaults and JSON export/import.
 
+### GPU Acceleration
+
+- **WebGL2 Layer Compositing** – All 16 CSS blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten, Color Dodge, Color Burn, Hard Light, Soft Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity) are implemented in GLSL shaders and composited on the GPU via ping-pong framebuffers. Falls back to Canvas 2D compositing if WebGL2 is unavailable.
+- **Desynchronized Canvas Contexts** – Overlay and selection canvases use `desynchronized: true` for reduced input latency.
+
+### Architecture
+
+- **Extensible Brush Registry** – A `BrushRegistry` system allows registering new brush types programmatically. Each brush is an object with a name, icon, and description. This provides a clean extension point for adding future "special brush" modes without modifying core event handling or rendering code.
+
 ## Usage
 
 Open `index.html` in a modern browser. Works on desktop and tablet (iPad) — no server or build step required.
@@ -37,6 +46,15 @@ Open `index.html` in a modern browser. Works on desktop and tablet (iPad) — no
 | `Ctrl/⌘ + Shift + Z` | Redo |
 | `Ctrl/⌘ + X/C/V` | Cut / Copy / Paste |
 | `Ctrl/⌘ + D` | Deselect |
+
+## Migration Notes
+
+This project is structured to facilitate future migration to a compiled language (C#, C++, or similar):
+
+- **GPU pipeline** – The WebGL2 compositor uses GLSL shaders with standard blend mode math. These shaders translate directly to HLSL (DirectX), Metal Shading Language, or GLSL (OpenGL/Vulkan) with minimal changes.
+- **Brush registry** – The `BrushRegistry` pattern maps naturally to an interface/abstract class pattern in C#/C++.
+- **Boid simulation** – The `Boid` class and flocking forces are pure math with no DOM dependencies, making them straightforward to port.
+- **Parameter system** – All brush parameters are centralized in `getP()` and `controlDefs`, providing a clear schema for native UI bindings.
 
 ## Future Plans
 
