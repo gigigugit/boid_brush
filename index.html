@@ -330,7 +330,7 @@ function resizeAll(){
 // All 16 CSS blend modes are implemented in GLSL shaders.
 // ============================================================
 let glCanvas=null,gl=null,gpuReady=false;
-let glProgram=null,glCheckerProgram=null;
+let glProgram=null,glCheckerProgram=null,glPassProgram=null;
 let glFBO=[null,null],glFBOTex=[null,null];
 let glVAO=null,glLayerTex=null;
 const BLEND_MODE_MAP={
@@ -424,6 +424,13 @@ void main(){
   float c=mod(floor(p.x/sz)+floor(p.y/sz),2.0);
   oColor=vec4(mix(vec3(0.784),vec3(0.878),c),1.0);}`;
 
+const GL_PASS_FRAG=`#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+in vec2 vUV;
+out vec4 oColor;
+void main(){oColor=texture(uTex,vUV);}`;
+
 function initGPU(){
   glCanvas=document.createElement('canvas');
   gl=glCanvas.getContext('webgl2',{alpha:true,premultipliedAlpha:false,preserveDrawingBuffer:true});
@@ -431,9 +438,10 @@ function initGPU(){
 
   const bvs=glCompile(GL_VERT,gl.VERTEX_SHADER),bfs=glCompile(GL_BLEND_FRAG,gl.FRAGMENT_SHADER);
   const cvs=glCompile(GL_VERT,gl.VERTEX_SHADER),cfs=glCompile(GL_CHECKER_FRAG,gl.FRAGMENT_SHADER);
-  if(!bvs||!bfs||!cvs||!cfs){gl=null;console.warn('WebGL2 shader compilation failed — falling back to CPU compositing');return;}
-  glProgram=glLink(bvs,bfs);glCheckerProgram=glLink(cvs,cfs);
-  if(!glProgram||!glCheckerProgram){gl=null;console.warn('WebGL2 program linking failed — falling back to CPU compositing');return;}
+  const pvs=glCompile(GL_VERT,gl.VERTEX_SHADER),pfs=glCompile(GL_PASS_FRAG,gl.FRAGMENT_SHADER);
+  if(!bvs||!bfs||!cvs||!cfs||!pvs||!pfs){gl=null;console.warn('WebGL2 shader compilation failed — falling back to CPU compositing');return;}
+  glProgram=glLink(bvs,bfs);glCheckerProgram=glLink(cvs,cfs);glPassProgram=glLink(pvs,pfs);
+  if(!glProgram||!glCheckerProgram||!glPassProgram){gl=null;console.warn('WebGL2 program linking failed — falling back to CPU compositing');return;}
 
   // Full-screen quad
   const vbo=gl.createBuffer();
@@ -558,11 +566,12 @@ function compositeAllLayersGL(){
     const tmp=src;src=dst;dst=tmp;
   }
 
-  // Blit result to default framebuffer → then to 2D display
-  gl.bindFramebuffer(gl.READ_FRAMEBUFFER,glFBO[src]);
-  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,null);
-  gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT,gl.LINEAR);
+  // Render result to default framebuffer via passthrough shader
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.useProgram(glPassProgram);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,glFBOTex[src]);
+  gl.uniform1i(gl.getUniformLocation(glPassProgram,'uTex'),0);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   gl.bindVertexArray(null);
 
   // Copy WebGL canvas → 2D composite display (GPU blit)
