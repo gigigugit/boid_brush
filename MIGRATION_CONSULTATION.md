@@ -10,10 +10,11 @@
 1. [Current Architecture Summary](#1-current-architecture-summary)
 2. [Performance Bottleneck Analysis](#2-performance-bottleneck-analysis)
 3. [Platform Options](#3-platform-options)
-4. [Comparison Matrix](#4-comparison-matrix)
-5. [Recommended Path](#5-recommended-path)
-6. [Migration Strategy](#6-migration-strategy)
-7. [Open Questions for Discussion](#7-open-questions-for-discussion)
+4. [Addon / Fork of Existing Art Applications](#4-addon--fork-of-existing-art-applications)
+5. [Comparison Matrix](#5-comparison-matrix)
+6. [Recommended Path](#6-recommended-path)
+7. [Migration Strategy](#7-migration-strategy)
+8. [Open Questions for Discussion](#8-open-questions-for-discussion)
 
 ---
 
@@ -217,31 +218,208 @@ Boid Brush is a single-file browser application (`index.html`, ~1,070 lines) wit
 
 ---
 
-## 4. Comparison Matrix
+## 4. Addon / Fork of Existing Art Applications
 
-| Criteria | A: WebGPU | B: C++/SDL2 | C: Rust/wgpu | D: C#/MonoGame | E: Godot | F: WASM+WebGPU |
-|----------|-----------|-------------|-------------|---------------|----------|----------------|
-| **Max boids (60fps)** | 10K-100K | 100K+ | 100K+ | 10K-50K | 5K-50K | 1K-10K+ |
-| **Development effort** | Medium | High | High | Medium-High | Medium | Low-Medium |
-| **Learning curve** | Low | High | Very High | Medium | Low-Medium | Low-Medium |
-| **Cross-platform** | ✓ (browser) | Build per OS | Build per OS | .NET multi-OS | Export per OS | ✓ (browser) |
-| **Distribution** | URL | Installer | Installer | Installer | Installer/Web | URL |
-| **UI maturity** | HTML/CSS | Dear ImGui/Qt | egui | WinForms/WPF | Built-in | HTML/CSS |
-| **GPU compute** | ✓ (compute shaders) | ✓ (OpenGL/Vulkan) | ✓ (wgpu) | ✓ (HLSL) | ✓ (Godot 4) | ✓ (WebGPU) |
-| **Stamp rendering** | GPU instanced | GPU instanced | GPU instanced | GPU instanced | GPU instanced | GPU instanced |
-| **Code reuse from current** | High (GLSL→WGSL) | Medium (math ports) | Medium (math ports) | Medium (math ports) | Low-Medium | High |
-| **Future scalability** | Good | Excellent | Excellent | Good | Good | Good |
-| **Professional art tool viable** | Limited | ✓ | ✓ | ✓ | Possible | Limited |
+A fundamentally different approach from building a standalone app: integrate Boid Brush's boid-flocking brush engine into an existing professional painting application as a **plugin/addon**, or **fork** that application and add boid brushes directly.
+
+### How Boid Brush Maps to a Host Application
+
+Before comparing candidates, it helps to understand which Boid Brush components are portable "brush engine" logic vs. "application shell" that a host app already provides:
+
+| Boid Brush Component | Type | Portable? | Host App Provides? |
+|----------------------|------|-----------|-------------------|
+| Boid class (flocking physics) | Pure math | ✓ Fully portable | ✗ (novel — this is what we bring) |
+| Spawn shapes (circle, ring, spiral, etc.) | Pure math | ✓ Fully portable | ✗ (novel) |
+| Simplex noise (flow field, wander) | Pure math | ✓ Libraries exist | Partial (some apps have noise) |
+| Stamp interpolation logic | Pure math | ✓ Fully portable | ✓ (host apps handle stroke interpolation) |
+| Brush parameter schema (`controlDefs`) | Data | ✓ Translates to settings classes | ✓ (host apps have settings frameworks) |
+| BrushRegistry pattern | Pure logic | ✓ Maps to factory/interface | ✓ (host apps have plugin registries) |
+| Stamp rendering (Canvas 2D `arc()` calls) | Rendering | ✗ Must adapt | ✓ (host apps have their own paint/dab APIs) |
+| Layer system + blend modes | Application | ✗ Not needed | ✓ (host apps handle layers) |
+| Undo/redo | Application | ✗ Not needed | ✓ (host apps handle undo) |
+| UI controls (sliders, panels) | Application | ✗ Must rebuild | ✓ (host apps have settings widgets) |
+| File I/O, persistence | Application | ✗ Not needed | ✓ (host apps handle files) |
+
+**Key insight:** Roughly 60-70% of Boid Brush's code is "application shell" (layers, UI, undo, compositing) that a host app already provides. The novel ~30-40% — boid physics, spawn shapes, flocking forces, and the brush behavior logic — is pure math that ports to any language.
 
 ---
 
-## 5. Recommended Path
+### Option G: Krita Brush Engine Plugin (C++)
+
+**What it is:** Implement the boid-flocking brush as a new "paintop" (paint operation) plugin in Krita's brush engine framework, written in C++.
+
+**How Krita's brush engine works:**
+- Brush engines are C++ classes registered via `KisPaintopRegistry`
+- Each engine subclasses `KisPaintop` and implements:
+  - `paintAt(const KisPaintInformation &info)` — stamp a single dab at a point
+  - `paintLine(const KisPaintInformation &pi1, const KisPaintInformation &pi2, ...)` — paint between two input points (stroke interpolation)
+- Settings are managed via `KisPaintopSettings` (serializable to XML/presets)
+- UI is built with `KisPaintopSettingsWidget` (Qt-based parameter panels)
+- Krita provides: layers, blend modes, undo, canvas, color management, file I/O, pressure/tilt input, brush tip textures, and the entire professional painting workflow
+
+**How Boid Brush would map:**
+
+| Boid Brush | → Krita Plugin |
+|-----------|---------------|
+| `Boid` class | C++ `BoidParticle` class (pure math, straightforward port) |
+| `update()` (flocking physics) | Called inside `paintLine()` — advance all boids between input points |
+| `stampBoid()` (Canvas 2D `arc`) | → `KisPainter::paintAt()` or direct pixel/dab operations via `KisFixedPaintDevice` |
+| `getP()` parameter cache | → `KisPaintopSettings` subclass with named properties |
+| `controlDefs` (sliders, checkboxes) | → `KisPaintopSettingsWidget` subclass (Qt widgets) |
+| Spawn shapes | C++ helper functions, called on stroke start |
+| Simplex noise (flow field) | C++ noise library (FastNoiseLite or similar) |
+| Pixel sensing | → `KisPaintDevice::pixel()` to read existing canvas content |
+| Layer system, undo, blend modes | ✗ Not needed — Krita handles all of this |
+| BrushRegistry | ✗ Not needed — Krita's `KisPaintopRegistry` replaces this |
+
+**Pros:**
+- **Inherit a professional painting application for free** — layers, blend modes, color management, file formats (KRA, PSD, PNG, etc.), undo/redo, canvas management, pen tablet support, HDR, CMYK, and hundreds of other features you'd never build yourself
+- **C++ performance** — boid physics run natively, no JavaScript bottleneck
+- **Krita already handles stroke interpolation** — `paintLine()` receives smoothed input; you focus on the boid simulation
+- **Large existing user base** — Krita users could discover and use boid brushes immediately
+- **Presets system** — boid brush configurations become shareable `.kpp` preset files
+- **GPU acceleration is possible** — Krita supports OpenGL/Vulkan rendering; compute shaders could accelerate the boid simulation
+- **Open source (GPL)** — no licensing cost, can be distributed as a plugin
+
+**Cons:**
+- **C++ required** — must write the plugin in C++ with Qt/KDE dependencies
+- **Large build environment** — Krita's full source tree + dependencies (Qt, KDE Frameworks, Boost, etc.) needed to build plugins
+- **Steep learning curve for Krita internals** — the paintop API is powerful but not heavily documented; requires reading existing engine source code (Pixel, Bristle, Spray are good references)
+- **Stroke model mismatch** — Krita calls `paintLine()` per input segment; Boid Brush runs boids continuously between frames. Need to adapt: advance boid simulation within `paintLine()` calls, generating dabs along boid trajectories
+- **No Python path for brush engines** — Krita's Python scripting can automate tasks and create tool plugins, but **cannot** create new brush engines (paintops require C++)
+- **Plugin distribution** — must be compiled per platform (Windows/macOS/Linux) or merged upstream into Krita's source tree
+- **Coupling to Krita's release cycle** — API changes in Krita may require plugin updates
+
+**Effort:** High (~2-3 months for a working prototype, longer for polish)
+**Performance ceiling:** Excellent — native C++ with potential GPU compute
+
+---
+
+### Option H: Fork of Krita
+
+**What it is:** Fork Krita's entire source repository and add boid brush as a built-in brush engine.
+
+**Pros:**
+- **Full control** — can modify any part of Krita (canvas rendering, brush engine framework, UI)
+- **No plugin API constraints** — can add boid-specific features to the core (e.g., overlay visualization of boid trails, custom canvas interactions)
+- **If merged upstream**, becomes part of Krita for all users
+- Same C++ performance benefits as the plugin approach
+
+**Cons:**
+- **Massive maintenance burden** — Krita is 1.5M+ lines of C++; you inherit all of it
+- **Must keep fork in sync** with upstream Krita to get bug fixes and features — merge conflicts are inevitable
+- **Overkill for a brush engine** — a plugin achieves the same result without forking
+- **Community friction** — Krita's maintainers prefer contributions as plugins or upstream PRs, not competing forks
+- **Build complexity** — full Krita builds require significant infrastructure
+
+**Recommendation:** **Plugin is strongly preferred over fork.** A fork only makes sense if you need to modify Krita's core painting pipeline in ways the plugin API doesn't allow — which is unlikely for a boid brush. If the plugin works well, it can be submitted upstream to become part of Krita proper.
+
+**Effort:** Very High (same as plugin + ongoing merge maintenance)
+
+---
+
+### Option I: GIMP Plugin (Python or C)
+
+**What it is:** Implement boid brush behavior as a GIMP plugin.
+
+**How GIMP plugins work:**
+- **Python-Fu** (Python 3 in GIMP 3.x): Full access to GIMP's Procedure Database (PDB) — can call `gimp-paintbrush`, `gimp-pencil`, manipulate images, create tools
+- **C plugins**: Deeper access, can register new tools and painting functions
+- GIMP's plugin system is more "automation" oriented — you script actions using existing tools rather than creating new real-time brush engines
+
+**Mapping challenge:**
+- GIMP does **not** expose a real-time brush engine plugin API like Krita's `KisPaintop`
+- You cannot create a new "brush engine" that runs during live painting via Python-Fu
+- A Python plugin could simulate boid painting by programmatically calling `gimp-paintbrush` in a loop, but this would be:
+  - **Not real-time** — runs as a batch operation after the fact
+  - **No live visual feedback** — boids wouldn't visually follow the cursor
+  - **Limited to existing brush tips** — can't define custom dab generation
+
+**Pros:**
+- Python is easier than C++
+- GIMP has a large user base
+- Could work as a "generate boid stroke from path" tool (non-real-time)
+
+**Cons:**
+- **Cannot create real-time brush engines** — fundamental limitation
+- No live boid visualization during painting
+- Performance would be poor (Python + PDB call overhead per stamp)
+- **Not a viable path for the Boid Brush experience**
+
+**Verdict:** GIMP is **not suitable** for a real-time boid brush. The plugin model doesn't support custom real-time brush engines. It could only work as a non-interactive batch tool, which loses the core appeal of Boid Brush.
+
+---
+
+### Option J: MyPaint / libmypaint Integration
+
+**What it is:** Integrate boid behavior into [libmypaint](https://github.com/mypaint/libmypaint), the standalone brush engine library used by MyPaint, GIMP, and Krita.
+
+**How libmypaint works:**
+- A C library with a clean abstraction: `MyPaintBrush` (processes input → generates dabs) + `MyPaintSurface` (receives dabs → renders pixels)
+- Brush behavior is defined by JSON settings files mapping inputs (pressure, speed, tilt) to outputs (radius, opacity, color shift)
+- **No plugin API for custom brush algorithms** — all customization is via parameter mapping, not code
+
+**Mapping challenge:**
+- libmypaint's brush model is fundamentally single-cursor: one input position → one dab output
+- Boid Brush needs **multiple autonomous agents** generating dabs simultaneously from a single input
+- This is architecturally incompatible with libmypaint's single-point-in-single-dab-out model
+- Would require modifying libmypaint's core C code, not just JSON settings
+
+**Pros:**
+- If modified, changes would propagate to all apps using libmypaint (GIMP, MyPaint, etc.)
+- C performance for boid physics
+- Clean architecture
+
+**Cons:**
+- **Architecturally incompatible** — single-cursor model vs. multi-agent model
+- No plugin system — requires forking/modifying libmypaint source
+- Very niche library; small maintainer community
+- Changes unlikely to be accepted upstream (too specialized)
+
+**Verdict:** libmypaint's architecture is a **poor fit** for boid brushes. The single-cursor-to-single-dab model doesn't accommodate swarm behavior. Modifying the core would be a deep fork with maintenance burden and little community benefit.
+
+---
+
+### Addon/Fork Summary
+
+| Approach | Feasibility | Real-time? | Performance | Effort | Recommended? |
+|----------|-------------|------------|-------------|--------|-------------|
+| **G: Krita Plugin** | ✓ Excellent | ✓ Yes | C++ native | High (2-3 months) | **✓ Yes — best addon path** |
+| **H: Krita Fork** | ✓ Possible | ✓ Yes | C++ native | Very High + maintenance | ✗ Plugin preferred |
+| **I: GIMP Plugin** | ✗ Limited | ✗ No (batch only) | Python (slow) | Medium | ✗ Not suitable |
+| **J: libmypaint** | ✗ Poor fit | ✗ Architecture mismatch | C native | Very High (core mod) | ✗ Not suitable |
+
+**Bottom line:** If integrating into an existing art application, **Krita plugin (Option G) is the clear winner**. Krita's `KisPaintop` framework is specifically designed for custom brush engines, the API maps well to Boid Brush's architecture, and you get a professional painting application for free.
+
+---
+
+## 5. Comparison Matrix
+
+| Criteria | A: WebGPU | B: C++/SDL2 | C: Rust/wgpu | D: C#/MonoGame | E: Godot | F: WASM+WebGPU | G: Krita Plugin |
+|----------|-----------|-------------|-------------|---------------|----------|----------------|-----------------|
+| **Max boids (60fps)** | 10K-100K | 100K+ | 100K+ | 10K-50K | 5K-50K | 1K-10K+ | 10K-100K+ |
+| **Development effort** | Medium | High | High | Medium-High | Medium | Low-Medium | High |
+| **Learning curve** | Low | High | Very High | Medium | Low-Medium | Low-Medium | High (C++ / Krita API) |
+| **Cross-platform** | ✓ (browser) | Build per OS | Build per OS | .NET multi-OS | Export per OS | ✓ (browser) | ✓ (Krita runs on all) |
+| **Distribution** | URL | Installer | Installer | Installer | Installer/Web | URL | Krita plugin / upstream |
+| **UI maturity** | HTML/CSS | Dear ImGui/Qt | egui | WinForms/WPF | Built-in | HTML/CSS | ✓ Qt (Krita provides) |
+| **GPU compute** | ✓ (compute shaders) | ✓ (OpenGL/Vulkan) | ✓ (wgpu) | ✓ (HLSL) | ✓ (Godot 4) | ✓ (WebGPU) | ✓ (OpenGL/Vulkan) |
+| **Stamp rendering** | GPU instanced | GPU instanced | GPU instanced | GPU instanced | GPU instanced | GPU instanced | Krita paint API |
+| **Code reuse from current** | High (GLSL→WGSL) | Medium (math ports) | Medium (math ports) | Medium (math ports) | Low-Medium | High | Medium (math ports to C++) |
+| **Future scalability** | Good | Excellent | Excellent | Good | Good | Good | Excellent (Krita ecosystem) |
+| **Professional art tool viable** | Limited | ✓ | ✓ | ✓ | Possible | Limited | **✓ Already professional** |
+| **Layers, undo, file I/O** | Must build | Must build | Must build | Must build | Built-in | Must build | **✓ Free (Krita provides)** |
+| **Existing user base** | None | None | None | None | None | None | **✓ Krita's millions of users** |
+
+---
+
+## 6. Recommended Path
 
 ### If the goal is **maximum performance with professional tool ambitions**:
 
-> **Recommendation: Option C (Rust + wgpu) or Option B (C++ with SDL2/Vulkan)**
+> **Recommendation: Option G (Krita plugin) or Option C (Rust + wgpu) or Option B (C++ with SDL2/Vulkan)**
 >
-> These give the highest performance ceiling and the most control. Rust's safety guarantees reduce crash risk, and `wgpu` shaders are forward-compatible with WebGPU for potential web builds later. C++ is the industry standard for professional art tools but carries more maintenance burden.
+> A Krita plugin gives you a professional painting application for free — layers, blend modes, color management, file formats, tablet support, and an existing user base. You write only the boid simulation and dab generation in C++. If you want full control over the entire experience (custom UI, custom canvas, custom rendering pipeline), a standalone app in Rust or C++ is the way to go.
 
 ### If the goal is **fastest improvement with least disruption**:
 
@@ -258,9 +436,17 @@ Boid Brush is a single-file browser application (`index.html`, ~1,070 lines) wit
 >
 > Rust is an excellent learning investment. The `wgpu` ecosystem has a vibrant creative-coding community, and the same code can target both native and web (via WASM). The boid physics are pure math and translate cleanly.
 
+### If the goal is **integrating into an existing professional art tool**:
+
+> **Recommendation: Option G (Krita brush engine plugin)**
+>
+> Krita is the only viable host application. Its `KisPaintop` framework is specifically designed for custom brush engines, and its API maps well to Boid Brush's architecture. GIMP lacks a real-time brush engine plugin API, and libmypaint's single-cursor model is architecturally incompatible with swarm brushes.
+>
+> **Tradeoff vs. standalone app:** You get layers, undo, blend modes, file I/O, color management, and millions of existing users for free — but you must write C++, deal with Krita's build system, and work within Krita's stroke model (adapting continuous boid simulation to `paintLine()` callbacks).
+
 ---
 
-## 6. Migration Strategy
+## 7. Migration Strategy
 
 Regardless of which platform is chosen, the migration can follow this general phased approach:
 
@@ -307,7 +493,7 @@ Regardless of which platform is chosen, the migration can follow this general ph
 
 ---
 
-## 7. Open Questions for Discussion
+## 8. Open Questions for Discussion
 
 Before deciding, consider these questions:
 
@@ -336,6 +522,16 @@ Before deciding, consider these questions:
 
 6. **Should we try quick wins first?**
    - Adding spatial hashing + batched Canvas 2D could get to ~100-200 boids at 60fps with ~1 week of work, without any platform change. This could buy time while planning a larger migration.
+
+7. **Plugin or standalone — what matters more?**
+   - **Plugin (Krita):** You get a professional app for free but give up control over UI/UX and are constrained by Krita's stroke model and C++ requirement.
+   - **Standalone:** Full creative control over the entire experience but must build everything (layers, undo, file I/O, etc.) from scratch.
+   - **Hybrid approach:** Start as a Krita plugin to validate the brush engine in a real art workflow, then spin off a standalone app later if needed — the C++ boid physics code is reusable either way.
+
+8. **Are you comfortable with C++ and Krita's build environment?**
+   - Krita requires Qt, KDE Frameworks, CMake, and a substantial build chain.
+   - If C++ is not in your comfort zone, a standalone app in a language you know (Rust, C#, or even staying in JS with WebGPU) may be more productive.
+   - Krita's plugin API documentation is sparse — expect to read a lot of source code from existing engines (Pixel, Bristle, Spray, Particle are good starting points).
 
 ---
 
