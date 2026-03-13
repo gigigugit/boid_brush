@@ -4,6 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
 *{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;box-sizing:border-box;}
+#controls,#controls *,#layerPanel,#layerPanel *{touch-action:pan-y;}
 html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12px;color:#ccc;}
 #canvasArea{position:absolute;top:42px;left:0;right:0;bottom:22px;}
 #compositeDisplay{position:absolute;top:0;left:0;width:100%;height:100%;}
@@ -11,7 +12,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-ap
 #liveCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 #interactionCanvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;}
 
-#toolbar{position:fixed;top:0;left:0;right:0;height:42px;background:rgba(20,20,20,0.95);border-bottom:1px solid #333;display:flex;align-items:center;padding:0 8px;gap:4px;z-index:20;overflow-x:auto;}
+#toolbar{position:fixed;top:0;left:0;right:0;height:42px;background:rgba(20,20,20,0.95);border-bottom:1px solid #333;display:flex;align-items:center;padding:0 8px;gap:4px;z-index:20;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+#toolbar,#toolbar *{touch-action:pan-x;}
 #toolbar button,#toolbar .tool-btn{padding:4px 8px;border:1px solid #444;border-radius:4px;background:#333;color:#ddd;font-size:11px;cursor:pointer;white-space:nowrap;}
 #toolbar button:hover,.tool-btn:hover{background:#555;}
 .tool-btn.active{background:#4a7eff;border-color:#6a9eff;color:#fff;}
@@ -27,13 +29,14 @@ html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-ap
 
 #panel{position:fixed;top:42px;right:0;bottom:22px;display:flex;z-index:10;pointer-events:none;}
 #toggleBtn{pointer-events:auto;align-self:flex-start;margin-top:10px;background:rgba(0,0,0,0.75);color:#fff;border:none;border-radius:8px 0 0 8px;padding:10px 8px;font-size:16px;cursor:pointer;writing-mode:vertical-lr;letter-spacing:2px;line-height:1;}
-#controls{pointer-events:auto;background:rgba(10,10,10,0.92);color:#ccc;padding:10px;font-size:11px;max-height:100%;overflow-y:auto;min-width:240px;transition:width 0.25s,min-width 0.25s,padding 0.25s,opacity 0.2s;}
+#controls{pointer-events:auto;background:rgba(10,10,10,0.92);color:#ccc;padding:10px;font-size:11px;max-height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;min-width:240px;transition:width 0.25s,min-width 0.25s,padding 0.25s,opacity 0.2s;}
 #controls.collapsed{width:0;min-width:0;padding:0;opacity:0;overflow:hidden;pointer-events:none;}
-.section-header{color:#fff;margin:8px 0 2px;font-size:10px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #333;padding-bottom:2px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;}
+.section-header{color:#fff;margin:8px 0 0;font-size:10px;text-transform:uppercase;letter-spacing:1px;padding:5px 8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:4px 4px 0 0;}
+.section-header.closed{border-radius:4px;margin-bottom:0;}
 .section-header .chevron{font-size:9px;color:#888;transition:transform 0.2s;}
 .section-header.closed .chevron{transform:rotate(-90deg);}
-.section-body{overflow:hidden;transition:max-height 0.25s;max-height:600px;}
-.section-body.collapsed{max-height:0;}
+.section-body{overflow:hidden;transition:max-height 0.25s;max-height:600px;border:1px solid #333;border-top:none;border-radius:0 0 4px 4px;padding:4px 6px;background:rgba(0,0,0,0.15);margin-bottom:2px;}
+.section-body.collapsed{max-height:0;padding-top:0;padding-bottom:0;border:none;margin-bottom:0;}
 #controls label{display:flex;justify-content:space-between;align-items:center;margin:2px 0;white-space:nowrap;}
 #controls input[type="range"]{width:90px;}
 #controls select{background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:11px;width:100px;}
@@ -48,7 +51,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-ap
 #layerPanel h3{padding:8px;margin:0;font-size:10px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #333;color:#fff;display:flex;justify-content:space-between;align-items:center;}
 #layerActions{padding:4px 6px;display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid #333;}
 #layerActions button{font-size:10px;padding:3px 5px;background:#444;color:#fff;border:none;border-radius:3px;cursor:pointer;}
-#layerList{flex:1;overflow-y:auto;padding:2px;}
+#layerList{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px;}
 .layer-item{padding:5px 6px;margin:1px 0;border-radius:3px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:11px;border:1px solid transparent;}
 .layer-item:hover{background:#333;}
 .layer-item.active{background:#2a4a7a;border-color:#4a7eff;}
@@ -70,6 +73,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-ap
 
 <div id="toolbar">
   <button class="tool-btn active" data-tool="boid">🐦 Boid</button>
+  <button class="tool-btn" data-tool="simple">🖌 Simple</button>
   <button class="tool-btn" data-tool="eyedropper">💧</button>
   <button class="tool-btn" data-tool="fill">🪣</button>
   <button class="tool-btn" data-tool="select">⬚</button>
@@ -122,6 +126,11 @@ html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-ap
 <div id="panel">
   <button id="toggleBtn" onclick="togglePanel()">🐦 Brush</button>
   <div id="controls">
+    <div class="section-header" onclick="toggleSection(this)">Brush Scale <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Scale <span id="v_brushScale">1.0</span>x<input type="range" id="brushScale" min="10" max="300" value="100"></label>
+      <div style="font-size:9px;color:#666;margin-top:2px;">Proportionally adjusts stamp size, spawn radius &amp; spread</div>
+    </div>
     <div class="section-header" onclick="toggleSection(this)">Spawn Shape <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Shape <select id="spawnShape"><option value="circle">● Circle</option><option value="ring">◎ Ring</option><option value="gaussian">☁ Gaussian</option><option value="line">═ Line</option><option value="ellipse">⬮ Ellipse</option><option value="diamond">◆ Diamond</option><option value="grid">▥ Grid</option><option value="sunburst">✱ Sunburst</option><option value="spiral">≋ Spiral</option><option value="poisson">⁘ Poisson</option><option value="random_cluster">✦ Clusters</option></select></label>
@@ -136,7 +145,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#222;font-family:-ap
     <div class="section-header" onclick="toggleSection(this)">Forces <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Seek <span id="v_seek">0.40</span><input type="range" id="seek" min="0" max="100" value="40"></label>
-      <label>Cohesion <span id="v_cohesion">0.30</span><input type="range" id="cohesion" min="0" max="100" value="30"></label>
+      <label>Cohesion <span id="v_cohesion">0.15</span><input type="range" id="cohesion" min="0" max="100" value="15"></label>
       <label>Separation <span id="v_separation">0.50</span><input type="range" id="separation" min="0" max="100" value="50"></label>
       <label>Alignment <span id="v_alignment">0.20</span><input type="range" id="alignment" min="0" max="100" value="20"></label>
       <label>Jitter <span id="v_jitter">0.00</span><input type="range" id="jitter" min="0" max="100" value="0"></label>
@@ -419,24 +428,26 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>
 // ============================================================
 // PARAMS
 // ============================================================
-const allSliders=['count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
-const labelMap={count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
+const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
+const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
 for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
 
-function getP(){return{
+function getP(){
+  const scale=+document.getElementById('brushScale').value/100;
+  return{
   count:+document.getElementById('count').value,spawnShape:document.getElementById('spawnShape').value,
-  spawnRadius:+document.getElementById('spawnRadius').value,spawnAngle:+document.getElementById('spawnAngle').value*Math.PI/180,
+  spawnRadius:Math.round(+document.getElementById('spawnRadius').value*scale),spawnAngle:+document.getElementById('spawnAngle').value*Math.PI/180,
   spawnJitter:+document.getElementById('spawnJitter').value/100,respawnOnStroke:document.getElementById('respawnOnStroke').checked,
   pressureSpawnRadius:document.getElementById('pressureSpawnRadius').checked,
-  seek:+document.getElementById('seek').value/100,cohesion:+document.getElementById('cohesion').value/100,
-  separation:+document.getElementById('separation').value/100,alignment:+document.getElementById('alignment').value/100,
+  seek:+document.getElementById('seek').value/100,cohesion:+document.getElementById('cohesion').value/100/scale,
+  separation:+document.getElementById('separation').value/100*scale,alignment:+document.getElementById('alignment').value/100,
   jitter:+document.getElementById('jitter').value/100,wander:+document.getElementById('wander').value/100,
   wanderSpeed:+document.getElementById('wanderSpeed').value/100,fov:+document.getElementById('fov').value,
   flowField:+document.getElementById('flowField').value/100,flowScale:+document.getElementById('flowScale').value/1000,
   fleeRadius:+document.getElementById('fleeRadius').value,individuality:+document.getElementById('individuality').value/100,
   maxSpeed:+document.getElementById('maxSpeed').value/2,damping:+document.getElementById('damping').value/100,
-  stampSize:+document.getElementById('stampSize').value,stampOpacity:+document.getElementById('stampOpacity').value/100,
-  stampSeparation:+document.getElementById('stampSeparation').value,skipStamps:+document.getElementById('skipStamps').value,
+  stampSize:Math.max(1,Math.round(+document.getElementById('stampSize').value*scale)),stampOpacity:+document.getElementById('stampOpacity').value/100,
+  stampSeparation:Math.round(+document.getElementById('stampSeparation').value*scale),skipStamps:+document.getElementById('skipStamps').value,
   pressureSize:document.getElementById('pressureSize').checked,pressureOpacity:document.getElementById('pressureOpacity').checked,
   taperLength:+document.getElementById('taperLength').value,taperCurve:+document.getElementById('taperCurve').value/100,
   taperSize:document.getElementById('taperSize').checked,taperOpacity:document.getElementById('taperOpacity').checked,
@@ -511,6 +522,7 @@ class Boid{
 let boids=[],leaderX=0,leaderY=0,isDrawing=false,currentPressure=.5;
 let isTapering=false,taperFrame=0,taperTotal=0,strokeFrame=0;
 let undoPushedThisStroke=false;
+let simpleLastX=null,simpleLastY=null,simpleTapering=false,simpleTaperFrame=0,simpleTaperTotal=0;
 const startTime=performance.now();
 
 function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
@@ -526,6 +538,29 @@ function stampBoid(ctx,b,p,pr,tm){
   ctx.fillStyle=p.color;ctx.fill();b.rs();
 }
 
+function stampSimple(ctx,x,y,p,pr,tm){
+  let sz=p.stampSize,op=p.stampOpacity;
+  if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
+  if(typeof tm==='number'&&tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
+  if(op<.003||sz<.3)return;
+  ctx.globalAlpha=Math.min(1,op);ctx.beginPath();
+  ctx.arc(x,y,Math.max(.5,sz/2),0,Math.PI*2);
+  ctx.fillStyle=p.color;ctx.fill();ctx.globalAlpha=1;
+}
+
+function stampSimpleLine(ctx,x0,y0,x1,y1,p,pr,tm){
+  const dx=x1-x0,dy=y1-y0,dist=Math.sqrt(dx*dx+dy*dy);
+  let sz=p.stampSize;
+  if(p.pressureSize)sz*=(.3+.7*pr);
+  const step=Math.max(1,sz*0.25);
+  if(dist<step){stampSimple(ctx,x1,y1,p,pr,tm);return;}
+  const steps=Math.ceil(dist/step);
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    stampSimple(ctx,x0+dx*t,y0+dy*t,p,pr,tm);
+  }
+}
+
 // ============================================================
 // POINTER EVENTS
 // ============================================================
@@ -538,15 +573,22 @@ interCanvas.addEventListener('pointerdown',e=>{
   if(activeTool==='fill'){floodFill(x,y,document.getElementById('primaryColor').value);return;}
   if(activeTool==='select'){selDragging=true;selStart={x,y};selection=null;drawSelection();return;}
 
-  // Boid tool
+  // Boid or Simple brush tool
   isDrawing=true;isTapering=false;taperFrame=0;
   leaderX=x;leaderY=y;currentPressure=e.pressure||.5;
   undoPushedThisStroke=false;
   pushUndo();undoPushedThisStroke=true;
 
-  const p=getP();
-  if(p.sensingEnabled)buildSensingData(p.sensingSource);
-  if(p.respawnOnStroke)spawnBoids(leaderX,leaderY);
+  if(activeTool==='simple'){
+    // Simple brush: stamp immediately at cursor, track position for interpolation
+    simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;
+    const p=getP(),l=getActiveLayer();
+    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);compositeAllLayers();}
+  } else {
+    const p=getP();
+    if(p.sensingEnabled)buildSensingData(p.sensingSource);
+    if(p.respawnOnStroke)spawnBoids(leaderX,leaderY);
+  }
 });
 
 interCanvas.addEventListener('pointermove',e=>{
@@ -561,7 +603,16 @@ interCanvas.addEventListener('pointermove',e=>{
   for(const ce of events){
     const cx=ce.clientX-rect.left,cy=ce.clientY-rect.top;
     leaderX=cx;leaderY=cy;currentPressure=ce.pressure||.5;
+
+    if(activeTool==='simple'){
+      const p=getP(),l=getActiveLayer();
+      if(l&&simpleLastX!==null){
+        stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1);
+      }
+      simpleLastX=cx;simpleLastY=cy;
+    }
   }
+  if(activeTool==='simple')compositeAllLayers();
   info.textContent=`${activeTool} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
 });
 
@@ -570,9 +621,14 @@ interCanvas.addEventListener('pointerup',()=>{
   if(!isDrawing)return;
   isDrawing=false;
   const p=getP();
-  if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
+  if(activeTool==='simple'){
+    if(p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
+    else{simpleLastX=null;simpleLastY=null;}
+  } else {
+    if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
+  }
 });
-interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
+interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(activeTool==='simple'){simpleLastX=null;simpleLastY=null;}else if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
 
 // Keyboard
 document.addEventListener('keydown',e=>{
@@ -584,6 +640,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='v'&&(e.ctrlKey||e.metaKey)){e.preventDefault();doPaste();}
   else if(e.key==='d'&&(e.ctrlKey||e.metaKey)){e.preventDefault();clearSelection();}
   else if(e.key==='b'){activeTool='boid';}
+  else if(e.key==='s'){activeTool='simple';}
   else if(e.key==='i'){activeTool='eyedropper';}
   else if(e.key==='g'){activeTool='fill';}
   else if(e.key==='m'){activeTool='select';}
@@ -601,22 +658,38 @@ function frame(){
   let tm=1;
   if(isTapering&&taperTotal>0){tm=Math.max(0,1-Math.pow(taperFrame/taperTotal,p.taperCurve));taperFrame++;if(taperFrame>=taperTotal)isTapering=false;}
 
-  if(isDrawing||isTapering){
+  if((isDrawing||isTapering)&&activeTool!=='simple'){
     const l=getActiveLayer();
     if(l){for(const b of boids)stampBoid(l.ctx,b,p,currentPressure,tm);l.ctx.globalAlpha=1;}
     compositeAllLayers();strokeFrame++;
   }
 
+  // Simple brush taper
+  if(simpleTapering&&simpleTaperTotal>0&&simpleLastX!==null){
+    const stm=Math.max(0,1-Math.pow(simpleTaperFrame/simpleTaperTotal,p.taperCurve));
+    simpleTaperFrame++;
+    const l=getActiveLayer();
+    if(l){stampSimple(l.ctx,simpleLastX,simpleLastY,p,currentPressure,stm);compositeAllLayers();}
+    if(simpleTaperFrame>=simpleTaperTotal){simpleTapering=false;simpleLastX=null;simpleLastY=null;}
+  }
+
   // Overlay
   lctx.clearRect(0,0,W,H);
-  if(p.showBoids){
+  if(activeTool==='simple'){
+    // Show simple brush cursor
+    let sz=p.stampSize;
+    if(p.pressureSize)sz*=(.3+.7*currentPressure);
+    lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,Math.max(.5,sz/2),0,Math.PI*2);
+    lctx.strokeStyle=isDrawing?'#ff4444':(simpleTapering?'#ff8800':'#aaa');lctx.lineWidth=1;lctx.stroke();
+    lctx.globalAlpha=1;
+  } else if(p.showBoids){
     lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,5,0,Math.PI*2);
     lctx.fillStyle=isDrawing?'#ff4444':(isTapering?'#ff8800':'#666');lctx.fill();
     if(isTapering&&taperTotal>0){const rem=1-taperFrame/taperTotal;lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,12,0,Math.PI*2);lctx.strokeStyle='#ff8800';lctx.lineWidth=2;lctx.stroke();lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,12,-Math.PI/2,-Math.PI/2+rem*Math.PI*2);lctx.strokeStyle='#ffcc00';lctx.lineWidth=2;lctx.stroke();}
     for(const b of boids){const sk=b.fr<p.skipStamps;lctx.globalAlpha=sk?.15:.4;lctx.beginPath();lctx.arc(b.x,b.y,2,0,Math.PI*2);lctx.fillStyle=sk?'#ff8800':'#44aaff';lctx.fill();}
     lctx.globalAlpha=1;
   }
-  if(p.showSpawn&&!isDrawing&&!isTapering){
+  if(p.showSpawn&&!isDrawing&&!isTapering&&activeTool!=='simple'){
     const pts=genSpawn(leaderX,leaderY,{...p,spawnJitter:0});
     lctx.globalAlpha=.2;lctx.fillStyle='#ffaa00';
     for(const pt of pts){lctx.beginPath();lctx.arc(pt.x,pt.y,2,0,Math.PI*2);lctx.fill();}
@@ -635,7 +708,7 @@ function frame(){
 // ============================================================
 // SETTINGS PERSISTENCE
 // ============================================================
-const controlDefs={spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:30},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
+const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
 function capSt(){const s={_v:STORAGE_VERSION};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
 function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}return true;}
 function autoSave(){try{localStorage.setItem(STORAGE_KEY_SESSION,JSON.stringify(capSt()));}catch(e){}}
