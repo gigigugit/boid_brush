@@ -522,6 +522,7 @@ class Boid{
 let boids=[],leaderX=0,leaderY=0,isDrawing=false,currentPressure=.5;
 let isTapering=false,taperFrame=0,taperTotal=0,strokeFrame=0;
 let undoPushedThisStroke=false;
+let simpleLastX=null,simpleLastY=null,simpleTapering=false,simpleTaperFrame=0,simpleTaperTotal=0;
 const startTime=performance.now();
 
 function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
@@ -537,13 +538,27 @@ function stampBoid(ctx,b,p,pr,tm){
   ctx.fillStyle=p.color;ctx.fill();b.rs();
 }
 
-function stampSimple(ctx,x,y,p,pr){
+function stampSimple(ctx,x,y,p,pr,tm){
   let sz=p.stampSize,op=p.stampOpacity;
   if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
+  if(typeof tm==='number'&&tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
   if(op<.003||sz<.3)return;
   ctx.globalAlpha=Math.min(1,op);ctx.beginPath();
   ctx.arc(x,y,Math.max(.5,sz/2),0,Math.PI*2);
   ctx.fillStyle=p.color;ctx.fill();ctx.globalAlpha=1;
+}
+
+function stampSimpleLine(ctx,x0,y0,x1,y1,p,pr,tm){
+  const dx=x1-x0,dy=y1-y0,dist=Math.sqrt(dx*dx+dy*dy);
+  let sz=p.stampSize;
+  if(p.pressureSize)sz*=(.3+.7*pr);
+  const step=Math.max(1,sz*0.25);
+  if(dist<step){stampSimple(ctx,x1,y1,p,pr,tm);return;}
+  const steps=Math.ceil(dist/step);
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    stampSimple(ctx,x0+dx*t,y0+dy*t,p,pr,tm);
+  }
 }
 
 // ============================================================
@@ -565,9 +580,10 @@ interCanvas.addEventListener('pointerdown',e=>{
   pushUndo();undoPushedThisStroke=true;
 
   if(activeTool==='simple'){
-    // Simple brush: stamp immediately at cursor
+    // Simple brush: stamp immediately at cursor, track position for interpolation
+    simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;
     const p=getP(),l=getActiveLayer();
-    if(l){stampSimple(l.ctx,x,y,p,currentPressure);compositeAllLayers();}
+    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);compositeAllLayers();}
   } else {
     const p=getP();
     if(p.sensingEnabled)buildSensingData(p.sensingSource);
@@ -590,9 +606,13 @@ interCanvas.addEventListener('pointermove',e=>{
 
     if(activeTool==='simple'){
       const p=getP(),l=getActiveLayer();
-      if(l){stampSimple(l.ctx,cx,cy,p,currentPressure);compositeAllLayers();}
+      if(l&&simpleLastX!==null){
+        stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1);
+      }
+      simpleLastX=cx;simpleLastY=cy;
     }
   }
+  if(activeTool==='simple')compositeAllLayers();
   info.textContent=`${activeTool} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
 });
 
@@ -601,9 +621,14 @@ interCanvas.addEventListener('pointerup',()=>{
   if(!isDrawing)return;
   isDrawing=false;
   const p=getP();
-  if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
+  if(activeTool==='simple'){
+    if(p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
+    else{simpleLastX=null;simpleLastY=null;}
+  } else {
+    if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
+  }
 });
-interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
+interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(activeTool==='simple'){simpleLastX=null;simpleLastY=null;}else if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
 
 // Keyboard
 document.addEventListener('keydown',e=>{
@@ -639,6 +664,15 @@ function frame(){
     compositeAllLayers();strokeFrame++;
   }
 
+  // Simple brush taper
+  if(simpleTapering&&simpleTaperTotal>0&&simpleLastX!==null){
+    const stm=Math.max(0,1-Math.pow(simpleTaperFrame/simpleTaperTotal,p.taperCurve));
+    simpleTaperFrame++;
+    const l=getActiveLayer();
+    if(l){stampSimple(l.ctx,simpleLastX,simpleLastY,p,currentPressure,stm);compositeAllLayers();}
+    if(simpleTaperFrame>=simpleTaperTotal){simpleTapering=false;simpleLastX=null;simpleLastY=null;}
+  }
+
   // Overlay
   lctx.clearRect(0,0,W,H);
   if(activeTool==='simple'){
@@ -646,7 +680,7 @@ function frame(){
     let sz=p.stampSize;
     if(p.pressureSize)sz*=(.3+.7*currentPressure);
     lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,Math.max(.5,sz/2),0,Math.PI*2);
-    lctx.strokeStyle=isDrawing?'#ff4444':'#aaa';lctx.lineWidth=1;lctx.stroke();
+    lctx.strokeStyle=isDrawing?'#ff4444':(simpleTapering?'#ff8800':'#aaa');lctx.lineWidth=1;lctx.stroke();
     lctx.globalAlpha=1;
   } else if(p.showBoids){
     lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,5,0,Math.PI*2);
