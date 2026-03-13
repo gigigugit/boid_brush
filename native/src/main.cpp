@@ -69,7 +69,7 @@ static void stampBoid(Canvas& canvas, Boid& b, const BoidParams& p) {
 // ---------------------------------------------------------------------------
 static void drawDot(uint8_t* buf, int w, int h,
                     float cx, float cy, float radius,
-                    uint8_t r, uint8_t g, uint8_t b_) {
+                    uint8_t red, uint8_t green, uint8_t blue) {
     int ir = static_cast<int>(std::ceil(radius));
     int ix = static_cast<int>(cx), iy = static_cast<int>(cy);
     for (int dy = -ir; dy <= ir; dy++) {
@@ -78,9 +78,9 @@ static void drawDot(uint8_t* buf, int w, int h,
             int px = ix + dx, py = iy + dy;
             if (px < 0 || px >= w || py < 0 || py >= h) continue;
             int idx         = (py * w + px) * 4;
-            buf[idx + 0]    = r;
-            buf[idx + 1]    = g;
-            buf[idx + 2]    = b_;
+            buf[idx + 0]    = red;
+            buf[idx + 1]    = green;
+            buf[idx + 2]    = blue;
             buf[idx + 3]    = 255;
         }
     }

@@ -638,7 +638,10 @@ void VkRenderer::drawFrame() {
         device, swapchain, UINT64_MAX, imageAvailableSems[currentFrame],
         VK_NULL_HANDLE, &imageIndex);
     if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
-        // Swapchain recreation not implemented in Phase 1 — skip frame.
+        // Phase 1: swapchain recreation not implemented. Window resize or
+        // display changes may cause skipped frames until the swapchain
+        // becomes valid again. Phase 2 will add proper recreation.
+        fprintf(stderr, "Swapchain out of date/suboptimal — skipping frame\n");
         return;
     }
     VK_CHECK(res);
