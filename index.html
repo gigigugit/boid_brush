@@ -810,14 +810,19 @@ const startTime=performance.now();
 function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
 
 function stampBoid(ctx,b,p,pr,tm){
-  if(b.fr<p.skipStamps||!b.cs(p.stampSeparation))return;
+  if(b.fr<p.skipStamps)return;
   let sz=p.stampSize*b.sm,op=p.stampOpacity*b.om;
   if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
   if(tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
   if(op<.003||sz<.3)return;
-  ctx.globalAlpha=Math.min(1,op);ctx.beginPath();
-  ctx.arc(b.x,b.y,Math.max(.5,sz/2),0,Math.PI*2);
-  ctx.fillStyle=p.color;ctx.fill();b.rs();
+  const step=p.stampSeparation>0?p.stampSeparation:Math.max(1,sz*0.25);
+  const dx=b.x-b.lsx,dy=b.y-b.lsy,dist=Math.sqrt(dx*dx+dy*dy);
+  if(!b.hs){ctx.globalAlpha=Math.min(1,op);ctx.beginPath();ctx.arc(b.x,b.y,Math.max(.5,sz/2),0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();b.rs();return;}
+  if(dist<step)return;
+  ctx.globalAlpha=Math.min(1,op);ctx.fillStyle=p.color;
+  const count=Math.floor(dist/step);
+  for(let i=1;i<=count;i++){const t=(i*step)/dist;ctx.beginPath();ctx.arc(b.lsx+dx*t,b.lsy+dy*t,Math.max(.5,sz/2),0,Math.PI*2);ctx.fill();}
+  const lt=(count*step)/dist;b.lsx+=dx*lt;b.lsy+=dy*lt;b.hs=true;
 }
 
 function stampSimple(ctx,x,y,p,pr,tm){
