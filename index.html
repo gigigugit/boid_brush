@@ -509,7 +509,7 @@ function makeLayerCanvas(){
 }
 function addLayer(name){
   const{canvas,ctx}=makeLayerCanvas();
-  const layer={canvas,ctx,name:name||'Layer '+(layers.length+1),visible:true,opacity:1,blend:'source-over'};
+  const layer={canvas,ctx,name:name||'Layer '+(layers.length+1),visible:true,opacity:1,blend:'source-over',dirty:true};
   layers.splice(activeLayerIdx,0,layer);
   renderLayerList();compositeAllLayers();
   return layer;
@@ -556,7 +556,7 @@ function compositeAllLayersGL(){
     const l=layers[i];if(!l.visible)continue;
     // Per-layer GL texture: create or re-upload only when dirty
     if(!l.glTex){l.glTex=gl.createTexture();glLayerTexInit(l.glTex);l.dirty=true;}
-    if(l.dirty!==false){
+    if(l.dirty){
       gl.bindTexture(gl.TEXTURE_2D,l.glTex);
       gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,l.canvas);
       l.dirty=false;
@@ -636,7 +636,7 @@ function syncLayerControls(){const l=getActiveLayer();if(!l)return;document.getE
 function updateActiveLayerBlend(){const l=getActiveLayer();if(l){l.blend=document.getElementById('layerBlend').value;compositeAllLayers();renderLayerList();}}
 function updateActiveLayerOpacity(){const l=getActiveLayer();if(l){l.opacity=+document.getElementById('layerOpacity').value/100;document.getElementById('v_layerOpacity').textContent=document.getElementById('layerOpacity').value;compositeAllLayers();renderLayerList();}}
 function removeLayer(){if(layers.length<=1){showToast('Need at least 1 layer');return;}pushUndo();const rem=layers[activeLayerIdx];if(rem.glTex&&gl){gl.deleteTexture(rem.glTex);}layers.splice(activeLayerIdx,1);if(activeLayerIdx>=layers.length)activeLayerIdx=layers.length-1;renderLayerList();syncLayerControls();compositeAllLayers();}
-function duplicateLayer(){pushUndo();const src=getActiveLayer();const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(src.canvas,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,0,{canvas,ctx,name:src.name+' copy',visible:true,opacity:src.opacity,blend:src.blend});renderLayerList();compositeAllLayers();}
+function duplicateLayer(){pushUndo();const src=getActiveLayer();const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(src.canvas,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,0,{canvas,ctx,name:src.name+' copy',visible:true,opacity:src.opacity,blend:src.blend,dirty:true});renderLayerList();compositeAllLayers();}
 function moveLayerUp(){if(activeLayerIdx<=0)return;pushUndo();[layers[activeLayerIdx-1],layers[activeLayerIdx]]=[layers[activeLayerIdx],layers[activeLayerIdx-1]];activeLayerIdx--;renderLayerList();compositeAllLayers();}
 function moveLayerDown(){if(activeLayerIdx>=layers.length-1)return;pushUndo();[layers[activeLayerIdx+1],layers[activeLayerIdx]]=[layers[activeLayerIdx],layers[activeLayerIdx+1]];activeLayerIdx++;renderLayerList();compositeAllLayers();}
 function mergeDown(){if(activeLayerIdx>=layers.length-1){showToast('No layer below');return;}pushUndo();const upper=layers[activeLayerIdx],lower=layers[activeLayerIdx+1];lower.ctx.save();lower.ctx.setTransform(1,0,0,1,0,0);lower.ctx.globalAlpha=upper.opacity;lower.ctx.globalCompositeOperation=upper.blend;lower.ctx.drawImage(upper.canvas,0,0);lower.ctx.restore();lower.ctx.setTransform(DPR,0,0,DPR,0,0);if(upper.glTex&&gl){gl.deleteTexture(upper.glTex);}lower.dirty=true;layers.splice(activeLayerIdx,1);renderLayerList();syncLayerControls();compositeAllLayers();}
@@ -665,7 +665,7 @@ function drawSelection(){sctx.clearRect(0,0,W,H);if(!selection)return;const s=se
 function clearSelection(){selection=null;drawSelection();}
 function doCut(){if(!selection)return;pushUndo();const l=getActiveLayer(),s=selection;clipboard=l.ctx.getImageData(s.x*DPR,s.y*DPR,s.w*DPR,s.h*DPR);l.ctx.clearRect(s.x,s.y,s.w,s.h);l.dirty=true;compositeAllLayers();showToast('✂ Cut');}
 function doCopy(){if(!selection)return;const l=getActiveLayer(),s=selection;clipboard=l.ctx.getImageData(s.x*DPR,s.y*DPR,s.w*DPR,s.h*DPR);showToast('📄 Copied');}
-function doPaste(){if(!clipboard)return;pushUndo();const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(clipboard,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,0,{canvas,ctx,name:'Pasted',visible:true,opacity:1,blend:'source-over'});renderLayerList();compositeAllLayers();showToast('📋 Pasted');}
+function doPaste(){if(!clipboard)return;pushUndo();const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(clipboard,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,0,{canvas,ctx,name:'Pasted',visible:true,opacity:1,blend:'source-over',dirty:true});renderLayerList();compositeAllLayers();showToast('📋 Pasted');}
 
 // ============================================================
 // COLOR + PALETTE
@@ -1048,9 +1048,9 @@ resizeAll();
 layers=[];
 const{canvas:bgC,ctx:bgX}=makeLayerCanvas();
 bgX.fillStyle='#f5f1eb';bgX.fillRect(0,0,W,H);
-layers.push({canvas:bgC,ctx:bgX,name:'Background',visible:true,opacity:1,blend:'source-over'});
+layers.push({canvas:bgC,ctx:bgX,name:'Background',visible:true,opacity:1,blend:'source-over',dirty:true});
 const{canvas:l1C,ctx:l1X}=makeLayerCanvas();
-layers.splice(0,0,{canvas:l1C,ctx:l1X,name:'Layer 1',visible:true,opacity:1,blend:'source-over'});
+layers.splice(0,0,{canvas:l1C,ctx:l1X,name:'Layer 1',visible:true,opacity:1,blend:'source-over',dirty:true});
 activeLayerIdx=0; // Layer 1 is active (top)
 renderLayerList();syncLayerControls();compositeAllLayers();
 
