@@ -302,10 +302,12 @@ function resizeAll(){
     c.width=W*DPR;c.height=H*DPR;
     c.style.width=W+'px';c.style.height=H+'px';
   }
-  dctx=compositeDisplay.getContext('2d');
+  if(!gpuReady){
+    dctx=compositeDisplay.getContext('2d');
+    dctx.setTransform(DPR,0,0,DPR,0,0);
+  }
   sctx=selCanvas.getContext('2d',{desynchronized:true});
   lctx=liveCanvas.getContext('2d',{desynchronized:true});
-  dctx.setTransform(DPR,0,0,DPR,0,0);
   sctx.setTransform(DPR,0,0,DPR,0,0);
   lctx.setTransform(DPR,0,0,DPR,0,0);
   // Resize layer canvases
@@ -319,6 +321,7 @@ function resizeAll(){
       l.ctx.setTransform(DPR,0,0,DPR,0,0);
       l.ctx.drawImage(tmp,0,0,tmp.width,tmp.height,0,0,W,H);
     }
+    l.dirty=true;if(l.glTex&&gl){gl.deleteTexture(l.glTex);l.glTex=null;}
   });
   resizeGPU();
   compositeAllLayers();
@@ -329,10 +332,11 @@ function resizeAll(){
 // Falls back to Canvas 2D if WebGL2 is unavailable.
 // All 16 CSS blend modes are implemented in GLSL shaders.
 // ============================================================
-let glCanvas=null,gl=null,gpuReady=false;
+let gl=null,gpuReady=false;
 let glProgram=null,glCheckerProgram=null,glPassProgram=null;
 let glFBO=[null,null],glFBOTex=[null,null];
-let glVAO=null,glLayerTex=null;
+let glVAO=null,glLayerTexInit=null;
+let _cachedP=null,_paramsDirty=true;
 const BLEND_MODE_MAP={
   'source-over':0,'multiply':1,'screen':2,'overlay':3,
   'darken':4,'lighten':5,'color-dodge':6,'color-burn':7,
@@ -432,8 +436,7 @@ out vec4 oColor;
 void main(){oColor=texture(uTex,vUV);}`;
 
 function initGPU(){
-  glCanvas=document.createElement('canvas');
-  gl=glCanvas.getContext('webgl2',{alpha:true,premultipliedAlpha:false,preserveDrawingBuffer:true});
+  gl=compositeDisplay.getContext('webgl2',{alpha:true,premultipliedAlpha:false,preserveDrawingBuffer:true});
   if(!gl){console.warn('WebGL2 unavailable — using CPU compositing');return;}
 
   const bvs=glCompile(GL_VERT,gl.VERTEX_SHADER),bfs=glCompile(GL_BLEND_FRAG,gl.FRAGMENT_SHADER);
@@ -461,18 +464,15 @@ function initGPU(){
     glFBO[i]=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,glFBO[i]);
     gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,glFBOTex[i],0);
   }
-  glLayerTex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,glLayerTex);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  glLayerTexInit=function(tex){gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);};
   gl.bindTexture(gl.TEXTURE_2D,null);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
   gpuReady=true;
 }
 
 function resizeGPU(){
   if(!gpuReady)return;
-  const w=W*DPR,h=H*DPR;glCanvas.width=w;glCanvas.height=h;
+  const w=W*DPR,h=H*DPR;
   gl.viewport(0,0,w,h);
   for(let i=0;i<2;i++){gl.bindTexture(gl.TEXTURE_2D,glFBOTex[i]);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
   gl.bindTexture(gl.TEXTURE_2D,null);
@@ -517,8 +517,8 @@ function addLayer(name){
 function getActiveLayer(){return layers[activeLayerIdx];}
 
 function compositeAllLayers(){
-  if(!dctx)return;
   if(gpuReady){compositeAllLayersGL();return;}
+  if(!dctx)return;
   // 2D fallback
   dctx.save();dctx.setTransform(DPR,0,0,DPR,0,0);
   dctx.fillStyle='#c8c8c8';dctx.fillRect(0,0,W,H);
@@ -554,11 +554,16 @@ function compositeAllLayersGL(){
 
   for(let i=layers.length-1;i>=0;i--){
     const l=layers[i];if(!l.visible)continue;
+    // Per-layer GL texture: create or re-upload only when dirty
+    if(!l.glTex){l.glTex=gl.createTexture();glLayerTexInit(l.glTex);l.dirty=true;}
+    if(l.dirty!==false){
+      gl.bindTexture(gl.TEXTURE_2D,l.glTex);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,l.canvas);
+      l.dirty=false;
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER,glFBO[dst]);
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,glFBOTex[src]);gl.uniform1i(uBase,0);
-    gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,glLayerTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,l.canvas);
+    gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,l.glTex);
     gl.uniform1i(uLayer,1);
     gl.uniform1f(uOpacity,l.opacity);
     gl.uniform1i(uMode,BLEND_MODE_MAP[l.blend]||0);
@@ -566,18 +571,13 @@ function compositeAllLayersGL(){
     const tmp=src;src=dst;dst=tmp;
   }
 
-  // Render result to default framebuffer via passthrough shader
+  // Render result directly to screen (no offscreen copy needed)
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   gl.useProgram(glPassProgram);
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,glFBOTex[src]);
   gl.uniform1i(gl.getUniformLocation(glPassProgram,'uTex'),0);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   gl.bindVertexArray(null);
-
-  // Copy WebGL canvas → 2D composite display (GPU blit)
-  dctx.save();dctx.setTransform(1,0,0,1,0,0);
-  dctx.drawImage(glCanvas,0,0);
-  dctx.restore();
 }
 
 // Sensing: build pixel data from layers below (or all/active)
@@ -635,12 +635,12 @@ function renderLayerList(){
 function syncLayerControls(){const l=getActiveLayer();if(!l)return;document.getElementById('layerBlend').value=l.blend;document.getElementById('layerOpacity').value=Math.round(l.opacity*100);document.getElementById('v_layerOpacity').textContent=Math.round(l.opacity*100);}
 function updateActiveLayerBlend(){const l=getActiveLayer();if(l){l.blend=document.getElementById('layerBlend').value;compositeAllLayers();renderLayerList();}}
 function updateActiveLayerOpacity(){const l=getActiveLayer();if(l){l.opacity=+document.getElementById('layerOpacity').value/100;document.getElementById('v_layerOpacity').textContent=document.getElementById('layerOpacity').value;compositeAllLayers();renderLayerList();}}
-function removeLayer(){if(layers.length<=1){showToast('Need at least 1 layer');return;}pushUndo();layers.splice(activeLayerIdx,1);if(activeLayerIdx>=layers.length)activeLayerIdx=layers.length-1;renderLayerList();syncLayerControls();compositeAllLayers();}
+function removeLayer(){if(layers.length<=1){showToast('Need at least 1 layer');return;}pushUndo();const rem=layers[activeLayerIdx];if(rem.glTex&&gl){gl.deleteTexture(rem.glTex);}layers.splice(activeLayerIdx,1);if(activeLayerIdx>=layers.length)activeLayerIdx=layers.length-1;renderLayerList();syncLayerControls();compositeAllLayers();}
 function duplicateLayer(){pushUndo();const src=getActiveLayer();const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(src.canvas,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,0,{canvas,ctx,name:src.name+' copy',visible:true,opacity:src.opacity,blend:src.blend});renderLayerList();compositeAllLayers();}
 function moveLayerUp(){if(activeLayerIdx<=0)return;pushUndo();[layers[activeLayerIdx-1],layers[activeLayerIdx]]=[layers[activeLayerIdx],layers[activeLayerIdx-1]];activeLayerIdx--;renderLayerList();compositeAllLayers();}
 function moveLayerDown(){if(activeLayerIdx>=layers.length-1)return;pushUndo();[layers[activeLayerIdx+1],layers[activeLayerIdx]]=[layers[activeLayerIdx],layers[activeLayerIdx+1]];activeLayerIdx++;renderLayerList();compositeAllLayers();}
-function mergeDown(){if(activeLayerIdx>=layers.length-1){showToast('No layer below');return;}pushUndo();const upper=layers[activeLayerIdx],lower=layers[activeLayerIdx+1];lower.ctx.save();lower.ctx.setTransform(1,0,0,1,0,0);lower.ctx.globalAlpha=upper.opacity;lower.ctx.globalCompositeOperation=upper.blend;lower.ctx.drawImage(upper.canvas,0,0);lower.ctx.restore();lower.ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,1);renderLayerList();syncLayerControls();compositeAllLayers();}
-function flattenAll(){if(layers.length<=1)return;pushUndo();const{canvas,ctx}=makeLayerCanvas();ctx.save();ctx.setTransform(1,0,0,1,0,0);for(let i=layers.length-1;i>=0;i--){const l=layers[i];if(!l.visible)continue;ctx.globalAlpha=l.opacity;ctx.globalCompositeOperation=l.blend;ctx.drawImage(l.canvas,0,0);}ctx.restore();ctx.setTransform(DPR,0,0,DPR,0,0);layers=[{canvas,ctx,name:'Flattened',visible:true,opacity:1,blend:'source-over'}];activeLayerIdx=0;renderLayerList();syncLayerControls();compositeAllLayers();}
+function mergeDown(){if(activeLayerIdx>=layers.length-1){showToast('No layer below');return;}pushUndo();const upper=layers[activeLayerIdx],lower=layers[activeLayerIdx+1];lower.ctx.save();lower.ctx.setTransform(1,0,0,1,0,0);lower.ctx.globalAlpha=upper.opacity;lower.ctx.globalCompositeOperation=upper.blend;lower.ctx.drawImage(upper.canvas,0,0);lower.ctx.restore();lower.ctx.setTransform(DPR,0,0,DPR,0,0);if(upper.glTex&&gl){gl.deleteTexture(upper.glTex);}lower.dirty=true;layers.splice(activeLayerIdx,1);renderLayerList();syncLayerControls();compositeAllLayers();}
+function flattenAll(){if(layers.length<=1)return;pushUndo();const{canvas,ctx}=makeLayerCanvas();ctx.save();ctx.setTransform(1,0,0,1,0,0);for(let i=layers.length-1;i>=0;i--){const l=layers[i];if(!l.visible)continue;ctx.globalAlpha=l.opacity;ctx.globalCompositeOperation=l.blend;ctx.drawImage(l.canvas,0,0);}ctx.restore();ctx.setTransform(DPR,0,0,DPR,0,0);for(const l of layers){if(l.glTex&&gl)gl.deleteTexture(l.glTex);}layers=[{canvas,ctx,name:'Flattened',visible:true,opacity:1,blend:'source-over',dirty:true}];activeLayerIdx=0;renderLayerList();syncLayerControls();compositeAllLayers();}
 
 // ============================================================
 // UNDO / REDO
@@ -648,7 +648,8 @@ function flattenAll(){if(layers.length<=1)return;pushUndo();const{canvas,ctx}=ma
 let undoStack=[],redoStack=[];const MAX_UNDO=20;
 function captureState(){return layers.map(l=>({data:l.ctx.getImageData(0,0,l.canvas.width,l.canvas.height),name:l.name,visible:l.visible,opacity:l.opacity,blend:l.blend}));}
 function restoreState(state){
-  layers=state.map(s=>{const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(s.data,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);return{canvas,ctx,name:s.name,visible:s.visible,opacity:s.opacity,blend:s.blend};});
+  for(const l of layers){if(l.glTex&&gl)gl.deleteTexture(l.glTex);}
+  layers=state.map(s=>{const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(s.data,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);return{canvas,ctx,name:s.name,visible:s.visible,opacity:s.opacity,blend:s.blend,dirty:true};});
   if(activeLayerIdx>=layers.length)activeLayerIdx=layers.length-1;
   renderLayerList();syncLayerControls();compositeAllLayers();
 }
@@ -662,7 +663,7 @@ function doRedo(){if(!redoStack.length)return;undoStack.push({s:captureState(),i
 let selection=null,selDragging=false,selStart=null,clipboard=null;
 function drawSelection(){sctx.clearRect(0,0,W,H);if(!selection)return;const s=selection;sctx.setLineDash([6,4]);sctx.strokeStyle='#fff';sctx.lineWidth=1;sctx.strokeRect(s.x,s.y,s.w,s.h);sctx.strokeStyle='#000';sctx.lineDashOffset=6;sctx.strokeRect(s.x,s.y,s.w,s.h);sctx.setLineDash([]);sctx.lineDashOffset=0;}
 function clearSelection(){selection=null;drawSelection();}
-function doCut(){if(!selection)return;pushUndo();const l=getActiveLayer(),s=selection;clipboard=l.ctx.getImageData(s.x*DPR,s.y*DPR,s.w*DPR,s.h*DPR);l.ctx.clearRect(s.x,s.y,s.w,s.h);compositeAllLayers();showToast('✂ Cut');}
+function doCut(){if(!selection)return;pushUndo();const l=getActiveLayer(),s=selection;clipboard=l.ctx.getImageData(s.x*DPR,s.y*DPR,s.w*DPR,s.h*DPR);l.ctx.clearRect(s.x,s.y,s.w,s.h);l.dirty=true;compositeAllLayers();showToast('✂ Cut');}
 function doCopy(){if(!selection)return;const l=getActiveLayer(),s=selection;clipboard=l.ctx.getImageData(s.x*DPR,s.y*DPR,s.w*DPR,s.h*DPR);showToast('📄 Copied');}
 function doPaste(){if(!clipboard)return;pushUndo();const{canvas,ctx}=makeLayerCanvas();ctx.setTransform(1,0,0,1,0,0);ctx.putImageData(clipboard,0,0);ctx.setTransform(DPR,0,0,DPR,0,0);layers.splice(activeLayerIdx,0,{canvas,ctx,name:'Pasted',visible:true,opacity:1,blend:'source-over'});renderLayerList();compositeAllLayers();showToast('📋 Pasted');}
 
@@ -689,9 +690,14 @@ function floodFill(x,y,col){
   const match=o=>Math.abs(d[o]-sr)+Math.abs(d[o+1]-sg)+Math.abs(d[o+2]-sb)+Math.abs(d[o+3]-sa)<=tol;
   const stack=[[px,py]];
   while(stack.length){const[cx,cy]=stack.pop();const idx=cy*w+cx;if(cx<0||cy<0||cx>=w||cy>=h||visited[idx])continue;const o=idx*4;if(!match(o))continue;visited[idx]=1;d[o]=fr;d[o+1]=fg;d[o+2]=fb;d[o+3]=255;stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);}
-  l.ctx.putImageData(id,0,0);compositeAllLayers();
+  l.ctx.putImageData(id,0,0);l.dirty=true;compositeAllLayers();
 }
-function pickColor(x,y){const p=dctx.getImageData(x*DPR,y*DPR,1,1).data;const hex='#'+[p[0],p[1],p[2]].map(v=>v.toString(16).padStart(2,'0')).join('');document.getElementById('primaryColor').value=hex;showToast('💧 '+hex);}
+function pickColor(x,y){
+  let r,g,b;
+  if(gpuReady){compositeAllLayers();const px=new Uint8Array(4);gl.readPixels(Math.round(x*DPR),gl.drawingBufferHeight-1-Math.round(y*DPR),1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);r=px[0];g=px[1];b=px[2];}
+  else{const p=dctx.getImageData(x*DPR,y*DPR,1,1).data;r=p[0];g=p[1];b=p[2];}
+  const hex='#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');document.getElementById('primaryColor').value=hex;showToast('💧 '+hex);
+}
 
 // Tool selection
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>{activeTool=btn.dataset.tool;document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};});
@@ -701,11 +707,16 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>
 // ============================================================
 const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
 const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
-for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
+for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{_paramsDirty=true;const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
+// Also invalidate cache on checkbox/select changes
+document.querySelectorAll('#controls input[type=checkbox],#controls select').forEach(el=>el.addEventListener('change',()=>{_paramsDirty=true;}));
+document.getElementById('primaryColor').addEventListener('input',()=>{_paramsDirty=true;});
 
 function getP(){
+  if(_cachedP&&!_paramsDirty)return _cachedP;
+  _paramsDirty=false;
   const scale=+document.getElementById('brushScale').value/100;
-  return{
+  _cachedP={
   count:+document.getElementById('count').value,spawnShape:document.getElementById('spawnShape').value,
   spawnRadius:Math.round(+document.getElementById('spawnRadius').value*scale),spawnAngle:+document.getElementById('spawnAngle').value*Math.PI/180,
   spawnJitter:+document.getElementById('spawnJitter').value/100,respawnOnStroke:document.getElementById('respawnOnStroke').checked,
@@ -729,7 +740,7 @@ function getP(){
   showBoids:document.getElementById('showBoids').checked,showSpawn:document.getElementById('showSpawn').checked,
   showFlow:document.getElementById('showFlow').checked,showSensing:document.getElementById('showSensing')?.checked||false,
   color:document.getElementById('primaryColor').value,
-};}
+  };return _cachedP;}
 
 // ============================================================
 // SPAWN SHAPES
@@ -864,7 +875,7 @@ interCanvas.addEventListener('pointerdown',e=>{
     // Simple brush: stamp immediately at cursor, track position for interpolation
     simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;
     const p=getP(),l=getActiveLayer();
-    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);compositeAllLayers();}
+    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);l.dirty=true;compositeAllLayers();}
   } else {
     const p=getP();
     if(p.sensingEnabled)buildSensingData(p.sensingSource);
@@ -893,7 +904,7 @@ interCanvas.addEventListener('pointermove',e=>{
       simpleLastX=cx;simpleLastY=cy;
     }
   }
-  if(activeTool==='simple')compositeAllLayers();
+  if(activeTool==='simple'){const al=getActiveLayer();if(al)al.dirty=true;compositeAllLayers();}
   info.textContent=`${activeTool} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
 });
 
@@ -934,14 +945,15 @@ document.addEventListener('keydown',e=>{
 function frame(){
   const p=getP(),t=performance.now()-startTime;
 
-  for(const b of boids)b.update(boids,leaderX,leaderY,p,t);
+  // Skip boid physics when idle (not drawing, not tapering)
+  if(isDrawing||isTapering)for(const b of boids)b.update(boids,leaderX,leaderY,p,t);
 
   let tm=1;
   if(isTapering&&taperTotal>0){tm=Math.max(0,1-Math.pow(taperFrame/taperTotal,p.taperCurve));taperFrame++;if(taperFrame>=taperTotal)isTapering=false;}
 
   if((isDrawing||isTapering)&&activeTool!=='simple'){
     const l=getActiveLayer();
-    if(l){for(const b of boids)stampBoid(l.ctx,b,p,currentPressure,tm);l.ctx.globalAlpha=1;}
+    if(l){for(const b of boids)stampBoid(l.ctx,b,p,currentPressure,tm);l.ctx.globalAlpha=1;l.dirty=true;}
     compositeAllLayers();strokeFrame++;
   }
 
@@ -950,7 +962,7 @@ function frame(){
     const stm=Math.max(0,1-Math.pow(simpleTaperFrame/simpleTaperTotal,p.taperCurve));
     simpleTaperFrame++;
     const l=getActiveLayer();
-    if(l){stampSimple(l.ctx,simpleLastX,simpleLastY,p,currentPressure,stm);compositeAllLayers();}
+    if(l){stampSimple(l.ctx,simpleLastX,simpleLastY,p,currentPressure,stm);l.dirty=true;compositeAllLayers();}
     if(simpleTaperFrame>=simpleTaperTotal){simpleTapering=false;simpleLastX=null;simpleLastY=null;}
   }
 
@@ -1021,7 +1033,7 @@ function applyPreset(name){const pr=presets[name];if(!pr)return;for(const[k,v]of
 // ============================================================
 // UTILITIES
 // ============================================================
-function clearActiveLayer(){pushUndo();const l=getActiveLayer();l.ctx.clearRect(0,0,W,H);compositeAllLayers();}
+function clearActiveLayer(){pushUndo();const l=getActiveLayer();l.ctx.clearRect(0,0,W,H);l.dirty=true;compositeAllLayers();}
 function saveImage(){compositeAllLayers();const a=document.createElement('a');a.download='boid-'+Date.now()+'.png';a.href=compositeDisplay.toDataURL('image/png');a.click();}
 function togglePanel(){const c=document.getElementById('controls'),b=document.getElementById('toggleBtn');c.classList.toggle('collapsed');b.textContent=c.classList.contains('collapsed')?'🐦◀':'🐦 Brush';}
 function toggleSection(h){h.classList.toggle('closed');h.nextElementSibling.classList.toggle('collapsed');}
