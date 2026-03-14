@@ -887,7 +887,7 @@ interCanvas.addEventListener('pointerdown',e=>{
     // Simple brush: stamp immediately at cursor, track position for interpolation
     simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;simpleStrokeFrame=0;
     const p=getP(),l=getActiveLayer();
-    const inTm=p.taperInLength>0?Math.pow(0/Math.max(1,p.taperInLength),p.taperCurve):1;
+    const inTm=p.taperInLength>0?Math.pow(0.5/p.taperInLength,p.taperCurve):1;
     if(l){stampSimple(l.ctx,x,y,p,currentPressure,1,inTm);l.dirty=true;compositeAllLayers();}
   } else {
     const p=getP();
@@ -897,7 +897,7 @@ interCanvas.addEventListener('pointerdown',e=>{
 });
 
 interCanvas.addEventListener('pointermove',e=>{
-  if(e.pointerType==='touch'&&!selDragging)return;
+  if(e.pointerType==='touch'&&activeTool!=='select'&&activeTool!=='eyedropper'&&activeTool!=='fill')return;
   const rect=interCanvas.getBoundingClientRect();
   const x=e.clientX-rect.left,y=e.clientY-rect.top;
 
