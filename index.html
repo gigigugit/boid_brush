@@ -201,18 +201,19 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
     <div class="section-body"><label>Count <span id="v_count">25</span><input type="range" id="count" min="3" max="200" value="25"></label></div>
     <div class="section-header" onclick="toggleSection(this)">Forces <span class="chevron">▼</span></div>
     <div class="section-body">
-      <label>Seek <span id="v_seek">0.40</span><input type="range" id="seek" min="0" max="100" value="40"></label>
-      <label>Cohesion <span id="v_cohesion">0.15</span><input type="range" id="cohesion" min="0" max="100" value="15"></label>
-      <label>Separation <span id="v_separation">0.50</span><input type="range" id="separation" min="0" max="100" value="50"></label>
-      <label>Alignment <span id="v_alignment">0.20</span><input type="range" id="alignment" min="0" max="100" value="20"></label>
+      <label>Seek <span id="v_seek">0.45</span><input type="range" id="seek" min="0" max="100" value="45"></label>
+      <label>Cohesion <span id="v_cohesion">0.30</span><input type="range" id="cohesion" min="0" max="100" value="30"></label>
+      <label>Separation <span id="v_separation">0.30</span><input type="range" id="separation" min="0" max="100" value="30"></label>
+      <label>Alignment <span id="v_alignment">0.35</span><input type="range" id="alignment" min="0" max="100" value="35"></label>
       <label>Jitter <span id="v_jitter">0.00</span><input type="range" id="jitter" min="0" max="100" value="0"></label>
-      <label>Wander <span id="v_wander">0.00</span><input type="range" id="wander" min="0" max="100" value="0"></label>
+      <label>Wander <span id="v_wander">0.10</span><input type="range" id="wander" min="0" max="100" value="10"></label>
       <label>Wander Spd <span id="v_wanderSpeed">0.30</span><input type="range" id="wanderSpeed" min="1" max="100" value="30"></label>
+      <label>Neighbor R <span id="v_neighborRadius">60</span><input type="range" id="neighborRadius" min="10" max="150" value="60"></label>
       <label>FOV <span id="v_fov">360</span>°<input type="range" id="fov" min="30" max="360" value="360"></label>
       <label>Flow <span id="v_flowField">0.00</span><input type="range" id="flowField" min="0" max="100" value="0"></label>
       <label>Flow Scale <span id="v_flowScale">0.010</span><input type="range" id="flowScale" min="1" max="100" value="10"></label>
       <label>Flee R <span id="v_fleeRadius">0</span><input type="range" id="fleeRadius" min="0" max="150" value="0"></label>
-      <label>Individ. <span id="v_individuality">0.00</span><input type="range" id="individuality" min="0" max="100" value="0"></label>
+      <label>Individ. <span id="v_individuality">0.20</span><input type="range" id="individuality" min="0" max="100" value="20"></label>
     </div>
     <div class="section-header" onclick="toggleSection(this)">Motion <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -223,6 +224,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
     <div class="section-body">
       <label>Size <span id="v_stampSize">6</span><input type="range" id="stampSize" min="1" max="40" value="6"></label>
       <label>Opacity <span id="v_stampOpacity">0.15</span><input type="range" id="stampOpacity" min="1" max="100" value="15"></label>
+      <label>Size Jitter <span id="v_sizeJitter">0.30</span><input type="range" id="sizeJitter" min="0" max="100" value="30"></label>
+      <label>Opacity Jitter <span id="v_opacJitter">0.30</span><input type="range" id="opacJitter" min="0" max="100" value="30"></label>
       <label>Separation <span id="v_stampSeparation">0</span><input type="range" id="stampSeparation" min="0" max="80" value="0"></label>
       <label>Skip Start <span id="v_skipStamps">0</span><input type="range" id="skipStamps" min="0" max="60" value="0"></label>
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
@@ -706,8 +709,8 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>
 // ============================================================
 // PARAMS
 // ============================================================
-const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperInLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
-const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperInLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
+const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','neighborRadius','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','sizeJitter','opacJitter','stampSeparation','skipStamps','taperLength','taperInLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
+const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),neighborRadius:v=>v,fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),sizeJitter:v=>(v/100).toFixed(2),opacJitter:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperInLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
 for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{_paramsDirty=true;const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
 // Also invalidate cache on checkbox/select changes
 document.querySelectorAll('#controls input[type=checkbox],#controls select').forEach(el=>el.addEventListener('change',()=>{_paramsDirty=true;}));
@@ -726,11 +729,13 @@ function getP(){
   seek:+document.getElementById('seek').value/100,cohesion:+document.getElementById('cohesion').value/100/scale,
   separation:+document.getElementById('separation').value/100*scale,alignment:+document.getElementById('alignment').value/100,
   jitter:+document.getElementById('jitter').value/100,wander:+document.getElementById('wander').value/100,
-  wanderSpeed:+document.getElementById('wanderSpeed').value/100,fov:+document.getElementById('fov').value,
+  wanderSpeed:+document.getElementById('wanderSpeed').value/100,neighborRadius:+document.getElementById('neighborRadius').value,
+  fov:+document.getElementById('fov').value,
   flowField:+document.getElementById('flowField').value/100,flowScale:+document.getElementById('flowScale').value/1000,
   fleeRadius:+document.getElementById('fleeRadius').value,individuality:+document.getElementById('individuality').value/100,
   maxSpeed:+document.getElementById('maxSpeed').value/2,damping:+document.getElementById('damping').value/100,
   stampSize:Math.max(1,Math.round(+document.getElementById('stampSize').value*scale)),stampOpacity:+document.getElementById('stampOpacity').value/100,
+  sizeJitter:+document.getElementById('sizeJitter').value/100,opacJitter:+document.getElementById('opacJitter').value/100,
   stampSeparation:Math.round(+document.getElementById('stampSeparation').value*scale),skipStamps:+document.getElementById('skipStamps').value,
   pressureSize:document.getElementById('pressureSize').checked,pressureOpacity:document.getElementById('pressureOpacity').checked,
   taperLength:+document.getElementById('taperLength').value,taperInLength:+document.getElementById('taperInLength').value,taperCurve:+document.getElementById('taperCurve').value/100,
@@ -766,7 +771,7 @@ function genSpawn(cx,cy,p){const r=p.spawnRadius,raw=(SS[p.spawnShape]||SS.circl
 // BOID
 // ============================================================
 class Boid{
-  constructor(x,y,ind){this.x=x;this.y=y;this.vx=(Math.random()-.5)*2;this.vy=(Math.random()-.5)*2;this.ax=0;this.ay=0;this.wa=Math.random()*Math.PI*2;this.ps=1+(Math.random()-.5)*ind;this.pk=1+(Math.random()-.5)*ind;this.pc=1+(Math.random()-.5)*ind;this.pp=1+(Math.random()-.5)*ind;this.pn=1+(Math.random()-.5)*ind*.8;this.sm=.7+Math.random()*.6;this.om=.6+Math.random()*.8;this.nx=Math.random()*1e3;this.ny=Math.random()*1e3;this.lsx=x;this.lsy=y;this.hs=false;this.fr=0;}
+  constructor(x,y,ind,sizeJitter,opacJitter){this.x=x;this.y=y;this.vx=(Math.random()-.5)*2;this.vy=(Math.random()-.5)*2;this.ax=0;this.ay=0;this.wa=Math.random()*Math.PI*2;this.ps=1+(Math.random()-.5)*ind;this.pk=1+(Math.random()-.5)*ind;this.pc=1+(Math.random()-.5)*ind;this.pp=1+(Math.random()-.5)*ind;this.pn=1+(Math.random()-.5)*ind*.8;this.sm=Math.max(0.2,1+(Math.random()-.5)*sizeJitter);this.om=Math.max(0.1,1+(Math.random()-.5)*opacJitter);this.nx=Math.random()*1e3;this.ny=Math.random()*1e3;this.lsx=x;this.lsy=y;this.hs=false;this.fr=0;}
   af(fx,fy){this.ax+=fx;this.ay+=fy;}
   sk(tx,ty,w,ms){let dx=tx-this.x,dy=ty-this.y;const d=Math.sqrt(dx*dx+dy*dy)||1;this.af(((dx/d)*ms-this.vx)*w,((dy/d)*ms-this.vy)*w);}
   fl(tx,ty,r,ms){const dx=this.x-tx,dy=this.y-ty,d=Math.sqrt(dx*dx+dy*dy);if(d>r||!d)return;const s=1-d/r;this.af((dx/d)*ms*s,(dy/d)*ms*s);}
@@ -784,8 +789,8 @@ class Boid{
     this.sk(lx,ly,p.seek*this.pk,ms);
     if(p.fleeRadius>0)this.fl(lx,ly,p.fleeRadius,ms*.8);
     let cx=0,cy=0,cc=0,sx=0,sy=0,ax=0,ay=0,ac=0;
-    const nd=80*this.pn,sd=25*this.pn,fr=p.fov*Math.PI/180;
-    for(const o of boids){if(o===this||!this.fov(o,fr))continue;const dx=o.x-this.x,dy=o.y-this.y,d=Math.sqrt(dx*dx+dy*dy);if(d<nd){cx+=o.x;cy+=o.y;cc++;ax+=o.vx;ay+=o.vy;ac++;}if(d<sd&&d>0){sx-=dx/d;sy-=dy/d;}}
+    const nd=p.neighborRadius*this.pn,sd=nd*0.3,fr=p.fov*Math.PI/180;
+    for(const o of boids){if(o===this)continue;const dx=o.x-this.x,dy=o.y-this.y;if(Math.abs(dx)>nd||Math.abs(dy)>nd)continue;if(!this.fov(o,fr))continue;const d=Math.sqrt(dx*dx+dy*dy);if(d<nd){cx+=o.x;cy+=o.y;cc++;ax+=o.vx;ay+=o.vy;ac++;}if(d<sd&&d>0){sx-=dx/d;sy-=dy/d;}}
     if(cc>0)this.sk(cx/cc,cy/cc,p.cohesion*this.pc,ms);
     if(ac>0)this.af((ax/ac-this.vx)*p.alignment,(ay/ac-this.vy)*p.alignment);
     this.af(sx*p.separation*this.pp,sy*p.separation*this.pp);
@@ -810,7 +815,7 @@ let simpleLastX=null,simpleLastY=null,simpleTapering=false,simpleTaperFrame=0,si
 let activePointerId=null;
 const startTime=performance.now();
 
-function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
+function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality,p.sizeJitter,p.opacJitter));strokeFrame=0;}
 
 function stampBoid(ctx,b,p,pr,tm){
   if(b.fr<p.skipStamps)return;
@@ -1036,7 +1041,7 @@ function frame(){
 // ============================================================
 // SETTINGS PERSISTENCE
 // ============================================================
-const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperInLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
+const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:45},cohesion:{t:'r',f:30},separation:{t:'r',f:30},alignment:{t:'r',f:35},jitter:{t:'r',f:0},wander:{t:'r',f:10},wanderSpeed:{t:'r',f:30},neighborRadius:{t:'r',f:60},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:20},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},sizeJitter:{t:'r',f:30},opacJitter:{t:'r',f:30},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperInLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
 function capSt(){const s={_v:STORAGE_VERSION};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
 function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}return true;}
 function autoSave(){try{localStorage.setItem(STORAGE_KEY_SESSION,JSON.stringify(capSt()));}catch(e){}}
