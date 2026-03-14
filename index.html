@@ -342,8 +342,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#121214;font-family:
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option></select></label>
       <label>Show Sensing <input type="checkbox" id="showSensing"></label>
     </div>
-    <div class="section-header" data-brushes="boid swirl random" onclick="toggleSection(this)">Visual <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid swirl random">
+    <div class="section-header" data-brushes="boid swirl random path" onclick="toggleSection(this)">Visual <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid swirl random path">
       <label>Show Particles <input type="checkbox" id="showBoids" checked></label>
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
       <label>Show Flow <input type="checkbox" id="showFlow"></label>
@@ -827,7 +827,10 @@ function pickColor(x,y){
 }
 
 // Tool selection
-document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>{activeTool=btn.dataset.tool;document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};});
+document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
+  if(btn.id==='motionBrushBtn')return; // handled by motion brush dropdown
+  btn.onclick=()=>{activeTool=btn.dataset.tool;document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};
+});
 
 // Touch drawing toggle
 document.getElementById('touchDrawing').addEventListener('change',e=>{touchDrawingEnabled=e.target.checked;});
@@ -1118,7 +1121,10 @@ function samplePathAt(t,cx,cy,scale){
   const i0=Math.floor(idx),i1=Math.min(i0+1,pathCurveCache.length-1);
   const frac=idx-i0;
   const a=pathCurveCache[i0],b=pathCurveCache[i1];
-  return{x:cx+(a.x+(b.x-a.x)*frac)*scale,y:cy+(a.y+(b.y-a.y)*frac)*scale};
+  // Path coordinates are normalized 0-1, center at 0.5, so subtract 0.5 to center on cursor
+  const px=(a.x+(b.x-a.x)*frac-0.5)*scale;
+  const py=(a.y+(b.y-a.y)*frac-0.5)*scale;
+  return{x:cx+px,y:cy+py};
 }
 
 function spawnPath(cx,cy){
@@ -1728,8 +1734,9 @@ function frame(){
       lctx.globalAlpha=.15;lctx.strokeStyle='#88ccff';lctx.lineWidth=1;lctx.beginPath();
       for(let i=0;i<pathCurveCache.length;i++){
         const pt=pathCurveCache[i];
-        if(i===0)lctx.moveTo(leaderX+pt.x*sc,leaderY+pt.y*sc);
-        else lctx.lineTo(leaderX+pt.x*sc,leaderY+pt.y*sc);
+        const px=leaderX+(pt.x-0.5)*sc,py=leaderY+(pt.y-0.5)*sc;
+        if(i===0)lctx.moveTo(px,py);
+        else lctx.lineTo(px,py);
       }
       lctx.closePath();lctx.stroke();
     }
