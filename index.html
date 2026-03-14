@@ -228,6 +228,17 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
     </div>
+    <div class="section-header closed" onclick="toggleSection(this)">Symmetry <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      <label>Enable <input type="checkbox" id="symmetryEnabled"></label>
+      <label>Count <span id="v_symmetryCount">4</span><input type="range" id="symmetryCount" min="2" max="16" value="4"></label>
+      <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
+      <label>Center X <span id="v_symmetryCenterX">50</span>%<input type="range" id="symmetryCenterX" min="0" max="100" value="50"></label>
+      <label>Center Y <span id="v_symmetryCenterY">50</span>%<input type="range" id="symmetryCenterY" min="0" max="100" value="50"></label>
+      <label>Show Guides <input type="checkbox" id="showSymmetry" checked></label>
+      <div style="display:flex;gap:3px;margin:4px 0;"><button onclick="recenterSymmetry()">⊕ Recenter</button></div>
+      <div style="font-size:9px;color:#666;margin-top:2px;">Alt+click canvas to set center</div>
+    </div>
     <div class="section-header" onclick="toggleSection(this)">Taper <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Length <span id="v_taperLength">0</span><input type="range" id="taperLength" min="0" max="120" value="0"></label>
@@ -284,7 +295,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 // ============================================================
 // CORE
 // ============================================================
-const STORAGE_KEY_SESSION='bb_s5',STORAGE_KEY_DEFAULT='bb_d5',STORAGE_VERSION=5;
+const STORAGE_KEY_SESSION='bb_s6',STORAGE_KEY_DEFAULT='bb_d6',STORAGE_VERSION=6;
 let W,H,DPR,activeTool='boid';
 const compositeDisplay=document.getElementById('compositeDisplay');
 const selCanvas=document.getElementById('selectionCanvas');
@@ -705,8 +716,8 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>
 // ============================================================
 // PARAMS
 // ============================================================
-const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
-const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
+const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','symmetryCount','symmetryCenterX','symmetryCenterY','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
+const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,symmetryCount:v=>v,symmetryCenterX:v=>v,symmetryCenterY:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
 for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{_paramsDirty=true;const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
 // Also invalidate cache on checkbox/select changes
 document.querySelectorAll('#controls input[type=checkbox],#controls select').forEach(el=>el.addEventListener('change',()=>{_paramsDirty=true;}));
@@ -731,6 +742,11 @@ function getP(){
   stampSize:Math.max(1,Math.round(+document.getElementById('stampSize').value*scale)),stampOpacity:+document.getElementById('stampOpacity').value/100,
   stampSeparation:Math.round(+document.getElementById('stampSeparation').value*scale),skipStamps:+document.getElementById('skipStamps').value,
   pressureSize:document.getElementById('pressureSize').checked,pressureOpacity:document.getElementById('pressureOpacity').checked,
+  symmetryEnabled:document.getElementById('symmetryEnabled').checked,symmetryCount:+document.getElementById('symmetryCount').value,
+  symmetryMirror:document.getElementById('symmetryMirror').checked,
+  symmetryCenterX:Math.round(+document.getElementById('symmetryCenterX').value/100*W),
+  symmetryCenterY:Math.round(+document.getElementById('symmetryCenterY').value/100*H),
+  showSymmetry:document.getElementById('showSymmetry')?.checked||false,
   taperLength:+document.getElementById('taperLength').value,taperCurve:+document.getElementById('taperCurve').value/100,
   taperSize:document.getElementById('taperSize').checked,taperOpacity:document.getElementById('taperOpacity').checked,
   sensingEnabled:document.getElementById('sensingEnabled').checked,sensingMode:document.getElementById('sensingMode').value,
@@ -809,6 +825,24 @@ const startTime=performance.now();
 
 function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
 
+function getSymmetryPoints(x,y,p){
+  if(!p.symmetryEnabled||p.symmetryCount<2)return null;
+  const cx=p.symmetryCenterX,cy=p.symmetryCenterY,n=p.symmetryCount;
+  const dx=x-cx,dy=y-cy;const pts=[];
+  for(let i=0;i<n;i++){
+    const a=(i/n)*Math.PI*2,co=Math.cos(a),si=Math.sin(a);
+    pts.push({x:cx+dx*co-dy*si,y:cy+dx*si+dy*co});
+    if(p.symmetryMirror)pts.push({x:cx+dx*co+dy*si,y:cy+dx*si-dy*co});
+  }
+  return pts;
+}
+
+function symStamp(ctx,x,y,r,p){
+  const pts=getSymmetryPoints(x,y,p);
+  if(pts){for(const pt of pts){ctx.beginPath();ctx.arc(pt.x,pt.y,r,0,Math.PI*2);ctx.fill();}}
+  else{ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+}
+
 function stampBoid(ctx,b,p,pr,tm){
   if(b.fr<p.skipStamps)return;
   let sz=p.stampSize*b.sm,op=p.stampOpacity*b.om;
@@ -817,11 +851,12 @@ function stampBoid(ctx,b,p,pr,tm){
   if(op<.003||sz<.3)return;
   const step=p.stampSeparation>0?p.stampSeparation:Math.max(1,sz*0.25);
   const dx=b.x-b.lsx,dy=b.y-b.lsy,dist=Math.sqrt(dx*dx+dy*dy);
-  if(!b.hs){ctx.globalAlpha=Math.min(1,op);ctx.beginPath();ctx.arc(b.x,b.y,Math.max(.5,sz/2),0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();b.rs();return;}
+  const rad=Math.max(.5,sz/2);
+  if(!b.hs){ctx.globalAlpha=Math.min(1,op);ctx.fillStyle=p.color;symStamp(ctx,b.x,b.y,rad,p);b.rs();return;}
   if(dist<step)return;
   ctx.globalAlpha=Math.min(1,op);ctx.fillStyle=p.color;
   const count=Math.floor(dist/step);
-  for(let i=1;i<=count;i++){const t=(i*step)/dist;ctx.beginPath();ctx.arc(b.lsx+dx*t,b.lsy+dy*t,Math.max(.5,sz/2),0,Math.PI*2);ctx.fill();}
+  for(let i=1;i<=count;i++){const t=(i*step)/dist;symStamp(ctx,b.lsx+dx*t,b.lsy+dy*t,rad,p);}
   const lt=(count*step)/dist;b.lsx+=dx*lt;b.lsy+=dy*lt;b.hs=true;
 }
 
@@ -830,9 +865,8 @@ function stampSimple(ctx,x,y,p,pr,tm){
   if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
   if(typeof tm==='number'&&tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
   if(op<.003||sz<.3)return;
-  ctx.globalAlpha=Math.min(1,op);ctx.beginPath();
-  ctx.arc(x,y,Math.max(.5,sz/2),0,Math.PI*2);
-  ctx.fillStyle=p.color;ctx.fill();ctx.globalAlpha=1;
+  ctx.globalAlpha=Math.min(1,op);ctx.fillStyle=p.color;
+  symStamp(ctx,x,y,Math.max(.5,sz/2),p);ctx.globalAlpha=1;
 }
 
 function stampSimpleLine(ctx,x0,y0,x1,y1,p,pr,tm){
@@ -869,6 +903,15 @@ interCanvas.addEventListener('pointerdown',e=>{
   if(activeTool==='eyedropper'){pickColor(x,y);return;}
   if(activeTool==='fill'){floodFill(x,y,document.getElementById('primaryColor').value);return;}
   if(activeTool==='select'){selDragging=true;selStart={x,y};selection=null;drawSelection();return;}
+
+  // Alt+click to set symmetry center
+  if(e.altKey&&document.getElementById('symmetryEnabled').checked){
+    const xpct=Math.round(x/W*100),ypct=Math.round(y/H*100);
+    const elX=document.getElementById('symmetryCenterX'),elY=document.getElementById('symmetryCenterY');
+    elX.value=Math.max(0,Math.min(100,xpct));elY.value=Math.max(0,Math.min(100,ypct));
+    elX.dispatchEvent(new Event('input'));elY.dispatchEvent(new Event('input'));
+    return;
+  }
 
   // Boid or Simple brush tool
   isDrawing=true;isTapering=false;taperFrame=0;
@@ -1000,13 +1043,33 @@ function frame(){
     for(let y=0;y<H;y+=step)for(let x=0;x<W;x+=step){const v=sampleSensing(x,y,p.sensingChannel);if(v>p.sensingThreshold){lctx.fillStyle=p.sensingMode==='avoid'?`rgba(255,0,0,${v})`:`rgba(0,255,0,${v})`;lctx.fillRect(x-step/2,y-step/2,step,step);}}
     lctx.globalAlpha=1;
   }
+  if(p.showSymmetry&&p.symmetryEnabled&&p.symmetryCount>=2){
+    const cx=p.symmetryCenterX,cy=p.symmetryCenterY,n=p.symmetryCount;
+    const maxR=Math.sqrt(W*W+H*H);
+    lctx.save();
+    lctx.strokeStyle='rgba(255,170,0,0.25)';lctx.lineWidth=1;
+    lctx.setLineDash([6,4]);
+    const totalLines=p.symmetryMirror?n*2:n;
+    for(let i=0;i<totalLines;i++){
+      const a=(i/totalLines)*Math.PI*2;
+      lctx.beginPath();lctx.moveTo(cx,cy);
+      lctx.lineTo(cx+Math.cos(a)*maxR,cy+Math.sin(a)*maxR);
+      lctx.stroke();
+    }
+    lctx.setLineDash([]);
+    lctx.strokeStyle='rgba(255,170,0,0.5)';lctx.lineWidth=1.5;
+    lctx.beginPath();lctx.arc(cx,cy,6,0,Math.PI*2);lctx.stroke();
+    lctx.beginPath();lctx.moveTo(cx-3,cy);lctx.lineTo(cx+3,cy);lctx.stroke();
+    lctx.beginPath();lctx.moveTo(cx,cy-3);lctx.lineTo(cx,cy+3);lctx.stroke();
+    lctx.restore();
+  }
   requestAnimationFrame(frame);
 }
 
 // ============================================================
 // SETTINGS PERSISTENCE
 // ============================================================
-const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
+const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},symmetryCount:{t:'r',f:4},symmetryCenterX:{t:'r',f:50},symmetryCenterY:{t:'r',f:50},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},symmetryEnabled:{t:'c',f:false},symmetryMirror:{t:'c',f:false},showSymmetry:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
 function capSt(){const s={_v:STORAGE_VERSION};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
 function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}return true;}
 function autoSave(){try{localStorage.setItem(STORAGE_KEY_SESSION,JSON.stringify(capSt()));}catch(e){}}
@@ -1042,6 +1105,7 @@ function clearActiveLayer(){pushUndo();const l=getActiveLayer();l.ctx.clearRect(
 function saveImage(){compositeAllLayers();const a=document.createElement('a');a.download='boid-'+Date.now()+'.png';a.href=compositeDisplay.toDataURL('image/png');a.click();}
 function togglePanel(){const c=document.getElementById('controls'),b=document.getElementById('toggleBtn');c.classList.toggle('collapsed');b.textContent=c.classList.contains('collapsed')?'🐦◀':'🐦 Brush';}
 function toggleSection(h){h.classList.toggle('closed');h.nextElementSibling.classList.toggle('collapsed');}
+function recenterSymmetry(){const elX=document.getElementById('symmetryCenterX'),elY=document.getElementById('symmetryCenterY');elX.value=50;elY.value=50;elX.dispatchEvent(new Event('input'));elY.dispatchEvent(new Event('input'));_paramsDirty=true;}
 let toastTO;function showToast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');clearTimeout(toastTO);toastTO=setTimeout(()=>e.classList.remove('show'),2e3);}
 
 // ============================================================
