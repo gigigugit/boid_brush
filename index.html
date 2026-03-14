@@ -290,7 +290,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#121214;font-family:
       <label>Speed Var <span id="v_pathSpeedVar">0</span>%<input type="range" id="pathSpeedVar" min="0" max="100" value="0"></label>
       <label>Scale <span id="v_pathScale">100</span><input type="range" id="pathScale" min="10" max="300" value="100"></label>
       <div style="display:flex;gap:3px;margin:4px 0;"><button onclick="openPathEditor()">✏️ Edit Path</button></div>
-      <div style="font-size:9px;color:#666;margin-top:2px;">Stamps follow a user-defined closed bezier path</div>
+      <div style="font-size:9px;color:#666;margin-top:2px;">Stamps follow a user-defined closed spline path</div>
     </div>
     <div class="section-header" data-brushes="random" onclick="toggleSection(this)">Random Spray <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="random">
@@ -380,7 +380,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#121214;font-family:
 
 <div id="pathEditorModal" class="modal-overlay">
   <div class="modal-box">
-    <h3>Path Editor — Bezier Curve</h3>
+    <h3>Path Editor — Catmull-Rom Spline</h3>
     <canvas id="pathEditorCanvas" width="480" height="300"></canvas>
     <div style="font-size:10px;color:#888;margin-top:6px;">Click to add anchor points. Drag to move. Right-click to delete. Path auto-closes.</div>
     <div class="modal-actions">
@@ -1154,6 +1154,8 @@ function updatePath(cx,cy,p){
 let pathEditorAnchors=[];
 let pathEditorDragging=-1;
 let pathEditorCtx=null;
+const PATH_HIT_RADIUS=0.04;
+const PATH_DELETE_RADIUS=0.05;
 
 function openPathEditor(){
   const modal=document.getElementById('pathEditorModal');
@@ -1196,13 +1198,13 @@ function pathEditorDown(e){
       const d=Math.hypot(pathEditorAnchors[i].x-x,pathEditorAnchors[i].y-y);
       if(d<minD){minD=d;minI=i;}
     }
-    if(minI>=0&&minD<0.05){pathEditorAnchors.splice(minI,1);drawPathEditor();}
+    if(minI>=0&&minD<PATH_DELETE_RADIUS){pathEditorAnchors.splice(minI,1);drawPathEditor();}
     return;
   }
   // Left click: check if near existing point (drag) or add new
   let hitIdx=-1;
   for(let i=0;i<pathEditorAnchors.length;i++){
-    if(Math.hypot(pathEditorAnchors[i].x-x,pathEditorAnchors[i].y-y)<0.04){hitIdx=i;break;}
+    if(Math.hypot(pathEditorAnchors[i].x-x,pathEditorAnchors[i].y-y)<PATH_HIT_RADIUS){hitIdx=i;break;}
   }
   if(hitIdx>=0){pathEditorDragging=hitIdx;}
   else{pathEditorAnchors.push({x,y});pathEditorDragging=pathEditorAnchors.length-1;drawPathEditor();}
@@ -1421,7 +1423,7 @@ BrushRegistry.register('eraser',{
 });
 BrushRegistry.register('path',{
   name:'Path Brush',icon:'⤴',
-  description:'Stamps follow a user-defined closed bezier curve path'
+  description:'Stamps follow a user-defined closed Catmull-Rom spline path'
 });
 
 // ============================================================
@@ -1522,6 +1524,8 @@ interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing
 // ============================================================
 let pinchActive=false,pinchStartDist=0,pinchStartZoom=1,pinchStartPanX=0,pinchStartPanY=0,pinchStartMidX=0,pinchStartMidY=0,pinchStartAngle=0,pinchStartRotation=0;
 let tapTouches=[],tapMoved=false;
+const TAP_MOVE_THRESHOLD_SQ=225; // 15px squared
+const TAP_MAX_DURATION=350; // ms
 
 interCanvas.addEventListener('touchstart',e=>{
   // Track tap gesture
@@ -1551,7 +1555,7 @@ interCanvas.addEventListener('touchmove',e=>{
   if(tapTouches.length>0&&!tapMoved){
     for(let i=0;i<Math.min(e.touches.length,tapTouches.length);i++){
       const dx=e.touches[i].clientX-tapTouches[i].x,dy=e.touches[i].clientY-tapTouches[i].y;
-      if(dx*dx+dy*dy>225){tapMoved=true;break;}
+      if(dx*dx+dy*dy>TAP_MOVE_THRESHOLD_SQ){tapMoved=true;break;}
     }
   }
   if(pinchActive&&e.touches.length===2){
@@ -1585,7 +1589,7 @@ interCanvas.addEventListener('touchend',e=>{
   // Detect multi-finger tap gestures (two-finger=undo, three-finger=redo)
   if(e.touches.length===0&&tapTouches.length>=2&&!tapMoved){
     const elapsed=Date.now()-tapTouches[0].t;
-    if(elapsed<350){
+    if(elapsed<TAP_MAX_DURATION){
       if(tapTouches.length===2){doUndo();showToast('↩ Undo (2-finger tap)');}
       else if(tapTouches.length>=3){doRedo();showToast('↪ Redo (3-finger tap)');}
     }
