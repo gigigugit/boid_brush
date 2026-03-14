@@ -24,7 +24,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 .tb-sep{width:1px;height:24px;background:rgba(255,255,255,0.08);margin:0 5px;flex-shrink:0;}
 
 /* Color Pickers */
-#primaryColor,#secondaryColor{width:30px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;}
+#primaryColor,#secondaryColor{width:30px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;}
 #primaryColor:hover,#secondaryColor:hover{border-color:rgba(255,255,255,0.35);}
 #primaryColor::-webkit-color-swatch-wrapper,#secondaryColor::-webkit-color-swatch-wrapper{padding:1px;}
 #primaryColor::-webkit-color-swatch,#secondaryColor::-webkit-color-swatch{border:none;border-radius:3px;}
@@ -94,7 +94,11 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 .brush-type-btn{flex:1;min-width:0;padding:5px 4px;border:1px solid rgba(255,255,255,0.1);border-radius:5px;background:rgba(255,255,255,0.06);color:#ccc;font-size:10px;cursor:pointer;text-align:center;transition:all 0.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .brush-type-btn:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.18);color:#fff;}
 .brush-type-btn.active{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 6px rgba(74,126,255,0.25);}
+.brush-type-btn[data-btype="eraser"].active{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.5);box-shadow:0 0 6px rgba(224,80,80,0.25);}
 .brush-hidden{display:none!important;}
+
+/* Canvas Transform (zoom/pan) */
+#canvasTransform{position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:center center;}
 
 /* Checkboxes */
 #controls input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
@@ -180,9 +184,11 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 </div>
 
 <div id="canvasArea">
-  <canvas id="compositeDisplay"></canvas>
-  <canvas id="selectionCanvas"></canvas>
-  <canvas id="liveCanvas"></canvas>
+  <div id="canvasTransform">
+    <canvas id="compositeDisplay"></canvas>
+    <canvas id="selectionCanvas"></canvas>
+    <canvas id="liveCanvas"></canvas>
+  </div>
   <canvas id="interactionCanvas"></canvas>
 </div>
 
@@ -194,6 +200,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       <button class="brush-type-btn" data-btype="simple">🖌 Simple</button>
       <button class="brush-type-btn" data-btype="swirl">🌀 Swirl</button>
       <button class="brush-type-btn" data-btype="random">✦ Random</button>
+      <button class="brush-type-btn" data-btype="eraser">◻ Eraser</button>
     </div>
     <div class="section-header" onclick="toggleSection(this)">Brush Scale <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -290,12 +297,14 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
     </div>
     <div class="section-header" onclick="toggleSection(this)">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
+      <label>Touch Drawing <input type="checkbox" id="touchDrawing"></label>
       <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
         <button class="save-btn" onclick="saveAsUserDefault()">💾 Save Default</button>
         <button class="reset-btn" onclick="resetToFactoryDefaults()">🏭 Factory Reset</button>
         <button onclick="resetToUserDefault()">👤 Load Default</button>
         <button onclick="exportSettings()">📋 Export</button>
         <button onclick="importSettings()">📥 Import</button>
+        <button onclick="resetView()">🔍 Reset View</button>
       </div>
       <div style="font-size:9px;color:#666;margin-top:4px;" id="settingsStatus"></div>
     </div>
@@ -322,6 +331,9 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 // ============================================================
 const STORAGE_KEY_SESSION='bb_s7',STORAGE_KEY_DEFAULT='bb_d7',STORAGE_VERSION=7;
 let W,H,DPR,activeTool='paint',brushType='boid';
+let touchDrawingEnabled=false;
+let viewZoom=1,viewPanX=0,viewPanY=0;
+const VIEW_ZOOM_MIN=0.1,VIEW_ZOOM_MAX=10;
 const compositeDisplay=document.getElementById('compositeDisplay');
 const selCanvas=document.getElementById('selectionCanvas');
 const liveCanvas=document.getElementById('liveCanvas');
@@ -353,7 +365,7 @@ function resizeAll(){
       tmp.width=l.canvas.width;tmp.height=l.canvas.height;
       tmp.getContext('2d').drawImage(l.canvas,0,0);
       l.canvas.width=W*DPR;l.canvas.height=H*DPR;
-      l.ctx=l.canvas.getContext('2d');
+      l.ctx=l.canvas.getContext('2d',{desynchronized:true});
       l.ctx.setTransform(DPR,0,0,DPR,0,0);
       l.ctx.drawImage(tmp,0,0,tmp.width,tmp.height,0,0,W,H);
     }
@@ -361,7 +373,17 @@ function resizeAll(){
   });
   resizeGPU();
   compositeAllLayers();
+  applyViewTransform();
 }
+
+function applyViewTransform(){
+  document.getElementById('canvasTransform').style.transform=
+    `translate(${viewPanX}px,${viewPanY}px) scale(${viewZoom})`;
+}
+function screenToCanvas(sx,sy){
+  return{x:(sx-W/2-viewPanX)/viewZoom+W/2,y:(sy-H/2-viewPanY)/viewZoom+H/2};
+}
+function resetView(){viewZoom=1;viewPanX=0;viewPanY=0;applyViewTransform();showToast('🔍 View reset');}
 
 // ============================================================
 // GPU COMPOSITOR (WebGL2-accelerated layer compositing)
@@ -540,7 +562,7 @@ let layers=[],activeLayerIdx=0;
 function makeLayerCanvas(){
   const c=document.createElement('canvas');
   c.width=(W||window.innerWidth)*DPR;c.height=(H||window.innerHeight)*DPR;
-  const ctx=c.getContext('2d');ctx.setTransform(DPR||2,0,0,DPR||2,0,0);
+  const ctx=c.getContext('2d',{desynchronized:true});ctx.setTransform(DPR||2,0,0,DPR||2,0,0);
   return{canvas:c,ctx};
 }
 function addLayer(name){
@@ -707,9 +729,9 @@ function doPaste(){if(!clipboard)return;pushUndo();const{canvas,ctx}=makeLayerCa
 // COLOR + PALETTE
 // ============================================================
 let palette=JSON.parse(localStorage.getItem('bb_palette')||'["#1a1a1a","#ffffff","#ff3b30","#ff9500","#ffcc00","#34c759","#007aff","#5856d6","#af52de","#8e8e93"]');
-function renderPalette(){const bar=document.getElementById('paletteBar');bar.innerHTML='';palette.forEach((c,i)=>{const s=document.createElement('div');s.className='palette-swatch';s.style.background=c;s.onclick=()=>document.getElementById('primaryColor').value=c;s.oncontextmenu=e=>{e.preventDefault();palette.splice(i,1);localStorage.setItem('bb_palette',JSON.stringify(palette));renderPalette();};bar.appendChild(s);});}
+function renderPalette(){const bar=document.getElementById('paletteBar');bar.innerHTML='';palette.forEach((c,i)=>{const s=document.createElement('div');s.className='palette-swatch';s.style.background=c;s.onclick=()=>{document.getElementById('primaryColor').value=c;_paramsDirty=true;};s.oncontextmenu=e=>{e.preventDefault();palette.splice(i,1);localStorage.setItem('bb_palette',JSON.stringify(palette));renderPalette();};bar.appendChild(s);});}
 function addPaletteSwatch(){const c=document.getElementById('primaryColor').value;if(!palette.includes(c)){palette.push(c);localStorage.setItem('bb_palette',JSON.stringify(palette));renderPalette();}}
-document.getElementById('swapColors').onclick=()=>{const p=document.getElementById('primaryColor'),s=document.getElementById('secondaryColor'),t=p.value;p.value=s.value;s.value=t;};
+document.getElementById('swapColors').onclick=()=>{const p=document.getElementById('primaryColor'),s=document.getElementById('secondaryColor'),t=p.value;p.value=s.value;s.value=t;_paramsDirty=true;};
 renderPalette();
 
 // Fill tool
@@ -737,6 +759,9 @@ function pickColor(x,y){
 
 // Tool selection
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>{activeTool=btn.dataset.tool;document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};});
+
+// Touch drawing toggle
+document.getElementById('touchDrawing').addEventListener('change',e=>{touchDrawingEnabled=e.target.checked;});
 
 // Brush type selection
 function setBrushType(bt){
@@ -766,6 +791,7 @@ for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEve
 // Also invalidate cache on checkbox/select changes
 document.querySelectorAll('#controls input[type=checkbox],#controls select').forEach(el=>el.addEventListener('change',()=>{_paramsDirty=true;}));
 document.getElementById('primaryColor').addEventListener('input',()=>{_paramsDirty=true;});
+document.getElementById('primaryColor').addEventListener('change',()=>{_paramsDirty=true;});
 
 function getP(){
   if(_cachedP&&!_paramsDirty)return _cachedP;
@@ -983,6 +1009,12 @@ function stampSimpleLine(ctx,x0,y0,x1,y1,p,pr,tm){
     stampSimple(ctx,x0+dx*t,y0+dy*t,p,pr,tm);
   }
 }
+// Applies a stamp function in destination-out (erase) mode when erase=true, then restores.
+function eraseStamp(ctx,erase,fn){
+  if(erase)ctx.globalCompositeOperation='destination-out';
+  fn();
+  ctx.globalCompositeOperation='source-over';
+}
 
 // Register brushes with the BrushRegistry for extensibility
 BrushRegistry.register('boid',{
@@ -1001,14 +1033,19 @@ BrushRegistry.register('random',{
   name:'Random Spray',icon:'✦',
   description:'Stamps scattered randomly within a probability field'
 });
+BrushRegistry.register('eraser',{
+  name:'Eraser',icon:'◻',
+  description:'Erases pixels on the active layer using destination-out blending'
+});
 
 // ============================================================
 // POINTER EVENTS
 // ============================================================
 interCanvas.addEventListener('pointerdown',e=>{
-  if(e.pointerType==='touch')return;
+  if(e.pointerType==='touch'&&!touchDrawingEnabled)return;
   const rect=interCanvas.getBoundingClientRect();
-  const x=e.clientX-rect.left,y=e.clientY-rect.top;
+  const sx=e.clientX-rect.left,sy=e.clientY-rect.top;
+  const{x,y}=screenToCanvas(sx,sy);
 
   if(activeTool==='eyedropper'){pickColor(x,y);return;}
   if(activeTool==='fill'){floodFill(x,y,document.getElementById('primaryColor').value);return;}
@@ -1023,23 +1060,25 @@ interCanvas.addEventListener('pointerdown',e=>{
     return;
   }
 
-  // Boid or Simple brush tool
+  // Paint / Eraser
   isDrawing=true;isTapering=false;taperFrame=0;
   leaderX=x;leaderY=y;currentPressure=e.pressure||.5;
   undoPushedThisStroke=false;
   pushUndo();undoPushedThisStroke=true;
 
-  if(brushType==='simple'){
-    // Simple brush: stamp immediately at cursor, track position for interpolation
+  if(brushType==='simple'||brushType==='eraser'){
     simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;
     const p=getP(),l=getActiveLayer();
-    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);l.dirty=true;compositeAllLayers();}
+    if(l){
+      eraseStamp(l.ctx,brushType==='eraser',()=>stampSimple(l.ctx,x,y,p,currentPressure,1));
+      l.dirty=true;compositeAllLayers();
+    }
   } else if(brushType==='swirl'){
     const p=getP();
     if(p.sensingEnabled)buildSensingData(p.sensingSource);
     spawnSwirl(x,y);
   } else if(brushType==='random'){
-    // Random spray: no pre-spawn needed; positions generated each frame
+    // positions generated each frame
   } else {
     const p=getP();
     if(p.sensingEnabled)buildSensingData(p.sensingSource);
@@ -1048,28 +1087,30 @@ interCanvas.addEventListener('pointerdown',e=>{
 });
 
 interCanvas.addEventListener('pointermove',e=>{
-  if(e.pointerType==='touch')return;
+  if(e.pointerType==='touch'&&!touchDrawingEnabled)return;
   const rect=interCanvas.getBoundingClientRect();
-  const x=e.clientX-rect.left,y=e.clientY-rect.top;
+  const sx0=e.clientX-rect.left,sy0=e.clientY-rect.top;
+  const{x,y}=screenToCanvas(sx0,sy0);
 
   if(selDragging&&selStart){selection={x:Math.min(selStart.x,x),y:Math.min(selStart.y,y),w:Math.abs(x-selStart.x),h:Math.abs(y-selStart.y)};drawSelection();return;}
   if(!isDrawing)return;
 
   const events=e.getCoalescedEvents?e.getCoalescedEvents():[e];
   for(const ce of events){
-    const cx=ce.clientX-rect.left,cy=ce.clientY-rect.top;
+    const sx=ce.clientX-rect.left,sy=ce.clientY-rect.top;
+    const{x:cx,y:cy}=screenToCanvas(sx,sy);
     leaderX=cx;leaderY=cy;currentPressure=ce.pressure||.5;
 
-    if(brushType==='simple'){
+    if(brushType==='simple'||brushType==='eraser'){
       const p=getP(),l=getActiveLayer();
       if(l&&simpleLastX!==null){
-        stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1);
+        eraseStamp(l.ctx,brushType==='eraser',()=>stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1));
       }
       simpleLastX=cx;simpleLastY=cy;
     }
   }
-  if(brushType==='simple'){const al=getActiveLayer();if(al)al.dirty=true;compositeAllLayers();}
-  info.textContent=`${brushType} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
+  if(brushType==='simple'||brushType==='eraser'){const al=getActiveLayer();if(al)al.dirty=true;}
+  info.textContent=`${brushType} | ${(viewZoom*100).toFixed(0)}% | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
 });
 
 interCanvas.addEventListener('pointerup',()=>{
@@ -1077,16 +1118,78 @@ interCanvas.addEventListener('pointerup',()=>{
   if(!isDrawing)return;
   isDrawing=false;
   const p=getP();
-  if(brushType==='simple'){
-    if(p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
+  if(brushType==='simple'||brushType==='eraser'){
+    if(brushType==='simple'&&p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
     else{simpleLastX=null;simpleLastY=null;}
   } else if(brushType==='random'){
-    // Random spray: no taper state needed
+    // no taper
   } else {
     if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
   }
 });
-interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(brushType==='simple'){simpleLastX=null;simpleLastY=null;}else if(brushType!=='random'&&p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
+interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(brushType==='simple'||brushType==='eraser'){simpleLastX=null;simpleLastY=null;}else if(brushType!=='random'&&p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
+
+// ============================================================
+// PINCH ZOOM + TWO-FINGER PAN (touch) & MOUSE-WHEEL ZOOM
+// ============================================================
+let pinchActive=false,pinchStartDist=0,pinchStartZoom=1,pinchStartPanX=0,pinchStartPanY=0,pinchStartMidX=0,pinchStartMidY=0;
+
+interCanvas.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){
+    e.preventDefault();
+    pinchActive=true;
+    // cancel any in-progress drawing stroke
+    if(isDrawing){isDrawing=false;simpleLastX=null;simpleLastY=null;}
+    const r=interCanvas.getBoundingClientRect();
+    const t1=e.touches[0],t2=e.touches[1];
+    pinchStartDist=Math.hypot(t2.clientX-t1.clientX,t2.clientY-t1.clientY);
+    pinchStartZoom=viewZoom;pinchStartPanX=viewPanX;pinchStartPanY=viewPanY;
+    pinchStartMidX=(t1.clientX+t2.clientX)/2-r.left;
+    pinchStartMidY=(t1.clientY+t2.clientY)/2-r.top;
+  }
+},{passive:false});
+
+interCanvas.addEventListener('touchmove',e=>{
+  if(pinchActive&&e.touches.length===2){
+    e.preventDefault();
+    const r=interCanvas.getBoundingClientRect();
+    const t1=e.touches[0],t2=e.touches[1];
+    const dist=Math.hypot(t2.clientX-t1.clientX,t2.clientY-t1.clientY);
+    const midX=(t1.clientX+t2.clientX)/2-r.left;
+    const midY=(t1.clientY+t2.clientY)/2-r.top;
+    const newZoom=Math.max(VIEW_ZOOM_MIN,Math.min(VIEW_ZOOM_MAX,pinchStartZoom*dist/pinchStartDist));
+    // canvas point that was under the pinch start midpoint
+    const csx=(pinchStartMidX-W/2-pinchStartPanX)/pinchStartZoom+W/2;
+    const csy=(pinchStartMidY-H/2-pinchStartPanY)/pinchStartZoom+H/2;
+    // keep that canvas point under the current midpoint
+    viewZoom=newZoom;
+    viewPanX=midX-(csx-W/2)*newZoom-W/2;
+    viewPanY=midY-(csy-H/2)*newZoom-H/2;
+    applyViewTransform();
+    info.textContent=`zoom ${(viewZoom*100).toFixed(0)}%`;
+  }
+},{passive:false});
+
+interCanvas.addEventListener('touchend',e=>{if(e.touches.length<2)pinchActive=false;});
+interCanvas.addEventListener('touchcancel',()=>{pinchActive=false;});
+
+// Mouse wheel / trackpad pinch zoom
+interCanvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=interCanvas.getBoundingClientRect();
+  const sx=e.clientX-r.left,sy=e.clientY-r.top;
+  // ctrlKey = trackpad pinch (finer steps); regular wheel = coarser
+  const factor=e.ctrlKey?0.04:0.12;
+  const delta=e.deltaY>0?1/(1+factor):1+factor;
+  const newZoom=Math.max(VIEW_ZOOM_MIN,Math.min(VIEW_ZOOM_MAX,viewZoom*delta));
+  const cx=(sx-W/2-viewPanX)/viewZoom+W/2;
+  const cy=(sy-H/2-viewPanY)/viewZoom+H/2;
+  viewZoom=newZoom;
+  viewPanX=sx-(cx-W/2)*newZoom-W/2;
+  viewPanY=sy-(cy-H/2)*newZoom-H/2;
+  applyViewTransform();
+  info.textContent=`zoom ${(viewZoom*100).toFixed(0)}%`;
+},{passive:false});
 
 // Keyboard
 document.addEventListener('keydown',e=>{
@@ -1101,6 +1204,8 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='s'){activeTool='paint';setBrushType('simple');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
   else if(e.key==='w'){activeTool='paint';setBrushType('swirl');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
   else if(e.key==='r'){activeTool='paint';setBrushType('random');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
+  else if(e.key==='e'){activeTool='paint';setBrushType('eraser');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
+  else if(e.key==='0'&&(e.ctrlKey||e.metaKey)){e.preventDefault();resetView();}
   else if(e.key==='i'){activeTool='eyedropper';}
   else if(e.key==='g'){activeTool='fill';}
   else if(e.key==='m'){activeTool='select';}
@@ -1143,6 +1248,11 @@ function frame(){
     compositeAllLayers();strokeFrame++;
   }
 
+  // Simple / Eraser: composite is RAF-batched for responsiveness (stamps written in pointermove)
+  if(isDrawing&&(brushType==='simple'||brushType==='eraser')){
+    const l=getActiveLayer();if(l&&l.dirty)compositeAllLayers();strokeFrame++;
+  }
+
   // Simple brush taper
   if(simpleTapering&&simpleTaperTotal>0&&simpleLastX!==null){
     const stm=Math.max(0,1-Math.pow(simpleTaperFrame/simpleTaperTotal,p.taperCurve));
@@ -1154,12 +1264,17 @@ function frame(){
 
   // Overlay
   lctx.clearRect(0,0,W,H);
-  if(brushType==='simple'){
-    // Simple brush cursor
+  if(brushType==='simple'||brushType==='eraser'){
+    // Simple / Eraser cursor ring
     let sz=p.stampSize;
     if(p.pressureSize)sz*=(.3+.7*currentPressure);
-    lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,Math.max(.5,sz/2),0,Math.PI*2);
-    lctx.strokeStyle=isDrawing?'#ff4444':(simpleTapering?'#ff8800':'#aaa');lctx.lineWidth=1;lctx.stroke();
+    const isErase=brushType==='eraser';
+    let cursorColor='#aaa';
+    if(isDrawing)cursorColor=isErase?'#ff8800':'#ff4444';
+    else if(simpleTapering)cursorColor='#ff8800';
+    else if(isErase)cursorColor='#cc6600';
+    lctx.globalAlpha=.5;lctx.beginPath();lctx.arc(leaderX,leaderY,Math.max(.5,sz/2),0,Math.PI*2);
+    lctx.strokeStyle=cursorColor;lctx.lineWidth=isErase?2:1;lctx.stroke();
     lctx.globalAlpha=1;
   } else if(brushType==='swirl'&&p.showBoids){
     // Swirl: orbit ring + particles
@@ -1224,9 +1339,9 @@ function frame(){
 // ============================================================
 // SETTINGS PERSISTENCE
 // ============================================================
-const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},symmetryCount:{t:'r',f:4},symmetryCenterX:{t:'r',f:50},symmetryCenterY:{t:'r',f:50},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},swirlCount:{t:'r',f:12},swirlRadius:{t:'r',f:50},swirlSpeed:{t:'r',f:30},swirlInward:{t:'r',f:0},randomCount:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},symmetryEnabled:{t:'c',f:false},symmetryMirror:{t:'c',f:false},showSymmetry:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
+const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},symmetryCount:{t:'r',f:4},symmetryCenterX:{t:'r',f:50},symmetryCenterY:{t:'r',f:50},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},swirlCount:{t:'r',f:12},swirlRadius:{t:'r',f:50},swirlSpeed:{t:'r',f:30},swirlInward:{t:'r',f:0},randomCount:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},symmetryEnabled:{t:'c',f:false},symmetryMirror:{t:'c',f:false},showSymmetry:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},touchDrawing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
 function capSt(){const s={_v:STORAGE_VERSION,brushType};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
-function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}if(s.brushType)setBrushType(s.brushType);return true;}
+function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}if(s.brushType)setBrushType(s.brushType);touchDrawingEnabled=document.getElementById('touchDrawing').checked;return true;}
 function autoSave(){try{localStorage.setItem(STORAGE_KEY_SESSION,JSON.stringify(capSt()));}catch(e){}}
 function attachAutoSave(){for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(el)el.addEventListener(d.t==='c'?'change':'input',autoSave);}}
 window.addEventListener('beforeunload',autoSave);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')autoSave();});
