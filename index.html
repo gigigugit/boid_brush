@@ -89,6 +89,13 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 #controls::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
 #controls::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.25);}
 
+/* Brush Type Bar */
+#brushTypeBar{display:flex;flex-wrap:wrap;gap:3px;padding:6px 4px 6px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:4px;}
+.brush-type-btn{flex:1;min-width:0;padding:5px 4px;border:1px solid rgba(255,255,255,0.1);border-radius:5px;background:rgba(255,255,255,0.06);color:#ccc;font-size:10px;cursor:pointer;text-align:center;transition:all 0.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.brush-type-btn:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.18);color:#fff;}
+.brush-type-btn.active{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 6px rgba(74,126,255,0.25);}
+.brush-hidden{display:none!important;}
+
 /* Checkboxes */
 #controls input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
 #controls input[type="checkbox"]:checked{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(91,138,240,0.5);}
@@ -129,8 +136,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 <body>
 
 <div id="toolbar">
-  <button class="tool-btn active" data-tool="boid">🐦 Boid</button>
-  <button class="tool-btn" data-tool="simple">🖌 Simple</button>
+  <button class="tool-btn active" data-tool="paint">🖊 Brush</button>
   <button class="tool-btn" data-tool="eyedropper">💧</button>
   <button class="tool-btn" data-tool="fill">🪣</button>
   <button class="tool-btn" data-tool="select">⬚</button>
@@ -183,13 +189,19 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 <div id="panel">
   <button id="toggleBtn" onclick="togglePanel()">🐦 Brush</button>
   <div id="controls">
+    <div id="brushTypeBar">
+      <button class="brush-type-btn active" data-btype="boid">🐦 Boid</button>
+      <button class="brush-type-btn" data-btype="simple">🖌 Simple</button>
+      <button class="brush-type-btn" data-btype="swirl">🌀 Swirl</button>
+      <button class="brush-type-btn" data-btype="random">✦ Random</button>
+    </div>
     <div class="section-header" onclick="toggleSection(this)">Brush Scale <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Scale <span id="v_brushScale">1.0</span>x<input type="range" id="brushScale" min="10" max="300" value="100"></label>
       <div style="font-size:9px;color:#666;margin-top:2px;">Proportionally adjusts stamp size, spawn radius &amp; spread</div>
     </div>
-    <div class="section-header" onclick="toggleSection(this)">Spawn Shape <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-brushes="boid random" onclick="toggleSection(this)">Spawn Shape <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid random">
       <label>Shape <select id="spawnShape"><option value="circle">● Circle</option><option value="ring">◎ Ring</option><option value="gaussian">☁ Gaussian</option><option value="line">═ Line</option><option value="ellipse">⬮ Ellipse</option><option value="diamond">◆ Diamond</option><option value="grid">▥ Grid</option><option value="sunburst">✱ Sunburst</option><option value="spiral">≋ Spiral</option><option value="poisson">⁘ Poisson</option><option value="random_cluster">✦ Clusters</option></select></label>
       <label>Radius <span id="v_spawnRadius">50</span><input type="range" id="spawnRadius" min="5" max="200" value="50"></label>
       <label>Angle <span id="v_spawnAngle">0</span>°<input type="range" id="spawnAngle" min="0" max="360" value="0"></label>
@@ -197,10 +209,10 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
     </div>
-    <div class="section-header" onclick="toggleSection(this)">Swarm <span class="chevron">▼</span></div>
-    <div class="section-body"><label>Count <span id="v_count">25</span><input type="range" id="count" min="3" max="200" value="25"></label></div>
-    <div class="section-header" onclick="toggleSection(this)">Forces <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-brushes="boid" onclick="toggleSection(this)">Swarm <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid"><label>Count <span id="v_count">25</span><input type="range" id="count" min="3" max="200" value="25"></label></div>
+    <div class="section-header" data-brushes="boid" onclick="toggleSection(this)">Forces <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid">
       <label>Seek <span id="v_seek">0.40</span><input type="range" id="seek" min="0" max="100" value="40"></label>
       <label>Cohesion <span id="v_cohesion">0.15</span><input type="range" id="cohesion" min="0" max="100" value="15"></label>
       <label>Separation <span id="v_separation">0.50</span><input type="range" id="separation" min="0" max="100" value="50"></label>
@@ -214,10 +226,23 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       <label>Flee R <span id="v_fleeRadius">0</span><input type="range" id="fleeRadius" min="0" max="150" value="0"></label>
       <label>Individ. <span id="v_individuality">0.00</span><input type="range" id="individuality" min="0" max="100" value="0"></label>
     </div>
-    <div class="section-header" onclick="toggleSection(this)">Motion <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-brushes="boid" onclick="toggleSection(this)">Motion <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid">
       <label>Max Speed <span id="v_maxSpeed">4.0</span><input type="range" id="maxSpeed" min="1" max="30" value="8"></label>
       <label>Damping <span id="v_damping">0.95</span><input type="range" id="damping" min="80" max="100" value="95"></label>
+    </div>
+    <div class="section-header" data-brushes="swirl" onclick="toggleSection(this)">Swirl <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="swirl">
+      <label>Particles <span id="v_swirlCount">12</span><input type="range" id="swirlCount" min="3" max="60" value="12"></label>
+      <label>Orbit R <span id="v_swirlRadius">50</span><input type="range" id="swirlRadius" min="5" max="200" value="50"></label>
+      <label>Speed <span id="v_swirlSpeed">0.030</span><input type="range" id="swirlSpeed" min="1" max="200" value="30"></label>
+      <label>Inward <span id="v_swirlInward">0</span><input type="range" id="swirlInward" min="0" max="100" value="0"></label>
+      <div style="font-size:9px;color:#666;margin-top:2px;">Particles orbit the cursor while painting</div>
+    </div>
+    <div class="section-header" data-brushes="random" onclick="toggleSection(this)">Random Spray <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="random">
+      <label>Stamps/Frame <span id="v_randomCount">10</span><input type="range" id="randomCount" min="1" max="80" value="10"></label>
+      <div style="font-size:9px;color:#666;margin-top:2px;">Spawn Shape controls distribution pattern</div>
     </div>
     <div class="section-header" onclick="toggleSection(this)">Stamp <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -246,8 +271,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       <label>Taper Size <input type="checkbox" id="taperSize"></label>
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
-    <div class="section-header" onclick="toggleSection(this)">Pixel Sensing <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-brushes="boid" onclick="toggleSection(this)">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
@@ -257,9 +282,9 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option></select></label>
       <label>Show Sensing <input type="checkbox" id="showSensing"></label>
     </div>
-    <div class="section-header" onclick="toggleSection(this)">Visual <span class="chevron">▼</span></div>
-    <div class="section-body">
-      <label>Show Boids <input type="checkbox" id="showBoids" checked></label>
+    <div class="section-header" data-brushes="boid swirl random" onclick="toggleSection(this)">Visual <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid swirl random">
+      <label>Show Particles <input type="checkbox" id="showBoids" checked></label>
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
       <label>Show Flow <input type="checkbox" id="showFlow"></label>
     </div>
@@ -274,8 +299,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
       </div>
       <div style="font-size:9px;color:#666;margin-top:4px;" id="settingsStatus"></div>
     </div>
-    <div class="section-header" onclick="toggleSection(this)">Presets <span class="chevron">▼</span></div>
-    <div class="section-body"><div style="display:flex;flex-wrap:wrap;gap:2px;margin:4px 0;">
+    <div class="section-header" data-brushes="boid" onclick="toggleSection(this)">Presets <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid"><div style="display:flex;flex-wrap:wrap;gap:2px;margin:4px 0;">
       <button onclick="applyPreset('inkWash')">Ink Wash</button>
       <button onclick="applyPreset('charcoal')">Charcoal</button>
       <button onclick="applyPreset('ribbon')">Ribbon</button>
@@ -295,8 +320,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 // ============================================================
 // CORE
 // ============================================================
-const STORAGE_KEY_SESSION='bb_s6',STORAGE_KEY_DEFAULT='bb_d6',STORAGE_VERSION=6;
-let W,H,DPR,activeTool='boid';
+const STORAGE_KEY_SESSION='bb_s7',STORAGE_KEY_DEFAULT='bb_d7',STORAGE_VERSION=7;
+let W,H,DPR,activeTool='paint',brushType='boid';
 const compositeDisplay=document.getElementById('compositeDisplay');
 const selCanvas=document.getElementById('selectionCanvas');
 const liveCanvas=document.getElementById('liveCanvas');
@@ -713,11 +738,30 @@ function pickColor(x,y){
 // Tool selection
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>{activeTool=btn.dataset.tool;document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};});
 
+// Brush type selection
+function setBrushType(bt){
+  brushType=bt;
+  document.querySelectorAll('.brush-type-btn').forEach(b=>b.classList.toggle('active',b.dataset.btype===bt));
+  updateBrushSections();
+  _paramsDirty=true;
+}
+function updateBrushSections(){
+  document.querySelectorAll('[data-brushes]').forEach(el=>{
+    const brushes=el.dataset.brushes.split(' ');
+    el.classList.toggle('brush-hidden',!brushes.includes(brushType));
+  });
+}
+document.querySelectorAll('.brush-type-btn').forEach(btn=>{btn.onclick=()=>{
+  activeTool='paint';
+  document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));
+  setBrushType(btn.dataset.btype);
+};});
+
 // ============================================================
 // PARAMS
 // ============================================================
-const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','symmetryCount','symmetryCenterX','symmetryCenterY','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
-const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,symmetryCount:v=>v,symmetryCenterX:v=>v,symmetryCenterY:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
+const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','symmetryCount','symmetryCenterX','symmetryCenterY','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold','swirlCount','swirlRadius','swirlSpeed','swirlInward','randomCount'];
+const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,symmetryCount:v=>v,symmetryCenterX:v=>v,symmetryCenterY:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2),swirlCount:v=>v,swirlRadius:v=>v,swirlSpeed:v=>(v/1000).toFixed(3),swirlInward:v=>v,randomCount:v=>v};
 for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{_paramsDirty=true;const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
 // Also invalidate cache on checkbox/select changes
 document.querySelectorAll('#controls input[type=checkbox],#controls select').forEach(el=>el.addEventListener('change',()=>{_paramsDirty=true;}));
@@ -756,6 +800,11 @@ function getP(){
   showBoids:document.getElementById('showBoids').checked,showSpawn:document.getElementById('showSpawn').checked,
   showFlow:document.getElementById('showFlow').checked,showSensing:document.getElementById('showSensing')?.checked||false,
   color:document.getElementById('primaryColor').value,
+  swirlCount:+document.getElementById('swirlCount').value,
+  swirlRadius:Math.round(+document.getElementById('swirlRadius').value*scale),
+  swirlSpeed:+document.getElementById('swirlSpeed').value/1000,
+  swirlInward:+document.getElementById('swirlInward').value/5000,
+  randomCount:+document.getElementById('randomCount').value,
   };return _cachedP;}
 
 // ============================================================
@@ -821,9 +870,62 @@ let boids=[],leaderX=0,leaderY=0,isDrawing=false,currentPressure=.5;
 let isTapering=false,taperFrame=0,taperTotal=0,strokeFrame=0;
 let undoPushedThisStroke=false;
 let simpleLastX=null,simpleLastY=null,simpleTapering=false,simpleTaperFrame=0,simpleTaperTotal=0;
+let swirlParticles=[];
 const startTime=performance.now();
 
 function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
+
+// ============================================================
+// SWIRL BRUSH
+// Particles orbit the cursor in a rotating swarm while painting.
+// Each SwirlParticle shares the stampBoid stamping interface.
+// ============================================================
+class SwirlParticle{
+  constructor(angle,x,y){
+    this.angle=angle;this.orbRadius=0;
+    this.x=x;this.y=y;
+    this.lsx=x;this.lsy=y;this.hs=false;this.fr=0;
+    this.sm=.7+Math.random()*.6;this.om=.6+Math.random()*.8;
+  }
+  rs(){this.lsx=this.x;this.lsy=this.y;this.hs=true;}
+}
+
+function spawnSwirl(cx,cy){
+  const p=getP();
+  swirlParticles=[];strokeFrame=0;
+  for(let i=0;i<p.swirlCount;i++){
+    const angle=(i/p.swirlCount)*Math.PI*2;
+    const x=cx+Math.cos(angle)*p.swirlRadius,y=cy+Math.sin(angle)*p.swirlRadius;
+    const sp=new SwirlParticle(angle,x,y);sp.orbRadius=p.swirlRadius;swirlParticles.push(sp);
+  }
+}
+
+function updateSwirl(cx,cy,p){
+  for(const sp of swirlParticles){
+    sp.angle+=p.swirlSpeed;
+    if(p.swirlInward>0)sp.orbRadius=Math.max(2,sp.orbRadius*(1-p.swirlInward));
+    sp.x=cx+Math.cos(sp.angle)*sp.orbRadius;
+    sp.y=cy+Math.sin(sp.angle)*sp.orbRadius;
+    sp.fr++;
+  }
+}
+
+// ============================================================
+// RANDOM SPRAY BRUSH
+// Stamps are placed at random positions sampled from the chosen
+// spawn-shape probability field centred on the cursor each frame.
+// ============================================================
+function stampRandom(ctx,p,pr,tm){
+  const positions=genSpawn(leaderX,leaderY,{...p,count:p.randomCount});
+  let sz=p.stampSize,op=p.stampOpacity;
+  if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
+  if(tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
+  if(op<.003||sz<.3)return;
+  ctx.globalAlpha=Math.min(1,op);ctx.fillStyle=p.color;
+  const rad=Math.max(.5,sz/2);
+  for(const pt of positions)symStamp(ctx,pt.x,pt.y,rad,p);
+  ctx.globalAlpha=1;
+}
 
 function getSymmetryPoints(x,y,p){
   if(!p.symmetryEnabled||p.symmetryCount<2)return null;
@@ -891,6 +993,14 @@ BrushRegistry.register('simple',{
   name:'Simple Brush',icon:'🖌',
   description:'Direct single-stamp painting with pressure support'
 });
+BrushRegistry.register('swirl',{
+  name:'Swirl Brush',icon:'🌀',
+  description:'Particles orbit the cursor in a rotating swarm'
+});
+BrushRegistry.register('random',{
+  name:'Random Spray',icon:'✦',
+  description:'Stamps scattered randomly within a probability field'
+});
 
 // ============================================================
 // POINTER EVENTS
@@ -919,11 +1029,17 @@ interCanvas.addEventListener('pointerdown',e=>{
   undoPushedThisStroke=false;
   pushUndo();undoPushedThisStroke=true;
 
-  if(activeTool==='simple'){
+  if(brushType==='simple'){
     // Simple brush: stamp immediately at cursor, track position for interpolation
     simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;
     const p=getP(),l=getActiveLayer();
     if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);l.dirty=true;compositeAllLayers();}
+  } else if(brushType==='swirl'){
+    const p=getP();
+    if(p.sensingEnabled)buildSensingData(p.sensingSource);
+    spawnSwirl(x,y);
+  } else if(brushType==='random'){
+    // Random spray: no pre-spawn needed; positions generated each frame
   } else {
     const p=getP();
     if(p.sensingEnabled)buildSensingData(p.sensingSource);
@@ -944,7 +1060,7 @@ interCanvas.addEventListener('pointermove',e=>{
     const cx=ce.clientX-rect.left,cy=ce.clientY-rect.top;
     leaderX=cx;leaderY=cy;currentPressure=ce.pressure||.5;
 
-    if(activeTool==='simple'){
+    if(brushType==='simple'){
       const p=getP(),l=getActiveLayer();
       if(l&&simpleLastX!==null){
         stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1);
@@ -952,8 +1068,8 @@ interCanvas.addEventListener('pointermove',e=>{
       simpleLastX=cx;simpleLastY=cy;
     }
   }
-  if(activeTool==='simple'){const al=getActiveLayer();if(al)al.dirty=true;compositeAllLayers();}
-  info.textContent=`${activeTool} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
+  if(brushType==='simple'){const al=getActiveLayer();if(al)al.dirty=true;compositeAllLayers();}
+  info.textContent=`${brushType} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
 });
 
 interCanvas.addEventListener('pointerup',()=>{
@@ -961,14 +1077,16 @@ interCanvas.addEventListener('pointerup',()=>{
   if(!isDrawing)return;
   isDrawing=false;
   const p=getP();
-  if(activeTool==='simple'){
+  if(brushType==='simple'){
     if(p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
     else{simpleLastX=null;simpleLastY=null;}
+  } else if(brushType==='random'){
+    // Random spray: no taper state needed
   } else {
     if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
   }
 });
-interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(activeTool==='simple'){simpleLastX=null;simpleLastY=null;}else if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
+interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(brushType==='simple'){simpleLastX=null;simpleLastY=null;}else if(brushType!=='random'&&p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
 
 // Keyboard
 document.addEventListener('keydown',e=>{
@@ -979,8 +1097,10 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='c'&&(e.ctrlKey||e.metaKey)){e.preventDefault();doCopy();}
   else if(e.key==='v'&&(e.ctrlKey||e.metaKey)){e.preventDefault();doPaste();}
   else if(e.key==='d'&&(e.ctrlKey||e.metaKey)){e.preventDefault();clearSelection();}
-  else if(e.key==='b'){activeTool='boid';}
-  else if(e.key==='s'){activeTool='simple';}
+  else if(e.key==='b'){activeTool='paint';setBrushType('boid');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
+  else if(e.key==='s'){activeTool='paint';setBrushType('simple');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
+  else if(e.key==='w'){activeTool='paint';setBrushType('swirl');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
+  else if(e.key==='r'){activeTool='paint';setBrushType('random');document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool==='paint'));}
   else if(e.key==='i'){activeTool='eyedropper';}
   else if(e.key==='g'){activeTool='fill';}
   else if(e.key==='m'){activeTool='select';}
@@ -993,15 +1113,33 @@ document.addEventListener('keydown',e=>{
 function frame(){
   const p=getP(),t=performance.now()-startTime;
 
-  // Skip boid physics when idle (not drawing, not tapering)
-  if(isDrawing||isTapering)for(const b of boids)b.update(boids,leaderX,leaderY,p,t);
+  // Boid physics
+  if((isDrawing||isTapering)&&brushType==='boid')for(const b of boids)b.update(boids,leaderX,leaderY,p,t);
+
+  // Swirl physics
+  if((isDrawing||isTapering)&&brushType==='swirl')updateSwirl(leaderX,leaderY,p);
 
   let tm=1;
   if(isTapering&&taperTotal>0){tm=Math.max(0,1-Math.pow(taperFrame/taperTotal,p.taperCurve));taperFrame++;if(taperFrame>=taperTotal)isTapering=false;}
 
-  if((isDrawing||isTapering)&&activeTool!=='simple'){
+  // Boid stamping
+  if((isDrawing||isTapering)&&brushType==='boid'){
     const l=getActiveLayer();
     if(l){for(const b of boids)stampBoid(l.ctx,b,p,currentPressure,tm);l.ctx.globalAlpha=1;l.dirty=true;}
+    compositeAllLayers();strokeFrame++;
+  }
+
+  // Swirl stamping (reuses stampBoid since SwirlParticle shares the same interface)
+  if((isDrawing||isTapering)&&brushType==='swirl'){
+    const l=getActiveLayer();
+    if(l){for(const sp of swirlParticles)stampBoid(l.ctx,sp,p,currentPressure,tm);l.ctx.globalAlpha=1;l.dirty=true;}
+    compositeAllLayers();strokeFrame++;
+  }
+
+  // Random spray stamping
+  if(isDrawing&&brushType==='random'){
+    const l=getActiveLayer();
+    if(l){stampRandom(l.ctx,p,currentPressure,tm);l.dirty=true;}
     compositeAllLayers();strokeFrame++;
   }
 
@@ -1016,26 +1154,43 @@ function frame(){
 
   // Overlay
   lctx.clearRect(0,0,W,H);
-  if(activeTool==='simple'){
-    // Show simple brush cursor
+  if(brushType==='simple'){
+    // Simple brush cursor
     let sz=p.stampSize;
     if(p.pressureSize)sz*=(.3+.7*currentPressure);
     lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,Math.max(.5,sz/2),0,Math.PI*2);
     lctx.strokeStyle=isDrawing?'#ff4444':(simpleTapering?'#ff8800':'#aaa');lctx.lineWidth=1;lctx.stroke();
     lctx.globalAlpha=1;
+  } else if(brushType==='swirl'&&p.showBoids){
+    // Swirl: orbit ring + particles
+    lctx.globalAlpha=.2;lctx.strokeStyle='#aa66ff';lctx.lineWidth=1;
+    lctx.beginPath();lctx.arc(leaderX,leaderY,p.swirlRadius,0,Math.PI*2);lctx.stroke();
+    lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,5,0,Math.PI*2);
+    lctx.fillStyle=isDrawing?'#ff4444':(isTapering?'#ff8800':'#666');lctx.fill();
+    if(isTapering&&taperTotal>0){const rem=1-taperFrame/taperTotal;lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,12,0,Math.PI*2);lctx.strokeStyle='#ff8800';lctx.lineWidth=2;lctx.stroke();lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,12,-Math.PI/2,-Math.PI/2+rem*Math.PI*2);lctx.strokeStyle='#ffcc00';lctx.lineWidth=2;lctx.stroke();}
+    for(const sp of swirlParticles){lctx.globalAlpha=.45;lctx.beginPath();lctx.arc(sp.x,sp.y,2,0,Math.PI*2);lctx.fillStyle='#bb88ff';lctx.fill();}
+    lctx.globalAlpha=1;
+  } else if(brushType==='random'&&p.showBoids){
+    // Random: show spawn shape preview
+    lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,5,0,Math.PI*2);
+    lctx.fillStyle=isDrawing?'#ff4444':'#888';lctx.fill();
+    lctx.globalAlpha=1;
   } else if(p.showBoids){
+    // Boid: leader + particles
     lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,5,0,Math.PI*2);
     lctx.fillStyle=isDrawing?'#ff4444':(isTapering?'#ff8800':'#666');lctx.fill();
     if(isTapering&&taperTotal>0){const rem=1-taperFrame/taperTotal;lctx.globalAlpha=.3;lctx.beginPath();lctx.arc(leaderX,leaderY,12,0,Math.PI*2);lctx.strokeStyle='#ff8800';lctx.lineWidth=2;lctx.stroke();lctx.globalAlpha=.6;lctx.beginPath();lctx.arc(leaderX,leaderY,12,-Math.PI/2,-Math.PI/2+rem*Math.PI*2);lctx.strokeStyle='#ffcc00';lctx.lineWidth=2;lctx.stroke();}
     for(const b of boids){const sk=b.fr<p.skipStamps;lctx.globalAlpha=sk?.15:.4;lctx.beginPath();lctx.arc(b.x,b.y,2,0,Math.PI*2);lctx.fillStyle=sk?'#ff8800':'#44aaff';lctx.fill();}
     lctx.globalAlpha=1;
   }
-  if(p.showSpawn&&!isDrawing&&!isTapering&&activeTool!=='simple'){
-    const pts=genSpawn(leaderX,leaderY,{...p,spawnJitter:0});
+  if(p.showSpawn&&!isDrawing&&!isTapering&&brushType!=='simple'){
+    const previewCount=(brushType==='random')?p.randomCount:p.count;
+    const pts=genSpawn(leaderX,leaderY,{...p,count:previewCount,spawnJitter:0});
     lctx.globalAlpha=.2;lctx.fillStyle='#ffaa00';
     for(const pt of pts){lctx.beginPath();lctx.arc(pt.x,pt.y,2,0,Math.PI*2);lctx.fill();}
+    const previewRadius=(brushType==='swirl')?p.swirlRadius:p.spawnRadius;
     lctx.globalAlpha=.12;lctx.strokeStyle='#ffaa00';lctx.lineWidth=1;
-    lctx.beginPath();lctx.arc(leaderX,leaderY,p.spawnRadius,0,Math.PI*2);lctx.stroke();
+    lctx.beginPath();lctx.arc(leaderX,leaderY,previewRadius,0,Math.PI*2);lctx.stroke();
     lctx.globalAlpha=1;
   }
   if(p.showSensing&&p.sensingEnabled&&sensingImageData){
@@ -1069,14 +1224,14 @@ function frame(){
 // ============================================================
 // SETTINGS PERSISTENCE
 // ============================================================
-const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},symmetryCount:{t:'r',f:4},symmetryCenterX:{t:'r',f:50},symmetryCenterY:{t:'r',f:50},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},symmetryEnabled:{t:'c',f:false},symmetryMirror:{t:'c',f:false},showSymmetry:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
-function capSt(){const s={_v:STORAGE_VERSION};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
-function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}return true;}
+const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},symmetryCount:{t:'r',f:4},symmetryCenterX:{t:'r',f:50},symmetryCenterY:{t:'r',f:50},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},swirlCount:{t:'r',f:12},swirlRadius:{t:'r',f:50},swirlSpeed:{t:'r',f:30},swirlInward:{t:'r',f:0},randomCount:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},symmetryEnabled:{t:'c',f:false},symmetryMirror:{t:'c',f:false},showSymmetry:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
+function capSt(){const s={_v:STORAGE_VERSION,brushType};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
+function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}if(s.brushType)setBrushType(s.brushType);return true;}
 function autoSave(){try{localStorage.setItem(STORAGE_KEY_SESSION,JSON.stringify(capSt()));}catch(e){}}
 function attachAutoSave(){for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(el)el.addEventListener(d.t==='c'?'change':'input',autoSave);}}
 window.addEventListener('beforeunload',autoSave);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')autoSave();});
 function saveAsUserDefault(){try{localStorage.setItem(STORAGE_KEY_DEFAULT,JSON.stringify(capSt()));showToast('✅ Saved');}catch(e){showToast('❌ Failed');}}
-function resetToFactoryDefaults(){const s={_v:STORAGE_VERSION};for(const[id,d]of Object.entries(controlDefs))s[id]=d.f;appSt(s);autoSave();showToast('🏭 Reset');}
+function resetToFactoryDefaults(){const s={_v:STORAGE_VERSION,brushType:'boid'};for(const[id,d]of Object.entries(controlDefs))s[id]=d.f;appSt(s);autoSave();showToast('🏭 Reset');}
 function resetToUserDefault(){try{const r=localStorage.getItem(STORAGE_KEY_DEFAULT);if(r&&appSt(JSON.parse(r))){autoSave();showToast('👤 Loaded');}else showToast('ℹ️ None saved');}catch(e){showToast('❌ Error');}}
 function exportSettings(){const j=JSON.stringify(capSt(),null,2);if(navigator.clipboard?.writeText)navigator.clipboard.writeText(j).then(()=>showToast('📋 Copied')).catch(()=>dlJSON(j));else dlJSON(j);}
 function dlJSON(j){const b=new Blob([j],{type:'application/json'}),l=document.createElement('a');l.download='boid-settings.json';l.href=URL.createObjectURL(b);l.click();showToast('💾 Downloaded');}
@@ -1124,6 +1279,8 @@ activeLayerIdx=0; // Layer 1 is active (top)
 renderLayerList();syncLayerControls();compositeAllLayers();
 
 try{const r=localStorage.getItem(STORAGE_KEY_SESSION);if(r)appSt(JSON.parse(r));}catch(e){}
+// Apply initial brush type visibility (also called by appSt when loading saved state)
+updateBrushSections();
 attachAutoSave();
 document.getElementById('settingsStatus').textContent=(gpuReady?'GPU✓ ':'')+'Auto-saves on change';
 window.addEventListener('resize',resizeAll);
