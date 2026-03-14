@@ -24,7 +24,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
 .tb-sep{width:1px;height:24px;background:rgba(255,255,255,0.08);margin:0 5px;flex-shrink:0;}
 
 /* Color Pickers */
-#primaryColor,#secondaryColor{width:30px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;}
+#primaryColor,#secondaryColor{width:30px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;}
 #primaryColor:hover,#secondaryColor:hover{border-color:rgba(255,255,255,0.35);}
 #primaryColor::-webkit-color-swatch-wrapper,#secondaryColor::-webkit-color-swatch-wrapper{padding:1px;}
 #primaryColor::-webkit-color-swatch,#secondaryColor::-webkit-color-swatch{border:none;border-radius:3px;}
@@ -231,6 +231,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#1a1a1e;font-family:
     <div class="section-header" onclick="toggleSection(this)">Taper <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Length <span id="v_taperLength">0</span><input type="range" id="taperLength" min="0" max="120" value="0"></label>
+      <label>In Length <span id="v_taperInLength">0</span><input type="range" id="taperInLength" min="0" max="120" value="0"></label>
       <label>Curve <span id="v_taperCurve">1.0</span><input type="range" id="taperCurve" min="10" max="300" value="100"></label>
       <label>Taper Size <input type="checkbox" id="taperSize"></label>
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
@@ -671,9 +672,9 @@ function doPaste(){if(!clipboard)return;pushUndo();const{canvas,ctx}=makeLayerCa
 // COLOR + PALETTE
 // ============================================================
 let palette=JSON.parse(localStorage.getItem('bb_palette')||'["#1a1a1a","#ffffff","#ff3b30","#ff9500","#ffcc00","#34c759","#007aff","#5856d6","#af52de","#8e8e93"]');
-function renderPalette(){const bar=document.getElementById('paletteBar');bar.innerHTML='';palette.forEach((c,i)=>{const s=document.createElement('div');s.className='palette-swatch';s.style.background=c;s.onclick=()=>document.getElementById('primaryColor').value=c;s.oncontextmenu=e=>{e.preventDefault();palette.splice(i,1);localStorage.setItem('bb_palette',JSON.stringify(palette));renderPalette();};bar.appendChild(s);});}
+function renderPalette(){const bar=document.getElementById('paletteBar');bar.innerHTML='';palette.forEach((c,i)=>{const s=document.createElement('div');s.className='palette-swatch';s.style.background=c;s.onclick=()=>{document.getElementById('primaryColor').value=c;_paramsDirty=true;};s.oncontextmenu=e=>{e.preventDefault();palette.splice(i,1);localStorage.setItem('bb_palette',JSON.stringify(palette));renderPalette();};bar.appendChild(s);});}
 function addPaletteSwatch(){const c=document.getElementById('primaryColor').value;if(!palette.includes(c)){palette.push(c);localStorage.setItem('bb_palette',JSON.stringify(palette));renderPalette();}}
-document.getElementById('swapColors').onclick=()=>{const p=document.getElementById('primaryColor'),s=document.getElementById('secondaryColor'),t=p.value;p.value=s.value;s.value=t;};
+document.getElementById('swapColors').onclick=()=>{const p=document.getElementById('primaryColor'),s=document.getElementById('secondaryColor'),t=p.value;p.value=s.value;s.value=t;_paramsDirty=true;};
 renderPalette();
 
 // Fill tool
@@ -705,12 +706,13 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{btn.onclick=()=>
 // ============================================================
 // PARAMS
 // ============================================================
-const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
-const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
+const allSliders=['brushScale','count','spawnRadius','spawnAngle','spawnJitter','seek','cohesion','separation','alignment','jitter','wander','wanderSpeed','fov','flowField','flowScale','fleeRadius','individuality','maxSpeed','damping','stampSize','stampOpacity','stampSeparation','skipStamps','taperLength','taperInLength','taperCurve','sensingStrength','sensingRadius','sensingThreshold'];
+const labelMap={brushScale:v=>(v/100).toFixed(1),count:v=>v,spawnRadius:v=>v,spawnAngle:v=>v,spawnJitter:v=>(v/100).toFixed(2),seek:v=>(v/100).toFixed(2),cohesion:v=>(v/100).toFixed(2),separation:v=>(v/100).toFixed(2),alignment:v=>(v/100).toFixed(2),jitter:v=>(v/100).toFixed(2),wander:v=>(v/100).toFixed(2),wanderSpeed:v=>(v/100).toFixed(2),fov:v=>v,flowField:v=>(v/100).toFixed(2),flowScale:v=>(v/1000).toFixed(3),fleeRadius:v=>v,individuality:v=>(v/100).toFixed(2),maxSpeed:v=>(v/2).toFixed(1),damping:v=>(v/100).toFixed(2),stampSize:v=>v,stampOpacity:v=>(v/100).toFixed(2),stampSeparation:v=>v,skipStamps:v=>v,taperLength:v=>v,taperInLength:v=>v,taperCurve:v=>(v/100).toFixed(1),sensingStrength:v=>(v/100).toFixed(2),sensingRadius:v=>v,sensingThreshold:v=>(v/100).toFixed(2)};
 for(const id of allSliders){const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{_paramsDirty=true;const v=document.getElementById('v_'+id);if(v&&labelMap[id])v.textContent=labelMap[id](+el.value);});}
 // Also invalidate cache on checkbox/select changes
 document.querySelectorAll('#controls input[type=checkbox],#controls select').forEach(el=>el.addEventListener('change',()=>{_paramsDirty=true;}));
 document.getElementById('primaryColor').addEventListener('input',()=>{_paramsDirty=true;});
+document.getElementById('primaryColor').addEventListener('change',()=>{_paramsDirty=true;});
 
 function getP(){
   if(_cachedP&&!_paramsDirty)return _cachedP;
@@ -731,7 +733,7 @@ function getP(){
   stampSize:Math.max(1,Math.round(+document.getElementById('stampSize').value*scale)),stampOpacity:+document.getElementById('stampOpacity').value/100,
   stampSeparation:Math.round(+document.getElementById('stampSeparation').value*scale),skipStamps:+document.getElementById('skipStamps').value,
   pressureSize:document.getElementById('pressureSize').checked,pressureOpacity:document.getElementById('pressureOpacity').checked,
-  taperLength:+document.getElementById('taperLength').value,taperCurve:+document.getElementById('taperCurve').value/100,
+  taperLength:+document.getElementById('taperLength').value,taperInLength:+document.getElementById('taperInLength').value,taperCurve:+document.getElementById('taperCurve').value/100,
   taperSize:document.getElementById('taperSize').checked,taperOpacity:document.getElementById('taperOpacity').checked,
   sensingEnabled:document.getElementById('sensingEnabled').checked,sensingMode:document.getElementById('sensingMode').value,
   sensingChannel:document.getElementById('sensingChannel').value,sensingStrength:+document.getElementById('sensingStrength').value/100,
@@ -804,7 +806,8 @@ class Boid{
 let boids=[],leaderX=0,leaderY=0,isDrawing=false,currentPressure=.5;
 let isTapering=false,taperFrame=0,taperTotal=0,strokeFrame=0;
 let undoPushedThisStroke=false;
-let simpleLastX=null,simpleLastY=null,simpleTapering=false,simpleTaperFrame=0,simpleTaperTotal=0;
+let simpleLastX=null,simpleLastY=null,simpleTapering=false,simpleTaperFrame=0,simpleTaperTotal=0,simpleStrokeFrame=0;
+let activePointerId=null;
 const startTime=performance.now();
 
 function spawnBoids(cx,cy){const p=getP();let r=p.spawnRadius;if(p.pressureSpawnRadius)r*=(.3+.7*currentPressure);const mp={...p,spawnRadius:r};boids=genSpawn(cx,cy,mp).map(pt=>new Boid(pt.x,pt.y,p.individuality));strokeFrame=0;}
@@ -814,6 +817,7 @@ function stampBoid(ctx,b,p,pr,tm){
   let sz=p.stampSize*b.sm,op=p.stampOpacity*b.om;
   if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
   if(tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
+  if(p.taperInLength>0){const ef=b.fr-p.skipStamps;if(ef<p.taperInLength){const inTm=Math.pow(ef/p.taperInLength,p.taperCurve);if(p.taperOpacity)op*=inTm;if(p.taperSize)sz*=inTm;}}
   if(op<.003||sz<.3)return;
   const step=p.stampSeparation>0?p.stampSeparation:Math.max(1,sz*0.25);
   const dx=b.x-b.lsx,dy=b.y-b.lsy,dist=Math.sqrt(dx*dx+dy*dy);
@@ -825,26 +829,27 @@ function stampBoid(ctx,b,p,pr,tm){
   const lt=(count*step)/dist;b.lsx+=dx*lt;b.lsy+=dy*lt;b.hs=true;
 }
 
-function stampSimple(ctx,x,y,p,pr,tm){
+function stampSimple(ctx,x,y,p,pr,tm,inTm){
   let sz=p.stampSize,op=p.stampOpacity;
   if(p.pressureSize)sz*=(.3+.7*pr);if(p.pressureOpacity)op*=(.3+.7*pr);
   if(typeof tm==='number'&&tm<1){if(p.taperOpacity)op*=tm;if(p.taperSize)sz*=tm;}
+  if(typeof inTm==='number'&&inTm<1){if(p.taperOpacity)op*=inTm;if(p.taperSize)sz*=inTm;}
   if(op<.003||sz<.3)return;
   ctx.globalAlpha=Math.min(1,op);ctx.beginPath();
   ctx.arc(x,y,Math.max(.5,sz/2),0,Math.PI*2);
   ctx.fillStyle=p.color;ctx.fill();ctx.globalAlpha=1;
 }
 
-function stampSimpleLine(ctx,x0,y0,x1,y1,p,pr,tm){
+function stampSimpleLine(ctx,x0,y0,x1,y1,p,pr,tm,inTm){
   const dx=x1-x0,dy=y1-y0,dist=Math.sqrt(dx*dx+dy*dy);
   let sz=p.stampSize;
   if(p.pressureSize)sz*=(.3+.7*pr);
   const step=Math.max(1,sz*0.25);
-  if(dist<step){stampSimple(ctx,x1,y1,p,pr,tm);return;}
+  if(dist<step){stampSimple(ctx,x1,y1,p,pr,tm,inTm);return;}
   const steps=Math.ceil(dist/step);
   for(let i=0;i<=steps;i++){
     const t=i/steps;
-    stampSimple(ctx,x0+dx*t,y0+dy*t,p,pr,tm);
+    stampSimple(ctx,x0+dx*t,y0+dy*t,p,pr,tm,inTm);
   }
 }
 
@@ -862,7 +867,7 @@ BrushRegistry.register('simple',{
 // POINTER EVENTS
 // ============================================================
 interCanvas.addEventListener('pointerdown',e=>{
-  if(e.pointerType==='touch')return;
+  if(e.pointerType==='touch'&&activeTool!=='select'&&activeTool!=='eyedropper'&&activeTool!=='fill')return;
   const rect=interCanvas.getBoundingClientRect();
   const x=e.clientX-rect.left,y=e.clientY-rect.top;
 
@@ -871,6 +876,8 @@ interCanvas.addEventListener('pointerdown',e=>{
   if(activeTool==='select'){selDragging=true;selStart={x,y};selection=null;drawSelection();return;}
 
   // Boid or Simple brush tool
+  interCanvas.setPointerCapture(e.pointerId);
+  activePointerId=e.pointerId;
   isDrawing=true;isTapering=false;taperFrame=0;
   leaderX=x;leaderY=y;currentPressure=e.pressure||.5;
   undoPushedThisStroke=false;
@@ -878,9 +885,10 @@ interCanvas.addEventListener('pointerdown',e=>{
 
   if(activeTool==='simple'){
     // Simple brush: stamp immediately at cursor, track position for interpolation
-    simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;
+    simpleLastX=x;simpleLastY=y;simpleTapering=false;simpleTaperFrame=0;simpleStrokeFrame=0;
     const p=getP(),l=getActiveLayer();
-    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1);l.dirty=true;compositeAllLayers();}
+    const inTm=p.taperInLength>0?Math.pow(0.5/p.taperInLength,p.taperCurve):1;
+    if(l){stampSimple(l.ctx,x,y,p,currentPressure,1,inTm);l.dirty=true;compositeAllLayers();}
   } else {
     const p=getP();
     if(p.sensingEnabled)buildSensingData(p.sensingSource);
@@ -889,12 +897,12 @@ interCanvas.addEventListener('pointerdown',e=>{
 });
 
 interCanvas.addEventListener('pointermove',e=>{
-  if(e.pointerType==='touch')return;
+  if(e.pointerType==='touch'&&activeTool!=='select'&&activeTool!=='eyedropper'&&activeTool!=='fill')return;
   const rect=interCanvas.getBoundingClientRect();
   const x=e.clientX-rect.left,y=e.clientY-rect.top;
 
   if(selDragging&&selStart){selection={x:Math.min(selStart.x,x),y:Math.min(selStart.y,y),w:Math.abs(x-selStart.x),h:Math.abs(y-selStart.y)};drawSelection();return;}
-  if(!isDrawing)return;
+  if(!isDrawing||e.pointerId!==activePointerId)return;
 
   const events=e.getCoalescedEvents?e.getCoalescedEvents():[e];
   for(const ce of events){
@@ -904,7 +912,9 @@ interCanvas.addEventListener('pointermove',e=>{
     if(activeTool==='simple'){
       const p=getP(),l=getActiveLayer();
       if(l&&simpleLastX!==null){
-        stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1);
+        simpleStrokeFrame++;
+        const inTm=p.taperInLength>0&&simpleStrokeFrame<p.taperInLength?Math.pow(simpleStrokeFrame/p.taperInLength,p.taperCurve):1;
+        stampSimpleLine(l.ctx,simpleLastX,simpleLastY,cx,cy,p,currentPressure,1,inTm);
       }
       simpleLastX=cx;simpleLastY=cy;
     }
@@ -913,10 +923,10 @@ interCanvas.addEventListener('pointermove',e=>{
   info.textContent=`${activeTool} | pressure:${currentPressure.toFixed(2)} | boids:${boids.length} | layer:${getActiveLayer()?.name||'-'}`;
 });
 
-interCanvas.addEventListener('pointerup',()=>{
+interCanvas.addEventListener('pointerup',e=>{
   if(selDragging){selDragging=false;if(selection&&selection.w<3&&selection.h<3)selection=null;drawSelection();return;}
-  if(!isDrawing)return;
-  isDrawing=false;
+  if(!isDrawing||e.pointerId!==activePointerId)return;
+  isDrawing=false;activePointerId=null;
   const p=getP();
   if(activeTool==='simple'){
     if(p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
@@ -925,7 +935,27 @@ interCanvas.addEventListener('pointerup',()=>{
     if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
   }
 });
-interCanvas.addEventListener('pointercancel',()=>{selDragging=false;if(isDrawing){isDrawing=false;const p=getP();if(activeTool==='simple'){simpleLastX=null;simpleLastY=null;}else if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}}});
+interCanvas.addEventListener('pointercancel',e=>{
+  selDragging=false;
+  if(isDrawing&&(activePointerId===null||e.pointerId===activePointerId)){
+    isDrawing=false;activePointerId=null;
+    const p=getP();
+    if(activeTool==='simple'){simpleLastX=null;simpleLastY=null;}
+    else if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
+  }
+});
+interCanvas.addEventListener('lostpointercapture',e=>{
+  if(isDrawing&&e.pointerId===activePointerId){
+    isDrawing=false;activePointerId=null;
+    const p=getP();
+    if(activeTool==='simple'){
+      if(p.taperLength>0){simpleTapering=true;simpleTaperFrame=0;simpleTaperTotal=p.taperLength;}
+      else{simpleLastX=null;simpleLastY=null;}
+    } else {
+      if(p.taperLength>0){isTapering=true;taperFrame=0;taperTotal=p.taperLength;}
+    }
+  }
+});
 
 // Keyboard
 document.addEventListener('keydown',e=>{
@@ -1006,7 +1036,7 @@ function frame(){
 // ============================================================
 // SETTINGS PERSISTENCE
 // ============================================================
-const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
+const controlDefs={brushScale:{t:'r',f:100},spawnShape:{t:'s',f:'circle'},spawnRadius:{t:'r',f:50},spawnAngle:{t:'r',f:0},spawnJitter:{t:'r',f:0},count:{t:'r',f:25},seek:{t:'r',f:40},cohesion:{t:'r',f:15},separation:{t:'r',f:50},alignment:{t:'r',f:20},jitter:{t:'r',f:0},wander:{t:'r',f:0},wanderSpeed:{t:'r',f:30},fov:{t:'r',f:360},flowField:{t:'r',f:0},flowScale:{t:'r',f:10},fleeRadius:{t:'r',f:0},individuality:{t:'r',f:0},maxSpeed:{t:'r',f:8},damping:{t:'r',f:95},stampSize:{t:'r',f:6},stampOpacity:{t:'r',f:15},stampSeparation:{t:'r',f:0},skipStamps:{t:'r',f:0},taperLength:{t:'r',f:0},taperInLength:{t:'r',f:0},taperCurve:{t:'r',f:100},sensingStrength:{t:'r',f:50},sensingRadius:{t:'r',f:20},sensingThreshold:{t:'r',f:10},respawnOnStroke:{t:'c',f:true},pressureSpawnRadius:{t:'c',f:false},pressureSize:{t:'c',f:true},pressureOpacity:{t:'c',f:true},taperSize:{t:'c',f:false},taperOpacity:{t:'c',f:true},sensingEnabled:{t:'c',f:false},showBoids:{t:'c',f:true},showSpawn:{t:'c',f:true},showFlow:{t:'c',f:false},showSensing:{t:'c',f:false},sensingMode:{t:'s',f:'avoid'},sensingChannel:{t:'s',f:'darkness'},sensingSource:{t:'s',f:'below'}};
 function capSt(){const s={_v:STORAGE_VERSION};for(const[id,d]of Object.entries(controlDefs)){const el=document.getElementById(id);if(!el)continue;s[id]=d.t==='c'?el.checked:d.t==='s'?el.value:+el.value;}return s;}
 function appSt(s){if(!s||s._v!==STORAGE_VERSION)return false;for(const[id,d]of Object.entries(controlDefs)){if(!(id in s))continue;const el=document.getElementById(id);if(!el)continue;if(d.t==='c')el.checked=s[id];else{el.value=s[id];el.dispatchEvent(new Event('input'));}}return true;}
 function autoSave(){try{localStorage.setItem(STORAGE_KEY_SESSION,JSON.stringify(capSt()));}catch(e){}}
