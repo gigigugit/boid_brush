@@ -178,21 +178,14 @@ export class BoidBrush {
       const agentSat = buffer[base + 21]; // saturation offset
       const agentLit = buffer[base + 22]; // lightness offset
 
-      // Stamp separation check
-      if (p.stampSeparation > 0) {
-        if (this._lastStampX[i] !== undefined) {
-          const dx = ax - this._lastStampX[i];
-          const dy = ay - this._lastStampY[i];
-          if (dx * dx + dy * dy < p.stampSeparation * p.stampSeparation) continue;
-        }
+      // Skip first N stamps (lead-in) — track position but don't stamp
+      if (app.strokeFrame <= skipN) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        continue;
       }
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
 
-      // Skip first N stamps (lead-in)
-      if (app.strokeFrame <= skipN) continue;
-
-      // Compute size and opacity
+      // Compute size and opacity (needed for spacing calculation)
       let sz = p.stampSize * sm;
       // In flat mode, stamps go at full agent opacity; master opacity applied on composite
       let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
@@ -207,7 +200,32 @@ export class BoidBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      app.symStamp(stampCtx, ax, ay, sz, color, op);
+      // Interpolation: fill gaps between previous and current position
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < step) continue; // accumulate distance until next stamp
+
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const t = j / n;
+          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
+        }
+      } else {
+        // First stamp for this agent
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+      }
+
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
     }
 
     // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
@@ -268,7 +286,31 @@ export class BoidBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      app.symStamp(stampCtx, ax, ay, sz, color, op);
+      // Interpolation: fill gaps between previous and current position
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < step) continue; // accumulate distance
+
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const tt = j / n;
+          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
+        }
+      } else {
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+      }
+
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
     }
 
     if (flat) {
