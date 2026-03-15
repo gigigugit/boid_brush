@@ -15,6 +15,8 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
+const MIN_SELECTION_SIZE = 2;
+const MARCH_SPEED = 40; // pixels per second for marching ants
 
 export class App {
   constructor() {
@@ -98,7 +100,6 @@ export class App {
     this._isSelecting = false;    // actively dragging a selection
     this._selectStartX = 0;
     this._selectStartY = 0;
-    this._marchOffset = 0;        // marching ants animation offset
 
     // Kick off
     this._init();
@@ -394,7 +395,8 @@ export class App {
   _drawSelectionOverlay(ctx) {
     if (!this.selection) return;
     const s = this.selection;
-    this._marchOffset = (this._marchOffset + 0.3) % 16;
+    const t = performance.now() / 1000;
+    const offset = (t * MARCH_SPEED) % 16;
     ctx.save();
     // Draw selection border — white dashed with black dashed underneath for contrast
     ctx.lineWidth = 1;
@@ -404,7 +406,7 @@ export class App {
     ctx.strokeStyle = 'rgba(0,0,0,0.6)';
     ctx.strokeRect(s.x + 0.5, s.y + 0.5, s.w, s.h);
     // White overlay (marching)
-    ctx.lineDashOffset = -this._marchOffset;
+    ctx.lineDashOffset = -offset;
     ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.strokeRect(s.x + 0.5, s.y + 0.5, s.w, s.h);
     ctx.restore();
@@ -808,7 +810,7 @@ export class App {
     if (this._isSelecting) {
       this._isSelecting = false;
       // Remove zero-size selections
-      if (this.selection && (this.selection.w < 2 || this.selection.h < 2)) {
+      if (this.selection && (this.selection.w < MIN_SELECTION_SIZE || this.selection.h < MIN_SELECTION_SIZE)) {
         this.selection = null;
       }
       return;
@@ -1167,8 +1169,8 @@ export class App {
         // Copy only the selected region
         const s = this.selection;
         outCanvas = document.createElement('canvas');
-        outCanvas.width = Math.round(s.w * this.DPR);
-        outCanvas.height = Math.round(s.h * this.DPR);
+        outCanvas.width = Math.ceil(s.w * this.DPR);
+        outCanvas.height = Math.ceil(s.h * this.DPR);
         const oc = outCanvas.getContext('2d');
         oc.drawImage(flat,
           s.x * this.DPR, s.y * this.DPR, s.w * this.DPR, s.h * this.DPR,
