@@ -4,6 +4,7 @@ wasm-sim/.cargo/
 
 # Node
 node_modules/
+package.json
 package-lock.json
 
 # OS files
