@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Boid Sim WASM — E2E Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+#hud { position: fixed; top: 8px; left: 12px; font-size: 13px; pointer-events: none; z-index: 10; }
+#controls { position: fixed; bottom: 12px; left: 12px; font-size: 12px; z-index: 10; }
+#controls label { display: block; margin: 2px 0; }
+#controls input[type=range] { width: 120px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="fps">FPS: --</div>
+  <div id="info">Agents: 0 | step(): --ms</div>
+</div>
+<div id="controls">
+  <label>Agents: <input id="countSlider" type="range" min="100" max="10000" value="1000" step="100"> <span id="countVal">1000</span></label>
+  <label>Seek: <input id="seekSlider" type="range" min="0" max="100" value="40"> <span id="seekVal">0.40</span></label>
+  <label>Cohesion: <input id="cohSlider" type="range" min="0" max="100" value="15"> <span id="cohVal">0.15</span></label>
+  <label>Separation: <input id="sepSlider" type="range" min="0" max="100" value="50"> <span id="sepVal">0.50</span></label>
+  <button id="respawnBtn">Respawn</button>
+</div>
+<canvas id="c"></canvas>
+
+<script type="module">
+// =========================================================================
+// E2E Demo: WASM boid simulation + WebGL2 instanced rendering
+//
+// This demo validates the WASM module by spawning up to 10k boids,
+// rendering them as instanced triangles, and measuring step() perf.
+// =========================================================================
+import { BoidSim } from './wasm-bridge.js';
+
+try {
+
+const canvas = document.getElementById('c');
+const W = canvas.width = window.innerWidth;
+const H = canvas.height = window.innerHeight;
+const gl = canvas.getContext('webgl2');
+if (!gl) { document.body.textContent = 'WebGL2 required'; throw ''; }
+
+// --- Sliders ---
+const countSlider = document.getElementById('countSlider');
+const seekSlider = document.getElementById('seekSlider');
+const cohSlider = document.getElementById('cohSlider');
+const sepSlider = document.getElementById('sepSlider');
+countSlider.oninput = () => document.getElementById('countVal').textContent = countSlider.value;
+seekSlider.oninput = () => document.getElementById('seekVal').textContent = (+seekSlider.value / 100).toFixed(2);
+cohSlider.oninput = () => document.getElementById('cohVal').textContent = (+cohSlider.value / 100).toFixed(2);
+sepSlider.oninput = () => document.getElementById('sepVal').textContent = (+sepSlider.value / 100).toFixed(2);
+
+// --- Init WASM simulation ---
+const MAX_AGENTS = 10000;
+const sim = await BoidSim.create(W, H, MAX_AGENTS);
+
+let mouseX = W / 2, mouseY = H / 2;
+canvas.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); mouseX = e.touches[0].clientX; mouseY = e.touches[0].clientY; }, { passive: false });
+
+function respawn() {
+  sim.clearAgents();
+  const count = +countSlider.value;
+  sim.spawnBatch(W / 2, H / 2, count, 'circle', 0, 0.1, Math.min(W, H) * 0.3);
+}
+document.getElementById('respawnBtn').onclick = respawn;
+respawn();
+
+// --- WebGL2 instanced boid rendering ---
+const vsSource = `#version 300 es
+layout(location=0) in vec2 aPos;       // triangle vertex
+layout(location=1) in vec2 aOffset;    // agent x,y (instanced)
+layout(location=2) in vec2 aVel;       // agent vx,vy (instanced)
+uniform vec2 uRes;
+out float vAngle;
+
+void main() {
+  float angle = atan(aVel.y, aVel.x);
+  float c = cos(angle), s = sin(angle);
+  vec2 rotated = vec2(aPos.x * c - aPos.y * s, aPos.x * s + aPos.y * c);
+  vec2 pos = (aOffset + rotated) / uRes * 2.0 - 1.0;
+  gl_Position = vec4(pos.x, -pos.y, 0.0, 1.0);
+  vAngle = angle;
+}`;
+
+const fsSource = `#version 300 es
+precision mediump float;
+in float vAngle;
+out vec4 fragColor;
+void main() {
+  float hue = (vAngle / 6.2832 + 1.0) * 0.5;
+  // Simple HSV → RGB (S=0.7, V=1.0)
+  vec3 c = clamp(abs(mod(hue * 6.0 + vec3(0,4,2), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  fragColor = vec4(mix(vec3(1.0), c, 0.7), 0.85);
+}`;
+
+function compileShader(src, type) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s));
+    return null;
+  }
+  return s;
+}
+
+const vs = compileShader(vsSource, gl.VERTEX_SHADER);
+const fs = compileShader(fsSource, gl.FRAGMENT_SHADER);
+const prog = gl.createProgram();
+gl.attachShader(prog, vs);
+gl.attachShader(prog, fs);
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  console.error(gl.getProgramInfoLog(prog));
+}
+gl.useProgram(prog);
+const uRes = gl.getUniformLocation(prog, 'uRes');
+
+// Triangle geometry (small arrowhead shape)
+const SIZE = 5.0;
+const triVerts = new Float32Array([
+   SIZE * 1.5,  0,
+  -SIZE,  SIZE * 0.7,
+  -SIZE, -SIZE * 0.7,
+]);
+
+const triVBO = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, triVBO);
+gl.bufferData(gl.ARRAY_BUFFER, triVerts, gl.STATIC_DRAW);
+
+// Instance buffer for agent positions + velocities
+const instanceBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuf);
+gl.bufferData(gl.ARRAY_BUFFER, MAX_AGENTS * 4 * 4, gl.DYNAMIC_DRAW); // 4 floats per agent
+
+// VAO
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+// Attribute 0: triangle vertex (per-vertex)
+gl.bindBuffer(gl.ARRAY_BUFFER, triVBO);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+// Attributes 1,2: instance data (x,y,vx,vy stride=16 bytes)
+gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuf);
+gl.enableVertexAttribArray(1);
+gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 0); // offset x,y
+gl.vertexAttribDivisor(1, 1);
+gl.enableVertexAttribArray(2);
+gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 16, 8); // vx,vy
+gl.vertexAttribDivisor(2, 1);
+
+gl.bindVertexArray(null);
+
+// --- Render loop ---
+let lastTime = performance.now();
+let frameCount = 0;
+let fpsTime = 0;
+
+function loop(now) {
+  const dt = (now - lastTime) / 1000;
+  lastTime = now;
+
+  // Update params
+  sim.writeParams({
+    seek: +seekSlider.value / 100,
+    cohesion: +cohSlider.value / 100,
+    separation: +sepSlider.value / 100,
+    alignment: 0.2,
+    jitter: 0.02,
+    wander: 0.05,
+    wanderSpeed: 0.3,
+    maxSpeed: 4.0,
+    damping: 0.95,
+    flowField: 0,
+    flowScale: 0.01,
+    fleeRadius: 0,
+    fov: 360,
+    individuality: 0,
+    sensingEnabled: false,
+  }, mouseX, mouseY, now * 0.001);
+
+  // Step simulation
+  const t0 = performance.now();
+  sim.step(dt);
+  const stepMs = performance.now() - t0;
+
+  // Read agent buffer
+  const { buffer: agents, count, stride } = sim.readAgents();
+
+  // Extract x,y,vx,vy for GPU upload (stride=16 floats, we want offsets 0,1,2,3)
+  const instanceData = new Float32Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    const off = i * stride;
+    instanceData[i * 4 + 0] = agents[off + 0]; // x
+    instanceData[i * 4 + 1] = agents[off + 1]; // y
+    instanceData[i * 4 + 2] = agents[off + 2]; // vx
+    instanceData[i * 4 + 3] = agents[off + 3]; // vy
+  }
+
+  // Upload to GPU
+  gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData);
+
+  // Render
+  gl.viewport(0, 0, W, H);
+  gl.clearColor(0.07, 0.07, 0.08, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.useProgram(prog);
+  gl.uniform2f(uRes, W, H);
+  gl.bindVertexArray(vao);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, count);
+  gl.bindVertexArray(null);
+
+  // FPS
+  frameCount++;
+  fpsTime += dt;
+  if (fpsTime >= 1.0) {
+    document.getElementById('fps').textContent = `FPS: ${Math.round(frameCount / fpsTime)}`;
+    frameCount = 0;
+    fpsTime = 0;
+  }
+  document.getElementById('info').textContent = `Agents: ${count} | step(): ${stepMs.toFixed(2)}ms`;
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+
+} catch (e) {
+  document.getElementById('info').textContent = 'Error: ' + e.message;
+  console.error('Demo init failed:', e);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "boid-sim",
+  "type": "module",
+  "description": "WebAssembly boid/particle simulation core for Boid Brush",
+  "version": "0.1.0",
+  "files": [
+    "boid_sim_bg.wasm",
+    "boid_sim.js",
+    "boid_sim.d.ts"
+  ],
+  "main": "boid_sim.js",
+  "types": "boid_sim.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

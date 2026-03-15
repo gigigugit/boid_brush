@@ -1,0 +1,28 @@
+[package]
+name = "boid-sim"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly boid/particle simulation core for Boid Brush"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = []
+spatial-hash = []
+
+[profile.release]
+lto = true
+opt-level = 3
+strip = "symbols"
+
+# wasm-pack 0.14's bundled wasm-opt is too old for Rust 1.82+ bulk-memory output.
+# Rust's own LTO + opt-level 3 already does sufficient optimization.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

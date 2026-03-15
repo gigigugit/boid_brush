@@ -1,0 +1,11 @@
+# Rust build artifacts
+wasm-sim/target/
+wasm-sim/.cargo/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
