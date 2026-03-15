@@ -631,17 +631,10 @@ export class App {
     const brush = this.getCurrentBrush();
     // Use coalesced events for smoother brush strokes (sub-frame input samples)
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
-    if (coalesced.length > 0) {
-      for (const ce of coalesced) {
-        const { x, y } = this._getEventCoords(ce);
-        this.pressure = ce.pressure || 0.5;
-        this.leaderX = x;
-        this.leaderY = y;
-        if (brush) brush.onMove(x, y, this.pressure);
-      }
-    } else {
-      const { x, y } = this._getEventCoords(e);
-      this.pressure = e.pressure || 0.5;
+    const events = coalesced.length > 0 ? coalesced : [e];
+    for (const pe of events) {
+      const { x, y } = this._getEventCoords(pe);
+      this.pressure = pe.pressure || 0.5;
       this.leaderX = x;
       this.leaderY = y;
       if (brush) brush.onMove(x, y, this.pressure);
