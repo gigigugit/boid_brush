@@ -113,16 +113,16 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 /* Edge sliders - left side quick controls */
 #edgeSliders,#edgeSliders *{touch-action:none;}
 #edgeSliders{position:fixed;left:0;top:44px;bottom:24px;z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:20px;pointer-events:none;padding-left:8px;}
-.edge-slider{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:36px;background:rgba(0,0,0,0.35);border-radius:0 10px 10px 0;padding:10px 6px 6px;}
-.edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;cursor:pointer;}
+.edge-slider{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:36px;background:rgba(0,0,0,0.35);border-radius:0 10px 10px 0;padding:10px 6px 6px;cursor:pointer;}
+.edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
 .edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
 .edge-slider-thumb{position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;left:50%;transform:translate(-50%,50%);box-shadow:0 1px 4px rgba(0,0,0,0.5);pointer-events:none;}
-.edge-slider-label{font-size:7px;color:#777;text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;}
-.edge-slider-value{font-size:9px;color:#bbb;font-variant-numeric:tabular-nums;text-align:center;}
+.edge-slider-label{font-size:7px;color:#777;text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;pointer-events:none;}
+.edge-slider-value{font-size:9px;color:#bbb;font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;}
 
 /* Brush type dropdown */
 #brushBtnWrap{position:relative;}
-#brushDropdown{position:absolute;top:calc(100% + 4px);left:0;background:rgba(18,18,22,0.97);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px;z-index:100;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:120px;}
+#brushDropdown{position:fixed;background:rgba(18,18,22,0.97);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px;z-index:100;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:120px;}
 #brushDropdown.open{display:block;}
 #brushDropdown button{display:block;width:100%;text-align:left;padding:8px 12px;border:none!important;background:transparent;color:#ccc;font-size:12px;cursor:pointer;border-radius:6px;white-space:nowrap;}
 #brushDropdown button:hover{background:rgba(255,255,255,0.1);color:#fff;}
@@ -135,11 +135,6 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 <div id="topbar">
   <div id="brushBtnWrap">
     <button id="brushBtn" class="active">🐦 Boid</button>
-    <div id="brushDropdown">
-      <button data-brush="boid" class="selected">🐦 Boid</button>
-      <button data-brush="simple">🖌 Simple</button>
-      <button data-brush="eraser">◻ Eraser</button>
-    </div>
   </div>
   <div class="tb-sep"></div>
   <input type="color" id="primaryColor" value="#1a1a1a" title="Primary">
@@ -158,6 +153,13 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
   <button id="saveBtn">💾 Save</button>
   <div style="flex:1"></div>
   <button id="sidebarToggle">☰</button>
+</div>
+
+<!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
+<div id="brushDropdown">
+  <button data-brush="boid" class="selected">🐦 Boid</button>
+  <button data-brush="simple">🖌 Simple</button>
+  <button data-brush="eraser">◻ Eraser</button>
 </div>
 
 <!-- ══════════ Canvas Stack ══════════ -->

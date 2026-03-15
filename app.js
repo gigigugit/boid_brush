@@ -550,8 +550,14 @@ export class App {
     const brushBtn = document.getElementById('brushBtn');
     const brushDropdown = document.getElementById('brushDropdown');
     if (brushBtn && brushDropdown) {
+      const positionDropdown = () => {
+        const r = brushBtn.getBoundingClientRect();
+        brushDropdown.style.top = (r.bottom + 4) + 'px';
+        brushDropdown.style.left = r.left + 'px';
+      };
       brushBtn.addEventListener('click', e => {
         e.stopPropagation();
+        positionDropdown();
         brushDropdown.classList.toggle('open');
       });
       brushDropdown.querySelectorAll('button[data-brush]').forEach(b => {

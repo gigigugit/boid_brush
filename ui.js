@@ -543,15 +543,15 @@ export function initEdgeSliders(app) {
       }
     };
 
-    track.addEventListener('pointerdown', e => {
+    slider.addEventListener('pointerdown', e => {
       e.preventDefault();
       e.stopPropagation();
-      track.setPointerCapture(e.pointerId);
+      slider.setPointerCapture(e.pointerId);
       setFromY(e.clientY);
     });
 
-    track.addEventListener('pointermove', e => {
-      if (track.hasPointerCapture(e.pointerId)) {
+    slider.addEventListener('pointermove', e => {
+      if (slider.hasPointerCapture(e.pointerId)) {
         e.preventDefault();
         setFromY(e.clientY);
       }
