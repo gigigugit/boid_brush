@@ -221,6 +221,7 @@ export function buildSidebar(app) {
     const update = () => {
       span.textContent = fmt ? fmt(+inp.value) : inp.value;
       app.invalidateParams();
+      syncEdgeSliders();
     };
     inp.addEventListener('input', update);
   });
@@ -299,6 +300,7 @@ export function syncUI(app) {
     if (vs) vs.textContent = Math.round(l.opacity * 100);
   }
   _renderLayerList(app);
+  syncEdgeSliders();
 }
 
 // ── Slider display format map ───────────────────────────────
@@ -500,4 +502,61 @@ function _exportPresets() {
   }).catch(() => {
     prompt('Copy this JSON:', json);
   });
+}
+
+// ── Edge slider sync ────────────────────────────────────────
+export function syncEdgeSliders() {
+  document.querySelectorAll('.edge-slider').forEach(slider => {
+    const paramId = slider.dataset.param;
+    const min = +slider.dataset.min;
+    const max = +slider.dataset.max;
+    const fill = slider.querySelector('.edge-slider-fill');
+    const thumb = slider.querySelector('.edge-slider-thumb');
+    const valueEl = slider.querySelector('.edge-slider-value');
+    const sidebarSlider = document.getElementById(paramId);
+    if (!sidebarSlider) return;
+    const val = +sidebarSlider.value;
+    const pct = Math.max(0, Math.min(1, (val - min) / (max - min)));
+    fill.style.height = (pct * 100) + '%';
+    thumb.style.bottom = (pct * 100) + '%';
+    const fmt = _sliderFormats[paramId];
+    valueEl.textContent = fmt ? fmt(val) : val;
+  });
+}
+
+// ── Initialize edge slider drag behavior ────────────────────
+export function initEdgeSliders(app) {
+  document.querySelectorAll('.edge-slider').forEach(slider => {
+    const track = slider.querySelector('.edge-slider-track');
+    const paramId = slider.dataset.param;
+    const min = +slider.dataset.min;
+    const max = +slider.dataset.max;
+
+    const setFromY = (clientY) => {
+      const rect = track.getBoundingClientRect();
+      const pct = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+      const val = Math.round(min + pct * (max - min));
+      const sidebarSlider = document.getElementById(paramId);
+      if (sidebarSlider) {
+        sidebarSlider.value = val;
+        sidebarSlider.dispatchEvent(new Event('input'));
+      }
+    };
+
+    track.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      track.setPointerCapture(e.pointerId);
+      setFromY(e.clientY);
+    });
+
+    track.addEventListener('pointermove', e => {
+      if (track.hasPointerCapture(e.pointerId)) {
+        e.preventDefault();
+        setFromY(e.clientY);
+      }
+    });
+  });
+
+  syncEdgeSliders();
 }

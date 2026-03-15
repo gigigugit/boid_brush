@@ -7,7 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, syncUI } from './ui.js';
+import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const MAX_UNDO = 20;
@@ -97,6 +97,7 @@ export class App {
 
     // Sidebar UI
     buildSidebar(this);
+    initEdgeSliders(this);
 
     // Events
     this._bindEvents();
@@ -497,12 +498,18 @@ export class App {
     const cur = this.brushes[this.activeBrush];
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
-    // Update toolbar buttons
-    document.querySelectorAll('#topbar button[data-brush]').forEach(b => {
-      b.classList.remove('active', 'eraser-active');
+    // Update brush dropdown button
+    const brushLabels = { boid: '🐦 Boid', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const btn = document.getElementById('brushBtn');
+    if (btn) {
+      btn.textContent = brushLabels[name] || name;
+      btn.classList.remove('active', 'eraser-active');
+      btn.classList.add(name === 'eraser' ? 'eraser-active' : 'active');
+    }
+    // Update dropdown selection
+    document.querySelectorAll('#brushDropdown button[data-brush]').forEach(b => {
+      b.classList.toggle('selected', b.dataset.brush === name);
     });
-    const btn = document.querySelector(`#topbar button[data-brush="${name}"]`);
-    if (btn) btn.classList.add(name === 'eraser' ? 'eraser-active' : 'active');
     // Toggle brush-specific sections
     this._toggleBrushSections(name);
     this._paramsDirty = true;
@@ -539,10 +546,25 @@ export class App {
       this.compositeAllLayers();
     });
 
-    // Toolbar buttons
-    document.querySelectorAll('#topbar button[data-brush]').forEach(b => {
-      b.addEventListener('click', () => this.setBrush(b.dataset.brush));
-    });
+    // Brush dropdown
+    const brushBtn = document.getElementById('brushBtn');
+    const brushDropdown = document.getElementById('brushDropdown');
+    if (brushBtn && brushDropdown) {
+      brushBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        brushDropdown.classList.toggle('open');
+      });
+      brushDropdown.querySelectorAll('button[data-brush]').forEach(b => {
+        b.addEventListener('click', e => {
+          e.stopPropagation();
+          this.setBrush(b.dataset.brush);
+          brushDropdown.classList.remove('open');
+        });
+      });
+      document.addEventListener('click', () => {
+        brushDropdown.classList.remove('open');
+      });
+    }
     document.getElementById('undoBtn')?.addEventListener('click', () => this.doUndo());
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
