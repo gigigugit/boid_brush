@@ -2,6 +2,10 @@
 wasm-sim/target/
 wasm-sim/.cargo/
 
+# Node
+node_modules/
+package-lock.json
+
 # OS files
 Thumbs.db
 .DS_Store
