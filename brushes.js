@@ -178,21 +178,14 @@ export class BoidBrush {
       const agentSat = buffer[base + 21]; // saturation offset
       const agentLit = buffer[base + 22]; // lightness offset
 
-      // Stamp separation check
-      if (p.stampSeparation > 0) {
-        if (this._lastStampX[i] !== undefined) {
-          const dx = ax - this._lastStampX[i];
-          const dy = ay - this._lastStampY[i];
-          if (dx * dx + dy * dy < p.stampSeparation * p.stampSeparation) continue;
-        }
+      // Skip first N stamps (lead-in) — track position but don't stamp
+      if (app.strokeFrame <= skipN) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        continue;
       }
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
 
-      // Skip first N stamps (lead-in)
-      if (app.strokeFrame <= skipN) continue;
-
-      // Compute size and opacity
+      // Compute size and opacity (needed for spacing calculation)
       let sz = p.stampSize * sm;
       // In flat mode, stamps go at full agent opacity; master opacity applied on composite
       let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
@@ -207,7 +200,32 @@ export class BoidBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      app.symStamp(stampCtx, ax, ay, sz, color, op);
+      // Interpolation: fill gaps between previous and current position
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < step) continue; // accumulate distance until next stamp
+
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const t = j / n;
+          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
+        }
+      } else {
+        // First stamp for this agent
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+      }
+
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
     }
 
     // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
@@ -268,7 +286,31 @@ export class BoidBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      app.symStamp(stampCtx, ax, ay, sz, color, op);
+      // Interpolation: fill gaps between previous and current position
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < step) continue; // accumulate distance
+
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const tt = j / n;
+          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
+        }
+      } else {
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+      }
+
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
     }
 
     if (flat) {
@@ -327,8 +369,8 @@ export class BoidBrush {
 export class SimpleBrush {
   constructor(app) {
     this.app = app;
-    this._lastX = null;
-    this._lastY = null;
+    this._lastStampX = null;
+    this._lastStampY = null;
   }
 
   onDown(x, y, pressure) {
@@ -336,21 +378,45 @@ export class SimpleBrush {
       this.app.pushUndo();
       this.app.undoPushedThisStroke = true;
     }
-    this._lastX = x;
-    this._lastY = y;
+    this._lastStampX = x;
+    this._lastStampY = y;
     this.app.strokeFrame = 0;
     this._stamp(x, y, pressure);
+    const layer = this.app.getActiveLayer();
+    layer.dirty = true;
+    this.app.compositeAllLayers();
   }
 
   onMove(x, y, pressure) {
-    this._stampLine(this._lastX, this._lastY, x, y, pressure);
-    this._lastX = x;
-    this._lastY = y;
+    if (this._lastStampX == null) return;
+
+    const dx = x - this._lastStampX;
+    const dy = y - this._lastStampY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    const p = this.app.getP();
+    let sz = p.stampSize;
+    if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+    const step = Math.max(1, p.stampSeparation > 0 ? p.stampSeparation : sz * 0.25);
+
+    if (dist < step) return; // accumulate distance until next stamp
+
+    const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    for (let j = 1; j <= n; j++) {
+      const t = j / n;
+      this._stamp(this._lastStampX + dx * t, this._lastStampY + dy * t, pressure);
+    }
+    this._lastStampX = x;
+    this._lastStampY = y;
+
+    const layer = this.app.getActiveLayer();
+    layer.dirty = true;
+    this.app.compositeAllLayers();
   }
 
   onUp() {
-    this._lastX = null;
-    this._lastY = null;
+    this._lastStampX = null;
+    this._lastStampY = null;
   }
 
   onFrame() { /* no per-frame work for simple brush */ }
@@ -370,22 +436,7 @@ export class SimpleBrush {
     op = Math.min(op, 1);
 
     this.app.symStamp(ctx, x, y, sz, p.color, op);
-    layer.dirty = true;
-    this.app.compositeAllLayers();
     this.app.strokeFrame++;
-  }
-
-  _stampLine(x0, y0, x1, y1, pressure) {
-    if (x0 == null) return;
-    const dx = x1 - x0, dy = y1 - y0;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const p = this.app.getP();
-    const step = Math.max(1, p.stampSeparation || p.stampSize * 0.3);
-    const n = Math.ceil(dist / step);
-    for (let i = 0; i <= n; i++) {
-      const t = n > 0 ? i / n : 0;
-      this._stamp(x0 + dx * t, y0 + dy * t, pressure);
-    }
   }
 
   drawOverlay() { /* nothing */ }
@@ -415,8 +466,6 @@ export class EraserBrush {
       ctx.globalCompositeOperation = 'destination-out';
       this.app.symStamp(ctx, x, y, sz, '#000', op);
       ctx.globalCompositeOperation = 'source-over';
-      layer.dirty = true;
-      this.app.compositeAllLayers();
       this.app.strokeFrame++;
     };
   }
