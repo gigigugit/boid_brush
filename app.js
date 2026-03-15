@@ -11,6 +11,10 @@ import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const MAX_UNDO = 20;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 10;
+const WHEEL_ZOOM_IN = 1.05;
+const WHEEL_ZOOM_OUT = 0.95;
 
 export class App {
   constructor() {
@@ -48,6 +52,22 @@ export class App {
     this.leaderX = 0;
     this.leaderY = 0;
     this.undoPushedThisStroke = false;
+
+    // View transform (pinch zoom/rotate/pan)
+    this.viewZoom = 1;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
+    this.viewRotation = 0; // radians
+    this._pinchActive = false;
+    this._pinchStartDist = 0;
+    this._pinchStartAngle = 0;
+    this._pinchStartZoom = 1;
+    this._pinchStartRotation = 0;
+    this._pinchStartPanX = 0;
+    this._pinchStartPanY = 0;
+    this._pinchStartMidX = 0;
+    this._pinchStartMidY = 0;
+    this._activePointers = new Map();
 
     // Taper state
     this.isTapering = false;
@@ -537,6 +557,16 @@ export class App {
     ic.addEventListener('pointerup', e => this._onPointerUp(e));
     ic.addEventListener('pointercancel', e => this._onPointerUp(e));
 
+    // Touch events for pinch zoom/rotate (on canvasArea to capture all fingers)
+    const area = document.getElementById('canvasArea');
+    area.addEventListener('touchstart', e => this._onTouchStart(e), { passive: false });
+    area.addEventListener('touchmove', e => this._onTouchMove(e), { passive: false });
+    area.addEventListener('touchend', e => this._onTouchEnd(e), { passive: false });
+    area.addEventListener('touchcancel', e => this._onTouchEnd(e), { passive: false });
+
+    // Mouse wheel zoom
+    area.addEventListener('wheel', e => this._onWheel(e), { passive: false });
+
     // Keyboard shortcuts
     window.addEventListener('keydown', e => this._onKeyDown(e));
 
@@ -575,6 +605,7 @@ export class App {
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
     });
@@ -599,12 +630,48 @@ export class App {
   }
 
   _getEventCoords(e) {
-    const rect = this.interactionCanvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    // Get coords relative to the canvas area (not the transformed canvas)
+    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const sx = e.clientX - areaRect.left;
+    const sy = e.clientY - areaRect.top;
+    // Convert from screen space (post-transform) to canvas space
+    return this._screenToCanvas(sx, sy);
+  }
+
+  _screenToCanvas(sx, sy) {
+    // Undo view transform: the CSS transform is:
+    // translate(panX, panY) translate(cx,cy) rotate(rot) scale(zoom) translate(-cx,-cy)
+    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const cx = areaRect.width / 2;
+    const cy = areaRect.height / 2;
+
+    // Step 1: undo translate(panX, panY)
+    let dx = sx - this.viewPanX;
+    let dy = sy - this.viewPanY;
+    // Step 2: undo translate(cx, cy)
+    dx -= cx;
+    dy -= cy;
+    // Step 3: undo rotate(rot)
+    const cos = Math.cos(-this.viewRotation);
+    const sin = Math.sin(-this.viewRotation);
+    const rx = dx * cos - dy * sin;
+    const ry = dx * sin + dy * cos;
+    // Step 4: undo scale(zoom)
+    const ux = rx / this.viewZoom;
+    const uy = ry / this.viewZoom;
+    // Step 5: undo translate(-cx, -cy)
+    return { x: ux + cx, y: uy + cy };
   }
 
   _onPointerDown(e) {
     e.preventDefault();
+    // Track active pointers for multi-touch detection
+    this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    // Don't start drawing during pinch gesture
+    if (this._pinchActive) return;
+    // Don't start drawing if touch and multiple pointers (pinch incoming)
+    if (e.pointerType === 'touch' && this._activePointers.size > 1) return;
+
     this.interactionCanvas.setPointerCapture(e.pointerId);
     const { x, y } = this._getEventCoords(e);
     this.pressure = e.pressure || 0.5;
@@ -620,6 +687,9 @@ export class App {
   }
 
   _onPointerMove(e) {
+    this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    // Don't draw during pinch
+    if (this._pinchActive) return;
     if (!this.isDrawing) {
       const { x, y } = this._getEventCoords(e);
       this.pressure = e.pressure || 0.5;
@@ -642,6 +712,7 @@ export class App {
   }
 
   _onPointerUp(e) {
+    this._activePointers.delete(e.pointerId);
     if (!this.isDrawing) return;
     this.isDrawing = false;
     const { x, y } = this._getEventCoords(e);
@@ -662,10 +733,18 @@ export class App {
     // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
     if (e.ctrlKey && !e.shiftKey && e.key === 'z') { e.preventDefault(); this.doUndo(); }
     if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); this.doRedo(); }
+    // Ctrl+S = save image
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); this.saveImage(); }
+    // Ctrl+C = copy canvas to clipboard
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); this.copyToClipboard(); }
+    // Ctrl+V = paste from clipboard
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') { e.preventDefault(); this.pasteFromClipboard(); }
     // 1/2/3 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('simple');
     if (e.key === '3') this.setBrush('eraser');
+    // 0 = reset view
+    if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // X = swap colors
     if (e.key === 'x' || e.key === 'X') {
       if (!e.ctrlKey) {
@@ -675,6 +754,105 @@ export class App {
         this._paramsDirty = true;
       }
     }
+  }
+
+  // ========================================================
+  // PINCH ZOOM / ROTATE / PAN (Touch Gestures)
+  // ========================================================
+
+  _onTouchStart(e) {
+    if (e.touches.length === 2) {
+      // Two-finger gesture: start pinch zoom/rotate
+      e.preventDefault();
+      this._pinchActive = true;
+      // Cancel any active drawing
+      if (this.isDrawing) {
+        this.isDrawing = false;
+        const brush = this.getCurrentBrush();
+        if (brush) brush.onUp(this.leaderX, this.leaderY);
+      }
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const dx = t1.clientX - t0.clientX;
+      const dy = t1.clientY - t0.clientY;
+      this._pinchStartDist = Math.sqrt(dx * dx + dy * dy);
+      this._pinchStartAngle = Math.atan2(dy, dx);
+      this._pinchStartZoom = this.viewZoom;
+      this._pinchStartRotation = this.viewRotation;
+      this._pinchStartPanX = this.viewPanX;
+      this._pinchStartPanY = this.viewPanY;
+      this._pinchStartMidX = (t0.clientX + t1.clientX) / 2;
+      this._pinchStartMidY = (t0.clientY + t1.clientY) / 2;
+    }
+  }
+
+  _onTouchMove(e) {
+    if (this._pinchActive && e.touches.length === 2) {
+      e.preventDefault();
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const dx = t1.clientX - t0.clientX;
+      const dy = t1.clientY - t0.clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+
+      // Zoom
+      const scale = dist / this._pinchStartDist;
+      this.viewZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this._pinchStartZoom * scale));
+
+      // Rotation
+      this.viewRotation = this._pinchStartRotation + (angle - this._pinchStartAngle);
+
+      // Pan (midpoint movement)
+      const midX = (t0.clientX + t1.clientX) / 2;
+      const midY = (t0.clientY + t1.clientY) / 2;
+      this.viewPanX = this._pinchStartPanX + (midX - this._pinchStartMidX);
+      this.viewPanY = this._pinchStartPanY + (midY - this._pinchStartMidY);
+
+      this._applyViewTransform();
+    }
+  }
+
+  _onTouchEnd(e) {
+    if (this._pinchActive && e.touches.length < 2) {
+      this._pinchActive = false;
+    }
+  }
+
+  _onWheel(e) {
+    e.preventDefault();
+    const zoomFactor = e.deltaY > 0 ? WHEEL_ZOOM_OUT : WHEEL_ZOOM_IN;
+    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.viewZoom * zoomFactor));
+
+    // Zoom toward pointer position
+    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const mx = e.clientX - areaRect.left;
+    const my = e.clientY - areaRect.top;
+
+    // Adjust pan so the point under the cursor stays fixed
+    const s = newZoom / this.viewZoom;
+    this.viewPanX = mx - s * (mx - this.viewPanX);
+    this.viewPanY = my - s * (my - this.viewPanY);
+
+    this.viewZoom = newZoom;
+    this._applyViewTransform();
+  }
+
+  _applyViewTransform() {
+    const el = document.getElementById('canvasTransform');
+    if (!el) return;
+    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const cx = areaRect.width / 2;
+    const cy = areaRect.height / 2;
+    const deg = this.viewRotation * 180 / Math.PI;
+    el.style.transform = `translate(${this.viewPanX}px, ${this.viewPanY}px) translate(${cx}px, ${cy}px) rotate(${deg}deg) scale(${this.viewZoom}) translate(${-cx}px, ${-cy}px)`;
+  }
+
+  resetView() {
+    this.viewZoom = 1;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
+    this.viewRotation = 0;
+    this._applyViewTransform();
+    this.showToast('🔍 View reset');
   }
 
   // ========================================================
@@ -715,6 +893,10 @@ export class App {
 
   _updateStatus(brush) {
     let info = `${this.W}×${this.H} | Layer ${this.activeLayerIdx + 1}/${this.layers.length}`;
+    if (this.viewZoom !== 1 || this.viewRotation !== 0) {
+      info += ` | ${Math.round(this.viewZoom * 100)}%`;
+      if (this.viewRotation !== 0) info += ` ${Math.round(this.viewRotation * 180 / Math.PI)}°`;
+    }
     if (brush && brush.getStatusInfo) info += ` | ${brush.getStatusInfo()}`;
     this.statusEl.textContent = info;
   }
@@ -799,10 +981,9 @@ export class App {
   // SAVE IMAGE
   // ========================================================
 
-  saveImage() {
+  _compositeFlatCanvas() {
     const { canvas, ctx } = this.makeLayerCanvas();
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
-    // Use background color
     ctx.fillStyle = this.bgColorEl ? this.bgColorEl.value : '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     for (let i = this.layers.length - 1; i >= 0; i--) {
@@ -813,11 +994,81 @@ export class App {
       ctx.drawImage(l.canvas, 0, 0);
     }
     ctx.restore();
-    const a = document.createElement('a');
-    a.download = 'boid-brush.png';
-    a.href = canvas.toDataURL('image/png');
-    a.click();
-    this.showToast('💾 Saved');
+    return canvas;
+  }
+
+  saveImage() {
+    const canvas = this._compositeFlatCanvas();
+    // Use toBlob for better performance with large canvases
+    canvas.toBlob(blob => {
+      if (!blob) {
+        // Fallback to toDataURL
+        const a = document.createElement('a');
+        a.download = 'boid-brush.png';
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+        this.showToast('💾 Saved');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = 'boid-brush.png';
+      a.href = url;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      this.showToast('💾 Saved');
+    }, 'image/png');
+  }
+
+  // ========================================================
+  // COPY / PASTE
+  // ========================================================
+
+  async copyToClipboard() {
+    try {
+      const canvas = this._compositeFlatCanvas();
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) { this.showToast('⚠ Copy failed'); return; }
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+      this.showToast('📋 Copied to clipboard');
+    } catch (err) {
+      this.showToast('⚠ Copy failed — clipboard access denied');
+    }
+  }
+
+  async pasteFromClipboard() {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        for (const type of item.types) {
+          if (type.startsWith('image/')) {
+            const blob = await item.getType(type);
+            const img = new Image();
+            const url = URL.createObjectURL(blob);
+            img.onload = () => {
+              this.pushUndo();
+              const l = this.getActiveLayer();
+              l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
+              l.dirty = true;
+              this.compositeAllLayers();
+              URL.revokeObjectURL(url);
+              this.showToast('📋 Pasted');
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(url);
+              this.showToast('⚠ Paste failed — invalid image');
+            };
+            img.src = url;
+            return;
+          }
+        }
+      }
+      this.showToast('⚠ No image in clipboard');
+    } catch (err) {
+      this.showToast('⚠ Paste failed — clipboard access denied');
+    }
   }
 
   // ========================================================

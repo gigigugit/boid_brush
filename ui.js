@@ -3,6 +3,7 @@
 // =============================================================================
 
 const PRESETS_KEY = 'bb_presets_v1';
+const AUTOSAVE_DEBOUNCE_MS = 2000;
 
 // ── Built-in presets ────────────────────────────────────────
 const BUILTIN_PRESETS = {
@@ -201,6 +202,7 @@ export function buildSidebar(app) {
     <!-- Settings -->
     <div class="section-header" data-section="settings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
+      <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
       <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
         <button id="btnResetDefaults" class="reset-btn">🏭 Factory Reset</button>
@@ -269,9 +271,30 @@ export function buildSidebar(app) {
   document.getElementById('btnResetDefaults')?.addEventListener('click', () => {
     if (confirm('Reset all controls to factory defaults?')) {
       localStorage.removeItem('bb_session_v1');
+      localStorage.removeItem('bb_autosave');
       location.reload();
     }
   });
+  // Auto-save toggle
+  const autoSaveCb = document.getElementById('autoSaveSession');
+  if (autoSaveCb) {
+    autoSaveCb.checked = localStorage.getItem('bb_autosave') === '1';
+    autoSaveCb.addEventListener('change', () => {
+      localStorage.setItem('bb_autosave', autoSaveCb.checked ? '1' : '0');
+      app.showToast(autoSaveCb.checked ? '⏱ Auto-save enabled' : 'Auto-save disabled');
+    });
+    // Debounced auto-save: save session when params change
+    let _autoSaveTimer = null;
+    const triggerAutoSave = () => {
+      if (!autoSaveCb.checked) return;
+      clearTimeout(_autoSaveTimer);
+      _autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
+    };
+    sb.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
+      el.addEventListener('input', triggerAutoSave);
+      el.addEventListener('change', triggerAutoSave);
+    });
+  }
 
   // Initial brush-specific visibility
   app._toggleBrushSections(app.activeBrush);
@@ -433,6 +456,10 @@ function _renderUserPresets(app) {
 
 function _applyPreset(app, values) {
   for (const [id, val] of Object.entries(values)) {
+    // Handle special preset keys
+    if (id === '_primaryColor') { app.primaryEl.value = val; continue; }
+    if (id === '_secondaryColor') { app.secondaryEl.value = val; continue; }
+    if (id === '_activeBrush') { app.setBrush(val); continue; }
     const el = document.getElementById(id);
     if (!el) continue;
     if (el.type === 'checkbox') el.checked = !!val;
@@ -446,18 +473,25 @@ function _applyPreset(app, values) {
 function _saveNewPreset(app) {
   const name = prompt('Preset name:');
   if (!name) return;
-  // Capture current slider values
+  const presets = loadUserPresets();
+  if (presets[name]) {
+    if (!confirm(`Overwrite existing preset "${name}"?`)) return;
+  }
+  // Capture current slider values, checkboxes, selects, colors, and brush type
   const values = {};
   document.querySelectorAll('#sidebar input[type="range"]').forEach(el => {
     if (el.id) values[el.id] = +el.value;
   });
   document.querySelectorAll('#sidebar input[type="checkbox"]').forEach(el => {
-    if (el.id) values[el.id] = el.checked;
+    if (el.id && el.id !== 'autoSaveSession') values[el.id] = el.checked;
   });
   document.querySelectorAll('#sidebar select').forEach(el => {
     if (el.id && el.id !== 'layerBlend') values[el.id] = el.value;
   });
-  const presets = loadUserPresets();
+  // Also save colors and brush type
+  values._primaryColor = app.primaryEl.value;
+  values._secondaryColor = app.secondaryEl.value;
+  values._activeBrush = app.activeBrush;
   presets[name] = values;
   saveUserPresets(presets);
   _renderUserPresets(app);

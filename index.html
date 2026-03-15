@@ -12,6 +12,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 
 /* ---- Canvas Area ---- */
 #canvasArea{position:absolute;top:44px;left:0;right:0;bottom:24px;overflow:hidden;}
+#canvasTransform{position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0;will-change:transform;}
 #compositeDisplay{position:absolute;top:0;left:0;width:100%;height:100%;will-change:contents;}
 #liveCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 #interactionCanvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;}
@@ -151,6 +152,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
   <div class="tb-sep"></div>
   <button id="clearBtn">🗑 Clear</button>
   <button id="saveBtn">💾 Save</button>
+  <button id="resetViewBtn" title="Reset zoom/pan/rotation">🔍 Reset View</button>
   <div style="flex:1"></div>
   <button id="sidebarToggle">☰</button>
 </div>
@@ -164,9 +166,11 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 
 <!-- ══════════ Canvas Stack ══════════ -->
 <div id="canvasArea">
-  <canvas id="compositeDisplay"></canvas>
-  <canvas id="liveCanvas"></canvas>
-  <canvas id="interactionCanvas"></canvas>
+  <div id="canvasTransform">
+    <canvas id="compositeDisplay"></canvas>
+    <canvas id="liveCanvas"></canvas>
+    <canvas id="interactionCanvas"></canvas>
+  </div>
 </div>
 
 <!-- Left Edge Sliders -->
