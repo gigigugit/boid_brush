@@ -620,15 +620,32 @@ export class App {
   }
 
   _onPointerMove(e) {
-    const { x, y } = this._getEventCoords(e);
-    this.pressure = e.pressure || 0.5;
-    this.leaderX = x;
-    this.leaderY = y;
-
-    if (!this.isDrawing) return;
+    if (!this.isDrawing) {
+      const { x, y } = this._getEventCoords(e);
+      this.pressure = e.pressure || 0.5;
+      this.leaderX = x;
+      this.leaderY = y;
+      return;
+    }
 
     const brush = this.getCurrentBrush();
-    if (brush) brush.onMove(x, y, this.pressure);
+    // Use coalesced events for smoother brush strokes (sub-frame input samples)
+    const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    if (coalesced.length > 0) {
+      for (const ce of coalesced) {
+        const { x, y } = this._getEventCoords(ce);
+        this.pressure = ce.pressure || 0.5;
+        this.leaderX = x;
+        this.leaderY = y;
+        if (brush) brush.onMove(x, y, this.pressure);
+      }
+    } else {
+      const { x, y } = this._getEventCoords(e);
+      this.pressure = e.pressure || 0.5;
+      this.leaderX = x;
+      this.leaderY = y;
+      if (brush) brush.onMove(x, y, this.pressure);
+    }
   }
 
   _onPointerUp(e) {
