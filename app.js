@@ -67,6 +67,7 @@ export class App {
     this._pinchStartPanY = 0;
     this._pinchStartMidX = 0;
     this._pinchStartMidY = 0;
+    this._pinchAnchor = { x: 0, y: 0 };
     this._activePointers = new Map();
 
     // Taper state
@@ -782,6 +783,12 @@ export class App {
       this._pinchStartPanY = this.viewPanY;
       this._pinchStartMidX = (t0.clientX + t1.clientX) / 2;
       this._pinchStartMidY = (t0.clientY + t1.clientY) / 2;
+      // Compute canvas point under pinch midpoint (to anchor zoom/rotate)
+      const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+      this._pinchAnchor = this._screenToCanvas(
+        this._pinchStartMidX - areaRect.left,
+        this._pinchStartMidY - areaRect.top
+      );
     }
   }
 
@@ -801,11 +808,20 @@ export class App {
       // Rotation
       this.viewRotation = this._pinchStartRotation + (angle - this._pinchStartAngle);
 
-      // Pan (midpoint movement)
+      // Pan: keep the canvas anchor point under the current pinch midpoint
       const midX = (t0.clientX + t1.clientX) / 2;
       const midY = (t0.clientY + t1.clientY) / 2;
-      this.viewPanX = this._pinchStartPanX + (midX - this._pinchStartMidX);
-      this.viewPanY = this._pinchStartPanY + (midY - this._pinchStartMidY);
+      const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+      const curSX = midX - areaRect.left;
+      const curSY = midY - areaRect.top;
+      const cx = areaRect.width / 2;
+      const cy = areaRect.height / 2;
+      const r = this.viewRotation;
+      const z = this.viewZoom;
+      const ax = this._pinchAnchor.x - cx;
+      const ay = this._pinchAnchor.y - cy;
+      this.viewPanX = curSX - cx - z * (ax * Math.cos(r) - ay * Math.sin(r));
+      this.viewPanY = curSY - cy - z * (ax * Math.sin(r) + ay * Math.cos(r));
 
       this._applyViewTransform();
     }
@@ -828,9 +844,11 @@ export class App {
     const my = e.clientY - areaRect.top;
 
     // Adjust pan so the point under the cursor stays fixed
+    const cx = areaRect.width / 2;
+    const cy = areaRect.height / 2;
     const s = newZoom / this.viewZoom;
-    this.viewPanX = mx - s * (mx - this.viewPanX);
-    this.viewPanY = my - s * (my - this.viewPanY);
+    this.viewPanX = (mx - cx) - s * (mx - cx - this.viewPanX);
+    this.viewPanY = (my - cy) - s * (my - cy - this.viewPanY);
 
     this.viewZoom = newZoom;
     this._applyViewTransform();
