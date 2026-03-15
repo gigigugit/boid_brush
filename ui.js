@@ -57,12 +57,12 @@ export function buildSidebar(app) {
         <option value="spiral">≋ Spiral</option><option value="poisson">⁘ Poisson</option>
         <option value="random_cluster">✦ Clusters</option>
       </select></label>
-      ${sliderRow('spawnRadius', 'Radius', 5, 200, 50)}
+      ${sliderRow('spawnRadius', 'Radius', 5, 200, 5)}
       ${sliderRow('spawnAngle', 'Angle', 0, 360, 0, v => v + '°')}
       ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
       <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
-      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
+      <label>Flat Stroke <input type="checkbox" id="flatStroke" checked></label>
     </div>
 
     <!-- Swarm (boid only) -->
@@ -76,12 +76,12 @@ export function buildSidebar(app) {
     <div class="section-body" data-brushes="boid">
       ${sliderRow('seek', 'Seek', 0, 100, 40, v => (v/100).toFixed(2))}
       ${sliderRow('cohesion', 'Cohesion', 0, 100, 15, v => (v/100).toFixed(2))}
-      ${sliderRow('separation', 'Separation', 0, 100, 50, v => (v/100).toFixed(2))}
+      ${sliderRow('separation', 'Separation', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('alignment', 'Alignment', 0, 100, 20, v => (v/100).toFixed(2))}
       ${sliderRow('jitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('wander', 'Wander', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('wanderSpeed', 'Wander Spd', 1, 100, 30, v => (v/100).toFixed(2))}
-      ${sliderRow('fov', 'FOV', 30, 360, 360, v => v + '°')}
+      ${sliderRow('fov', 'FOV', 30, 360, 115, v => v + '°')}
       ${sliderRow('flowField', 'Flow', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('flowScale', 'Flow Scale', 1, 100, 10, v => (v/1000).toFixed(3))}
       ${sliderRow('fleeRadius', 'Flee R', 0, 150, 0)}
