@@ -11,6 +11,10 @@ import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const MAX_UNDO = 20;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 10;
+const WHEEL_ZOOM_IN = 1.05;
+const WHEEL_ZOOM_OUT = 0.95;
 
 export class App {
   constructor() {
@@ -792,7 +796,7 @@ export class App {
 
       // Zoom
       const scale = dist / this._pinchStartDist;
-      this.viewZoom = Math.max(0.1, Math.min(10, this._pinchStartZoom * scale));
+      this.viewZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this._pinchStartZoom * scale));
 
       // Rotation
       this.viewRotation = this._pinchStartRotation + (angle - this._pinchStartAngle);
@@ -815,8 +819,8 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
-    const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
-    const newZoom = Math.max(0.1, Math.min(10, this.viewZoom * zoomFactor));
+    const zoomFactor = e.deltaY > 0 ? WHEEL_ZOOM_OUT : WHEEL_ZOOM_IN;
+    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.viewZoom * zoomFactor));
 
     // Zoom toward pointer position
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
