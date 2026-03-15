@@ -128,6 +128,9 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 #brushDropdown button{display:block;width:100%;text-align:left;padding:8px 12px;border:none!important;background:transparent;color:#ccc;font-size:12px;cursor:pointer;border-radius:6px;white-space:nowrap;}
 #brushDropdown button:hover{background:rgba(255,255,255,0.1);color:#fff;}
 #brushDropdown button.selected{background:rgba(58,106,232,0.3);color:#fff;}
+
+/* Select mode */
+#interactionCanvas.select-mode{cursor:crosshair;}
 </style>
 </head>
 <body>
@@ -144,6 +147,9 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
   <div class="tb-sep"></div>
   <button id="undoBtn">↩ Undo</button>
   <button id="redoBtn">↪ Redo</button>
+  <div class="tb-sep"></div>
+  <button id="selectBtn" title="Marquee select (M)">⬚ Select</button>
+  <button id="deselectBtn" title="Deselect (Ctrl+D)">⊘ Deselect</button>
   <div class="tb-sep"></div>
   <select id="layerSwitcher" title="Active layer"></select>
   <div class="tb-sep"></div>
