@@ -94,6 +94,9 @@ export class App {
     // Toast timer
     this._toastTimer = null;
 
+    // Internal clipboard buffer (fallback when Clipboard API unavailable)
+    this._clipboardBlob = null;
+
     // Selection
     this.selection = null;        // { x, y, w, h } in canvas coords or null
     this._selectMode = false;     // whether user is in marquee select mode
@@ -675,6 +678,8 @@ export class App {
     document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
+    document.getElementById('pasteBtn')?.addEventListener('click', () => this.pasteFromClipboard());
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
@@ -1162,70 +1167,99 @@ export class App {
   // ========================================================
 
   async copyToClipboard() {
-    try {
-      const flat = this._compositeFlatCanvas();
-      let outCanvas;
-      if (this.selection) {
-        // Copy only the selected region
-        const s = this.selection;
-        outCanvas = document.createElement('canvas');
-        outCanvas.width = Math.ceil(s.w * this.DPR);
-        outCanvas.height = Math.ceil(s.h * this.DPR);
-        const oc = outCanvas.getContext('2d');
-        oc.drawImage(flat,
-          s.x * this.DPR, s.y * this.DPR, s.w * this.DPR, s.h * this.DPR,
-          0, 0, outCanvas.width, outCanvas.height);
-      } else {
-        outCanvas = flat;
-      }
-      const blob = await new Promise(resolve => outCanvas.toBlob(resolve, 'image/png'));
-      if (!blob) { this.showToast('⚠ Copy failed'); return; }
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
+    const flat = this._compositeFlatCanvas();
+    let outCanvas;
+    if (this.selection) {
+      // Copy only the selected region
+      const s = this.selection;
+      outCanvas = document.createElement('canvas');
+      outCanvas.width = Math.ceil(s.w * this.DPR);
+      outCanvas.height = Math.ceil(s.h * this.DPR);
+      const oc = outCanvas.getContext('2d');
+      oc.drawImage(flat,
+        s.x * this.DPR, s.y * this.DPR, s.w * this.DPR, s.h * this.DPR,
+        0, 0, outCanvas.width, outCanvas.height);
+    } else {
+      outCanvas = flat;
+    }
+    const blob = await new Promise(resolve => outCanvas.toBlob(resolve, 'image/png'));
+    if (!blob) { this.showToast('⚠ Copy failed'); return; }
+    // Always store in internal buffer so paste fallback works
+    this._clipboardBlob = blob;
+    // Try modern Clipboard API (not available in all browsers, e.g. Firefox on iPad)
+    let clipboardOk = false;
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+        clipboardOk = true;
+      } catch (err) { console.warn('Clipboard API write unavailable, relying on internal buffer:', err); }
+    }
+    if (clipboardOk) {
       this.showToast(this.selection ? '📋 Selection copied' : '📋 Copied to clipboard');
-    } catch (err) {
-      this.showToast('⚠ Copy failed — clipboard access denied');
+    } else {
+      this.showToast(this.selection ? '📋 Selection copied (in-app only)' : '📋 Copied (in-app only)');
     }
   }
 
+  _pasteImageBlob(blob) {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      this.pushUndo();
+      const l = this.getActiveLayer();
+      if (this.selection) {
+        const s = this.selection;
+        l.ctx.drawImage(img, 0, 0, img.width, img.height, s.x, s.y, s.w, s.h);
+      } else {
+        l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
+      }
+      l.dirty = true;
+      this.compositeAllLayers();
+      URL.revokeObjectURL(url);
+      this.showToast('📋 Pasted');
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      this.showToast('⚠ Paste failed — invalid image');
+    };
+    img.src = url;
+  }
+
   async pasteFromClipboard() {
-    try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        for (const type of item.types) {
-          if (type.startsWith('image/')) {
-            const blob = await item.getType(type);
-            const img = new Image();
-            const url = URL.createObjectURL(blob);
-            img.onload = () => {
-              this.pushUndo();
-              const l = this.getActiveLayer();
-              if (this.selection) {
-                // Paste into selection region
-                const s = this.selection;
-                l.ctx.drawImage(img, 0, 0, img.width, img.height, s.x, s.y, s.w, s.h);
-              } else {
-                l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
-              }
-              l.dirty = true;
-              this.compositeAllLayers();
-              URL.revokeObjectURL(url);
-              this.showToast('📋 Pasted');
-            };
-            img.onerror = () => {
-              URL.revokeObjectURL(url);
-              this.showToast('⚠ Paste failed — invalid image');
-            };
-            img.src = url;
-            return;
+    // Try modern Clipboard API first
+    if (navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              this._pasteImageBlob(blob);
+              return;
+            }
           }
         }
-      }
-      this.showToast('⚠ No image in clipboard');
-    } catch (err) {
-      this.showToast('⚠ Paste failed — clipboard access denied');
+        this.showToast('⚠ No image in clipboard');
+        return;
+      } catch (err) { console.warn('Clipboard API read unavailable, trying internal buffer:', err); }
     }
+    // Fallback: use internal clipboard buffer if available
+    if (this._clipboardBlob) {
+      this._pasteImageBlob(this._clipboardBlob);
+      return;
+    }
+    // Last resort: open file picker when clipboard is unavailable
+    this.showToast('📋 Clipboard unavailable — select an image file');
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) this._pasteImageBlob(file);
+    };
+    input.click();
   }
 
   // ========================================================
