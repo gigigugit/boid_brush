@@ -1187,14 +1187,20 @@ export class App {
     // Always store in internal buffer so paste fallback works
     this._clipboardBlob = blob;
     // Try modern Clipboard API (not available in all browsers, e.g. Firefox on iPad)
+    let clipboardOk = false;
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
       try {
         await navigator.clipboard.write([
           new ClipboardItem({ 'image/png': blob })
         ]);
+        clipboardOk = true;
       } catch (err) { console.warn('Clipboard API write unavailable, relying on internal buffer:', err); }
     }
-    this.showToast(this.selection ? '📋 Selection copied' : '📋 Copied to clipboard');
+    if (clipboardOk) {
+      this.showToast(this.selection ? '📋 Selection copied' : '📋 Copied to clipboard');
+    } else {
+      this.showToast(this.selection ? '📋 Selection copied (in-app only)' : '📋 Copied (in-app only)');
+    }
   }
 
   _pasteImageBlob(blob) {
