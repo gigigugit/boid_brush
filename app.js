@@ -94,6 +94,9 @@ export class App {
     // Toast timer
     this._toastTimer = null;
 
+    // Internal clipboard buffer (fallback when Clipboard API unavailable)
+    this._clipboardBlob = null;
+
     // Selection
     this.selection = null;        // { x, y, w, h } in canvas coords or null
     this._selectMode = false;     // whether user is in marquee select mode
@@ -1181,24 +1184,17 @@ export class App {
     }
     const blob = await new Promise(resolve => outCanvas.toBlob(resolve, 'image/png'));
     if (!blob) { this.showToast('⚠ Copy failed'); return; }
+    // Always store in internal buffer so paste fallback works
+    this._clipboardBlob = blob;
     // Try modern Clipboard API (not available in all browsers, e.g. Firefox on iPad)
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
       try {
         await navigator.clipboard.write([
           new ClipboardItem({ 'image/png': blob })
         ]);
-        this.showToast(this.selection ? '📋 Selection copied' : '📋 Copied to clipboard');
-        return;
-      } catch (err) { console.warn('Clipboard write failed, using download fallback:', err); }
+      } catch (err) { console.warn('Clipboard API write unavailable, relying on internal buffer:', err); }
     }
-    // Fallback: download the image when clipboard is unavailable
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.download = 'boid-brush-copy.png';
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    this.showToast('📋 Clipboard unavailable — image downloaded');
+    this.showToast(this.selection ? '📋 Selection copied' : '📋 Copied to clipboard');
   }
 
   _pasteImageBlob(blob) {
@@ -1241,9 +1237,14 @@ export class App {
         }
         this.showToast('⚠ No image in clipboard');
         return;
-      } catch (err) { console.warn('Clipboard read failed, using file picker fallback:', err); }
+      } catch (err) { console.warn('Clipboard API read unavailable, trying internal buffer:', err); }
     }
-    // Fallback: open file picker when clipboard is unavailable
+    // Fallback: use internal clipboard buffer if available
+    if (this._clipboardBlob) {
+      this._pasteImageBlob(this._clipboardBlob);
+      return;
+    }
+    // Last resort: open file picker when clipboard is unavailable
     this.showToast('📋 Clipboard unavailable — select an image file');
     const input = document.createElement('input');
     input.type = 'file';
