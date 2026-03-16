@@ -108,6 +108,30 @@ export function buildSidebar(app) {
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
     </div>
 
+    <!-- Bristle Shape (bristle only) -->
+    <div class="section-header" data-brushes="bristle" data-section="bristleShape">Bristle Shape <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="bristle">
+      ${sliderRow('bristleCount', 'Count', 3, 100, 30)}
+      ${sliderRow('bristleWidth', 'Width', 5, 120, 30)}
+      ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2))}
+    </div>
+
+    <!-- Bristle Physics (bristle only) -->
+    <div class="section-header" data-brushes="bristle" data-section="bristlePhysics">Bristle Physics <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="bristle">
+      ${sliderRow('bristleLength', 'Length', 5, 80, 20)}
+      ${sliderRow('bristleStiffness', 'Stiffness', 1, 100, 50, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleDamping', 'Damping', 50, 100, 85, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2))}
+    </div>
+
+    <!-- Bristle Visual (bristle only) -->
+    <div class="section-header" data-brushes="bristle" data-section="bristleVisual">Bristle Visual <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="bristle">
+      <label>Show Bristles <input type="checkbox" id="showBristles" checked></label>
+    </div>
+
     <!-- Stamp -->
     <div class="section-header" data-section="stamp">Stamp <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -350,6 +374,11 @@ const _sliderFormats = {
   sensingThreshold: v => (v / 100).toFixed(2),
   symmetryCenterX: v => v + '%',
   symmetryCenterY: v => v + '%',
+  bristleSpread: v => (v / 100).toFixed(2),
+  bristleSplay: v => (v / 100).toFixed(2),
+  bristleStiffness: v => (v / 100).toFixed(2),
+  bristleDamping: v => (v / 100).toFixed(2),
+  bristleFriction: v => (v / 100).toFixed(2),
 };
 
 // ── Layer list renderer ─────────────────────────────────────

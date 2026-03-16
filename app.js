@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, BristleBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 
 const STORAGE_KEY = 'bb_session_v1';
@@ -110,6 +110,7 @@ export class App {
 
     // Brush engines
     this.brushes.boid = new BoidBrush(this);
+    this.brushes.bristle = new BristleBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
@@ -503,6 +504,16 @@ export class App {
       // Visual
       showBoids: chk('showBoids'),
       showSpawn: chk('showSpawn'),
+      // Bristle brush
+      bristleCount: val('bristleCount') || 30,
+      bristleWidth: Math.max(1, Math.round((val('bristleWidth') || 30) * scale)),
+      bristleLength: Math.max(1, Math.round((val('bristleLength') || 20) * scale)),
+      bristleStiffness: (val('bristleStiffness') || 50) / 100,
+      bristleDamping: (val('bristleDamping') || 85) / 100,
+      bristleFriction: (val('bristleFriction') || 40) / 100 * 20,
+      bristleSpread: (val('bristleSpread') || 10) / 100 * 10,
+      bristleSplay: (val('bristleSplay') || 30) / 100,
+      showBristles: chk('showBristles'),
       // Color
       color: this.primaryEl.value,
     };
@@ -520,7 +531,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const brushLabels = { boid: '🐦 Boid', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -742,8 +753,9 @@ export class App {
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') { e.preventDefault(); this.pasteFromClipboard(); }
     // 1/2/3 = brush switch
     if (e.key === '1') this.setBrush('boid');
-    if (e.key === '2') this.setBrush('simple');
-    if (e.key === '3') this.setBrush('eraser');
+    if (e.key === '2') this.setBrush('bristle');
+    if (e.key === '3') this.setBrush('simple');
+    if (e.key === '4') this.setBrush('eraser');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // X = swap colors
