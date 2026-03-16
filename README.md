@@ -37,11 +37,10 @@ Open `index.html` in a modern browser. Works on desktop and tablet (iPad) — no
 
 | Key | Action |
 |-----|--------|
-| `B` | Boid Brush tool |
-| `S` | Simple Brush tool |
-| `I` | Eyedropper |
-| `G` | Fill |
-| `M` | Selection |
+| `1` | Boid Brush |
+| `2` | Bristle Brush |
+| `3` | Simple Brush |
+| `4` | Eraser |
 | `Ctrl/⌘ + Z` | Undo |
 | `Ctrl/⌘ + Shift + Z` | Redo |
 | `Ctrl/⌘ + X/C/V` | Cut / Copy / Paste |
