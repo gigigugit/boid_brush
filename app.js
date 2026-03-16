@@ -675,6 +675,8 @@ export class App {
     document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
+    document.getElementById('pasteBtn')?.addEventListener('click', () => this.pasteFromClipboard());
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
