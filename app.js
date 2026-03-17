@@ -15,6 +15,8 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
+const MIN_SELECTION_SIZE = 2;
+const MARCH_SPEED = 40; // pixels per second for marching ants
 
 export class App {
   constructor() {
@@ -91,6 +93,16 @@ export class App {
 
     // Toast timer
     this._toastTimer = null;
+
+    // Internal clipboard buffer (fallback when Clipboard API unavailable)
+    this._clipboardBlob = null;
+
+    // Selection
+    this.selection = null;        // { x, y, w, h } in canvas coords or null
+    this._selectMode = false;     // whether user is in marquee select mode
+    this._isSelecting = false;    // actively dragging a selection
+    this._selectStartX = 0;
+    this._selectStartY = 0;
 
     // Kick off
     this._init();
@@ -344,6 +356,64 @@ export class App {
     l.dirty = true;
     this.compositeAllLayers();
     this.showToast('🗑 Layer cleared');
+  }
+
+  // ========================================================
+  // SELECTION
+  // ========================================================
+
+  toggleSelectMode() {
+    this._selectMode = !this._selectMode;
+    const btn = document.getElementById('selectBtn');
+    if (btn) btn.classList.toggle('active', this._selectMode);
+    this.interactionCanvas.classList.toggle('select-mode', this._selectMode);
+    if (!this._selectMode) {
+      this._isSelecting = false;
+    }
+    this.showToast(this._selectMode ? '⬚ Select mode ON — drag to select' : '⬚ Select mode OFF');
+  }
+
+  selectAll() {
+    this.selection = { x: 0, y: 0, w: this.W, h: this.H };
+    this.showToast('⬚ Selected all');
+  }
+
+  deselect() {
+    if (!this.selection) return;
+    this.selection = null;
+    this.showToast('⊘ Deselected');
+  }
+
+  clearSelection() {
+    if (!this.selection) return;
+    const l = this.getActiveLayer();
+    if (l.isBackground) { this.showToast('Cannot clear on background'); return; }
+    this.pushUndo();
+    const s = this.selection;
+    l.ctx.clearRect(s.x, s.y, s.w, s.h);
+    l.dirty = true;
+    this.compositeAllLayers();
+    this.showToast('🗑 Selection cleared');
+  }
+
+  _drawSelectionOverlay(ctx) {
+    if (!this.selection) return;
+    const s = this.selection;
+    const t = performance.now() / 1000;
+    const offset = (t * MARCH_SPEED) % 16;
+    ctx.save();
+    // Draw selection border — white dashed with black dashed underneath for contrast
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    // Black underlay
+    ctx.lineDashOffset = 0;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.strokeRect(s.x + 0.5, s.y + 0.5, s.w, s.h);
+    // White overlay (marching)
+    ctx.lineDashOffset = -offset;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.strokeRect(s.x + 0.5, s.y + 0.5, s.w, s.h);
+    ctx.restore();
   }
 
   compositeAllLayers() {
@@ -615,8 +685,12 @@ export class App {
     }
     document.getElementById('undoBtn')?.addEventListener('click', () => this.doUndo());
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
+    document.getElementById('selectBtn')?.addEventListener('click', () => this.toggleSelectMode());
+    document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
+    document.getElementById('pasteBtn')?.addEventListener('click', () => this.pasteFromClipboard());
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
@@ -686,6 +760,16 @@ export class App {
 
     this.interactionCanvas.setPointerCapture(e.pointerId);
     const { x, y } = this._getEventCoords(e);
+
+    // Select mode: start rectangular selection drag
+    if (this._selectMode) {
+      this._isSelecting = true;
+      this._selectStartX = x;
+      this._selectStartY = y;
+      this.selection = { x, y, w: 0, h: 0 };
+      return;
+    }
+
     this.pressure = e.pressure || 0.5;
     this.leaderX = x;
     this.leaderY = y;
@@ -702,6 +786,18 @@ export class App {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     // Don't draw during pinch
     if (this._pinchActive) return;
+
+    // Select mode: update selection rectangle
+    if (this._isSelecting) {
+      const { x, y } = this._getEventCoords(e);
+      const sx = Math.min(this._selectStartX, x);
+      const sy = Math.min(this._selectStartY, y);
+      const sw = Math.abs(x - this._selectStartX);
+      const sh = Math.abs(y - this._selectStartY);
+      this.selection = { x: sx, y: sy, w: sw, h: sh };
+      return;
+    }
+
     if (!this.isDrawing) {
       const { x, y } = this._getEventCoords(e);
       this.pressure = e.pressure || 0.5;
@@ -725,6 +821,17 @@ export class App {
 
   _onPointerUp(e) {
     this._activePointers.delete(e.pointerId);
+
+    // Finish selection drag
+    if (this._isSelecting) {
+      this._isSelecting = false;
+      // Remove zero-size selections
+      if (this.selection && (this.selection.w < MIN_SELECTION_SIZE || this.selection.h < MIN_SELECTION_SIZE)) {
+        this.selection = null;
+      }
+      return;
+    }
+
     if (!this.isDrawing) return;
     this.isDrawing = false;
     const { x, y } = this._getEventCoords(e);
@@ -751,6 +858,21 @@ export class App {
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); this.copyToClipboard(); }
     // Ctrl+V = paste from clipboard
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') { e.preventDefault(); this.pasteFromClipboard(); }
+    // Ctrl+A = select all
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); this.selectAll(); }
+    // Ctrl+D = deselect
+    if ((e.ctrlKey || e.metaKey) && e.key === 'd') { e.preventDefault(); this.deselect(); }
+    // Escape = deselect or exit select mode
+    if (e.key === 'Escape') {
+      if (this.selection) { this.deselect(); }
+      else if (this._selectMode) { this.toggleSelectMode(); }
+    }
+    // Delete/Backspace with selection = clear selected region
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.selection) {
+      e.preventDefault(); this.clearSelection();
+    }
+    // M = toggle marquee select mode
+    if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey) this.toggleSelectMode();
     // 1/2/3 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('bristle');
@@ -914,6 +1036,8 @@ export class App {
     if (brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, this.getP());
     }
+    // Draw selection overlay (marching ants)
+    this._drawSelectionOverlay(this.lctx);
 
     // Update status
     this._updateStatus(brush);
@@ -1055,50 +1179,99 @@ export class App {
   // ========================================================
 
   async copyToClipboard() {
-    try {
-      const canvas = this._compositeFlatCanvas();
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-      if (!blob) { this.showToast('⚠ Copy failed'); return; }
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
-      this.showToast('📋 Copied to clipboard');
-    } catch (err) {
-      this.showToast('⚠ Copy failed — clipboard access denied');
+    const flat = this._compositeFlatCanvas();
+    let outCanvas;
+    if (this.selection) {
+      // Copy only the selected region
+      const s = this.selection;
+      outCanvas = document.createElement('canvas');
+      outCanvas.width = Math.ceil(s.w * this.DPR);
+      outCanvas.height = Math.ceil(s.h * this.DPR);
+      const oc = outCanvas.getContext('2d');
+      oc.drawImage(flat,
+        s.x * this.DPR, s.y * this.DPR, s.w * this.DPR, s.h * this.DPR,
+        0, 0, outCanvas.width, outCanvas.height);
+    } else {
+      outCanvas = flat;
+    }
+    const blob = await new Promise(resolve => outCanvas.toBlob(resolve, 'image/png'));
+    if (!blob) { this.showToast('⚠ Copy failed'); return; }
+    // Always store in internal buffer so paste fallback works
+    this._clipboardBlob = blob;
+    // Try modern Clipboard API (not available in all browsers, e.g. Firefox on iPad)
+    let clipboardOk = false;
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+        clipboardOk = true;
+      } catch (err) { console.warn('Clipboard API write unavailable, relying on internal buffer:', err); }
+    }
+    if (clipboardOk) {
+      this.showToast(this.selection ? '📋 Selection copied' : '📋 Copied to clipboard');
+    } else {
+      this.showToast(this.selection ? '📋 Selection copied (in-app only)' : '📋 Copied (in-app only)');
     }
   }
 
+  _pasteImageBlob(blob) {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      this.pushUndo();
+      const l = this.getActiveLayer();
+      if (this.selection) {
+        const s = this.selection;
+        l.ctx.drawImage(img, 0, 0, img.width, img.height, s.x, s.y, s.w, s.h);
+      } else {
+        l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
+      }
+      l.dirty = true;
+      this.compositeAllLayers();
+      URL.revokeObjectURL(url);
+      this.showToast('📋 Pasted');
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      this.showToast('⚠ Paste failed — invalid image');
+    };
+    img.src = url;
+  }
+
   async pasteFromClipboard() {
-    try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        for (const type of item.types) {
-          if (type.startsWith('image/')) {
-            const blob = await item.getType(type);
-            const img = new Image();
-            const url = URL.createObjectURL(blob);
-            img.onload = () => {
-              this.pushUndo();
-              const l = this.getActiveLayer();
-              l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
-              l.dirty = true;
-              this.compositeAllLayers();
-              URL.revokeObjectURL(url);
-              this.showToast('📋 Pasted');
-            };
-            img.onerror = () => {
-              URL.revokeObjectURL(url);
-              this.showToast('⚠ Paste failed — invalid image');
-            };
-            img.src = url;
-            return;
+    // Try modern Clipboard API first
+    if (navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              this._pasteImageBlob(blob);
+              return;
+            }
           }
         }
-      }
-      this.showToast('⚠ No image in clipboard');
-    } catch (err) {
-      this.showToast('⚠ Paste failed — clipboard access denied');
+        this.showToast('⚠ No image in clipboard');
+        return;
+      } catch (err) { console.warn('Clipboard API read unavailable, trying internal buffer:', err); }
     }
+    // Fallback: use internal clipboard buffer if available
+    if (this._clipboardBlob) {
+      this._pasteImageBlob(this._clipboardBlob);
+      return;
+    }
+    // Last resort: open file picker when clipboard is unavailable
+    this.showToast('📋 Clipboard unavailable — select an image file');
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) this._pasteImageBlob(file);
+    };
+    input.click();
   }
 
   // ========================================================
