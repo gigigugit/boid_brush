@@ -647,25 +647,12 @@ export class BristleBrush {
         if (dist < step) continue; // accumulate distance
 
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-
-        if (smoothing > 0) {
-          // Use Catmull-Rom curve for interpolation between stamps
-          for (let j = 1; j <= n; j++) {
-            const t = j / n;
-            const cx = BristleBrush._catmullRom(hx[0], hx[1], hx[2], hx[3], 0.5 + t * 0.5);
-            const cy = BristleBrush._catmullRom(hy[0], hy[1], hy[2], hy[3], 0.5 + t * 0.5);
-            // Blend between linear and curve
-            const lx = prevX + dx * t;
-            const ly = prevY + dy * t;
-            const sx = lx * (1 - smoothing) + cx * smoothing;
-            const sy = ly * (1 - smoothing) + cy * smoothing;
-            app.symStamp(stampCtx, sx, sy, sz, color, op);
-          }
-        } else {
-          for (let j = 1; j <= n; j++) {
-            const t = j / n;
-            app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
-          }
+        // Linear interpolation between smoothed endpoints; the Catmull-Rom
+        // smoothing already determined tx/ty — filling stamps linearly avoids
+        // endpoint-mismatch gaps that caused the "dotted line" artifact.
+        for (let j = 1; j <= n; j++) {
+          const t = j / n;
+          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
         }
       } else {
         app.symStamp(stampCtx, tx, ty, sz, color, op);
@@ -809,20 +796,9 @@ export class BristleBrush {
         if (dist < step) continue;
 
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        if (smoothing > 0) {
-          for (let j = 1; j <= n; j++) {
-            const tt = j / n;
-            const cx = BristleBrush._catmullRom(hx[0], hx[1], hx[2], hx[3], 0.5 + tt * 0.5);
-            const cy = BristleBrush._catmullRom(hy[0], hy[1], hy[2], hy[3], 0.5 + tt * 0.5);
-            const lx = prevX + dx * tt;
-            const ly = prevY + dy * tt;
-            app.symStamp(layer.ctx, lx * (1 - smoothing) + cx * smoothing, ly * (1 - smoothing) + cy * smoothing, sz, color, op);
-          }
-        } else {
-          for (let j = 1; j <= n; j++) {
-            const tt = j / n;
-            app.symStamp(layer.ctx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
-          }
+        for (let j = 1; j <= n; j++) {
+          const tt = j / n;
+          app.symStamp(layer.ctx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
         }
       } else {
         app.symStamp(layer.ctx, tx, ty, sz, color, op);
