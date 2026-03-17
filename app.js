@@ -518,7 +518,15 @@ export class App {
       bristleFriction: (val('bristleFriction') || 40) / 100 * 20,
       bristleSpread: (val('bristleSpread') || 10) / 100 * 10,
       bristleSplay: (val('bristleSplay') || 30) / 100,
+      bristleSmoothing: (val('bristleSmoothing') || 50) / 100,
       showBristles: chk('showBristles'),
+      // Bristle variance
+      bSizeVar: val('bSizeVar') / 100,
+      bOpacityVar: val('bOpacityVar') / 100,
+      bStiffVar: val('bStiffVar') / 100,
+      bLengthVar: val('bLengthVar') / 100,
+      bFrictionVar: val('bFrictionVar') / 100,
+      bHueVar: val('bHueVar') / 100,
       // Color
       color: this.primaryEl.value,
       // AI Diffusion
