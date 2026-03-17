@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Dashboard — Boid Brush</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{min-height:100vh;background:#111;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#d0d0d4;}
+a{color:#5b8af0;}
+
+.dashboard{max-width:900px;margin:0 auto;padding:24px 20px 60px;}
+h1{font-size:22px;font-weight:600;color:#eee;margin-bottom:4px;}
+.subtitle{color:#888;font-size:12px;margin-bottom:24px;}
+
+/* Cards */
+.card{background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px;margin-bottom:16px;}
+.card h2{font-size:14px;font-weight:600;color:#ddd;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+.card h3{font-size:12px;font-weight:600;color:#bbb;margin:14px 0 8px;}
+.card p{color:#999;line-height:1.6;margin:4px 0;}
+.card ol{margin:8px 0;padding-left:20px;color:#bbb;line-height:1.8;}
+.card code{background:rgba(255,255,255,0.08);padding:2px 5px;border-radius:3px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:11px;color:#e0e0e4;}
+
+/* Status badge */
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:500;}
+.status-badge .dot{width:8px;height:8px;border-radius:50%;}
+.status-badge.connected{background:rgba(52,199,89,0.12);color:#34c759;border:1px solid rgba(52,199,89,0.2);}
+.status-badge.connected .dot{background:#34c759;}
+.status-badge.disconnected{background:rgba(255,59,48,0.12);color:#ff6b6b;border:1px solid rgba(255,59,48,0.2);}
+.status-badge.disconnected .dot{background:#ff3b30;}
+.status-badge.connecting{background:rgba(255,159,10,0.12);color:#ff9f0a;border:1px solid rgba(255,159,10,0.2);}
+.status-badge.connecting .dot{background:#ff9f0a;animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+
+/* Connection panel */
+.conn-row{display:flex;gap:8px;align-items:center;margin-bottom:10px;}
+.conn-row input[type="text"]{flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#ddd;padding:8px 12px;font-size:12px;font-family:inherit;}
+.conn-row input:focus{outline:none;border-color:rgba(58,106,232,0.5);}
+.conn-row select{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#ddd;padding:8px 10px;font-size:12px;}
+.btn{padding:8px 16px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:rgba(255,255,255,0.06);color:#ccc;font-size:12px;cursor:pointer;white-space:nowrap;}
+.btn:hover{background:rgba(255,255,255,0.12);color:#fff;}
+.btn-primary{background:linear-gradient(135deg,#3a6ae8,#5b8af0);color:#fff;border:none;}
+.btn-primary:hover{filter:brightness(1.1);}
+
+/* Stats grid */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px;}
+.stat-box{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:12px;text-align:center;}
+.stat-value{font-size:22px;font-weight:600;color:#eee;}
+.stat-label{font-size:10px;color:#888;margin-top:2px;text-transform:uppercase;letter-spacing:0.5px;}
+
+/* Command blocks */
+.cmd-block{position:relative;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 40px 10px 12px;margin:8px 0;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:11px;color:#ccc;white-space:pre-wrap;word-break:break-all;line-height:1.7;}
+.cmd-copy{position:absolute;top:6px;right:6px;background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:10px;cursor:pointer;padding:4px 8px;border-radius:4px;}
+.cmd-copy:hover{background:rgba(255,255,255,0.15);color:#fff;}
+
+/* Tabs */
+.tabs{display:flex;gap:4px;margin-bottom:14px;}
+.tabs button{flex:1;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);color:#999;font-size:11px;cursor:pointer;transition:0.15s;}
+.tabs button:hover{background:rgba(255,255,255,0.06);color:#ddd;}
+.tabs button.active{background:rgba(58,106,232,0.2);border-color:rgba(58,106,232,0.4);color:#fff;}
+.tab-panel{display:none;}
+.tab-panel.active{display:block;}
+
+/* Log area */
+.log-area{background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;max-height:200px;overflow-y:auto;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:10px;color:#999;line-height:1.6;}
+.log-area::-webkit-scrollbar{width:4px;}
+.log-area::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px;}
+.log-entry.error{color:#ff6b6b;}
+.log-entry.success{color:#34c759;}
+.log-entry.info{color:#5ac8fa;}
+
+/* History */
+.history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-top:10px;}
+.history-item{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);cursor:pointer;transition:0.15s;}
+.history-item:hover{border-color:rgba(58,106,232,0.5);}
+.history-item img{width:100%;height:100%;object-fit:cover;}
+.history-item .meta{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.8));padding:4px 6px;font-size:9px;color:#ccc;}
+.history-empty{color:#666;font-size:11px;text-align:center;padding:30px;}
+</style>
+</head>
+<body>
+<div class="dashboard">
+  <h1>🤖 AI Dashboard</h1>
+  <p class="subtitle">Boid Brush — AI Diffusion Server Management</p>
+
+  <!-- Connection Card -->
+  <div class="card">
+    <h2>
+      Connection
+      <span class="status-badge disconnected" id="statusBadge">
+        <span class="dot"></span>
+        <span id="statusText">Disconnected</span>
+      </span>
+    </h2>
+    <div class="conn-row">
+      <select id="backendSelect">
+        <option value="builtin">Built-in Python Server</option>
+        <option value="a1111">Draw Things / A1111</option>
+      </select>
+      <input type="text" id="serverUrl" value="http://127.0.0.1:7860" placeholder="http://127.0.0.1:7860">
+      <button class="btn" id="btnTest">Test</button>
+      <button class="btn btn-primary" id="btnSave">Save</button>
+    </div>
+    <div id="serverInfoRow" style="display:none;margin-top:8px;">
+      <p id="serverInfoText" style="font-size:11px;"></p>
+    </div>
+  </div>
+
+  <!-- Stats Card -->
+  <div class="card" id="statsCard" style="display:none;">
+    <h2>Server Stats</h2>
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-value" id="statDevice">—</div>
+        <div class="stat-label">Device</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="statModel">—</div>
+        <div class="stat-label">Model</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="statRequests">0</div>
+        <div class="stat-label">Requests</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="statAvgTime">—</div>
+        <div class="stat-label">Avg Time</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="statErrors">0</div>
+        <div class="stat-label">Errors</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Setup Instructions Card -->
+  <div class="card">
+    <h2>Setup Instructions</h2>
+    <div class="tabs">
+      <button class="active" data-tab="setup-builtin">Built-in Python Server</button>
+      <button data-tab="setup-a1111">Draw Things / A1111 WebUI</button>
+    </div>
+
+    <div class="tab-panel active" id="tab-setup-builtin">
+      <h3>Requirements</h3>
+      <p>• Python 3.10+ &nbsp; • NVIDIA GPU (6 GB+ VRAM) or Apple Silicon Mac &nbsp; • ~4 GB disk for model download</p>
+
+      <h3>Quick Start (Windows)</h3>
+      <ol>
+        <li>Open a terminal in the <code>server/</code> folder</li>
+        <li>Run the setup script:
+          <div class="cmd-block">cd server
+setup.bat<button class="cmd-copy" data-cmd="cd server && setup.bat">Copy</button></div>
+        </li>
+        <li>The model downloads automatically on first run (~4 GB)</li>
+        <li>Server is ready when you see <code>Uvicorn running on http://127.0.0.1:7860</code></li>
+      </ol>
+
+      <h3>Quick Start (macOS / Linux)</h3>
+      <div class="cmd-block">cd server
+chmod +x setup.sh
+./setup.sh<button class="cmd-copy" data-cmd="cd server && chmod +x setup.sh && ./setup.sh">Copy</button></div>
+
+      <h3>Manual Setup</h3>
+      <div class="cmd-block">cd server
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS/Linux
+pip install -r requirements.txt
+python server.py<button class="cmd-copy" data-cmd="cd server && python -m venv .venv && .venv\\Scripts\\activate && pip install -r requirements.txt && python server.py">Copy</button></div>
+
+      <h3>Options</h3>
+      <p><code>--model sd-inpaint</code> — Use SD 1.5 Inpainting (slower, more detail)</p>
+      <p><code>--port 7861</code> — Custom port</p>
+    </div>
+
+    <div class="tab-panel" id="tab-setup-a1111">
+      <h3>Draw Things (iOS / macOS)</h3>
+      <ol>
+        <li>Install <a href="https://drawthings.ai" target="_blank">Draw Things</a></li>
+        <li>Enable API server: Settings → API Server → Start</li>
+        <li>Find your device's IP in Settings → Wi-Fi → (i) button</li>
+        <li>Enter the IP and port (default 7860) in the connection panel above</li>
+      </ol>
+
+      <h3>A1111 WebUI / Forge</h3>
+      <ol>
+        <li>Launch with the <code>--api</code> flag:
+          <div class="cmd-block">webui-user.bat --api<button class="cmd-copy" data-cmd="webui-user.bat --api">Copy</button></div>
+        </li>
+        <li>Default URL: <code>http://127.0.0.1:7860</code></li>
+        <li>Load an inpainting model (e.g., <code>sd-v1-5-inpainting</code>)</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Diagnostics Card -->
+  <div class="card">
+    <h2>Diagnostics</h2>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <button class="btn" id="btnTestInpaint">Test Inpaint</button>
+      <button class="btn" id="btnClearLog">Clear Log</button>
+    </div>
+    <div class="log-area" id="logArea">
+      <div class="log-entry info">[startup] Dashboard loaded. Configure connection above and click Test.</div>
+    </div>
+  </div>
+
+  <!-- Generation History Card -->
+  <div class="card">
+    <h2>Generation History</h2>
+    <div class="history-grid" id="historyGrid">
+      <div class="history-empty">No generations yet. Use the AI brush in the painting app to generate stamps.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Settings persistence (shared with main app via localStorage) ──
+const AI_SETTINGS_KEY = 'bb_ai_settings';
+const AI_HISTORY_KEY = 'bb_ai_history';
+
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveSettings(s) {
+  const cur = loadSettings();
+  Object.assign(cur, s);
+  localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(cur));
+}
+
+// ── DOM refs ──
+const statusBadge = document.getElementById('statusBadge');
+const statusText = document.getElementById('statusText');
+const backendSelect = document.getElementById('backendSelect');
+const serverUrlInput = document.getElementById('serverUrl');
+const statsCard = document.getElementById('statsCard');
+const serverInfoRow = document.getElementById('serverInfoRow');
+const serverInfoText = document.getElementById('serverInfoText');
+const logArea = document.getElementById('logArea');
+
+// ── Init from saved settings ──
+const saved = loadSettings();
+if (saved.serverUrl) serverUrlInput.value = saved.serverUrl;
+if (saved.backend) backendSelect.value = saved.backend;
+
+// ── Logging ──
+function log(msg, cls = '') {
+  const ts = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + cls;
+  div.textContent = `[${ts}] ${msg}`;
+  logArea.appendChild(div);
+  logArea.scrollTop = logArea.scrollHeight;
+}
+
+// ── Connection testing ──
+async function testConnection() {
+  const url = serverUrlInput.value.replace(/\/+$/, '');
+  const backend = backendSelect.value;
+
+  statusBadge.className = 'status-badge connecting';
+  statusText.textContent = 'Connecting...';
+  log(`Testing ${backend} backend at ${url}...`, 'info');
+
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 5000);
+
+    let response, data;
+    if (backend === 'a1111') {
+      response = await fetch(`${url}/sdapi/v1/options`, { signal: ctrl.signal });
+      clearTimeout(timeout);
+      data = await response.json();
+      statusBadge.className = 'status-badge connected';
+      statusText.textContent = 'Connected';
+      serverInfoRow.style.display = '';
+      serverInfoText.textContent = `A1111 backend — Model: ${data.sd_model_checkpoint || 'unknown'}`;
+      statsCard.style.display = 'none';
+      log(`Connected to A1111. Model: ${data.sd_model_checkpoint}`, 'success');
+    } else {
+      response = await fetch(`${url}/api/health`, { signal: ctrl.signal });
+      clearTimeout(timeout);
+      data = await response.json();
+      if (data.status === 'ready') {
+        statusBadge.className = 'status-badge connected';
+        statusText.textContent = 'Connected';
+        serverInfoRow.style.display = '';
+        serverInfoText.textContent = `${data.model_id || data.model} on ${data.device}`;
+        // Update stats
+        statsCard.style.display = '';
+        document.getElementById('statDevice').textContent = data.device || '—';
+        document.getElementById('statModel').textContent = data.model || '—';
+        if (data.stats) {
+          document.getElementById('statRequests').textContent = data.stats.requests;
+          document.getElementById('statErrors').textContent = data.stats.errors;
+          const avg = data.stats.total_time_ms / Math.max(1, data.stats.requests);
+          document.getElementById('statAvgTime').textContent = avg > 0 ? Math.round(avg) + 'ms' : '—';
+        }
+        log(`Connected. Model: ${data.model_id} on ${data.device}`, 'success');
+        // Start stats refresh now that we know the server is up
+        if (statsTimer) clearInterval(statsTimer);
+        statsTimer = setInterval(refreshStats, 5000);
+      } else {
+        statusBadge.className = 'status-badge connecting';
+        statusText.textContent = data.status || 'Loading...';
+        log(`Server responding but status: ${data.status}`, 'info');
+      }
+    }
+  } catch (e) {
+    statusBadge.className = 'status-badge disconnected';
+    statusText.textContent = 'Disconnected';
+    serverInfoRow.style.display = 'none';
+    statsCard.style.display = 'none';
+    log(`Connection failed: ${e.message}`, 'error');
+  }
+}
+
+// ── Test inpaint with a synthetic image ──
+async function testInpaint() {
+  const url = serverUrlInput.value.replace(/\/+$/, '');
+  const backend = backendSelect.value;
+  log('Running test inpaint (512×512 grey image, center mask)...', 'info');
+
+  // Create a grey 512×512 test image
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, 512, 512);
+  const imageB64 = c.toDataURL('image/png');
+
+  // Create circular mask
+  ctx.clearRect(0, 0, 512, 512);
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(256, 256, 200, 0, Math.PI * 2);
+  ctx.fill();
+  const maskB64 = c.toDataURL('image/png');
+
+  try {
+    const t0 = performance.now();
+    let response;
+    if (backend === 'a1111') {
+      const strip = b64 => b64.includes(',') ? b64.split(',')[1] : b64;
+      response = await fetch(`${url}/sdapi/v1/img2img`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          init_images: [strip(imageB64)],
+          mask: strip(maskB64),
+          prompt: 'green leaves, watercolor',
+          negative_prompt: 'blurry',
+          denoising_strength: 0.8,
+          cfg_scale: 7.5,
+          steps: 4,
+          seed: 42,
+          width: 512, height: 512,
+          inpainting_fill: 1,
+          inpaint_full_res: false,
+        }),
+      });
+    } else {
+      response = await fetch(`${url}/api/inpaint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageB64,
+          mask: maskB64,
+          prompt: 'green leaves, watercolor',
+          negative_prompt: 'blurry',
+          steps: 2, strength: 0.8, guidance_scale: 7.5, seed: 42,
+        }),
+      });
+    }
+    const elapsed = Math.round(performance.now() - t0);
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const resultB64 = backend === 'a1111' ? data.images?.[0] : data.image;
+    log(`Test inpaint succeeded in ${elapsed}ms (server: ${data.time_ms || '?'}ms, seed: ${data.seed || '?'})`, 'success');
+
+    // Show result in history
+    if (resultB64) addHistoryItem(resultB64, 'test inpaint', elapsed);
+  } catch (e) {
+    log(`Test inpaint failed: ${e.message}`, 'error');
+  }
+}
+
+// ── Generation history ──
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(AI_HISTORY_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveHistory(arr) {
+  localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(arr.slice(0, 50)));
+}
+function addHistoryItem(b64, prompt, timeMs) {
+  const hist = loadHistory();
+  const prefix = b64.startsWith('data:') ? '' : 'data:image/png;base64,';
+  hist.unshift({ image: prefix + b64, prompt, timeMs, ts: Date.now() });
+  saveHistory(hist);
+  renderHistory();
+}
+function renderHistory() {
+  const grid = document.getElementById('historyGrid');
+  const hist = loadHistory();
+  if (hist.length === 0) {
+    grid.innerHTML = '<div class="history-empty">No generations yet.</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  for (const item of hist) {
+    const div = document.createElement('div');
+    div.className = 'history-item';
+    const img = document.createElement('img');
+    img.src = item.image;
+    img.alt = item.prompt || '';
+    div.appendChild(img);
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `${item.timeMs || '?'}ms`;
+    div.appendChild(meta);
+    grid.appendChild(div);
+  }
+}
+
+// ── Tab switching ──
+document.querySelectorAll('.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const group = btn.parentElement;
+    group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const card = group.closest('.card');
+    card.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    const target = card.querySelector('#tab-' + btn.dataset.tab);
+    if (target) target.classList.add('active');
+  });
+});
+
+// ── Copy buttons ──
+document.querySelectorAll('.cmd-copy').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(btn.dataset.cmd).then(() => {
+      btn.textContent = '✓';
+      setTimeout(() => btn.textContent = 'Copy', 1200);
+    });
+  });
+});
+
+// ── Button wiring ──
+document.getElementById('btnTest').addEventListener('click', testConnection);
+document.getElementById('btnSave').addEventListener('click', () => {
+  saveSettings({
+    serverUrl: serverUrlInput.value,
+    backend: backendSelect.value,
+  });
+  log('Settings saved to localStorage.', 'success');
+});
+document.getElementById('btnTestInpaint').addEventListener('click', testInpaint);
+document.getElementById('btnClearLog').addEventListener('click', () => {
+  logArea.innerHTML = '';
+  log('Log cleared.', 'info');
+});
+
+// ── Auto-refresh stats every 5s when connected ──
+let statsTimer = null;
+async function refreshStats() {
+  const url = serverUrlInput.value.replace(/\/+$/, '');
+  if (backendSelect.value !== 'builtin') return;
+  try {
+    const r = await fetch(`${url}/api/stats`);
+    const d = await r.json();
+    document.getElementById('statRequests').textContent = d.requests;
+    document.getElementById('statErrors').textContent = d.errors;
+    document.getElementById('statAvgTime').textContent = d.avg_time_ms > 0 ? Math.round(d.avg_time_ms) + 'ms' : '—';
+  } catch {}
+}
+
+// ── Init ──
+renderHistory();
+// Don't auto-test on load — wait for user to click Test
+// Just show the saved state
+const initSettings = loadSettings();
+if (initSettings.serverUrl) {
+  log('Loaded saved settings. Click "Test" to check connection.', 'info');
+}
+</script>
+</body>
+</html>
