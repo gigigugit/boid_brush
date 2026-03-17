@@ -6,8 +6,9 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, BristleBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
+import { AIServer } from './ai-server.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const MAX_UNDO = 20;
@@ -108,11 +109,15 @@ export class App {
     this.addLayer('Layer 1');
     this._syncLayerSwitcher();
 
+    // AI server
+    this.aiServer = new AIServer();
+
     // Brush engines
     this.brushes.boid = new BoidBrush(this);
     this.brushes.bristle = new BristleBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
+    this.brushes.ai = new AIDiffusionBrush(this);
 
     // Init WASM for boid brush
     await this.brushes.boid.init();
@@ -516,6 +521,19 @@ export class App {
       showBristles: chk('showBristles'),
       // Color
       color: this.primaryEl.value,
+      // AI Diffusion
+      aiStampSize: Math.max(20, Math.round(val('aiStampSize') * scale)) || 80,
+      aiSteps: val('aiSteps') || 2,
+      aiStrength: (val('aiStrength') || 80) / 100,
+      aiGuidance: (val('aiGuidance') || 75) / 10,
+      maskFeather: val('maskFeather') || 20,
+      aiInputSource: sel('aiInputSource') || 'visible',
+      aiMode: sel('aiMode') || 'continuous',
+      aiInterval: val('aiInterval') || 30,
+      aiRandomSeed: chk('aiRandomSeed'),
+      aiSeed: +(document.getElementById('aiSeed')?.value || 42),
+      aiPrompt: document.getElementById('aiPromptText')?.value || '',
+      aiNegPrompt: document.getElementById('aiNegPromptText')?.value || '',
     };
     return this._cachedP;
   }
@@ -531,7 +549,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const brushLabels = { boid: '🐦 Boid', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -756,6 +774,7 @@ export class App {
     if (e.key === '2') this.setBrush('bristle');
     if (e.key === '3') this.setBrush('simple');
     if (e.key === '4') this.setBrush('eraser');
+    if (e.key === '5') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // X = swap colors
@@ -1112,10 +1131,19 @@ export class App {
       document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select').forEach(el => {
         if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
       });
+      // Save number inputs (e.g. AI seed)
+      document.querySelectorAll('#sidebar input[type="number"]').forEach(el => {
+        if (el.id) controls[el.id] = el.value;
+      });
       controls.primaryColor = this.primaryEl.value;
       controls.secondaryColor = this.secondaryEl.value;
       controls.bgColor = this.bgColorEl ? this.bgColorEl.value : '#ffffff';
       controls.activeBrush = this.activeBrush;
+      // Save AI prompt textareas
+      const promptEl = document.getElementById('aiPromptText');
+      const negPromptEl = document.getElementById('aiNegPromptText');
+      if (promptEl) controls._aiPrompt = promptEl.value;
+      if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
     } catch { /* quota exceeded — ignore */ }
   }
@@ -1130,6 +1158,18 @@ export class App {
         if (id === 'secondaryColor') { this.secondaryEl.value = val; continue; }
         if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
         if (id === 'activeBrush') { this.setBrush(val); continue; }
+        if (id === '_aiPrompt') {
+          const el = document.getElementById('aiPromptText');
+          if (el) el.value = val;
+          const preview = document.getElementById('aiPromptPreview');
+          if (preview && val) preview.textContent = val;
+          continue;
+        }
+        if (id === '_aiNegPrompt') {
+          const el = document.getElementById('aiNegPromptText');
+          if (el) el.value = val;
+          continue;
+        }
         const el = document.getElementById(id);
         if (!el) continue;
         if (el.type === 'checkbox') el.checked = val;

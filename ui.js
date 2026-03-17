@@ -181,6 +181,53 @@ export function buildSidebar(app) {
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
     </div>
 
+    <!-- AI Connection (ai only) -->
+    <div class="section-header" data-brushes="ai" data-section="aiConnection">AI Connection <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ai">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="ai-conn-dot" id="aiSidebarDot"></span>
+          <span id="aiSidebarStatus" style="color:#999;font-size:10px;">Not connected</span>
+        </div>
+        <button id="btnAiSetup" style="font-size:10px;">⚙ Setup</button>
+      </div>
+    </div>
+
+    <!-- AI Prompt (ai only) -->
+    <div class="section-header" data-brushes="ai" data-section="aiPrompt">Prompt <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ai">
+      <div style="display:flex;align-items:center;gap:4px;">
+        <span id="aiPromptPreview" style="flex:1;color:#bbb;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;">paint green leaves...</span>
+        <button id="btnAiPromptEdit" style="font-size:10px;flex-shrink:0;">✏ Edit</button>
+      </div>
+    </div>
+
+    <!-- AI Generation (ai only) -->
+    <div class="section-header" data-brushes="ai" data-section="aiGeneration">Generation <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ai">
+      ${sliderRow('aiStampSize', 'Stamp Size', 20, 400, 80)}
+      ${sliderRow('aiSteps', 'Steps', 1, 20, 2)}
+      ${sliderRow('aiStrength', 'Strength', 1, 100, 80, v => (v/100).toFixed(2))}
+      ${sliderRow('aiGuidance', 'Guidance', 10, 200, 75, v => (v/10).toFixed(1))}
+      ${sliderRow('maskFeather', 'Mask Feather', 0, 100, 20)}
+    </div>
+
+    <!-- AI Mode (ai only) -->
+    <div class="section-header" data-brushes="ai" data-section="aiMode">Mode <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ai">
+      <label>Input Source <select id="aiInputSource">
+        <option value="visible">Visible pixels</option>
+        <option value="active">Active layer</option>
+      </select></label>
+      <label>Stamp Mode <select id="aiMode">
+        <option value="continuous">Continuous</option>
+        <option value="click">Click to stamp</option>
+      </select></label>
+      ${sliderRow('aiInterval', 'Spacing', 5, 100, 30)}
+      <label>Random Seed <input type="checkbox" id="aiRandomSeed" checked></label>
+      <label style="display:flex;gap:4px;align-items:center;">Seed <input type="number" id="aiSeed" value="42" min="0" max="999999999" style="width:80px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;color:#ddd;padding:3px 6px;font-size:11px;"></label>
+    </div>
+
     <!-- Layers -->
     <div class="section-header" data-section="layers">Layers <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -253,7 +300,7 @@ export function buildSidebar(app) {
   });
 
   // Checkbox & select → invalidate params
-  sb.querySelectorAll('input[type="checkbox"], select').forEach(el => {
+  sb.querySelectorAll('input[type="checkbox"], select, input[type="number"]').forEach(el => {
     el.addEventListener('change', () => app.invalidateParams());
   });
 
@@ -325,6 +372,210 @@ export function buildSidebar(app) {
 
   // Initial layer list
   _renderLayerList(app);
+
+  // ── AI Diffusion: Modal, Popout, and Button wiring ──
+  _initAIModal(app);
+  _initAIPromptPopout(app);
+
+  // ── AI Server live status updates ──
+  if (app.aiServer) {
+    app.aiServer.onChange((state) => {
+      _syncModalStatus(app.aiServer);
+    });
+  }
+}
+
+// ── AI Setup Modal logic ────────────────────────────────────
+const AI_SETTINGS_KEY = 'bb_ai_settings';
+
+function _loadAISettings() {
+  try { return JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function _saveAISettings(obj) {
+  localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(obj));
+}
+
+function _initAIModal(app) {
+  const modal = document.getElementById('aiSetupModal');
+  if (!modal) return;
+
+  const closeModal = () => modal.classList.remove('open');
+  const openModal = () => {
+    modal.classList.add('open');
+    // Restore saved settings
+    const settings = _loadAISettings();
+    const urlInput = document.getElementById('aiServerUrl');
+    const backendSel = document.getElementById('aiBackendSelect');
+    if (urlInput && settings.serverUrl) urlInput.value = settings.serverUrl;
+    if (backendSel && settings.backend) backendSel.value = settings.backend;
+    // Sync displayed status from AIServer if available
+    if (app.aiServer) _syncModalStatus(app.aiServer);
+  };
+
+  // Open button in sidebar
+  document.getElementById('btnAiSetup')?.addEventListener('click', openModal);
+
+  // Close buttons
+  document.getElementById('aiModalClose')?.addEventListener('click', closeModal);
+  document.getElementById('aiModalBackdrop')?.addEventListener('click', closeModal);
+
+  // Test connection button — uses live AIServer
+  document.getElementById('aiTestConn')?.addEventListener('click', async () => {
+    const dot = document.getElementById('aiConnDot');
+    const label = document.getElementById('aiConnLabel');
+    if (dot) dot.className = 'ai-conn-dot connecting';
+    if (label) label.textContent = 'Connecting...';
+
+    if (app.aiServer) {
+      const url = document.getElementById('aiServerUrl')?.value || 'http://127.0.0.1:7860';
+      const backend = document.getElementById('aiBackendSelect')?.value || 'builtin';
+      app.aiServer.updateSettings(url, backend);
+      // Wait for the health check result
+      const result = await app.aiServer.checkHealth();
+      _syncModalStatus(app.aiServer);
+    } else {
+      // No server object — show error
+      setTimeout(() => {
+        if (dot) dot.className = 'ai-conn-dot error';
+        if (label) label.textContent = 'Connection failed — server not running';
+      }, 800);
+    }
+  });
+
+  // Save & Close
+  document.getElementById('aiModalSave')?.addEventListener('click', () => {
+    const settings = {
+      backend: document.getElementById('aiBackendSelect')?.value || 'builtin',
+      serverUrl: document.getElementById('aiServerUrl')?.value || 'http://127.0.0.1:7860',
+    };
+    _saveAISettings(settings);
+    if (app.aiServer) {
+      app.aiServer.updateSettings(settings.serverUrl, settings.backend);
+    }
+    closeModal();
+    app.showToast('AI settings saved');
+  });
+}
+
+function _syncModalStatus(server) {
+  const dot = document.getElementById('aiConnDot');
+  const label = document.getElementById('aiConnLabel');
+  const sDot = document.getElementById('aiSidebarDot');
+  const sLabel = document.getElementById('aiSidebarStatus');
+  const stateMap = {
+    connected:    { cls: 'ai-conn-dot connected',  text: 'Connected' },
+    connecting:   { cls: 'ai-conn-dot connecting',  text: 'Connecting...' },
+    error:        { cls: 'ai-conn-dot error',       text: 'Not connected' },
+    disconnected: { cls: 'ai-conn-dot',             text: 'Not connected' },
+  };
+  const m = stateMap[server.state] || stateMap.disconnected;
+  if (dot) dot.className = m.cls;
+  if (label) {
+    if (server.state === 'connected' && server.serverInfo) {
+      const info = server.serverInfo;
+      label.textContent = info.model ? `Connected — ${info.model} on ${info.device}` : 'Connected';
+    } else {
+      label.textContent = m.text;
+    }
+  }
+  if (sDot) sDot.className = m.cls;
+  if (sLabel) sLabel.textContent = m.text;
+}
+
+// ── AI Prompt Popout logic ──────────────────────────────────
+const AI_PROMPTS_KEY = 'bb_ai_prompts';
+const MAX_RECENT_PROMPTS = 10;
+
+function _loadRecentPrompts() {
+  try { return JSON.parse(localStorage.getItem(AI_PROMPTS_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function _saveRecentPrompts(arr) {
+  localStorage.setItem(AI_PROMPTS_KEY, JSON.stringify(arr.slice(0, MAX_RECENT_PROMPTS)));
+}
+
+function _addRecentPrompt(text) {
+  if (!text.trim()) return;
+  let recent = _loadRecentPrompts();
+  recent = recent.filter(p => p !== text);
+  recent.unshift(text);
+  _saveRecentPrompts(recent);
+}
+
+function _initAIPromptPopout(app) {
+  const popout = document.getElementById('aiPromptPopout');
+  const editBtn = document.getElementById('btnAiPromptEdit');
+  const promptText = document.getElementById('aiPromptText');
+  const negPromptText = document.getElementById('aiNegPromptText');
+  const preview = document.getElementById('aiPromptPreview');
+  if (!popout || !editBtn) return;
+
+  // Restore saved prompt
+  const settings = _loadAISettings();
+  if (promptText && settings.prompt) promptText.value = settings.prompt;
+  if (negPromptText && settings.negativePrompt) negPromptText.value = settings.negativePrompt;
+  if (preview && settings.prompt) preview.textContent = settings.prompt;
+
+  const openPopout = () => {
+    // Position near the edit button
+    const rect = editBtn.getBoundingClientRect();
+    popout.style.top = rect.bottom + 4 + 'px';
+    popout.style.right = (window.innerWidth - rect.right) + 'px';
+    popout.classList.add('open');
+    _renderRecentPrompts();
+    promptText?.focus();
+  };
+
+  const closePopout = () => {
+    popout.classList.remove('open');
+    // Save prompt on close
+    const prompt = promptText?.value || '';
+    const negPrompt = negPromptText?.value || '';
+    if (preview) preview.textContent = prompt || 'paint green leaves...';
+    const settings = _loadAISettings();
+    settings.prompt = prompt;
+    settings.negativePrompt = negPrompt;
+    _saveAISettings(settings);
+    if (prompt) _addRecentPrompt(prompt);
+    app.invalidateParams();
+  };
+
+  editBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (popout.classList.contains('open')) closePopout();
+    else openPopout();
+  });
+
+  // Close on outside click
+  document.addEventListener('click', e => {
+    if (!popout.contains(e.target) && e.target !== editBtn && popout.classList.contains('open')) {
+      closePopout();
+    }
+  });
+
+  // Prevent popout clicks from closing
+  popout.addEventListener('click', e => e.stopPropagation());
+
+  function _renderRecentPrompts() {
+    const container = document.getElementById('aiRecentPrompts');
+    if (!container) return;
+    const recent = _loadRecentPrompts();
+    container.innerHTML = '<div class="ai-recent-label">Recent</div>';
+    if (recent.length === 0) return;
+    for (const p of recent) {
+      const div = document.createElement('div');
+      div.className = 'ai-recent-prompt-item';
+      div.textContent = p;
+      div.addEventListener('click', () => {
+        if (promptText) promptText.value = p;
+        if (preview) preview.textContent = p;
+      });
+      container.appendChild(div);
+    }
+  }
 }
 
 // ── Sync UI from app state (e.g. after session restore) ─────
@@ -379,6 +630,10 @@ const _sliderFormats = {
   bristleStiffness: v => (v / 100).toFixed(2),
   bristleDamping: v => (v / 100).toFixed(2),
   bristleFriction: v => (v / 100).toFixed(2),
+  // AI diffusion
+  aiStrength: v => (v / 100).toFixed(2),
+  aiGuidance: v => (v / 10).toFixed(1),
+  aiInterval: v => v + '%',
 };
 
 // ── Layer list renderer ─────────────────────────────────────

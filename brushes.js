@@ -821,3 +821,327 @@ export class EraserBrush {
   getStatusInfo() { return 'Eraser'; }
   deactivate() { this._inner.deactivate(); }
 }
+
+// =============================================================================
+// AI DIFFUSION BRUSH — Captures canvas region, sends to SD server for inpainting
+//
+// Phase A: Stub implementation using placeholder stamps. Capture + mask pipeline
+// fully functional; server calls replaced with tinted preview.
+// =============================================================================
+
+export class AIDiffusionBrush {
+  constructor(app) {
+    this.app = app;
+    // Stamp queue for continuous mode
+    this._queue = [];
+    this._pending = []; // { x, y, promise, startTime }
+    this._maxPending = 3;
+    // Reusable 512×512 canvases for capture/mask
+    this._captureCanvas = document.createElement('canvas');
+    this._captureCanvas.width = 512;
+    this._captureCanvas.height = 512;
+    this._captureCtx = this._captureCanvas.getContext('2d');
+    this._maskCanvas = document.createElement('canvas');
+    this._maskCanvas.width = 512;
+    this._maskCanvas.height = 512;
+    this._maskCtx = this._maskCanvas.getContext('2d');
+    // Result temp canvas (sized to stamp)
+    this._resultCanvas = document.createElement('canvas');
+    this._resultCtx = this._resultCanvas.getContext('2d');
+    // Continuous mode timer
+    this._lastStampTime = 0;
+    this._lastStampX = null;
+    this._lastStampY = null;
+  }
+
+  /**
+   * Capture a square region from the canvas centered at (cx, cy), resized to 512×512.
+   * @param {number} cx - Center X in canvas coords
+   * @param {number} cy - Center Y in canvas coords
+   * @param {number} size - Region size in canvas pixels
+   * @param {string} source - 'visible' or 'active'
+   * @returns {HTMLCanvasElement} 512×512 captured image
+   */
+  captureRegion(cx, cy, size, source) {
+    const app = this.app;
+    const half = size / 2;
+    const sx = cx - half, sy = cy - half;
+    const ctx = this._captureCtx;
+    ctx.clearRect(0, 0, 512, 512);
+
+    if (source === 'active') {
+      const layer = app.getActiveLayer();
+      const dpr = app.DPR;
+      ctx.drawImage(layer.canvas,
+        sx * dpr, sy * dpr, size * dpr, size * dpr,
+        0, 0, 512, 512);
+    } else {
+      // Visible composite — use the composite display canvas
+      const dpr = app.DPR;
+      ctx.drawImage(app.compositeCanvas,
+        sx * dpr, sy * dpr, size * dpr, size * dpr,
+        0, 0, 512, 512);
+    }
+    return this._captureCanvas;
+  }
+
+  /**
+   * Build a 512×512 circular soft-edged mask (white = inpaint area).
+   * @param {number} feather - Feather width in 512-space pixels (0 = hard edge)
+   * @returns {HTMLCanvasElement} 512×512 mask
+   */
+  buildMask(feather) {
+    const ctx = this._maskCtx;
+    ctx.clearRect(0, 0, 512, 512);
+    const cx = 256, cy = 256;
+    const outerR = 220; // leave some border for context
+    const innerR = Math.max(0, outerR - feather);
+
+    if (feather > 0) {
+      const grad = ctx.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
+      grad.addColorStop(0, '#fff');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 512, 512);
+      // Fill solid inner circle
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return this._maskCanvas;
+  }
+
+  /**
+   * Stamp a result image onto the active layer at (cx, cy) with the given size.
+   * Uses the mask to blend edges via globalCompositeOperation.
+   */
+  stampResult(resultImg, cx, cy, targetSize) {
+    const app = this.app;
+    const layer = app.getActiveLayer();
+    const ctx = layer.ctx;
+    const half = targetSize / 2;
+
+    // Draw result image clipped by circular mask
+    const rc = this._resultCanvas;
+    const rctx = this._resultCtx;
+    rc.width = targetSize;
+    rc.height = targetSize;
+    rctx.clearRect(0, 0, targetSize, targetSize);
+
+    // Draw circular clip path
+    rctx.save();
+    rctx.beginPath();
+    rctx.arc(targetSize / 2, targetSize / 2, targetSize / 2, 0, Math.PI * 2);
+    rctx.clip();
+    rctx.drawImage(resultImg, 0, 0, targetSize, targetSize);
+    rctx.restore();
+
+    // Stamp onto layer (use symmetry if enabled)
+    const points = app.getSymmetryPoints(cx, cy);
+    for (const pt of points) {
+      ctx.drawImage(rc, pt.x - half, pt.y - half, targetSize, targetSize);
+    }
+
+    layer.dirty = true;
+    app.compositeAllLayers();
+  }
+
+  /**
+   * Convert a canvas to a base64 data URL.
+   */
+  _canvasToB64(canvas) {
+    return canvas.toDataURL('image/png');
+  }
+
+  /**
+   * Request an AI-generated stamp from the server, or fall back to placeholder.
+   */
+  _requestStamp(cx, cy, p) {
+    const stampSize = p.aiStampSize || 80;
+    const feather = p.maskFeather || 20;
+    const source = p.aiInputSource || 'visible';
+    const server = this.app.aiServer;
+
+    // Capture + mask (always needed)
+    this.captureRegion(cx, cy, stampSize, source);
+    this.buildMask(feather);
+
+    if (!server || server.state !== 'connected') {
+      // Fallback: placeholder stamp
+      this._placeholderStamp(cx, cy, p);
+      return;
+    }
+
+    // Drop oldest pending if at cap
+    if (this._pending.length >= this._maxPending) {
+      this._pending.shift();
+    }
+
+    const imageB64 = this._canvasToB64(this._captureCanvas);
+    const maskB64 = this._canvasToB64(this._maskCanvas);
+
+    const seed = p.aiRandomSeed ? -1 : (p.aiSeed || 42);
+
+    const entry = {
+      x: cx, y: cy, stampSize,
+      startTime: performance.now(),
+      promise: server.inpaint({
+        imageBase64: imageB64,
+        maskBase64: maskB64,
+        prompt: p.aiPrompt || '',
+        negativePrompt: p.aiNegPrompt || '',
+        steps: p.aiSteps || 2,
+        strength: p.aiStrength ?? 0.8,
+        guidanceScale: p.aiGuidance ?? 7.5,
+        seed,
+      }).then(result => {
+        entry.result = result;
+      }).catch(err => {
+        entry.error = err;
+      }),
+      result: null,
+      error: null,
+    };
+    this._pending.push(entry);
+  }
+
+  /**
+   * Generate a placeholder stamp (no server / offline fallback).
+   */
+  _placeholderStamp(cx, cy, p) {
+    const stampSize = p.aiStampSize || 80;
+
+    // Create a visible placeholder: solid color fill + crosshatch
+    const tc = document.createElement('canvas');
+    tc.width = 512; tc.height = 512;
+    const tctx = tc.getContext('2d');
+
+    // Solid fill with primary color
+    tctx.globalAlpha = 0.35;
+    tctx.fillStyle = p.color || '#4a7af5';
+    tctx.fillRect(0, 0, 512, 512);
+
+    // Visible crosshatch pattern to indicate placeholder
+    tctx.globalAlpha = 0.5;
+    tctx.strokeStyle = '#ffffff';
+    tctx.lineWidth = 1.5;
+    for (let i = -512; i < 1024; i += 20) {
+      tctx.beginPath(); tctx.moveTo(i, 0); tctx.lineTo(i + 512, 512); tctx.stroke();
+      tctx.beginPath(); tctx.moveTo(i, 512); tctx.lineTo(i + 512, 0); tctx.stroke();
+    }
+    tctx.globalAlpha = 1;
+
+    this.stampResult(tc, cx, cy, stampSize);
+  }
+
+  onDown(x, y, pressure) {
+    const p = this.app.getP();
+
+    // Push undo
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+
+    // Stamp immediately
+    this._requestStamp(x, y, p);
+    this._lastStampX = x;
+    this._lastStampY = y;
+    this._lastStampTime = performance.now();
+  }
+
+  onMove(x, y, pressure) {
+    const p = this.app.getP();
+    const mode = p.aiMode || 'continuous';
+    if (mode !== 'continuous') return;
+
+    const dx = x - (this._lastStampX ?? x);
+    const dy = y - (this._lastStampY ?? y);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    // Spacing slider controls % of stamp size between centres
+    const spacing = (p.aiStampSize || 80) * ((p.aiInterval || 30) / 100);
+
+    if (dist >= spacing) {
+      this._requestStamp(x, y, p);
+      this._lastStampX = x;
+      this._lastStampY = y;
+    }
+  }
+
+  onUp(x, y) {
+    this._lastStampX = null;
+    this._lastStampY = null;
+  }
+
+  onFrame(elapsed) {
+    // Process completed server responses
+    const done = [];
+    for (let i = this._pending.length - 1; i >= 0; i--) {
+      const entry = this._pending[i];
+      if (entry.result) {
+        // Decode and stamp the AI-generated image
+        const img = new Image();
+        img.onload = () => {
+          this.stampResult(img, entry.x, entry.y, entry.stampSize);
+        };
+        img.src = entry.result.imageBase64.startsWith('data:')
+          ? entry.result.imageBase64
+          : 'data:image/png;base64,' + entry.result.imageBase64;
+        done.push(i);
+      } else if (entry.error) {
+        // Log error via toast, remove entry
+        this.app.showToast('⚠ AI: ' + (entry.error.message || 'Generation failed'));
+        done.push(i);
+      }
+    }
+    // Remove processed entries (reverse order to keep indices valid)
+    for (const i of done) {
+      this._pending.splice(i, 1);
+    }
+  }
+
+  taperFrame(t, p) {
+    // AI brush doesn't support taper
+  }
+
+  drawOverlay(ctx, p) {
+    const app = this.app;
+    // Draw stamp preview circle at cursor
+    const stampSize = p.aiStampSize || 80;
+    ctx.strokeStyle = 'rgba(74,122,245,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(app.leaderX, app.leaderY, stampSize / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw pending stamp indicators
+    for (const pend of this._pending) {
+      const elapsed = performance.now() - pend.startTime;
+      const pulse = 0.3 + 0.3 * Math.sin(elapsed / 200);
+      ctx.fillStyle = `rgba(74,122,245,${pulse})`;
+      ctx.beginPath();
+      ctx.arc(pend.x, pend.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  getStatusInfo() {
+    const pending = this._pending.length;
+    return pending > 0 ? `AI | Pending: ${pending}` : 'AI | Ready';
+  }
+
+  deactivate() {
+    this._queue = [];
+    this._pending = [];
+    this._lastStampX = null;
+    this._lastStampY = null;
+  }
+}
