@@ -91,7 +91,7 @@ Follow these conventions when modifying the codebase:
 Add the visible UI and a stub brush that stamps **placeholder** content (captured region with a tint) to prove the capture → mask → stamp pipeline works without a running server.
 
 Key tasks:
-1. Add `<button data-brush="ai">` to the brush dropdown in `index.html`
+1. Add `<option value="ai">AI Diffusion</option>` (or `<button data-brush="ai">`) to the brush dropdown in `index.html`
 2. Create `AIDiffusionBrush` class in `brushes.js` with full brush interface
 3. Add AI Setup Modal HTML in `index.html` and wire logic in `ui.js`
 4. Add AI sidebar sections (`data-brushes="ai"`) with prompt, sliders, mode controls
@@ -157,7 +157,7 @@ cd server && bash setup.sh
 
 ## Key Decisions (from plan.md)
 
-- **Model**: `stabilityai/sd-turbo` primary (1–4 steps, fast). Fallback: `runwayml/stable-diffusion-inpainting` + LCM.
+- **Model**: `stabilityai/sd-turbo` primary (1–4 steps, fast), selectable via `--model` CLI flag. Fallback: `runwayml/stable-diffusion-inpainting` + LCM.
 - **Inpainting**: Circular soft-edged mask in center of captured region, 512×512.
 - **Queue**: Max 3 pending requests in continuous mode; drop oldest on overflow.
 - **Undo**: One step per stroke (`pushUndo` in `onDown`), consistent with all other brushes.
