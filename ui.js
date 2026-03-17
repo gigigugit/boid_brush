@@ -32,9 +32,10 @@ function toggleSection(header) {
 }
 
 // ── Build a slider row ──────────────────────────────────────
-function sliderRow(id, label, min, max, value, fmt) {
+function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
-  return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>`;
+  const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
+  return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
 }
 
 // ── Build sidebar DOM ───────────────────────────────────────
@@ -111,19 +112,34 @@ export function buildSidebar(app) {
     <!-- Bristle Shape (bristle only) -->
     <div class="section-header" data-brushes="bristle" data-section="bristleShape">Bristle Shape <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="bristle">
-      ${sliderRow('bristleCount', 'Count', 3, 100, 30)}
-      ${sliderRow('bristleWidth', 'Width', 5, 120, 30)}
-      ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2))}
-      ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleCount', 'Count', 1, 200, 30, null, 'Number of individual bristle hairs')}
+      ${sliderRow('bristleWidth', 'Width', 1, 300, 30, null, 'Spread of bristles across brush head')}
+      ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2), 'Random scatter of bristle positions')}
+      ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2), 'How much pressure fans bristles outward')}
     </div>
 
     <!-- Bristle Physics (bristle only) -->
     <div class="section-header" data-brushes="bristle" data-section="bristlePhysics">Bristle Physics <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="bristle">
-      ${sliderRow('bristleLength', 'Length', 5, 80, 20)}
-      ${sliderRow('bristleStiffness', 'Stiffness', 1, 100, 50, v => (v/100).toFixed(2))}
-      ${sliderRow('bristleDamping', 'Damping', 50, 100, 85, v => (v/100).toFixed(2))}
-      ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleLength', 'Length', 1, 200, 20, null, 'How far tips trail behind roots')}
+      ${sliderRow('bristleStiffness', 'Stiffness', 1, 100, 50, v => (v/100).toFixed(2), 'Spring force pulling tips toward roots')}
+      ${sliderRow('bristleDamping', 'Damping', 1, 100, 85, v => (v/100).toFixed(2), 'Velocity decay per frame (higher = less bounce)')}
+      ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2), 'Surface drag opposing tip movement')}
+      ${sliderRow('bristleSmoothing', 'Smoothing', 0, 100, 50, v => (v/100).toFixed(2), 'Curve smoothing between tip positions')}
+      <label>Pencil Angle <input type="checkbox" id="pencilAngle"></label>
+      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle</span>
+      ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
+    </div>
+
+    <!-- Bristle Variance (bristle only) -->
+    <div class="section-header closed" data-brushes="bristle" data-section="bristleVariance">Bristle Variance <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="bristle">
+      ${sliderRow('bSizeVar', 'Size Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle stamp size variation')}
+      ${sliderRow('bOpacityVar', 'Opacity Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle opacity variation')}
+      ${sliderRow('bStiffVar', 'Stiffness Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle spring stiffness variation')}
+      ${sliderRow('bLengthVar', 'Length Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle trail length variation')}
+      ${sliderRow('bFrictionVar', 'Friction Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle surface drag variation')}
+      ${sliderRow('bHueVar', 'Hue Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle color hue shift')}
     </div>
 
     <!-- Bristle Visual (bristle only) -->
@@ -630,6 +646,13 @@ const _sliderFormats = {
   bristleStiffness: v => (v / 100).toFixed(2),
   bristleDamping: v => (v / 100).toFixed(2),
   bristleFriction: v => (v / 100).toFixed(2),
+  bristleSmoothing: v => (v / 100).toFixed(2),
+  bSizeVar: v => (v / 100).toFixed(2),
+  bOpacityVar: v => (v / 100).toFixed(2),
+  bStiffVar: v => (v / 100).toFixed(2),
+  bLengthVar: v => (v / 100).toFixed(2),
+  bFrictionVar: v => (v / 100).toFixed(2),
+  bHueVar: v => (v / 100).toFixed(2),
   // AI diffusion
   aiStrength: v => (v / 100).toFixed(2),
   aiGuidance: v => (v / 10).toFixed(1),

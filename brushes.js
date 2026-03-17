@@ -383,6 +383,16 @@ export class BristleBrush {
     this._lastStampX = [];
     this._lastStampY = [];
     this._offsets = [];  // per-bristle offset from cursor {dx, dy}
+    // Per-bristle position history for Catmull-Rom smoothing (4 points each)
+    this._histX = [];    // array of arrays: [[x0,x1,x2,x3], ...]
+    this._histY = [];
+    // Per-bristle variance multipliers (persistent per stroke)
+    this._varSize = [];
+    this._varOpacity = [];
+    this._varStiffness = [];
+    this._varLength = [];
+    this._varFriction = [];
+    this._varHue = [];
     this._count = 0;
     this._lastCursorX = 0;
     this._lastCursorY = 0;
@@ -404,6 +414,14 @@ export class BristleBrush {
     this._lastStampX = new Array(count);
     this._lastStampY = new Array(count);
     this._offsets = new Array(count);
+    this._histX = new Array(count);
+    this._histY = new Array(count);
+    this._varSize = new Array(count);
+    this._varOpacity = new Array(count);
+    this._varStiffness = new Array(count);
+    this._varLength = new Array(count);
+    this._varFriction = new Array(count);
+    this._varHue = new Array(count);
 
     const width = p.bristleWidth;
     const spread = p.bristleSpread;
@@ -427,6 +445,17 @@ export class BristleBrush {
       this._velY[i] = 0;
       this._lastStampX[i] = undefined;
       this._lastStampY[i] = undefined;
+      // Initialize position history with spawn position
+      this._histX[i] = [this._tipX[i], this._tipX[i], this._tipX[i], this._tipX[i]];
+      this._histY[i] = [this._tipY[i], this._tipY[i], this._tipY[i], this._tipY[i]];
+      // Generate persistent per-bristle variance multipliers (centered around 1.0)
+      // Variance 0→no variation, 1→range [0.1, 1.9] clamped to avoid zero/negative
+      this._varSize[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bSizeVar);
+      this._varOpacity[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bOpacityVar);
+      this._varStiffness[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bStiffVar);
+      this._varLength[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bLengthVar);
+      this._varFriction[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bFrictionVar);
+      this._varHue[i] = (Math.random() - 0.5) * 2 * p.bHueVar * 60; // ±60° at max
     }
   }
 
@@ -458,6 +487,11 @@ export class BristleBrush {
     const length = p.bristleLength;
 
     for (let i = 0; i < this._count; i++) {
+      // Apply per-bristle variance
+      const iStiff = stiffness * this._varStiffness[i];
+      const iLen = length * this._varLength[i];
+      const iFric = friction * this._varFriction[i];
+
       // Rest position = root position offset by bristle length in stroke direction
       const restX = this._rootX[i];
       const restY = this._rootY[i];
@@ -465,16 +499,15 @@ export class BristleBrush {
       // Spring force toward rest position
       const dx = restX - this._tipX[i];
       const dy = restY - this._tipY[i];
-      const dist = Math.sqrt(dx * dx + dy * dy);
 
       // The tip wants to stay at a distance of `length` from root in the
       // trailing direction, but also return if stretched too far
-      let fx = dx * stiffness;
-      let fy = dy * stiffness;
+      let fx = dx * iStiff;
+      let fy = dy * iStiff;
 
       // Surface friction: opposes velocity
-      fx -= this._velX[i] * friction;
-      fy -= this._velY[i] * friction;
+      fx -= this._velX[i] * iFric;
+      fy -= this._velY[i] * iFric;
 
       // Update velocity with damping
       this._velX[i] = (this._velX[i] + fx * dt) * damping;
@@ -493,7 +526,7 @@ export class BristleBrush {
       this._tipY[i] += this._velY[i] * dt;
 
       // Constrain: tip can't be further than bristleLength * 2 from root
-      const maxDist = length * 2;
+      const maxDist = iLen * 2;
       const tdx = this._tipX[i] - restX;
       const tdy = this._tipY[i] - restY;
       const tdist = Math.sqrt(tdx * tdx + tdy * tdy);
@@ -504,18 +537,101 @@ export class BristleBrush {
     }
   }
 
-  /** Stamp all bristle tips with interpolation */
+  /** Push current tip positions into the per-bristle history ring */
+  _pushHistory() {
+    for (let i = 0; i < this._count; i++) {
+      const hx = this._histX[i];
+      const hy = this._histY[i];
+      hx[0] = hx[1]; hx[1] = hx[2]; hx[2] = hx[3]; hx[3] = this._tipX[i];
+      hy[0] = hy[1]; hy[1] = hy[2]; hy[2] = hy[3]; hy[3] = this._tipY[i];
+    }
+  }
+
+  /** Catmull-Rom interpolation between p1 and p2 using p0 and p3 as tangent guides */
+  static _catmullRom(p0, p1, p2, p3, t) {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (
+      (2 * p1) +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+    );
+  }
+
+  /** Shift a color string by a hue offset. Returns hex color. */
+  static _shiftHue(color, hueDeg) {
+    if (hueDeg === 0) return color;
+    // Parse hex color
+    const r = parseInt(color.slice(1, 3), 16) / 255;
+    const g = parseInt(color.slice(3, 5), 16) / 255;
+    const b = parseInt(color.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    let h = 0, s = 0;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else h = ((r - g) / d + 4) / 6;
+    }
+    h = ((h * 360 + hueDeg) % 360 + 360) % 360 / 360;
+    // HSL to RGB
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    let rr, gg, bb;
+    if (s === 0) { rr = gg = bb = l; }
+    else {
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      rr = hue2rgb(p, q, h + 1/3);
+      gg = hue2rgb(p, q, h);
+      bb = hue2rgb(p, q, h - 1/3);
+    }
+    const toHex = v => {
+      const c = Math.round(Math.min(1, Math.max(0, v)) * 255);
+      return c < 16 ? '0' + c.toString(16) : c.toString(16);
+    };
+    return '#' + toHex(rr) + toHex(gg) + toHex(bb);
+  }
+
+  /** Stamp all bristle tips with Catmull-Rom smoothed interpolation */
   _stampBristles(stampCtx, p, opScale) {
     const app = this.app;
+    const smoothing = p.bristleSmoothing;
     for (let i = 0; i < this._count; i++) {
-      const tx = this._tipX[i];
-      const ty = this._tipY[i];
+      // Smoothed tip position: blend between raw tip and Catmull-Rom midpoint
+      const hx = this._histX[i];
+      const hy = this._histY[i];
+      const rawX = this._tipX[i];
+      const rawY = this._tipY[i];
+      // Catmull-Rom evaluated at t=0.5 between hist[1] and hist[2]
+      const smoothX = smoothing > 0
+        ? rawX * (1 - smoothing) + BristleBrush._catmullRom(hx[0], hx[1], hx[2], hx[3], 0.5) * smoothing
+        : rawX;
+      const smoothY = smoothing > 0
+        ? rawY * (1 - smoothing) + BristleBrush._catmullRom(hy[0], hy[1], hy[2], hy[3], 0.5) * smoothing
+        : rawY;
+      const tx = smoothX;
+      const ty = smoothY;
 
-      let sz = p.stampSize;
-      let op = p.stampOpacity * opScale;
+      let sz = p.stampSize * this._varSize[i];
+      let op = p.stampOpacity * opScale * this._varOpacity[i];
       if (p.pressureSize) sz *= (0.3 + 0.7 * this._pressure);
       if (p.pressureOpacity) op *= (0.3 + 0.7 * this._pressure);
       op = Math.min(op, 1);
+
+      // Apply per-bristle hue variance
+      const color = this._varHue[i] !== 0
+        ? BristleBrush._shiftHue(p.color, this._varHue[i])
+        : p.color;
 
       // Interpolation: fill gaps between previous and current position
       const step = p.stampSeparation > 0
@@ -531,12 +647,15 @@ export class BristleBrush {
         if (dist < step) continue; // accumulate distance
 
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        // Linear interpolation between smoothed endpoints; the Catmull-Rom
+        // smoothing already determined tx/ty — filling stamps linearly avoids
+        // endpoint-mismatch gaps that caused the "dotted line" artifact.
         for (let j = 1; j <= n; j++) {
           const t = j / n;
-          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, p.color, op);
+          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
         }
       } else {
-        app.symStamp(stampCtx, tx, ty, sz, p.color, op);
+        app.symStamp(stampCtx, tx, ty, sz, color, op);
       }
 
       this._lastStampX[i] = tx;
@@ -549,7 +668,12 @@ export class BristleBrush {
     this._pressure = pressure;
     this._lastCursorX = x;
     this._lastCursorY = y;
-    this._strokeDir = 0;
+    // Initialize direction from pencil azimuth if available, else 0
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+      this._strokeDir = this.app.azimuth;
+    } else {
+      this._strokeDir = 0;
+    }
     this._active = true;
     this.app.strokeFrame = 0;
 
@@ -565,18 +689,31 @@ export class BristleBrush {
   onMove(x, y, pressure) {
     if (!this._active) return;
     this._pressure = pressure;
+    const p = this.app.getP();
 
-    // Update stroke direction from cursor movement
+    // Compute movement-derived direction
     const dx = x - this._lastCursorX;
     const dy = y - this._lastCursorY;
     const dist = Math.sqrt(dx * dx + dy * dy);
+
+    let moveDir = this._strokeDir;
     if (dist > 1) {
-      // Smooth direction change
       const newDir = Math.atan2(dy, dx);
       const diff = newDir - this._strokeDir;
-      // Normalize angle difference to [-PI, PI]
       const wrapped = ((diff + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      this._strokeDir += wrapped * 0.3; // smooth blend
+      moveDir = this._strokeDir + wrapped * 0.3;
+    }
+
+    // Blend with pencil azimuth when enabled and pen is tilted
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+      const pencilDir = this.app.azimuth;
+      const blend = p.pencilBlend; // 0 = all movement, 1 = all pencil
+      // Normalize angle difference for blending
+      const diff = pencilDir - moveDir;
+      const wrapped = ((diff + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      this._strokeDir = moveDir + wrapped * blend;
+    } else {
+      this._strokeDir = moveDir;
     }
 
     this._lastCursorX = x;
@@ -601,6 +738,9 @@ export class BristleBrush {
     for (let s = 0; s < subSteps; s++) {
       this._stepPhysics(p, dt / subSteps);
     }
+
+    // Push tip positions into history for smoothing
+    this._pushHistory();
 
     app.strokeFrame++;
 
@@ -631,19 +771,35 @@ export class BristleBrush {
     const dt = 1 / 60;
     this._stepPhysics(p, dt);
 
+    // Push history for smoothing
+    this._pushHistory();
+
     const layer = app.getActiveLayer();
+    const smoothing = p.bristleSmoothing;
 
     // Stamp with fading opacity/size
     for (let i = 0; i < this._count; i++) {
-      const tx = this._tipX[i];
-      const ty = this._tipY[i];
+      const hx = this._histX[i];
+      const hy = this._histY[i];
+      const rawX = this._tipX[i];
+      const rawY = this._tipY[i];
+      const tx = smoothing > 0
+        ? rawX * (1 - smoothing) + BristleBrush._catmullRom(hx[0], hx[1], hx[2], hx[3], 0.5) * smoothing
+        : rawX;
+      const ty = smoothing > 0
+        ? rawY * (1 - smoothing) + BristleBrush._catmullRom(hy[0], hy[1], hy[2], hy[3], 0.5) * smoothing
+        : rawY;
 
-      let sz = p.stampSize;
-      let op = p.stampOpacity;
+      let sz = p.stampSize * this._varSize[i];
+      let op = p.stampOpacity * this._varOpacity[i];
       if (p.taperSize) sz *= curve;
       if (p.taperOpacity) op *= curve;
       op = Math.min(op, 1);
       if (op < 0.005 || sz < 0.5) continue;
+
+      const color = this._varHue[i] !== 0
+        ? BristleBrush._shiftHue(p.color, this._varHue[i])
+        : p.color;
 
       const step = p.stampSeparation > 0
         ? p.stampSeparation
@@ -660,10 +816,10 @@ export class BristleBrush {
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
         for (let j = 1; j <= n; j++) {
           const tt = j / n;
-          app.symStamp(layer.ctx, prevX + dx * tt, prevY + dy * tt, sz, p.color, op);
+          app.symStamp(layer.ctx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
         }
       } else {
-        app.symStamp(layer.ctx, tx, ty, sz, p.color, op);
+        app.symStamp(layer.ctx, tx, ty, sz, color, op);
       }
 
       this._lastStampX[i] = tx;
