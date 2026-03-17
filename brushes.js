@@ -449,12 +449,12 @@ export class BristleBrush {
       this._histX[i] = [this._tipX[i], this._tipX[i], this._tipX[i], this._tipX[i]];
       this._histY[i] = [this._tipY[i], this._tipY[i], this._tipY[i], this._tipY[i]];
       // Generate persistent per-bristle variance multipliers (centered around 1.0)
-      // Variance 0→no variation, 1→full range (0.0 to 2.0)
-      this._varSize[i] = 1 + (Math.random() - 0.5) * 2 * p.bSizeVar;
-      this._varOpacity[i] = 1 + (Math.random() - 0.5) * 2 * p.bOpacityVar;
-      this._varStiffness[i] = 1 + (Math.random() - 0.5) * 2 * p.bStiffVar;
-      this._varLength[i] = 1 + (Math.random() - 0.5) * 2 * p.bLengthVar;
-      this._varFriction[i] = 1 + (Math.random() - 0.5) * 2 * p.bFrictionVar;
+      // Variance 0→no variation, 1→range [0.1, 1.9] clamped to avoid zero/negative
+      this._varSize[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bSizeVar);
+      this._varOpacity[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bOpacityVar);
+      this._varStiffness[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bStiffVar);
+      this._varLength[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bLengthVar);
+      this._varFriction[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bFrictionVar);
       this._varHue[i] = (Math.random() - 0.5) * 2 * p.bHueVar * 60; // ±60° at max
     }
   }
@@ -579,7 +579,8 @@ export class BristleBrush {
     h = ((h * 360 + hueDeg) % 360 + 360) % 360 / 360;
     // HSL to RGB
     const hue2rgb = (p, q, t) => {
-      if (t < 0) t += 1; if (t > 1) t -= 1;
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
       if (t < 1/6) return p + (q - p) * 6 * t;
       if (t < 1/2) return q;
       if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
@@ -594,7 +595,10 @@ export class BristleBrush {
       gg = hue2rgb(p, q, h);
       bb = hue2rgb(p, q, h - 1/3);
     }
-    const toHex = v => { const c = Math.round(Math.min(1, Math.max(0, v)) * 255); return c < 16 ? '0' + c.toString(16) : c.toString(16); };
+    const toHex = v => {
+      const c = Math.round(Math.min(1, Math.max(0, v)) * 255);
+      return c < 16 ? '0' + c.toString(16) : c.toString(16);
+    };
     return '#' + toHex(rr) + toHex(gg) + toHex(bb);
   }
 
