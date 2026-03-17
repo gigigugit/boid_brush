@@ -50,6 +50,10 @@ export class App {
     // Drawing state
     this.isDrawing = false;
     this.pressure = 0.5;
+    this.tiltX = 0;       // stylus tilt in degrees (-90..90)
+    this.tiltY = 0;
+    this.azimuth = 0;     // stylus azimuth in radians (0..2π)
+    this.altitude = Math.PI / 2; // stylus altitude (π/2 = vertical)
     this.leaderX = 0;
     this.leaderY = 0;
     this.undoPushedThisStroke = false;
@@ -519,6 +523,8 @@ export class App {
       bristleSpread: (val('bristleSpread') || 10) / 100 * 10,
       bristleSplay: (val('bristleSplay') || 30) / 100,
       bristleSmoothing: (val('bristleSmoothing') || 50) / 100,
+      pencilAngle: chk('pencilAngle'),
+      pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
@@ -701,6 +707,28 @@ export class App {
     return { x: ux + cx, y: uy + cy };
   }
 
+  /** Extract stylus tilt/azimuth from a PointerEvent and store on this App */
+  _captureTilt(e) {
+    this.tiltX = e.tiltX || 0;
+    this.tiltY = e.tiltY || 0;
+    // Prefer the direct azimuthAngle/altitudeAngle (Safari/WebKit on iPad)
+    if (typeof e.azimuthAngle === 'number') {
+      this.azimuth = e.azimuthAngle;
+      this.altitude = typeof e.altitudeAngle === 'number' ? e.altitudeAngle : Math.PI / 2;
+    } else if (this.tiltX !== 0 || this.tiltY !== 0) {
+      // Compute azimuth from tiltX/tiltY (Pointer Events Level 2 fallback)
+      const tx = this.tiltX * Math.PI / 180;
+      const ty = this.tiltY * Math.PI / 180;
+      this.azimuth = Math.atan2(Math.tan(ty), Math.tan(tx));
+      if (this.azimuth < 0) this.azimuth += Math.PI * 2;
+      // Approximate altitude from tilt magnitude
+      const tiltMag = Math.sqrt(tx * tx + ty * ty);
+      this.altitude = Math.max(0, Math.PI / 2 - tiltMag);
+    } else {
+      // Pen is vertical or no tilt data — leave previous values
+    }
+  }
+
   _onPointerDown(e) {
     e.preventDefault();
     // Track active pointers for multi-touch detection
@@ -713,6 +741,7 @@ export class App {
     this.interactionCanvas.setPointerCapture(e.pointerId);
     const { x, y } = this._getEventCoords(e);
     this.pressure = e.pressure || 0.5;
+    this._captureTilt(e);
     this.leaderX = x;
     this.leaderY = y;
     this.isDrawing = true;
@@ -731,6 +760,7 @@ export class App {
     if (!this.isDrawing) {
       const { x, y } = this._getEventCoords(e);
       this.pressure = e.pressure || 0.5;
+      this._captureTilt(e);
       this.leaderX = x;
       this.leaderY = y;
       return;
@@ -743,6 +773,7 @@ export class App {
     for (const pe of events) {
       const { x, y } = this._getEventCoords(pe);
       this.pressure = pe.pressure || 0.5;
+      this._captureTilt(pe);
       this.leaderX = x;
       this.leaderY = y;
       if (brush) brush.onMove(x, y, this.pressure);

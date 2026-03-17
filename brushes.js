@@ -668,7 +668,12 @@ export class BristleBrush {
     this._pressure = pressure;
     this._lastCursorX = x;
     this._lastCursorY = y;
-    this._strokeDir = 0;
+    // Initialize direction from pencil azimuth if available, else 0
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+      this._strokeDir = this.app.azimuth;
+    } else {
+      this._strokeDir = 0;
+    }
     this._active = true;
     this.app.strokeFrame = 0;
 
@@ -684,18 +689,31 @@ export class BristleBrush {
   onMove(x, y, pressure) {
     if (!this._active) return;
     this._pressure = pressure;
+    const p = this.app.getP();
 
-    // Update stroke direction from cursor movement
+    // Compute movement-derived direction
     const dx = x - this._lastCursorX;
     const dy = y - this._lastCursorY;
     const dist = Math.sqrt(dx * dx + dy * dy);
+
+    let moveDir = this._strokeDir;
     if (dist > 1) {
-      // Smooth direction change
       const newDir = Math.atan2(dy, dx);
       const diff = newDir - this._strokeDir;
-      // Normalize angle difference to [-PI, PI]
       const wrapped = ((diff + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      this._strokeDir += wrapped * 0.3; // smooth blend
+      moveDir = this._strokeDir + wrapped * 0.3;
+    }
+
+    // Blend with pencil azimuth when enabled and pen is tilted
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+      const pencilDir = this.app.azimuth;
+      const blend = p.pencilBlend; // 0 = all movement, 1 = all pencil
+      // Normalize angle difference for blending
+      const diff = pencilDir - moveDir;
+      const wrapped = ((diff + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      this._strokeDir = moveDir + wrapped * blend;
+    } else {
+      this._strokeDir = moveDir;
     }
 
     this._lastCursorX = x;
