@@ -50,6 +50,7 @@ export class App {
     // Drawing state
     this.isDrawing = false;
     this.pressure = 0.5;
+    this._rawPressure = 0.5;  // unsmoothed pressure for EMA calculation
     this.tiltX = 0;       // stylus tilt in degrees (-90..90)
     this.tiltY = 0;
     this.azimuth = 0;     // stylus azimuth in radians (0..2π)
@@ -740,7 +741,9 @@ export class App {
 
     this.interactionCanvas.setPointerCapture(e.pointerId);
     const { x, y } = this._getEventCoords(e);
-    this.pressure = e.pressure || 0.5;
+    // Reset EMA pressure at stroke start for immediate response
+    this._rawPressure = e.pressure || 0.5;
+    this.pressure = this._rawPressure;
     this._captureTilt(e);
     this.leaderX = x;
     this.leaderY = y;
@@ -759,7 +762,8 @@ export class App {
     if (this._pinchActive) return;
     if (!this.isDrawing) {
       const { x, y } = this._getEventCoords(e);
-      this.pressure = e.pressure || 0.5;
+      this._rawPressure = e.pressure || 0.5;
+      this.pressure += (this._rawPressure - this.pressure) * 0.25;
       this._captureTilt(e);
       this.leaderX = x;
       this.leaderY = y;
@@ -772,7 +776,9 @@ export class App {
     const events = coalesced.length > 0 ? coalesced : [e];
     for (const pe of events) {
       const { x, y } = this._getEventCoords(pe);
-      this.pressure = pe.pressure || 0.5;
+      // EMA smoothing for pressure: alpha=0.25 gives ~4-sample window
+      this._rawPressure = pe.pressure || 0.5;
+      this.pressure += (this._rawPressure - this.pressure) * 0.25;
       this._captureTilt(pe);
       this.leaderX = x;
       this.leaderY = y;
