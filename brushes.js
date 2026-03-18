@@ -457,6 +457,8 @@ export class BristleBrush {
     this._varLength = [];
     this._varFriction = [];
     this._varHue = [];
+    this._cachedColors = [];   // pre-computed shifted colors per bristle
+    this._cachedBaseColor = null; // base color used for cached colors
     this._count = 0;
     this._lastCursorX = 0;
     this._lastCursorY = 0;
@@ -527,6 +529,11 @@ export class BristleBrush {
       this._varFriction[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bFrictionVar);
       this._varHue[i] = (Math.random() - 0.5) * 2 * p.bHueVar * 60; // ±60° at max
     }
+    // Sort hue offsets so spatially adjacent bristles get similar hues.
+    // This prevents the dotted-line effect caused by random color alternation
+    // between neighboring bristles whose stamps overlap on canvas.
+    this._varHue.sort((a, b) => a - b);
+    this._cachedBaseColor = null; // invalidate color cache
   }
 
   /** Rotate bristle offsets so the spread is perpendicular to stroke direction */
@@ -676,6 +683,19 @@ export class BristleBrush {
     return '#' + toHex(rr) + toHex(gg) + toHex(bb);
   }
 
+  /** Get the cached shifted color for bristle i, rebuilding cache if base color changed */
+  _getColor(i, baseColor) {
+    if (this._cachedBaseColor !== baseColor) {
+      this._cachedBaseColor = baseColor;
+      for (let k = 0; k < this._count; k++) {
+        this._cachedColors[k] = this._varHue[k] !== 0
+          ? BristleBrush._shiftHue(baseColor, this._varHue[k])
+          : baseColor;
+      }
+    }
+    return this._cachedColors[i];
+  }
+
   /** Stamp all bristle tips using EMA-smoothed positions */
   _stampBristles(stampCtx, p, opScale) {
     const app = this.app;
@@ -691,10 +711,8 @@ export class BristleBrush {
       if (p.pressureOpacity) op *= (0.3 + 0.7 * pres);
       op = Math.min(op, 1);
 
-      // Apply per-bristle hue variance
-      const color = this._varHue[i] !== 0
-        ? BristleBrush._shiftHue(p.color, this._varHue[i])
-        : p.color;
+      // Apply per-bristle hue variance (cached per color change)
+      const color = this._getColor(i, p.color);
 
       // Interpolation: fill gaps between previous and current position
       const step = p.stampSeparation > 0
@@ -850,9 +868,7 @@ export class BristleBrush {
       op = Math.min(op, 1);
       if (op < 0.005 || sz < 0.5) continue;
 
-      const color = this._varHue[i] !== 0
-        ? BristleBrush._shiftHue(p.color, this._varHue[i])
-        : p.color;
+      const color = this._getColor(i, p.color);
 
       const step = p.stampSeparation > 0
         ? p.stampSeparation
