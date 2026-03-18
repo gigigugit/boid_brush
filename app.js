@@ -302,6 +302,7 @@ export class App {
     if (!this._canvasTextureData) return 0;
     const w = this._canvasTextureW;
     const h = this._canvasTextureH;
+    if (w <= 0 || h <= 0 || !scale) return 0;
     // Tile position (scale modifies UV coords); double-mod handles negative coords
     const ix = ((Math.floor(x / scale) % w) + w) % w;
     const iy = ((Math.floor(y / scale) % h) + h) % h;
@@ -1071,11 +1072,13 @@ export class App {
 
   stampCircle(ctx, x, y, size, color, opacity) {
     // Modulate opacity by canvas texture if enabled
-    const p = this.getP();
-    if (p.canvasTextureEnabled && this._canvasTextureData && p.canvasTextureStrength > 0) {
-      const grey = this._sampleTexture(x, y, p.canvasTextureScale);
-      // grey 0=black(valley→more paint), 1=white(peak→less paint)
-      opacity *= 1 - p.canvasTextureStrength * grey;
+    if (this._canvasTextureData) {
+      const p = this._cachedP || this.getP();
+      if (p.canvasTextureEnabled && p.canvasTextureStrength > 0) {
+        const grey = this._sampleTexture(x, y, p.canvasTextureScale);
+        // grey 0=black(valley→more paint), 1=white(peak→less paint)
+        opacity *= 1 - p.canvasTextureStrength * grey;
+      }
     }
     ctx.beginPath();
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);

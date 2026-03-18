@@ -159,9 +159,9 @@ export function buildSidebar(app) {
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
     </div>
 
-    <!-- Canvas Texture (simple/pixel only) -->
-    <div class="section-header closed" data-brushes="simple" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="simple">
+    <!-- Canvas Texture -->
+    <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
       <label>Enable <input type="checkbox" id="canvasTextureEnabled"></label>
       <div style="display:flex;gap:4px;align-items:center;margin:4px 0;">
         <button id="btnUploadTexture" style="flex:1;">📂 Load Texture</button>
