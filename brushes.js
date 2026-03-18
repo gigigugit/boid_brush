@@ -491,6 +491,7 @@ export class BristleBrush {
     this._varLength = new Array(count);
     this._varFriction = new Array(count);
     this._varHue = new Array(count);
+    this._cachedColors = new Array(count);
 
     const width = p.bristleWidth;
     const spread = p.bristleSpread;
