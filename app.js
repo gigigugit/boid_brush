@@ -302,7 +302,7 @@ export class App {
     if (!this._canvasTextureData) return 0;
     const w = this._canvasTextureW;
     const h = this._canvasTextureH;
-    if (w <= 0 || h <= 0 || !scale) return 0;
+    if (w <= 0 || h <= 0 || scale <= 0) return 0;
     // Tile position (scale modifies UV coords); double-mod handles negative coords
     const ix = ((Math.floor(x / scale) % w) + w) % w;
     const iy = ((Math.floor(y / scale) % h) + h) % h;
