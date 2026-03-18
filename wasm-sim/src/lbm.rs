@@ -58,15 +58,14 @@ const PIGMENT_DECAY: f32 = 0.0005;
 /// LBM lattice velocities are O(0.1) but we want visually significant flow.
 const VELOCITY_AMP: f32 = 4.0;
 
+/// Minimum density threshold below which a cell is treated as vacuum.
+const MIN_DENSITY: f32 = 1e-6;
+
 /// Maximum allowed lattice velocity magnitude (LBM stability: |u| << cs = 1/√3)
 const MAX_VELOCITY: f32 = 0.15;
 
 /// Blend strength when injecting boid momentum into f distributions (0–1)
 const MOMENTUM_BLEND: f32 = 0.12;
-
-// =============================================================================
-// LbmGrid
-// =============================================================================
 
 /// D2Q9 Lattice Boltzmann grid with integrated passive scalar (pigment) transport.
 pub struct LbmGrid {
@@ -183,12 +182,14 @@ impl LbmGrid {
         }
         rho = rho.max(0.01);
 
-        // Blend distribution toward equilibrium with boid velocity
+        // Blend distribution toward equilibrium with boid velocity:
+        // f_new = f * (1 - MOMENTUM_BLEND) + f_eq * MOMENTUM_BLEND
         let uu = lux * lux + luy * luy;
         for q in 0..9 {
             let eu = EX[q] as f32 * lux + EY[q] as f32 * luy;
             let feq = W[q] * rho * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * uu);
             let fv = self.f[q * n + cidx];
+            // mul_add(a, b): equivalent to fv * (1.0 - MOMENTUM_BLEND) + feq * MOMENTUM_BLEND
             self.f[q * n + cidx] = fv.mul_add(1.0 - MOMENTUM_BLEND, feq * MOMENTUM_BLEND);
         }
     }
@@ -240,7 +241,7 @@ impl LbmGrid {
                 }
 
                 // Guard against near-zero density (vacuum cells)
-                if rho < 1e-6 {
+                if rho < MIN_DENSITY {
                     for q in 0..9 {
                         self.f_scratch[q * n + cidx] = W[q];
                     }
@@ -322,7 +323,7 @@ impl LbmGrid {
                     ux += fv * EX[q] as f32;
                     uy += fv * EY[q] as f32;
                 }
-                if rho > 1e-6 {
+                if rho > MIN_DENSITY {
                     ux /= rho;
                     uy /= rho;
                 }
@@ -333,7 +334,8 @@ impl LbmGrid {
 
                 let advected = self.bilinear_pigment(src_fx, src_fy);
 
-                // Laplacian diffusion
+                // Laplacian diffusion with zero-flux (Neumann) boundary:
+                // at edges, mirror the central cell value so the gradient is zero.
                 let p_l = if x > 0 { self.pigment[cidx - 1] } else { self.pigment[cidx] };
                 let p_r = if x < w - 1 { self.pigment[cidx + 1] } else { self.pigment[cidx] };
                 let p_u = if y > 0 { self.pigment[cidx - w] } else { self.pigment[cidx] };
