@@ -8,6 +8,11 @@
 
 import { BoidSim } from './wasm-bridge.js';
 
+// Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
+const BRISTLE_PRESSURE_ALPHA = 0.15;
+// Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
+const MAX_SMOOTH_DAMP = 0.92;
+
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
   let r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -63,6 +68,9 @@ export class BoidBrush {
     this._preStrokeCanvas = null;
     this._preStrokeCtx = null;
     this._flatActive = false;
+    // Sensing state
+    this._sensingFrame = 0;
+    this._sensingUploaded = false;
   }
 
   async init() {
@@ -78,6 +86,43 @@ export class BoidBrush {
     }
   }
 
+  /** Capture canvas luminance and upload to WASM for pixel sensing */
+  _uploadSensing(p) {
+    const imgData = this.app.buildSensingData();
+    const rgba = imgData.data;
+    const w = imgData.width;
+    const h = imgData.height;
+    // Downsample to 1/4 resolution to reduce cost
+    const dw = Math.max(1, w >> 2);
+    const dh = Math.max(1, h >> 2);
+    const lum = new Uint8Array(dw * dh);
+    const channel = p.sensingChannel || 'darkness';
+    const sx = w / dw;
+    const sy = h / dh;
+    for (let dy = 0; dy < dh; dy++) {
+      const srcY = Math.min(Math.floor(dy * sy), h - 1);
+      for (let dx = 0; dx < dw; dx++) {
+        const srcX = Math.min(Math.floor(dx * sx), w - 1);
+        const idx = (srcY * w + srcX) * 4;
+        const r = rgba[idx], g = rgba[idx + 1], b = rgba[idx + 2], a = rgba[idx + 3];
+        let v;
+        if (channel === 'red') v = r;
+        else if (channel === 'green') v = g;
+        else if (channel === 'blue') v = b;
+        else if (channel === 'alpha') v = a;
+        else if (channel === 'lightness') v = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        else if (channel === 'saturation') {
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          v = mx === 0 ? 0 : Math.round(((mx - mn) / mx) * 255);
+        }
+        else /* 'darkness' */ v = 255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        lum[dy * dw + dx] = v;
+      }
+    }
+    this.sim.uploadSensing(lum, dw, dh);
+    this._sensingUploaded = true;
+  }
+
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
@@ -90,6 +135,13 @@ export class BoidBrush {
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     this.app.strokeFrame = 0;
+    this._sensingFrame = 0;
+    this._sensingUploaded = false;
+
+    // Upload sensing data at stroke start if enabled
+    if (p.sensingEnabled) {
+      this._uploadSensing(p);
+    }
 
     // Push undo on first stroke frame that actually stamps
     if (!this.app.undoPushedThisStroke) {
@@ -151,6 +203,15 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     const app = this.app;
+
+    // Periodically re-upload sensing data during long strokes (every 30 frames)
+    if (p.sensingEnabled) {
+      this._sensingFrame++;
+      if (!this._sensingUploaded || this._sensingFrame >= 30) {
+        this._uploadSensing(p);
+        this._sensingFrame = 0;
+      }
+    }
 
     // Write sim params and step
     this.sim.writeParams(p, app.leaderX, app.leaderY, elapsed);
@@ -383,6 +444,9 @@ export class BristleBrush {
     this._lastStampX = [];
     this._lastStampY = [];
     this._offsets = [];  // per-bristle offset from cursor {dx, dy}
+    // Per-bristle EMA-smoothed positions for stamp output
+    this._smoothX = [];
+    this._smoothY = [];
     // Per-bristle position history for Catmull-Rom smoothing (4 points each)
     this._histX = [];    // array of arrays: [[x0,x1,x2,x3], ...]
     this._histY = [];
@@ -393,11 +457,14 @@ export class BristleBrush {
     this._varLength = [];
     this._varFriction = [];
     this._varHue = [];
+    this._cachedColors = [];   // pre-computed shifted colors per bristle
+    this._cachedBaseColor = null; // base color used for cached colors
     this._count = 0;
     this._lastCursorX = 0;
     this._lastCursorY = 0;
     this._strokeDir = 0; // stroke direction angle
     this._pressure = 0.5;
+    this._smoothPressure = 0.5; // EMA-smoothed pressure for gradual transitions
     this._active = false;
   }
 
@@ -414,6 +481,8 @@ export class BristleBrush {
     this._lastStampX = new Array(count);
     this._lastStampY = new Array(count);
     this._offsets = new Array(count);
+    this._smoothX = new Array(count);
+    this._smoothY = new Array(count);
     this._histX = new Array(count);
     this._histY = new Array(count);
     this._varSize = new Array(count);
@@ -422,6 +491,7 @@ export class BristleBrush {
     this._varLength = new Array(count);
     this._varFriction = new Array(count);
     this._varHue = new Array(count);
+    this._cachedColors = new Array(count);
 
     const width = p.bristleWidth;
     const spread = p.bristleSpread;
@@ -445,6 +515,9 @@ export class BristleBrush {
       this._velY[i] = 0;
       this._lastStampX[i] = undefined;
       this._lastStampY[i] = undefined;
+      // Initialize EMA-smoothed positions at spawn
+      this._smoothX[i] = this._tipX[i];
+      this._smoothY[i] = this._tipY[i];
       // Initialize position history with spawn position
       this._histX[i] = [this._tipX[i], this._tipX[i], this._tipX[i], this._tipX[i]];
       this._histY[i] = [this._tipY[i], this._tipY[i], this._tipY[i], this._tipY[i]];
@@ -457,6 +530,11 @@ export class BristleBrush {
       this._varFriction[i] = Math.max(0.1, 1 + (Math.random() - 0.5) * 2 * p.bFrictionVar);
       this._varHue[i] = (Math.random() - 0.5) * 2 * p.bHueVar * 60; // ±60° at max
     }
+    // Sort hue offsets so spatially adjacent bristles get similar hues.
+    // This prevents the dotted-line effect caused by random color alternation
+    // between neighboring bristles whose stamps overlap on canvas.
+    this._varHue.sort((a, b) => a - b);
+    this._cachedBaseColor = null; // invalidate color cache
   }
 
   /** Rotate bristle offsets so the spread is perpendicular to stroke direction */
@@ -464,7 +542,7 @@ export class BristleBrush {
     const angle = this._strokeDir;
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
-    const pressureSplay = p.bristleSplay * (0.5 + 0.5 * this._pressure);
+    const pressureSplay = p.bristleSplay * (0.5 + 0.5 * this._smoothPressure);
 
     for (let i = 0; i < this._count; i++) {
       const off = this._offsets[i];
@@ -537,13 +615,17 @@ export class BristleBrush {
     }
   }
 
-  /** Push current tip positions into the per-bristle history ring */
-  _pushHistory() {
+  /** Push current tip positions into the per-bristle history ring and update EMA-smoothed positions */
+  _pushHistory(smoothing) {
+    const alpha = smoothing > 0 ? 1 - smoothing * MAX_SMOOTH_DAMP : 1;
     for (let i = 0; i < this._count; i++) {
       const hx = this._histX[i];
       const hy = this._histY[i];
       hx[0] = hx[1]; hx[1] = hx[2]; hx[2] = hx[3]; hx[3] = this._tipX[i];
       hy[0] = hy[1]; hy[1] = hy[2]; hy[2] = hy[3]; hy[3] = this._tipY[i];
+      // Update per-bristle EMA-smoothed positions
+      this._smoothX[i] += (this._tipX[i] - this._smoothX[i]) * alpha;
+      this._smoothY[i] += (this._tipY[i] - this._smoothY[i]) * alpha;
     }
   }
 
@@ -602,36 +684,36 @@ export class BristleBrush {
     return '#' + toHex(rr) + toHex(gg) + toHex(bb);
   }
 
-  /** Stamp all bristle tips with Catmull-Rom smoothed interpolation */
+  /** Get the cached shifted color for bristle i, rebuilding cache if base color changed */
+  _getColor(i, baseColor) {
+    if (this._cachedBaseColor !== baseColor) {
+      this._cachedBaseColor = baseColor;
+      for (let k = 0; k < this._count; k++) {
+        this._cachedColors[k] = this._varHue[k] !== 0
+          ? BristleBrush._shiftHue(baseColor, this._varHue[k])
+          : baseColor;
+      }
+    }
+    return this._cachedColors[i];
+  }
+
+  /** Stamp all bristle tips using EMA-smoothed positions */
   _stampBristles(stampCtx, p, opScale) {
     const app = this.app;
-    const smoothing = p.bristleSmoothing;
+    const pres = this._smoothPressure;
     for (let i = 0; i < this._count; i++) {
-      // Smoothed tip position: blend between raw tip and Catmull-Rom midpoint
-      const hx = this._histX[i];
-      const hy = this._histY[i];
-      const rawX = this._tipX[i];
-      const rawY = this._tipY[i];
-      // Catmull-Rom evaluated at t=0.5 between hist[1] and hist[2]
-      const smoothX = smoothing > 0
-        ? rawX * (1 - smoothing) + BristleBrush._catmullRom(hx[0], hx[1], hx[2], hx[3], 0.5) * smoothing
-        : rawX;
-      const smoothY = smoothing > 0
-        ? rawY * (1 - smoothing) + BristleBrush._catmullRom(hy[0], hy[1], hy[2], hy[3], 0.5) * smoothing
-        : rawY;
-      const tx = smoothX;
-      const ty = smoothY;
+      // Use per-bristle EMA-smoothed position (updated in _pushHistory)
+      const tx = this._smoothX[i];
+      const ty = this._smoothY[i];
 
       let sz = p.stampSize * this._varSize[i];
       let op = p.stampOpacity * opScale * this._varOpacity[i];
-      if (p.pressureSize) sz *= (0.3 + 0.7 * this._pressure);
-      if (p.pressureOpacity) op *= (0.3 + 0.7 * this._pressure);
+      if (p.pressureSize) sz *= (0.3 + 0.7 * pres);
+      if (p.pressureOpacity) op *= (0.3 + 0.7 * pres);
       op = Math.min(op, 1);
 
-      // Apply per-bristle hue variance
-      const color = this._varHue[i] !== 0
-        ? BristleBrush._shiftHue(p.color, this._varHue[i])
-        : p.color;
+      // Apply per-bristle hue variance (cached per color change)
+      const color = this._getColor(i, p.color);
 
       // Interpolation: fill gaps between previous and current position
       const step = p.stampSeparation > 0
@@ -647,9 +729,6 @@ export class BristleBrush {
         if (dist < step) continue; // accumulate distance
 
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        // Linear interpolation between smoothed endpoints; the Catmull-Rom
-        // smoothing already determined tx/ty — filling stamps linearly avoids
-        // endpoint-mismatch gaps that caused the "dotted line" artifact.
         for (let j = 1; j <= n; j++) {
           const t = j / n;
           app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
@@ -666,6 +745,7 @@ export class BristleBrush {
   onDown(x, y, pressure) {
     const p = this.app.getP();
     this._pressure = pressure;
+    this._smoothPressure = pressure; // Initialize smoothed pressure at stroke start
     this._lastCursorX = x;
     this._lastCursorY = y;
     // Initialize direction from pencil azimuth if available, else 0
@@ -689,6 +769,7 @@ export class BristleBrush {
   onMove(x, y, pressure) {
     if (!this._active) return;
     this._pressure = pressure;
+    this._smoothPressure += (pressure - this._smoothPressure) * BRISTLE_PRESSURE_ALPHA;
     const p = this.app.getP();
 
     // Compute movement-derived direction
@@ -739,8 +820,8 @@ export class BristleBrush {
       this._stepPhysics(p, dt / subSteps);
     }
 
-    // Push tip positions into history for smoothing
-    this._pushHistory();
+    // Push tip positions into history and update EMA-smoothed positions
+    this._pushHistory(p.bristleSmoothing);
 
     app.strokeFrame++;
 
@@ -748,8 +829,8 @@ export class BristleBrush {
     const skipN = p.skipStamps || 0;
     if (app.strokeFrame <= skipN) {
       for (let i = 0; i < this._count; i++) {
-        this._lastStampX[i] = this._tipX[i];
-        this._lastStampY[i] = this._tipY[i];
+        this._lastStampX[i] = this._smoothX[i];
+        this._lastStampY[i] = this._smoothY[i];
       }
       return;
     }
@@ -771,24 +852,15 @@ export class BristleBrush {
     const dt = 1 / 60;
     this._stepPhysics(p, dt);
 
-    // Push history for smoothing
-    this._pushHistory();
+    // Push history and update EMA-smoothed positions
+    this._pushHistory(p.bristleSmoothing);
 
     const layer = app.getActiveLayer();
-    const smoothing = p.bristleSmoothing;
 
     // Stamp with fading opacity/size
     for (let i = 0; i < this._count; i++) {
-      const hx = this._histX[i];
-      const hy = this._histY[i];
-      const rawX = this._tipX[i];
-      const rawY = this._tipY[i];
-      const tx = smoothing > 0
-        ? rawX * (1 - smoothing) + BristleBrush._catmullRom(hx[0], hx[1], hx[2], hx[3], 0.5) * smoothing
-        : rawX;
-      const ty = smoothing > 0
-        ? rawY * (1 - smoothing) + BristleBrush._catmullRom(hy[0], hy[1], hy[2], hy[3], 0.5) * smoothing
-        : rawY;
+      const tx = this._smoothX[i];
+      const ty = this._smoothY[i];
 
       let sz = p.stampSize * this._varSize[i];
       let op = p.stampOpacity * this._varOpacity[i];
@@ -797,9 +869,7 @@ export class BristleBrush {
       op = Math.min(op, 1);
       if (op < 0.005 || sz < 0.5) continue;
 
-      const color = this._varHue[i] !== 0
-        ? BristleBrush._shiftHue(p.color, this._varHue[i])
-        : p.color;
+      const color = this._getColor(i, p.color);
 
       const step = p.stampSeparation > 0
         ? p.stampSeparation
