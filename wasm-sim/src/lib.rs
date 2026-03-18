@@ -20,6 +20,7 @@
 
 mod boid;
 mod forces;
+mod lbm;
 mod noise;
 mod params;
 mod sensing;
@@ -205,6 +206,95 @@ pub fn update_sensing() {
     // No-op: the data is already in place. This function exists as a
     // synchronization point — if we add threading later, this would
     // include a memory fence.
+}
+
+// =============================================================================
+// LBM (Lattice Boltzmann Method) fluid simulation exports
+// =============================================================================
+
+/// Initialise the D2Q9 LBM fluid grid at lattice resolution `lbm_w × lbm_h`.
+///
+/// The LBM grid is independent of the agent pool and operates at a lower
+/// resolution than the canvas (e.g., canvas_w/4 × canvas_h/4) for real-time
+/// performance.  After calling this, `step()` will automatically inject boid
+/// momentum/pigment into the LBM grid each frame.
+///
+/// ```js
+/// // Typically called once after sim_init():
+/// lbm_init(Math.floor(canvas.width / 4), Math.floor(canvas.height / 4));
+/// ```
+#[wasm_bindgen]
+pub fn lbm_init(lbm_w: u32, lbm_h: u32) {
+    with_sim(|sim| {
+        sim.lbm = Some(lbm::LbmGrid::new(
+            lbm_w as usize,
+            lbm_h as usize,
+            sim.width,
+            sim.height,
+        ));
+    });
+}
+
+/// Advance the LBM fluid simulation by one step **without** running boid physics.
+///
+/// Useful for running extra LBM sub-steps per boid step, or for stepping the
+/// fluid independently.  Boid momentum/pigment injection is **not** performed
+/// by this function — use `step()` for the integrated boid + LBM update.
+#[wasm_bindgen]
+pub fn step_lbm() {
+    with_sim(|sim| {
+        if let Some(ref mut lbm) = sim.lbm {
+            lbm.step();
+        }
+    });
+}
+
+/// Reset the LBM grid to equilibrium and clear all pigment.
+/// Call at the start of a new stroke to remove residual fluid state.
+#[wasm_bindgen]
+pub fn lbm_reset() {
+    with_sim(|sim| {
+        if let Some(ref mut lbm) = sim.lbm {
+            lbm.reset();
+        }
+    });
+}
+
+/// Pointer to the pigment Float32Array (one f32 per cell, in [0, 1]).
+///
+/// ```js
+/// const ptr = get_pigment_ptr();
+/// const w   = get_lbm_width();
+/// const h   = get_lbm_height();
+/// const pig = new Float32Array(wasm.memory.buffer, ptr, w * h);
+/// ```
+///
+/// Returns null (0) if LBM has not been initialised.
+#[wasm_bindgen]
+pub fn get_pigment_ptr() -> *const f32 {
+    with_sim(|sim| {
+        if let Some(ref lbm) = sim.lbm {
+            lbm.get_pigment_ptr()
+        } else {
+            core::ptr::null()
+        }
+    })
+}
+
+/// LBM grid width in lattice cells.  Returns 0 if LBM is not initialised.
+#[wasm_bindgen]
+pub fn get_lbm_width() -> u32 {
+    with_sim(|sim| {
+        sim.lbm.as_ref().map_or(0, |l| l.width as u32)
+    })
+}
+
+/// LBM grid height in lattice cells.  Returns 0 if LBM is not initialised.
+#[wasm_bindgen]
+pub fn get_lbm_height() -> u32 {
+    with_sim(|sim| {
+        sim.lbm.as_ref().map_or(0, |l| l.height as u32)
+    })
 }
 
 // =============================================================================

@@ -11,10 +11,14 @@
 
 use crate::boid::*;
 use crate::forces::{self, Rng};
+use crate::lbm::LbmGrid;
 use crate::noise::SimplexNoise;
 use crate::params::{SimParams, PARAMS_LEN};
 use crate::sensing::{self, SensingMap};
 use crate::spawn::{self, SpawnShape};
+
+/// Pigment deposited per boid per frame (scaled by the boid's opacity multiplier).
+const INK_DEPOSIT: f32 = 0.06;
 
 pub struct Simulation {
     /// Flat agent buffer: agent i occupies buf[i*STRIDE .. (i+1)*STRIDE].
@@ -36,6 +40,8 @@ pub struct Simulation {
     pub noise: SimplexNoise,
     /// Pixel sensing map.
     pub sensing: SensingMap,
+    /// LBM fluid grid (None until lbm_init() is called from JS).
+    pub lbm: Option<LbmGrid>,
     /// Scratch buffer for spawn shape positions.
     spawn_scratch: Vec<(f32, f32)>,
 }
@@ -55,6 +61,7 @@ impl Simulation {
             rng: Rng::new(seed),
             noise: SimplexNoise::new(seed as f32),
             sensing: SensingMap::new(),
+            lbm: None,
             spawn_scratch: Vec::with_capacity(256),
         }
     }
@@ -251,6 +258,24 @@ impl Simulation {
             }
             let agent_ms = ms * self.buf[base + SPD_M];
             forces::integrate(&mut self.buf, base, agent_ms, p.damping);
+        }
+
+        // Phase 4: Boid → LBM injection and LBM physics step.
+        // Each live boid deposits pigment and momentum into the fluid grid.
+        if let Some(ref mut lbm) = self.lbm {
+            for i in 0..self.agent_count {
+                let base = i * STRIDE;
+                if !has_flag(&self.buf, base, FLAG_ALIVE) {
+                    continue;
+                }
+                let bx = self.buf[base + X];
+                let by = self.buf[base + Y];
+                let bvx = self.buf[base + VX];
+                let bvy = self.buf[base + VY];
+                let om = self.buf[base + OM].clamp(0.0, 1.0);
+                lbm.inject_boid(bx, by, bvx, bvy, INK_DEPOSIT * om);
+            }
+            lbm.step();
         }
     }
 }

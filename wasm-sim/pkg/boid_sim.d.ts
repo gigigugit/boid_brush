@@ -23,6 +23,16 @@ export function get_agent_buffer_ptr(): number;
 export function get_agent_count(): number;
 
 /**
+ * LBM grid height in lattice cells.  Returns 0 if LBM is not initialised.
+ */
+export function get_lbm_height(): number;
+
+/**
+ * LBM grid width in lattice cells.  Returns 0 if LBM is not initialised.
+ */
+export function get_lbm_width(): number;
+
+/**
  * Pointer to the raw f32 params buffer (32 floats = 128 bytes).
  * JS writes directly here, then calls `set_params()` to parse.
  */
@@ -32,6 +42,20 @@ export function get_params_buffer_ptr(): number;
  * Params buffer length in f32 count (32).
  */
 export function get_params_len(): number;
+
+/**
+ * Pointer to the pigment Float32Array (one f32 per cell, in [0, 1]).
+ *
+ * ```js
+ * const ptr = get_pigment_ptr();
+ * const w   = get_lbm_width();
+ * const h   = get_lbm_height();
+ * const pig = new Float32Array(wasm.memory.buffer, ptr, w * h);
+ * ```
+ *
+ * Returns null (0) if LBM has not been initialised.
+ */
+export function get_pigment_ptr(): number;
 
 /**
  * Pointer to the sensing buffer (u8 luminance data).
@@ -51,6 +75,27 @@ export function get_stride(): number;
  * - `w`, `h`: sensing map resolution (typically canvas_w/4 × canvas_h/4).
  */
 export function init_sensing(w: number, h: number): void;
+
+/**
+ * Initialise the D2Q9 LBM fluid grid at lattice resolution `lbm_w × lbm_h`.
+ *
+ * The LBM grid is independent of the agent pool and operates at a lower
+ * resolution than the canvas (e.g., canvas_w/4 × canvas_h/4) for real-time
+ * performance.  After calling this, `step()` will automatically inject boid
+ * momentum/pigment into the LBM grid each frame.
+ *
+ * ```js
+ * // Typically called once after sim_init():
+ * lbm_init(Math.floor(canvas.width / 4), Math.floor(canvas.height / 4));
+ * ```
+ */
+export function lbm_init(lbm_w: number, lbm_h: number): void;
+
+/**
+ * Reset the LBM grid to equilibrium and clear all pigment.
+ * Call at the start of a new stroke to remove residual fluid state.
+ */
+export function lbm_reset(): void;
 
 /**
  * Remove an agent by ID. Uses swap-remove (O(1), may reorder).
@@ -124,6 +169,15 @@ export function spawn_batch(cx: number, cy: number, count: number, shape: number
 export function step(dt: number): void;
 
 /**
+ * Advance the LBM fluid simulation by one step **without** running boid physics.
+ *
+ * Useful for running extra LBM sub-steps per boid step, or for stepping the
+ * fluid independently.  Boid momentum/pigment injection is **not** performed
+ * by this function — use `step()` for the integrated boid + LBM update.
+ */
+export function step_lbm(): void;
+
+/**
  * Tell the simulation that fresh sensing data has been written.
  * (The data was written directly into the buffer at get_sensing_buffer_ptr().)
  */
@@ -136,9 +190,11 @@ export interface InitOutput {
     readonly get_agent_buffer_ptr: () => number;
     readonly get_params_buffer_ptr: () => number;
     readonly get_params_len: () => number;
+    readonly get_pigment_ptr: () => number;
     readonly get_sensing_buffer_ptr: () => number;
     readonly get_stride: () => number;
     readonly init_sensing: (a: number, b: number) => void;
+    readonly lbm_init: (a: number, b: number) => void;
     readonly remove_agent: (a: number) => void;
     readonly sim_init: (a: number, b: number, c: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -146,7 +202,11 @@ export interface InitOutput {
     readonly step: (a: number) => void;
     readonly get_agent_count: () => number;
     readonly clear_agents: () => void;
+    readonly lbm_reset: () => void;
+    readonly get_lbm_height: () => number;
+    readonly get_lbm_width: () => number;
     readonly spawn_agent: (a: number, b: number) => number;
+    readonly step_lbm: () => void;
     readonly set_params: () => void;
 }
 
