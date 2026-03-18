@@ -1090,7 +1090,8 @@ export class App {
       if (p.canvasTextureEnabled && p.canvasTextureStrength > 0) {
         const grey = this._sampleTexture(x, y, p.canvasTextureScale);
         // grey 0=black(valley→more paint), 1=white(peak→less paint)
-        opacity *= 1 - p.canvasTextureStrength * grey;
+        // strength and grey are both 0-1, so product ≤ 1, but clamp for safety
+        opacity *= Math.max(0, 1 - p.canvasTextureStrength * grey);
       }
     }
     ctx.beginPath();
