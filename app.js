@@ -88,6 +88,12 @@ export class App {
     this._paramsDirty = true;
     this._cachedP = null;
 
+    // Canvas texture
+    this._canvasTextureImg = null;   // greyscale HTMLCanvasElement (source tile)
+    this._canvasTextureW = 0;        // source tile pixel width
+    this._canvasTextureH = 0;        // source tile pixel height
+    this._canvasTextureData = null;   // Uint8ClampedArray of greyscale luminance
+
     // Color
     this.primaryEl = document.getElementById('primaryColor');
     this.secondaryEl = document.getElementById('secondaryColor');
@@ -241,6 +247,67 @@ export class App {
     if (this.bgColorEl) this.bgColorEl.value = color;
     this._fillBackgroundLayer();
     this.compositeAllLayers();
+  }
+
+  // ── Canvas texture ─────────────────────────────────────────
+
+  /**
+   * Load a user-supplied image as a greyscale canvas texture tile.
+   * @param {File} file - Image file (PNG, JPEG, etc.)
+   */
+  loadCanvasTexture(file) {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const img = new Image();
+      img.onload = () => {
+        // Draw to a temp canvas and convert to greyscale
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, c.width, c.height);
+        const d = imgData.data;
+        // Greyscale conversion: luminance = 0.299R + 0.587G + 0.114B
+        const grey = new Uint8ClampedArray(c.width * c.height);
+        for (let i = 0; i < grey.length; i++) {
+          const off = i * 4;
+          grey[i] = Math.round(0.299 * d[off] + 0.587 * d[off + 1] + 0.114 * d[off + 2]);
+        }
+        this._canvasTextureW = c.width;
+        this._canvasTextureH = c.height;
+        this._canvasTextureData = grey;
+        this._canvasTextureImg = c;
+        this.showToast('🖼 Texture loaded');
+      };
+      img.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  clearCanvasTexture() {
+    this._canvasTextureImg = null;
+    this._canvasTextureW = 0;
+    this._canvasTextureH = 0;
+    this._canvasTextureData = null;
+    this.showToast('Texture cleared');
+  }
+
+  /**
+   * Sample the greyscale texture value at a canvas position.
+   * Returns 0–1 where 0 = black (valley, holds paint) and 1 = white (peak, rejects paint).
+   * The texture is tiled at the specified scale.
+   */
+  _sampleTexture(x, y, scale) {
+    if (!this._canvasTextureData) return 0;
+    const w = this._canvasTextureW;
+    const h = this._canvasTextureH;
+    // Tile position (scale modifies UV coords)
+    const tx = ((x / scale) % w + w) % w;
+    const ty = ((y / scale) % h + h) % h;
+    const ix = Math.floor(tx) % w;
+    const iy = Math.floor(ty) % h;
+    return this._canvasTextureData[iy * w + ix] / 255;
   }
 
   setActiveLayer(idx) {
@@ -536,6 +603,10 @@ export class App {
       bLengthVar: val('bLengthVar') / 100,
       bFrictionVar: val('bFrictionVar') / 100,
       bHueVar: val('bHueVar') / 100,
+      // Canvas texture
+      canvasTextureEnabled: chk('canvasTextureEnabled'),
+      canvasTextureStrength: val('canvasTextureStrength') / 100,
+      canvasTextureScale: val('canvasTextureScale') / 100 || 1,
       // Color
       color: this.primaryEl.value,
       // AI Diffusion
@@ -1001,6 +1072,13 @@ export class App {
   // ========================================================
 
   stampCircle(ctx, x, y, size, color, opacity) {
+    // Modulate opacity by canvas texture if enabled
+    const p = this.getP();
+    if (p.canvasTextureEnabled && this._canvasTextureData && p.canvasTextureStrength > 0) {
+      const grey = this._sampleTexture(x, y, p.canvasTextureScale);
+      // grey 0=black(valley→more paint), 1=white(peak→less paint)
+      opacity *= 1 - p.canvasTextureStrength * grey;
+    }
     ctx.beginPath();
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
