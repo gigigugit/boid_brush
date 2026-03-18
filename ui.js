@@ -64,19 +64,19 @@ export function buildSidebar(app) {
       ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
       <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
-      <label>Flat Stroke <input type="checkbox" id="flatStroke" checked></label>
+      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
     </div>
 
     <!-- Swarm (boid only) -->
     <div class="section-header" data-brushes="boid" data-section="swarm">Swarm <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid">
-      ${sliderRow('count', 'Count', 3, 200, 25)}
+      ${sliderRow('count', 'Count', 3, 200, 60)}
     </div>
 
     <!-- Forces (boid only) -->
     <div class="section-header" data-brushes="boid" data-section="forces">Forces <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid">
-      ${sliderRow('seek', 'Seek', 0, 100, 40, v => (v/100).toFixed(2))}
+      ${sliderRow('seek', 'Seek', 0, 100, 75, v => (v/100).toFixed(2))}
       ${sliderRow('cohesion', 'Cohesion', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('separation', 'Separation', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('alignment', 'Alignment', 0, 100, 20, v => (v/100).toFixed(2))}
@@ -151,7 +151,7 @@ export function buildSidebar(app) {
     <!-- Stamp -->
     <div class="section-header" data-section="stamp">Stamp <span class="chevron">▼</span></div>
     <div class="section-body">
-      ${sliderRow('stampSize', 'Size', 1, 40, 6)}
+      ${sliderRow('stampSize', 'Size', 1, 40, 10)}
       ${sliderRow('stampOpacity', 'Opacity', 1, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('stampSeparation', 'Separation', 0, 80, 0)}
       ${sliderRow('skipStamps', 'Skip Start', 0, 60, 0)}

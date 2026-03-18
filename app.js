@@ -458,7 +458,7 @@ export class App {
       respawnOnStroke: chk('respawnOnStroke'),
       pressureSpawnRadius: chk('pressureSpawnRadius'),
       // Swarm
-      count: val('count') || 25,
+      count: val('count') || 60,
       // Forces
       seek: val('seek') / 100,
       cohesion: val('cohesion') / 100,
