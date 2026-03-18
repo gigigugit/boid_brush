@@ -94,6 +94,9 @@ export class App {
     this._canvasTextureH = 0;        // source tile pixel height
     this._canvasTextureData = null;   // Uint8ClampedArray of greyscale luminance
 
+    // Internal clipboard buffer (fallback when Clipboard API unavailable)
+    this._clipboardBlob = null;
+
     // Color
     this.primaryEl = document.getElementById('primaryColor');
     this.secondaryEl = document.getElementById('secondaryColor');
@@ -278,9 +281,19 @@ export class App {
         this._canvasTextureH = c.height;
         this._canvasTextureData = grey;
         this._canvasTextureImg = c;
-        this.showToast('🖼 Texture loaded');
+        // Auto-enable texture so the effect is immediately visible
+        const chk = document.getElementById('canvasTextureEnabled');
+        if (chk && !chk.checked) { chk.checked = true; }
+        this._paramsDirty = true;
+        this.showToast('🖼 Texture loaded & enabled');
+      };
+      img.onerror = () => {
+        this.showToast('⚠ Texture load failed — invalid image');
       };
       img.src = evt.target.result;
+    };
+    reader.onerror = () => {
+      this.showToast('⚠ Texture load failed — could not read file');
     };
     reader.readAsDataURL(file);
   }
@@ -1203,46 +1216,76 @@ export class App {
       const canvas = this._compositeFlatCanvas();
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       if (!blob) { this.showToast('⚠ Copy failed'); return; }
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
-      this.showToast('📋 Copied to clipboard');
+      // Always store internally for in-app paste fallback
+      this._clipboardBlob = blob;
+      let clipboardOk = false;
+      try {
+        if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ]);
+          clipboardOk = true;
+        }
+      } catch { /* Clipboard API unavailable or denied */ }
+      this.showToast(clipboardOk ? '📋 Copied to clipboard' : '📋 Copied (in-app only)');
     } catch (err) {
-      this.showToast('⚠ Copy failed — clipboard access denied');
+      this.showToast('⚠ Copy failed');
     }
   }
 
+  /** Shared helper to paste an image blob onto the active layer */
+  _pasteImageBlob(blob) {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      this.pushUndo();
+      const l = this.getActiveLayer();
+      l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
+      l.dirty = true;
+      this.compositeAllLayers();
+      URL.revokeObjectURL(url);
+      this.showToast('📋 Pasted');
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      this.showToast('⚠ Paste failed — invalid image');
+    };
+    img.src = url;
+  }
+
   async pasteFromClipboard() {
+    // Tier 1: try native Clipboard API
     try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        for (const type of item.types) {
-          if (type.startsWith('image/')) {
-            const blob = await item.getType(type);
-            const img = new Image();
-            const url = URL.createObjectURL(blob);
-            img.onload = () => {
-              this.pushUndo();
-              const l = this.getActiveLayer();
-              l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
-              l.dirty = true;
-              this.compositeAllLayers();
-              URL.revokeObjectURL(url);
-              this.showToast('📋 Pasted');
-            };
-            img.onerror = () => {
-              URL.revokeObjectURL(url);
-              this.showToast('⚠ Paste failed — invalid image');
-            };
-            img.src = url;
-            return;
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              this._pasteImageBlob(blob);
+              return;
+            }
           }
         }
       }
-      this.showToast('⚠ No image in clipboard');
-    } catch (err) {
-      this.showToast('⚠ Paste failed — clipboard access denied');
+    } catch { /* Clipboard API unavailable or denied — fall through */ }
+
+    // Tier 2: use internal clipboard buffer (from in-app copy)
+    if (this._clipboardBlob) {
+      this._pasteImageBlob(this._clipboardBlob);
+      return;
     }
+
+    // Tier 3: open a file picker as last resort
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) return;
+      this._pasteImageBlob(file);
+    });
+    input.click();
   }
 
   // ========================================================
