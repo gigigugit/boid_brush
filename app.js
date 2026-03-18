@@ -16,6 +16,8 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
+// Pressure EMA alpha (~4-sample smoothing window for pointer events)
+const PRESSURE_SMOOTH_ALPHA = 0.25;
 
 export class App {
   constructor() {
@@ -763,7 +765,7 @@ export class App {
     if (!this.isDrawing) {
       const { x, y } = this._getEventCoords(e);
       this._rawPressure = e.pressure || 0.5;
-      this.pressure += (this._rawPressure - this.pressure) * 0.25;
+      this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
       this._captureTilt(e);
       this.leaderX = x;
       this.leaderY = y;
@@ -776,9 +778,8 @@ export class App {
     const events = coalesced.length > 0 ? coalesced : [e];
     for (const pe of events) {
       const { x, y } = this._getEventCoords(pe);
-      // EMA smoothing for pressure: alpha=0.25 gives ~4-sample window
       this._rawPressure = pe.pressure || 0.5;
-      this.pressure += (this._rawPressure - this.pressure) * 0.25;
+      this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
       this._captureTilt(pe);
       this.leaderX = x;
       this.leaderY = y;

@@ -8,6 +8,11 @@
 
 import { BoidSim } from './wasm-bridge.js';
 
+// Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
+const BRISTLE_PRESSURE_ALPHA = 0.15;
+// Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
+const MAX_SMOOTH_DAMP = 0.92;
+
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
   let r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -604,8 +609,7 @@ export class BristleBrush {
 
   /** Push current tip positions into the per-bristle history ring and update EMA-smoothed positions */
   _pushHistory(smoothing) {
-    // EMA alpha: smoothing 0 → alpha 1 (no smoothing), smoothing 1 → alpha ~0.08 (heavy)
-    const alpha = smoothing > 0 ? 1 - smoothing * 0.92 : 1;
+    const alpha = smoothing > 0 ? 1 - smoothing * MAX_SMOOTH_DAMP : 1;
     for (let i = 0; i < this._count; i++) {
       const hx = this._histX[i];
       const hy = this._histY[i];
@@ -746,9 +750,7 @@ export class BristleBrush {
   onMove(x, y, pressure) {
     if (!this._active) return;
     this._pressure = pressure;
-    // EMA smoothing for pressure to eliminate choppy transitions
-    // Alpha 0.15 gives ~6-frame smoothing window for gradual changes
-    this._smoothPressure += (pressure - this._smoothPressure) * 0.15;
+    this._smoothPressure += (pressure - this._smoothPressure) * BRISTLE_PRESSURE_ALPHA;
     const p = this.app.getP();
 
     // Compute movement-derived direction
