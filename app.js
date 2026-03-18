@@ -88,6 +88,15 @@ export class App {
     this._paramsDirty = true;
     this._cachedP = null;
 
+    // Canvas texture
+    this._canvasTextureImg = null;   // greyscale HTMLCanvasElement (source tile)
+    this._canvasTextureW = 0;        // source tile pixel width
+    this._canvasTextureH = 0;        // source tile pixel height
+    this._canvasTextureData = null;   // Uint8ClampedArray of greyscale luminance
+
+    // Internal clipboard buffer (fallback when Clipboard API unavailable)
+    this._clipboardBlob = null;
+
     // Color
     this.primaryEl = document.getElementById('primaryColor');
     this.secondaryEl = document.getElementById('secondaryColor');
@@ -241,6 +250,76 @@ export class App {
     if (this.bgColorEl) this.bgColorEl.value = color;
     this._fillBackgroundLayer();
     this.compositeAllLayers();
+  }
+
+  // ── Canvas texture ─────────────────────────────────────────
+
+  /**
+   * Load a user-supplied image as a greyscale canvas texture tile.
+   * @param {File} file - Image file (PNG, JPEG, etc.)
+   */
+  loadCanvasTexture(file) {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const img = new Image();
+      img.onload = () => {
+        // Draw to a temp canvas and convert to greyscale
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, c.width, c.height);
+        const d = imgData.data;
+        // Greyscale conversion: luminance = 0.299R + 0.587G + 0.114B
+        const grey = new Uint8ClampedArray(c.width * c.height);
+        for (let i = 0; i < grey.length; i++) {
+          const off = i * 4;
+          grey[i] = Math.round(0.299 * d[off] + 0.587 * d[off + 1] + 0.114 * d[off + 2]);
+        }
+        this._canvasTextureW = c.width;
+        this._canvasTextureH = c.height;
+        this._canvasTextureData = grey;
+        this._canvasTextureImg = c;
+        // Auto-enable texture so the effect is immediately visible
+        const chk = document.getElementById('canvasTextureEnabled');
+        if (chk && !chk.checked) { chk.checked = true; }
+        this._paramsDirty = true;
+        this.showToast('🖼 Texture loaded & enabled');
+      };
+      img.onerror = () => {
+        this.showToast('⚠ Texture load failed — invalid image');
+      };
+      img.src = evt.target.result;
+    };
+    reader.onerror = () => {
+      this.showToast('⚠ Texture load failed — could not read file');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  clearCanvasTexture() {
+    this._canvasTextureImg = null;
+    this._canvasTextureW = 0;
+    this._canvasTextureH = 0;
+    this._canvasTextureData = null;
+    this.showToast('Texture cleared');
+  }
+
+  /**
+   * Sample the greyscale texture value at a canvas position.
+   * Returns 0–1 where 0 = black (valley, holds paint) and 1 = white (peak, rejects paint).
+   * The texture is tiled at the specified scale.
+   */
+  _sampleTexture(x, y, scale) {
+    if (!this._canvasTextureData) return 0;
+    const w = this._canvasTextureW;
+    const h = this._canvasTextureH;
+    if (w <= 0 || h <= 0 || scale <= 0) return 0;
+    // Tile position (scale modifies UV coords); double-mod handles negative coords
+    const ix = ((Math.floor(x / scale) % w) + w) % w;
+    const iy = ((Math.floor(y / scale) % h) + h) % h;
+    return this._canvasTextureData[iy * w + ix] / 255;
   }
 
   setActiveLayer(idx) {
@@ -536,6 +615,10 @@ export class App {
       bLengthVar: val('bLengthVar') / 100,
       bFrictionVar: val('bFrictionVar') / 100,
       bHueVar: val('bHueVar') / 100,
+      // Canvas texture
+      canvasTextureEnabled: chk('canvasTextureEnabled'),
+      canvasTextureStrength: val('canvasTextureStrength') / 100,
+      canvasTextureScale: val('canvasTextureScale') / 100 || 1,
       // Color
       color: this.primaryEl.value,
       // AI Diffusion
@@ -1001,6 +1084,16 @@ export class App {
   // ========================================================
 
   stampCircle(ctx, x, y, size, color, opacity) {
+    // Modulate opacity by canvas texture if enabled
+    if (this._canvasTextureData) {
+      const p = this._cachedP || this.getP();
+      if (p.canvasTextureEnabled && p.canvasTextureStrength > 0) {
+        const grey = this._sampleTexture(x, y, p.canvasTextureScale);
+        // grey 0=black(valley→more paint), 1=white(peak→less paint)
+        // strength and grey are both 0-1, so product ≤ 1, but clamp for safety
+        opacity *= Math.max(0, 1 - p.canvasTextureStrength * grey);
+      }
+    }
     ctx.beginPath();
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
@@ -1124,46 +1217,76 @@ export class App {
       const canvas = this._compositeFlatCanvas();
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       if (!blob) { this.showToast('⚠ Copy failed'); return; }
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
-      this.showToast('📋 Copied to clipboard');
+      // Always store internally for in-app paste fallback
+      this._clipboardBlob = blob;
+      let clipboardOk = false;
+      try {
+        if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ]);
+          clipboardOk = true;
+        }
+      } catch { /* Clipboard API unavailable or denied */ }
+      this.showToast(clipboardOk ? '📋 Copied to clipboard' : '📋 Copied (in-app only)');
     } catch (err) {
-      this.showToast('⚠ Copy failed — clipboard access denied');
+      this.showToast('⚠ Copy failed');
     }
   }
 
+  /** Shared helper to paste an image blob onto the active layer */
+  _pasteImageBlob(blob) {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      this.pushUndo();
+      const l = this.getActiveLayer();
+      l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
+      l.dirty = true;
+      this.compositeAllLayers();
+      URL.revokeObjectURL(url);
+      this.showToast('📋 Pasted');
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      this.showToast('⚠ Paste failed — invalid image');
+    };
+    img.src = url;
+  }
+
   async pasteFromClipboard() {
+    // Tier 1: try native Clipboard API
     try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        for (const type of item.types) {
-          if (type.startsWith('image/')) {
-            const blob = await item.getType(type);
-            const img = new Image();
-            const url = URL.createObjectURL(blob);
-            img.onload = () => {
-              this.pushUndo();
-              const l = this.getActiveLayer();
-              l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
-              l.dirty = true;
-              this.compositeAllLayers();
-              URL.revokeObjectURL(url);
-              this.showToast('📋 Pasted');
-            };
-            img.onerror = () => {
-              URL.revokeObjectURL(url);
-              this.showToast('⚠ Paste failed — invalid image');
-            };
-            img.src = url;
-            return;
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              this._pasteImageBlob(blob);
+              return;
+            }
           }
         }
       }
-      this.showToast('⚠ No image in clipboard');
-    } catch (err) {
-      this.showToast('⚠ Paste failed — clipboard access denied');
+    } catch { /* Clipboard API unavailable or denied — fall through */ }
+
+    // Tier 2: use internal clipboard buffer (from in-app copy)
+    if (this._clipboardBlob) {
+      this._pasteImageBlob(this._clipboardBlob);
+      return;
     }
+
+    // Tier 3: open a file picker as last resort
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) return;
+      this._pasteImageBlob(file);
+    });
+    input.click();
   }
 
   // ========================================================

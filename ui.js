@@ -159,6 +159,19 @@ export function buildSidebar(app) {
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
     </div>
 
+    <!-- Canvas Texture -->
+    <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      <label>Enable <input type="checkbox" id="canvasTextureEnabled"></label>
+      <div style="display:flex;gap:4px;align-items:center;margin:4px 0;">
+        <button id="btnUploadTexture" style="flex:1;">📂 Load Texture</button>
+        <button id="btnClearTexture" style="flex-shrink:0;">✕</button>
+      </div>
+      <span id="textureFileName" class="slider-desc">No texture loaded</span>
+      ${sliderRow('canvasTextureStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2), 'How strongly the texture modulates paint deposit')}
+      ${sliderRow('canvasTextureScale', 'Scale', 10, 500, 100, v => (v/100).toFixed(1) + '×', 'Tile scale of the texture pattern')}
+    </div>
+
     <!-- Symmetry (closed by default) -->
     <div class="section-header closed" data-section="symmetry">Symmetry <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
@@ -328,6 +341,25 @@ export function buildSidebar(app) {
   document.getElementById('btnLayerDown')?.addEventListener('click', () => { app.moveLayerDown(); _refreshLayers(app); });
   document.getElementById('btnMergeDown')?.addEventListener('click', () => { app.mergeDown(); _refreshLayers(app); });
   document.getElementById('btnFlatten')?.addEventListener('click', () => { app.flattenAll(); _refreshLayers(app); });
+
+  // ── Canvas texture upload ──
+  const _texFileInput = document.createElement('input');
+  _texFileInput.type = 'file';
+  _texFileInput.accept = 'image/*';
+  _texFileInput.addEventListener('change', () => {
+    const file = _texFileInput.files[0];
+    if (!file) return;
+    app.loadCanvasTexture(file);
+    const nameEl = document.getElementById('textureFileName');
+    if (nameEl) nameEl.textContent = file.name;
+    _texFileInput.value = '';
+  });
+  document.getElementById('btnUploadTexture')?.addEventListener('click', () => _texFileInput.click());
+  document.getElementById('btnClearTexture')?.addEventListener('click', () => {
+    app.clearCanvasTexture();
+    const nameEl = document.getElementById('textureFileName');
+    if (nameEl) nameEl.textContent = 'No texture loaded';
+  });
 
   // Layer blend & opacity
   document.getElementById('layerBlend')?.addEventListener('change', () => {
