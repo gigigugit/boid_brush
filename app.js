@@ -1112,8 +1112,9 @@ export class App {
       if (sampled.a > 0) {
         if (p.smudgeOnly) {
           // Smudge-only: stamp purely with the sampled canvas colour
+          // Use area-averaged alpha so stamps fade at edges near transparent pixels
           color = `rgb(${sampled.r},${sampled.g},${sampled.b})`;
-          opacity = sampled.a / 255;
+          opacity = this._sampleSmudgeAreaAlpha(x, y, size);
         } else {
           const brush = this._parseColorToRGB(color);
           const s = p.smudge * (sampled.a / 255); // scale by sampled alpha
@@ -1180,6 +1181,41 @@ export class App {
     const off = (py * w + px) * 4;
     const d = this._smudgeImageData.data;
     return { r: d[off], g: d[off + 1], b: d[off + 2], a: d[off + 3] };
+  }
+
+  /**
+   * Sample the average alpha within a circular stamp footprint on the active layer.
+   * Returns 0–1. Samples 9 points (center + 8 surrounding at half-radius) for
+   * performance, giving a smooth fade-out at edges near transparent pixels.
+   */
+  _sampleSmudgeAreaAlpha(x, y, size) {
+    const layer = this.getActiveLayer();
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    if (!this._smudgeImageData) {
+      this._smudgeImageData = layer.ctx.getImageData(0, 0, w, h);
+    }
+    const dpr = this.DPR;
+    const r = size / 2 * 0.5; // sample at half-radius
+    const d = this._smudgeImageData.data;
+    // 9 sample offsets: center + 4 cardinal + 4 diagonal at half-radius
+    const offsets = [
+      [0, 0],
+      [r, 0], [-r, 0], [0, r], [0, -r],
+      [r * 0.707, r * 0.707], [-r * 0.707, r * 0.707],
+      [r * 0.707, -r * 0.707], [-r * 0.707, -r * 0.707],
+    ];
+    let sum = 0;
+    let count = 0;
+    for (const [dx, dy] of offsets) {
+      const px = Math.round((x + dx) * dpr);
+      const py = Math.round((y + dy) * dpr);
+      if (px >= 0 && py >= 0 && px < w && py < h) {
+        sum += d[(py * w + px) * 4 + 3]; // alpha channel
+        count++;
+      }
+    }
+    return count > 0 ? (sum / count) / 255 : 0;
   }
 
   getSymmetryPoints(x, y) {
