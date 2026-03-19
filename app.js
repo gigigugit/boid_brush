@@ -1137,6 +1137,9 @@ export class App {
     ctx.globalAlpha = opacity;
     ctx.fill();
     ctx.globalAlpha = 1;
+    // Invalidate smudge cache so the next stamp in this frame sees our changes
+    // (needed because SimpleBrush/EraserBrush defer compositeAllLayers to onFrame)
+    if (this._smudgeImageData) this._smudgeImageData = null;
   }
 
   /**

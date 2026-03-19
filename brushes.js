@@ -985,21 +985,13 @@ export class SimpleBrush {
     this._lastStampX = null;
     this._lastStampY = null;
     // Flush any pending composite so the final stamps are visible
-    if (this._needsComposite) {
-      this.app.getActiveLayer().dirty = true;
-      this.app.compositeAllLayers();
-      this._needsComposite = false;
-    }
+    this._flushComposite();
     this._active = false;
   }
 
   onFrame() {
     if (!this._active) return;
-    if (this._needsComposite) {
-      this.app.getActiveLayer().dirty = true;
-      this.app.compositeAllLayers();
-      this._needsComposite = false;
-    }
+    this._flushComposite();
   }
 
   taperFrame(t, p) {
@@ -1010,6 +1002,14 @@ export class SimpleBrush {
   _markDirty() {
     this.app.getActiveLayer().dirty = true;
     this._needsComposite = true;
+  }
+
+  /** Flush pending composite if needed */
+  _flushComposite() {
+    if (!this._needsComposite) return;
+    this.app.getActiveLayer().dirty = true;
+    this.app.compositeAllLayers();
+    this._needsComposite = false;
   }
 
   _stamp(x, y, pressure) {
