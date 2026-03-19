@@ -154,6 +154,7 @@ export function buildSidebar(app) {
       ${sliderRow('stampSize', 'Size', 1, 40, 10)}
       ${sliderRow('stampOpacity', 'Opacity', 1, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('stampSeparation', 'Separation', 0, 80, 0)}
+      ${sliderRow('smudge', 'Smudge', 0, 100, 0, v => (v/100).toFixed(2), 'Blend with existing canvas colour')}
       ${sliderRow('skipStamps', 'Skip Start', 0, 60, 0)}
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
@@ -668,6 +669,7 @@ const _sliderFormats = {
   maxSpeed: v => (v / 2).toFixed(1),
   damping: v => (v / 100).toFixed(2),
   stampOpacity: v => (v / 100).toFixed(2),
+  smudge: v => (v / 100).toFixed(2),
   taperCurve: v => (v / 100).toFixed(1),
   sensingStrength: v => (v / 100).toFixed(2),
   sensingThreshold: v => (v / 100).toFixed(2),
