@@ -74,12 +74,16 @@ void main(){
   vec4 layer=texture(uLayer,vUV);
   float sa=layer.a*uOpacity;
   if(sa<0.001){oColor=base;return;}
+  float ra=sa+base.a*(1.0-sa);
+  if(uMode==0){
+    // Source-over: premultiplied Porter-Duff (no division, no precision loss)
+    oColor=vec4(layer.rgb*uOpacity+base.rgb*(1.0-sa),ra);return;}
+  // Non-trivial blend modes: un-premultiply for blend function
   vec3 Cb=base.a>0.001?base.rgb/base.a:vec3(0.0);
   vec3 Cs=layer.a>0.001?layer.rgb/layer.a:vec3(0.0);
-  vec3 Cr=(uMode==0)?Cs:blend(Cb,Cs,uMode);
-  float ra=sa+base.a*(1.0-sa);
+  vec3 Cr=blend(Cb,Cs,uMode);
+  // Output premultiplied (numerator of compositing formula)
   vec3 co=sa*(1.0-base.a)*Cs+sa*base.a*Cr+(1.0-sa)*base.a*Cb;
-  co=ra>0.001?co/ra:vec3(0.0);
   oColor=vec4(co,ra);}`;
 
 const GL_CHECKER_FRAG = `#version 300 es
@@ -176,7 +180,7 @@ export class Compositor {
 
   _initGL() {
     const gl = this.canvas.getContext('webgl2', {
-      alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true
+      alpha: true, premultipliedAlpha: true, preserveDrawingBuffer: true
     });
     if (!gl) { console.warn('WebGL2 unavailable — CPU compositing'); return; }
     this.gl = gl;
