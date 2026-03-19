@@ -94,6 +94,15 @@ export class App {
     this._canvasTextureH = 0;        // source tile pixel height
     this._canvasTextureData = null;   // Uint8ClampedArray of greyscale luminance
 
+    // Smudge: cached image data for colour sampling (invalidated each composite)
+    this._smudgeImageData = null;
+
+    // Reusable 1×1 canvas for CSS color parsing (smudge)
+    this._colorParseCanvas = document.createElement('canvas');
+    this._colorParseCanvas.width = 1;
+    this._colorParseCanvas.height = 1;
+    this._colorParseCtx = this._colorParseCanvas.getContext('2d');
+
     // Internal clipboard buffer (fallback when Clipboard API unavailable)
     this._clipboardBlob = null;
 
@@ -438,6 +447,7 @@ export class App {
   }
 
   compositeAllLayers() {
+    this._smudgeImageData = null; // invalidate smudge cache
     this.compositor?.composite(this.layers, this.W, this.H);
   }
 
@@ -572,6 +582,8 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
+      smudge: val('smudge') / 100,
+      smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
@@ -1084,9 +1096,9 @@ export class App {
   // ========================================================
 
   stampCircle(ctx, x, y, size, color, opacity) {
+    const p = this._cachedP || this.getP();
     // Modulate opacity by canvas texture if enabled
     if (this._canvasTextureData) {
-      const p = this._cachedP || this.getP();
       if (p.canvasTextureEnabled && p.canvasTextureStrength > 0) {
         const grey = this._sampleTexture(x, y, p.canvasTextureScale);
         // grey 0=black(valley→more paint), 1=white(peak→less paint)
@@ -1094,12 +1106,116 @@ export class App {
         opacity *= Math.max(0, 1 - p.canvasTextureStrength * grey);
       }
     }
+    // Smudge: blend brush colour with existing canvas colour
+    if (p.smudge > 0) {
+      const sampled = this._sampleSmudgeColor(x, y);
+      if (sampled.a > 0) {
+        if (p.smudgeOnly) {
+          // Smudge-only: stamp purely with the sampled canvas colour
+          // Use area-averaged alpha so stamps fade at edges near transparent pixels
+          color = `rgb(${sampled.r},${sampled.g},${sampled.b})`;
+          opacity = this._sampleSmudgeAreaAlpha(x, y, size);
+        } else {
+          const brush = this._parseColorToRGB(color);
+          const s = p.smudge * (sampled.a / 255); // scale by sampled alpha
+          const r = Math.round(brush.r * (1 - s) + sampled.r * s);
+          const g = Math.round(brush.g * (1 - s) + sampled.g * s);
+          const b = Math.round(brush.b * (1 - s) + sampled.b * s);
+          color = `rgb(${r},${g},${b})`;
+        }
+      } else if (p.smudgeOnly) {
+        // Nothing on canvas to smudge — skip stamp entirely
+        return;
+      }
+    } else if (p.smudgeOnly) {
+      // Smudge is 0 but smudgeOnly is on — nothing to do
+      return;
+    }
     ctx.beginPath();
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.globalAlpha = opacity;
     ctx.fill();
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * Parse any CSS colour string to {r, g, b}.
+   * Fast path for #rrggbb / #rgb hex; canvas fallback for hsl(), rgb(), etc.
+   */
+  _parseColorToRGB(color) {
+    if (color[0] === '#') {
+      let hex = color.slice(1);
+      if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+      const n = parseInt(hex, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    // Fallback: render into 1×1 canvas and read back
+    const c = this._colorParseCtx;
+    c.clearRect(0, 0, 1, 1);
+    c.fillStyle = color;
+    c.fillRect(0, 0, 1, 1);
+    const d = c.getImageData(0, 0, 1, 1).data;
+    return { r: d[0], g: d[1], b: d[2] };
+  }
+
+  /**
+   * Sample the active layer colour at CSS coordinate (x, y).
+   * Uses a cached ImageData snapshot that is invalidated each compositeAllLayers().
+   */
+  _sampleSmudgeColor(x, y) {
+    const layer = this.getActiveLayer();
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    // Lazy-capture once per composite cycle
+    if (!this._smudgeImageData) {
+      this._smudgeImageData = layer.ctx.getImageData(0, 0, w, h);
+    }
+    // Convert CSS coordinates to canvas bitmap pixels (canvas is scaled by DPR)
+    const dpr = this.DPR;
+    const px = Math.round(x * dpr);
+    const py = Math.round(y * dpr);
+    if (px < 0 || py < 0 || px >= w || py >= h) {
+      return { r: 0, g: 0, b: 0, a: 0 };
+    }
+    const off = (py * w + px) * 4;
+    const d = this._smudgeImageData.data;
+    return { r: d[off], g: d[off + 1], b: d[off + 2], a: d[off + 3] };
+  }
+
+  /**
+   * Sample the average alpha within a circular stamp footprint on the active layer.
+   * Returns 0–1. Samples 9 points (center + 8 surrounding at half-radius) for
+   * performance, giving a smooth fade-out at edges near transparent pixels.
+   */
+  _sampleSmudgeAreaAlpha(x, y, size) {
+    const layer = this.getActiveLayer();
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    if (!this._smudgeImageData) {
+      this._smudgeImageData = layer.ctx.getImageData(0, 0, w, h);
+    }
+    const dpr = this.DPR;
+    const r = size / 2 * 0.5; // sample at half-radius
+    const d = this._smudgeImageData.data;
+    // 9 sample offsets: center + 4 cardinal + 4 diagonal at half-radius
+    const offsets = [
+      [0, 0],
+      [r, 0], [-r, 0], [0, r], [0, -r],
+      [r * 0.707, r * 0.707], [-r * 0.707, r * 0.707],
+      [r * 0.707, -r * 0.707], [-r * 0.707, -r * 0.707],
+    ];
+    let sum = 0;
+    let count = 0;
+    for (const [dx, dy] of offsets) {
+      const px = Math.round((x + dx) * dpr);
+      const py = Math.round((y + dy) * dpr);
+      if (px >= 0 && py >= 0 && px < w && py < h) {
+        sum += d[(py * w + px) * 4 + 3]; // alpha channel
+        count++;
+      }
+    }
+    return count > 0 ? (sum / count) / 255 : 0;
   }
 
   getSymmetryPoints(x, y) {
