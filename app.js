@@ -583,6 +583,7 @@ export class App {
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
       smudge: val('smudge') / 100,
+      smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
@@ -1109,13 +1110,25 @@ export class App {
     if (p.smudge > 0) {
       const sampled = this._sampleSmudgeColor(x, y);
       if (sampled.a > 0) {
-        const brush = this._parseColorToRGB(color);
-        const s = p.smudge * (sampled.a / 255); // scale by sampled alpha
-        const r = Math.round(brush.r * (1 - s) + sampled.r * s);
-        const g = Math.round(brush.g * (1 - s) + sampled.g * s);
-        const b = Math.round(brush.b * (1 - s) + sampled.b * s);
-        color = `rgb(${r},${g},${b})`;
+        if (p.smudgeOnly) {
+          // Smudge-only: stamp purely with the sampled canvas colour
+          color = `rgb(${sampled.r},${sampled.g},${sampled.b})`;
+          opacity = sampled.a / 255;
+        } else {
+          const brush = this._parseColorToRGB(color);
+          const s = p.smudge * (sampled.a / 255); // scale by sampled alpha
+          const r = Math.round(brush.r * (1 - s) + sampled.r * s);
+          const g = Math.round(brush.g * (1 - s) + sampled.g * s);
+          const b = Math.round(brush.b * (1 - s) + sampled.b * s);
+          color = `rgb(${r},${g},${b})`;
+        }
+      } else if (p.smudgeOnly) {
+        // Nothing on canvas to smudge — skip stamp entirely
+        return;
       }
+    } else if (p.smudgeOnly) {
+      // Smudge is 0 but smudgeOnly is on — nothing to do
+      return;
     }
     ctx.beginPath();
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);

@@ -155,6 +155,7 @@ export function buildSidebar(app) {
       ${sliderRow('stampOpacity', 'Opacity', 1, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('stampSeparation', 'Separation', 0, 80, 0)}
       ${sliderRow('smudge', 'Smudge', 0, 100, 0, v => (v/100).toFixed(2), 'Blend with existing canvas colour')}
+      <label>Smudge Only <input type="checkbox" id="smudgeOnly"></label>
       ${sliderRow('skipStamps', 'Skip Start', 0, 60, 0)}
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
