@@ -1157,6 +1157,7 @@ export class App {
     if (!this._smudgeImageData) {
       this._smudgeImageData = layer.ctx.getImageData(0, 0, w, h);
     }
+    // Convert CSS coordinates to canvas bitmap pixels (canvas is scaled by DPR)
     const dpr = this.DPR;
     const px = Math.round(x * dpr);
     const py = Math.round(y * dpr);
