@@ -939,6 +939,8 @@ export class SimpleBrush {
     this.app = app;
     this._lastStampX = null;
     this._lastStampY = null;
+    this._needsComposite = false;
+    this._active = false;
   }
 
   onDown(x, y, pressure) {
@@ -949,10 +951,9 @@ export class SimpleBrush {
     this._lastStampX = x;
     this._lastStampY = y;
     this.app.strokeFrame = 0;
+    this._active = true;
     this._stamp(x, y, pressure);
-    const layer = this.app.getActiveLayer();
-    layer.dirty = true;
-    this.app.compositeAllLayers();
+    this._markDirty();
   }
 
   onMove(x, y, pressure) {
@@ -977,20 +978,38 @@ export class SimpleBrush {
     this._lastStampX = x;
     this._lastStampY = y;
 
-    const layer = this.app.getActiveLayer();
-    layer.dirty = true;
-    this.app.compositeAllLayers();
+    this._markDirty();
   }
 
   onUp() {
     this._lastStampX = null;
     this._lastStampY = null;
+    // Flush any pending composite so the final stamps are visible
+    if (this._needsComposite) {
+      this.app.getActiveLayer().dirty = true;
+      this.app.compositeAllLayers();
+      this._needsComposite = false;
+    }
+    this._active = false;
   }
 
-  onFrame() { /* no per-frame work for simple brush */ }
+  onFrame() {
+    if (!this._active) return;
+    if (this._needsComposite) {
+      this.app.getActiveLayer().dirty = true;
+      this.app.compositeAllLayers();
+      this._needsComposite = false;
+    }
+  }
 
   taperFrame(t, p) {
     // Simple brush has no ongoing simulation; taper is a no-op
+  }
+
+  /** Mark layer as needing composite on next frame */
+  _markDirty() {
+    this.app.getActiveLayer().dirty = true;
+    this._needsComposite = true;
   }
 
   _stamp(x, y, pressure) {
@@ -1009,7 +1028,7 @@ export class SimpleBrush {
 
   drawOverlay() { /* nothing */ }
   getStatusInfo() { return 'Simple'; }
-  deactivate() {}
+  deactivate() { this._active = false; }
 }
 
 // =============================================================================
