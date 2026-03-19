@@ -1112,9 +1112,9 @@ export class App {
       if (sampled.a > 0) {
         if (p.smudgeOnly) {
           // Smudge-only: stamp purely with the sampled canvas colour
-          // Use area-averaged alpha so stamps fade at edges near transparent pixels
+          // Modulate by area-averaged alpha so stamps fade at edges near transparent pixels
           color = `rgb(${sampled.r},${sampled.g},${sampled.b})`;
-          opacity = this._sampleSmudgeAreaAlpha(x, y, size);
+          opacity *= this._sampleSmudgeAreaAlpha(x, y, size);
         } else {
           const brush = this._parseColorToRGB(color);
           const s = p.smudge * (sampled.a / 255); // scale by sampled alpha
