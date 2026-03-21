@@ -212,6 +212,30 @@ export function buildSidebar(app) {
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
     </div>
 
+    <!-- Trail Blur (boid only) -->
+    <div class="section-header" data-brushes="boid" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid">
+      ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
+    </div>
+
+    <!-- Pigment Mix / KM (boid + bristle) -->
+    <div class="section-header" data-brushes="boid bristle" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid bristle">
+      <label>Enable <input type="checkbox" id="kmMix"></label>
+      <span class="slider-desc">Physically-based subtractive pigment mixing (blue+yellow→green)</span>
+      ${sliderRow('kmStrength', 'Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'How strongly the brush pigment mixes into existing paint')}
+    </div>
+
+    <!-- Impasto (boid + bristle) -->
+    <div class="section-header" data-brushes="boid bristle" data-section="impasto">Impasto <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid bristle">
+      <label>Enable <input type="checkbox" id="impasto"></label>
+      <span class="slider-desc">Build up paint height — directional lighting reveals 3D ridges</span>
+      ${sliderRow('impastoStrength', 'Strength', 0, 100, 60, v => (v / 100).toFixed(2))}
+      ${sliderRow('impastoLightAngle', 'Light Angle', 0, 360, 45, v => v + '°')}
+      ${sliderRow('impastoLightElevation', 'Light Elev.', 0, 90, 45, v => v + '°')}
+    </div>
+
     <!-- AI Connection (ai only) -->
     <div class="section-header" data-brushes="ai" data-section="aiConnection">AI Connection <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="ai">
@@ -692,6 +716,11 @@ const _sliderFormats = {
   aiStrength: v => (v / 100).toFixed(2),
   aiGuidance: v => (v / 10).toFixed(1),
   aiInterval: v => v + '%',
+  // Trail blur / KM / Impasto
+  kmStrength: v => (v / 100).toFixed(2),
+  impastoStrength: v => (v / 100).toFixed(2),
+  impastoLightAngle: v => v + '°',
+  impastoLightElevation: v => v + '°',
 };
 
 // ── Layer list renderer ─────────────────────────────────────

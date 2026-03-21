@@ -71,6 +71,11 @@ export class BoidBrush {
     // Sensing state
     this._sensingFrame = 0;
     this._sensingUploaded = false;
+    // Trail blur offscreen canvases
+    this._blurCanvas = null;
+    this._blurCtx = null;
+    this._blurTmpCanvas = null;
+    this._blurTmpCtx = null;
   }
 
   async init() {
@@ -303,6 +308,41 @@ export class BoidBrush {
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
       ctx.restore();
+    }
+
+    // Trail blur: diffuse freshly stamped paint outward like wet ink
+    if (p.trailBlur > 0 && !flat) {
+      const lw = layer.canvas.width, lh = layer.canvas.height;
+      // Create/resize offscreen blur canvases
+      if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
+        this._blurCanvas = document.createElement('canvas');
+        this._blurCanvas.width = lw;
+        this._blurCanvas.height = lh;
+        this._blurCtx = this._blurCanvas.getContext('2d');
+        this._blurTmpCanvas = document.createElement('canvas');
+        this._blurTmpCanvas.width = lw;
+        this._blurTmpCanvas.height = lh;
+        this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+      }
+      // Copy layer into blur canvas
+      this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurCtx.clearRect(0, 0, lw, lh);
+      this._blurCtx.drawImage(layer.canvas, 0, 0);
+      // Apply CSS blur via tmp canvas
+      this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurTmpCtx.clearRect(0, 0, lw, lh);
+      this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
+      this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
+      this._blurTmpCtx.filter = 'none';
+      // Composite blurred result back onto layer with low opacity for soft diffusion halo
+      layer.ctx.save();
+      layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layer.ctx.globalAlpha = 0.18;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.drawImage(this._blurTmpCanvas, 0, 0);
+      layer.ctx.globalAlpha = 1;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.restore();
     }
 
     layer.dirty = true;
