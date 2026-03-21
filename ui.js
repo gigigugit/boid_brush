@@ -64,7 +64,6 @@ export function buildSidebar(app) {
       ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
       <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
-      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
     </div>
 
     <!-- Swarm (boid only) -->
@@ -159,6 +158,7 @@ export function buildSidebar(app) {
       ${sliderRow('skipStamps', 'Skip Start', 0, 60, 0)}
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
+      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
     </div>
 
     <!-- Canvas Texture -->
@@ -210,6 +210,30 @@ export function buildSidebar(app) {
     <div class="section-body" data-brushes="boid">
       <label>Show Particles <input type="checkbox" id="showBoids" checked></label>
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
+    </div>
+
+    <!-- Trail Blur -->
+    <div class="section-header" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
+    <div class="section-body">
+      ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
+    </div>
+
+    <!-- Pigment Mix / KM -->
+    <div class="section-header" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Enable <input type="checkbox" id="kmMix"></label>
+      <span class="slider-desc">Physically-based subtractive pigment mixing (blue+yellow→green)</span>
+      ${sliderRow('kmStrength', 'Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'How strongly the brush pigment mixes into existing paint')}
+    </div>
+
+    <!-- Impasto -->
+    <div class="section-header" data-section="impasto">Impasto <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Enable <input type="checkbox" id="impasto"></label>
+      <span class="slider-desc">Build up paint height — directional lighting reveals 3D ridges</span>
+      ${sliderRow('impastoStrength', 'Strength', 0, 100, 60, v => (v / 100).toFixed(2))}
+      ${sliderRow('impastoLightAngle', 'Light Angle', 0, 360, 45, v => v + '°')}
+      ${sliderRow('impastoLightElevation', 'Light Elev.', 0, 90, 45, v => v + '°')}
     </div>
 
     <!-- AI Connection (ai only) -->
@@ -692,6 +716,11 @@ const _sliderFormats = {
   aiStrength: v => (v / 100).toFixed(2),
   aiGuidance: v => (v / 10).toFixed(1),
   aiInterval: v => v + '%',
+  // Trail blur / KM / Impasto
+  kmStrength: v => (v / 100).toFixed(2),
+  impastoStrength: v => (v / 100).toFixed(2),
+  impastoLightAngle: v => v + '°',
+  impastoLightElevation: v => v + '°',
 };
 
 // ── Layer list renderer ─────────────────────────────────────

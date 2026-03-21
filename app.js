@@ -98,6 +98,12 @@ export class App {
     // Smudge: cached image data for colour sampling (invalidated each composite)
     this._smudgeImageData = null;
 
+    // Height map for impasto (greyscale accumulation of paint thickness)
+    this._heightCanvas = null;
+    this._heightCtx = null;
+    this._heightDirty = false;
+    this._impastoOverlayCanvas = null;
+
     // Reusable 1×1 canvas for CSS color parsing (smudge)
     this._colorParseCanvas = document.createElement('canvas');
     this._colorParseCanvas.width = 1;
@@ -210,6 +216,28 @@ export class App {
     this.compositor?.resize(this.W, this.H, this.DPR);
     // Refill background layer after resize
     this._fillBackgroundLayer();
+
+    // Resize height canvas for impasto, preserving existing paint height data
+    if (!this._heightCanvas) {
+      this._heightCanvas = document.createElement('canvas');
+      this._heightCtx = this._heightCanvas.getContext('2d');
+    }
+    const targetW = this.W * this.DPR;
+    const targetH = this.H * this.DPR;
+    if (this._heightCanvas.width !== targetW || this._heightCanvas.height !== targetH) {
+      const oldW = this._heightCanvas.width, oldH = this._heightCanvas.height;
+      if (oldW > 0 && oldH > 0) {
+        const tmp = document.createElement('canvas');
+        tmp.width = oldW; tmp.height = oldH;
+        tmp.getContext('2d').drawImage(this._heightCanvas, 0, 0);
+        this._heightCanvas.width = targetW;
+        this._heightCanvas.height = targetH;
+        this._heightCtx.drawImage(tmp, 0, 0, oldW, oldH, 0, 0, targetW, targetH);
+      } else {
+        this._heightCanvas.width = targetW;
+        this._heightCanvas.height = targetH;
+      }
+    }
   }
 
   makeLayerCanvas() {
@@ -449,6 +477,11 @@ export class App {
     l.ctx.restore();
     l.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     l.dirty = true;
+    // Also clear height map when there's only one paint layer
+    if (this.layers.filter(layer => !layer.isBackground).length === 1) {
+      this._heightCtx?.clearRect(0, 0, this._heightCanvas.width, this._heightCanvas.height);
+      this._heightDirty = true;
+    }
     this.compositeAllLayers();
     this.showToast('🗑 Layer cleared');
   }
@@ -456,6 +489,28 @@ export class App {
   compositeAllLayers() {
     this._smudgeImageData = null; // invalidate smudge cache
     this.compositor?.composite(this.layers, this.W, this.H);
+
+    // Impasto: recompute lighting overlay from height map when dirty, then draw
+    const p = this._cachedP || this.getP();
+    if (p.impasto && p.impastoStrength > 0) {
+      if (this._heightDirty) {
+        this._impastoOverlayCanvas = this._computeImpastoOverlay(p);
+        this._heightDirty = false;
+      }
+      if (this._impastoOverlayCanvas && this.compositeCanvas) {
+        const dctx = this.compositeCanvas.getContext('2d');
+        if (dctx) {
+          dctx.save();
+          dctx.setTransform(1, 0, 0, 1, 0, 0);
+          dctx.globalCompositeOperation = 'overlay';
+          dctx.globalAlpha = p.impastoStrength * 0.6;
+          dctx.drawImage(this._impastoOverlayCanvas, 0, 0);
+          dctx.globalAlpha = 1;
+          dctx.globalCompositeOperation = 'source-over';
+          dctx.restore();
+        }
+      }
+    }
   }
 
   _syncLayerSwitcher() {
@@ -653,6 +708,16 @@ export class App {
       aiSeed: +(document.getElementById('aiSeed')?.value || 42),
       aiPrompt: document.getElementById('aiPromptText')?.value || '',
       aiNegPrompt: document.getElementById('aiNegPromptText')?.value || '',
+      // Trail blur
+      trailBlur: val('trailBlur') || 0,
+      // Kubelka-Munk pigment mixing
+      kmMix: chk('kmMix'),
+      kmStrength: val('kmStrength') / 100,
+      // Heightmap impasto
+      impasto: chk('impasto'),
+      impastoStrength: val('impastoStrength') / 100,
+      impastoLightAngle: val('impastoLightAngle') * Math.PI / 180,
+      impastoLightElevation: val('impastoLightElevation') * Math.PI / 180,
     };
     return this._cachedP;
   }
@@ -1270,6 +1335,15 @@ export class App {
         opacity *= Math.max(0, 1 - p.canvasTextureStrength * grey);
       }
     }
+    // Kubelka-Munk pigment mixing: blend brush colour with existing canvas colour
+    // physically (subtractive mixing) before smudge logic takes over
+    if (p.kmMix && p.kmStrength > 0 && !p.smudge) {
+      const sampled = this._sampleSmudgeColor(x, y);
+      if (sampled.a > 10) {
+        const mixed = this._kmMixColors(color, sampled.r, sampled.g, sampled.b, p.kmStrength);
+        color = `rgb(${mixed.r},${mixed.g},${mixed.b})`;
+      }
+    }
     // Smudge: blend brush colour with existing canvas colour
     if (p.smudge > 0) {
       const sampled = this._sampleSmudgeColor(x, y);
@@ -1301,6 +1375,18 @@ export class App {
     ctx.globalAlpha = opacity;
     ctx.fill();
     ctx.globalAlpha = 1;
+
+    // Impasto: stamp onto the height map proportionally to stamp opacity
+    if (p.impasto && p.impastoStrength > 0 && this._heightCtx) {
+      const hctx = this._heightCtx;
+      hctx.beginPath();
+      hctx.arc(x * this.DPR, y * this.DPR, (size / 2) * this.DPR, 0, Math.PI * 2);
+      hctx.fillStyle = '#ffffff';
+      hctx.globalAlpha = Math.min(opacity * p.impastoStrength, 1);
+      hctx.fill();
+      hctx.globalAlpha = 1;
+      this._heightDirty = true;
+    }
   }
 
   /**
@@ -1380,6 +1466,125 @@ export class App {
       }
     }
     return count > 0 ? (sum / count) / 255 : 0;
+  }
+
+  /**
+   * Kubelka-Munk two-flux reflectance mixing.
+   * Converts brush and canvas colours to K/S coefficients, mixes them by
+   * brushStrength, and converts back to RGB — producing physically-based
+   * subtractive pigment mixing (blue + yellow → vibrant green).
+   *
+   * @param {string} brushColorHex  Hex colour string of the brush (e.g. "#ff0000")
+   * @param {number} canvasR        Existing canvas red   channel (0–255)
+   * @param {number} canvasG        Existing canvas green channel (0–255)
+   * @param {number} canvasB        Existing canvas blue  channel (0–255)
+   * @param {number} strength       Mix strength 0–1 (1 = full brush colour)
+   * @returns {{ r: number, g: number, b: number }}
+   */
+  _kmMixColors(brushColorHex, canvasR, canvasG, canvasB, strength) {
+    const brushRGB = this._parseColorToRGB(brushColorHex);
+
+    // Convert 0-255 channel to linear reflectance [0.001, 0.999]
+    const toR = v => Math.max(0.001, Math.min(0.999, v / 255));
+    // Kubelka-Munk remission function: K/S = (1 - R)² / (2R)
+    const toKS = R => ((1 - R) * (1 - R)) / (2 * R);
+    // Convert K/S back to reflectance: R = 1 + K/S - sqrt((K/S)² + 2*(K/S))
+    const toRefl = ks => {
+      const r = 1 + ks - Math.sqrt(ks * ks + 2 * ks);
+      return Math.max(0, Math.min(1, r));
+    };
+
+    const channels = [
+      [brushRGB.r, canvasR],
+      [brushRGB.g, canvasG],
+      [brushRGB.b, canvasB],
+    ];
+
+    const mixed = channels.map(([bv, cv]) => {
+      const Rb = toR(bv);
+      const Rc = toR(cv);
+      const KSb = toKS(Rb);
+      const KSc = toKS(Rc);
+      // Separate K and S using a fixed K:S ratio derived from KS composite
+      // Simplified assumption: S=1, K=KS (valid for opaque pigments)
+      const Kb = KSb, Sb = 1;
+      const Kc = KSc, Sc = 1;
+      const Kmix = strength * Kb + (1 - strength) * Kc;
+      const Smix = strength * Sb + (1 - strength) * Sc;
+      const KSmix = Kmix / Smix;
+      return Math.round(toRefl(KSmix) * 255);
+    });
+
+    return { r: mixed[0], g: mixed[1], b: mixed[2] };
+  }
+
+  /**
+   * Compute a lighting overlay canvas from the height map using Sobel normals
+   * and a directional light model (Phong N·L).
+   * Only called when _heightDirty is true; result is cached as _impastoOverlayCanvas.
+   */
+  _computeImpastoOverlay(p) {
+    if (!this._heightCanvas || this._heightCanvas.width === 0) return null;
+    const w = this._heightCanvas.width;
+    const h = this._heightCanvas.height;
+    const src = this._heightCtx.getImageData(0, 0, w, h).data;
+
+    // Build a greyscale height array (using red channel)
+    const height = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      height[i] = src[i * 4] / 255;
+    }
+
+    // Light direction from angle + elevation
+    const la = p.impastoLightAngle;      // azimuth in radians
+    const le = p.impastoLightElevation;  // elevation in radians
+    const Lx = Math.cos(le) * Math.cos(la);
+    const Ly = Math.cos(le) * Math.sin(la);
+    const Lz = Math.sin(le);
+
+    // Create output canvas
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const octx = out.getContext('2d');
+    const imgData = octx.createImageData(w, h);
+    const od = imgData.data;
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        // Sobel kernel to approximate surface gradient
+        const tl = height[(y - 1) * w + (x - 1)];
+        const tc = height[(y - 1) * w + x];
+        const tr = height[(y - 1) * w + (x + 1)];
+        const ml = height[y * w + (x - 1)];
+        const mr = height[y * w + (x + 1)];
+        const bl = height[(y + 1) * w + (x - 1)];
+        const bc = height[(y + 1) * w + x];
+        const br = height[(y + 1) * w + (x + 1)];
+
+        const nx = -(tr + 2 * mr + br - tl - 2 * ml - bl);
+        const ny = -(bl + 2 * bc + br - tl - 2 * tc - tr);
+        const nz = 1.0;
+        // Normalise; nz=1 guarantees len >= 1, but guard for safety
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        const Nx = len > 1e-6 ? nx / len : 0;
+        const Ny = len > 1e-6 ? ny / len : 0;
+        const Nz = len > 1e-6 ? nz / len : 1;
+
+        // N·L dot product, clamped
+        const NdotL = Math.max(0, Math.min(1, Nx * Lx + Ny * Ly + Nz * Lz));
+
+        // Map to output: 128 is neutral; above = highlights, below = shadows
+        const v = Math.round(128 + (NdotL - 0.5) * 200);
+        const off = (y * w + x) * 4;
+        od[off] = v;
+        od[off + 1] = v;
+        od[off + 2] = v;
+        od[off + 3] = 255;
+      }
+    }
+
+    octx.putImageData(imgData, 0, 0);
+    return out;
   }
 
   getSymmetryPoints(x, y) {
