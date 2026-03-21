@@ -18,10 +18,21 @@ a:hover{text-decoration:underline;}
 .header .tagline{color:#888;font-size:14px;line-height:1.5;}
 
 /* Main app link */
-.main-app{display:block;text-align:center;margin-bottom:48px;padding:20px;background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:12px;transition:border-color 0.2s,background 0.2s;}
+.main-app{display:block;text-align:center;margin-bottom:16px;padding:20px;background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:12px;transition:border-color 0.2s,background 0.2s;}
 .main-app:hover{background:#1e1e24;border-color:rgba(91,138,240,0.4);text-decoration:none;}
 .main-app .label{font-size:18px;font-weight:600;color:#eee;}
 .main-app .desc{font-size:12px;color:#888;margin-top:4px;}
+
+/* Branch selector */
+.branch-selector{margin-bottom:48px;padding:16px;background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:10px;}
+.branch-selector .bs-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:10px;}
+.branch-selector .bs-row{display:flex;gap:8px;}
+.branch-selector select{flex:1;padding:8px 10px;background:#111;color:#d0d0d4;border:1px solid rgba(255,255,255,0.12);border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;}
+.branch-selector select:focus{outline:none;border-color:rgba(91,138,240,0.5);}
+.branch-selector select option{background:#1a1a1e;color:#d0d0d4;}
+.branch-selector .bs-go{padding:8px 16px;background:rgba(91,138,240,0.15);color:#5b8af0;border:1px solid rgba(91,138,240,0.3);border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s;text-decoration:none;white-space:nowrap;}
+.branch-selector .bs-go:hover{background:rgba(91,138,240,0.25);border-color:rgba(91,138,240,0.5);text-decoration:none;}
+.branch-selector .bs-status{font-size:11px;color:#555;margin-top:8px;}
 
 /* Section */
 .section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:#888;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);}
@@ -50,6 +61,15 @@ a:hover{text-decoration:underline;}
     <div class="label">▶ Open Boid Brush</div>
     <div class="desc">Launch the main painting application</div>
   </a>
+
+  <div class="branch-selector">
+    <div class="bs-label">Select branch to run app endpoint</div>
+    <div class="bs-row">
+      <select id="branchSelect"><option value="">Loading branches…</option></select>
+      <a id="branchGo" class="bs-go" href="app.html">Go ▸</a>
+    </div>
+    <div class="bs-status" id="branchStatus"></div>
+  </div>
 
   <div class="section-title">Forks &amp; Experiments</div>
 
@@ -88,5 +108,67 @@ a:hover{text-decoration:underline;}
   </div>
 
 </div>
+<script>
+(function() {
+  const OWNER = 'gigigugit', REPO = 'boid_brush';
+  const sel = document.getElementById('branchSelect');
+  const go  = document.getElementById('branchGo');
+  const st  = document.getElementById('branchStatus');
+  const DEFAULT_BRANCH = 'main';
+
+  function branchURL(branch) {
+    return 'https://raw.githack.com/' + OWNER + '/' + REPO + '/' +
+           encodeURIComponent(branch) + '/app.html';
+  }
+
+  function updateLink() {
+    var b = sel.value;
+    if (!b) return;
+    go.href = branchURL(b);
+  }
+
+  sel.addEventListener('change', updateLink);
+
+  var CACHE_KEY = 'bb_branches', CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+  function populate(branches) {
+    sel.innerHTML = '';
+    branches.sort(function(a, b) {
+      if (a.name === DEFAULT_BRANCH) return -1;
+      if (b.name === DEFAULT_BRANCH) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    branches.forEach(function(br) {
+      var opt = document.createElement('option');
+      opt.value = br.name;
+      opt.textContent = br.name;
+      sel.appendChild(opt);
+    });
+    st.textContent = branches.length + ' branch' + (branches.length !== 1 ? 'es' : '') + ' available';
+    updateLink();
+  }
+
+  // Use sessionStorage cache to avoid GitHub API rate limits (60/hr unauthenticated)
+  try {
+    var cached = JSON.parse(sessionStorage.getItem(CACHE_KEY));
+    if (cached && Date.now() - cached.ts < CACHE_TTL) { populate(cached.data); }
+    else throw 0;
+  } catch(_) {
+    fetch('https://api.github.com/repos/' + OWNER + '/' + REPO + '/branches?per_page=100')
+      .then(function(r) {
+        if (!r.ok) throw new Error('GitHub API ' + r.status);
+        return r.json();
+      })
+      .then(function(branches) {
+        try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ts: Date.now(), data: branches})); } catch(_) {}
+        populate(branches);
+      })
+      .catch(function(err) {
+        sel.innerHTML = '<option value="">Failed to load</option>';
+        st.textContent = 'Could not fetch branches: ' + err.message;
+      });
+  }
+})();
+</script>
 </body>
 </html>
