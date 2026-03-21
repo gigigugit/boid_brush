@@ -129,6 +129,8 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 #brushDropdown button{display:block;width:100%;text-align:left;padding:8px 12px;border:none!important;background:transparent;color:#ccc;font-size:12px;cursor:pointer;border-radius:6px;white-space:nowrap;}
 #brushDropdown button:hover{background:rgba(255,255,255,0.1);color:#fff;}
 #brushDropdown button.selected{background:rgba(58,106,232,0.3);color:#fff;}
+.brush-desc{display:block;font-size:9px;color:#777;font-weight:normal;margin-top:2px;white-space:normal;line-height:1.2;}
+#brushDropdown button:hover .brush-desc{color:#aaa;}
 
 /* AI Setup Modal */
 #aiSetupModal{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;}
@@ -201,11 +203,11 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 
 <!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
 <div id="brushDropdown">
-  <button data-brush="boid" class="selected">🐦 Boid</button>
-  <button data-brush="bristle">🖊 Bristle</button>
-  <button data-brush="simple">🖌 Simple</button>
-  <button data-brush="eraser">◻ Eraser</button>
-  <button data-brush="ai">🤖 AI Diffusion</button>
+  <button data-brush="boid" class="selected">🐦 Boid<span class="brush-desc">Swarm simulation — agents flock and trail paint</span></button>
+  <button data-brush="bristle">🖊 Bristle<span class="brush-desc">Spring-physics — bristle hairs drag across canvas</span></button>
+  <button data-brush="simple">🖌 Simple<span class="brush-desc">Direct stamp along pointer path</span></button>
+  <button data-brush="eraser">◻ Eraser<span class="brush-desc">Remove paint — erases with pointer path</span></button>
+  <button data-brush="ai">🤖 AI Diffusion<span class="brush-desc">AI-powered — generates stamps via local server</span></button>
 </div>
 
 <!-- ══════════ Canvas Stack ══════════ -->
