@@ -31,7 +31,7 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 
 ## Usage
 
-Open `index.html` in a modern browser. Works on desktop and tablet (iPad) — no server or build step required.
+Open `app.html` in a modern browser (or `index.html` for the landing page with links to forks). Works on desktop and tablet (iPad) — no server or build step required.
 
 ### Keyboard Shortcuts
 
