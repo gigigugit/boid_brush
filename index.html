@@ -116,9 +116,37 @@ a:hover{text-decoration:underline;}
   const st  = document.getElementById('branchStatus');
   const DEFAULT_BRANCH = 'main';
 
+  // Branches created before the app.html split only have index.html as the entry point
+  const LEGACY_BRANCHES = [
+    'copilot/add-canvas-texture-option',
+    'copilot/add-copy-paste-select-deselect',
+    'copilot/add-default-boid-brush-settings',
+    'copilot/add-flexible-bristle-simulation',
+    'copilot/add-pinch-zoom-rotate-controls',
+    'copilot/add-selectable-brush-options',
+    'copilot/add-simple-brush-mode',
+    'copilot/add-simple-brush-mode-settings',
+    'copilot/add-smooth-interpolation-between-stamps',
+    'copilot/add-smoothness-settings-bristle-brush',
+    'copilot/add-smudge-setting-for-brushes',
+    'copilot/add-symmetry-features',
+    'copilot/clean-up-ui-for-brushes',
+    'copilot/consultation-on-platform-migration',
+    'copilot/fix-brush-and-eraser-crash',
+    'copilot/fix-color-picker-and-touch-sensing',
+    'copilot/fix-layer-blending-issues',
+    'copilot/fix-toolbar-scroll-issue',
+    'copilot/implement-lbm-fluid-simulation',
+    'copilot/improve-boid-settings-cohesiveness',
+    'copilot/make-toolbar-scroll-horizontally',
+    'copilot/review-pixel-sensing-smoothing-pressure-data',
+    'copilot/rewrite-myagent-file-proper-syntax'
+  ];
+
   function branchURL(branch) {
+    var page = LEGACY_BRANCHES.indexOf(branch) !== -1 ? 'index.html' : 'app.html';
     return 'https://raw.githack.com/' + OWNER + '/' + REPO + '/' +
-           encodeURIComponent(branch) + '/index.html';
+           encodeURIComponent(branch) + '/' + page;
   }
 
   function updateLink() {
