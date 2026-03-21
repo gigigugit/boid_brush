@@ -210,6 +210,71 @@ export class BoidSim {
     this._mod.update_sensing();
   }
 
+  // ---------------------------------------------------------------------------
+  // LBM (Lattice Boltzmann Method) fluid simulation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialise the D2Q9 LBM fluid grid.
+   *
+   * Typically called once after create(), using canvas/4 resolution:
+   * ```js
+   * sim.initLbm(Math.floor(canvas.width / 4), Math.floor(canvas.height / 4));
+   * ```
+   *
+   * After this call, every `step()` will inject boid momentum/pigment into
+   * the LBM grid and advance the fluid physics automatically.
+   *
+   * @param {number} lbmW - LBM grid width in lattice cells.
+   * @param {number} lbmH - LBM grid height in lattice cells.
+   */
+  initLbm(lbmW, lbmH) {
+    this._mod.lbm_init(lbmW, lbmH);
+    this._lbmW = lbmW;
+    this._lbmH = lbmH;
+    this._ensureViews();
+  }
+
+  /**
+   * Advance the LBM fluid simulation by one step **without** running boid physics.
+   *
+   * Useful for running extra fluid sub-steps per boid frame, or for stepping
+   * the fluid independently of the agent system.
+   */
+  stepLbm() {
+    this._mod.step_lbm();
+  }
+
+  /**
+   * Reset the LBM grid to equilibrium and clear all pigment.
+   * Call at the start of a new stroke to remove residual fluid state.
+   */
+  lbmReset() {
+    this._mod.lbm_reset();
+  }
+
+  /**
+   * Read the pigment concentration grid as a Float32Array VIEW (zero-copy).
+   *
+   * Each element is a value in [0, 1] representing ink density at that
+   * lattice cell.  The grid is laid out row-major: index = y * width + x.
+   *
+   * Returns null if LBM has not been initialised.
+   *
+   * @returns {{buffer: Float32Array, width: number, height: number}|null}
+   */
+  readPigment() {
+    const ptr = this._mod.get_pigment_ptr();
+    if (!ptr) return null;
+    const w = this._mod.get_lbm_width();
+    const h = this._mod.get_lbm_height();
+    if (w === 0 || h === 0) return null;
+    const mem = this._getMemory();
+    if (mem.buffer !== this._memBuffer) this._refreshViews();
+    const buffer = new Float32Array(mem.buffer, ptr, w * h);
+    return { buffer, width: w, height: h };
+  }
+
   /** @private Recreate typed views if memory buffer has changed (growth). */
   _ensureViews() {
     const mem = this._getMemory();

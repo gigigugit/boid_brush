@@ -71,15 +71,24 @@ export class BoidBrush {
     // Sensing state
     this._sensingFrame = 0;
     this._sensingUploaded = false;
+    // LBM pigment rendering: offscreen canvas for fluid layer
+    this._lbmCanvas = null;
+    this._lbmCtx = null;
   }
 
   async init() {
     try {
-      this.sim = await BoidSim.create(
-        this.app.W || 800,
-        this.app.H || 600,
-        10000
-      );
+      const W = this.app.W || 800;
+      const H = this.app.H || 600;
+      this.sim = await BoidSim.create(W, H, 10000);
+      // Initialise LBM grid at 1/4 canvas resolution
+      const lbmW = Math.max(1, Math.floor(W / 4));
+      const lbmH = Math.max(1, Math.floor(H / 4));
+      this.sim.initLbm(lbmW, lbmH);
+      this._lbmCanvas = document.createElement('canvas');
+      this._lbmCanvas.width = lbmW;
+      this._lbmCanvas.height = lbmH;
+      this._lbmCtx = this._lbmCanvas.getContext('2d', { willReadFrequently: false });
       this._ready = true;
     } catch (e) {
       console.error('BoidBrush: WASM init failed —', e);
@@ -137,6 +146,9 @@ export class BoidBrush {
     this.app.strokeFrame = 0;
     this._sensingFrame = 0;
     this._sensingUploaded = false;
+
+    // Reset LBM fluid state for each new stroke
+    this.sim.lbmReset();
 
     // Upload sensing data at stroke start if enabled
     if (p.sensingEnabled) {
@@ -305,8 +317,81 @@ export class BoidBrush {
       ctx.restore();
     }
 
+    // Render LBM pigment fluid layer on top of boid stamps
+    if (p.lbmEnabled !== false) {
+      this._renderLbmPigment(layer.ctx, p);
+    }
+
     layer.dirty = true;
     app.compositeAllLayers();
+  }
+
+  /**
+   * Render the LBM pigment concentration grid onto the active layer ctx.
+   *
+   * Reads the Float32Array from WASM, converts pigment values to pixels
+   * tinted with the current brush colour, then scales the small grid up to
+   * fill the full canvas layer.
+   *
+   * @param {CanvasRenderingContext2D} ctx  - Target context (layer or stroke).
+   * @param {Object} p                     - Current params from getP().
+   * @private
+   */
+  _renderLbmPigment(ctx, p) {
+    if (!this._lbmCtx) return;
+    const pig = this.sim.readPigment();
+    if (!pig) return;
+    const { buffer, width: gw, height: gh } = pig;
+
+    // Decode brush colour to RGB for pigment tinting
+    const [bh, bs, bl] = this._baseHSL || [0, 0, 0];
+    const tmpCtx = this._lbmCtx;
+    const imgData = tmpCtx.createImageData(gw, gh);
+    const d = imgData.data;
+
+    // Convert HSL to RGB (one-shot for the whole pigment layer)
+    const hNorm = ((bh % 360) + 360) % 360;
+    const sNorm = Math.max(0, Math.min(1, bs / 100));
+    const lNorm = Math.max(0, Math.min(1, bl / 100));
+    const c = (1 - Math.abs(2 * lNorm - 1)) * sNorm;
+    const x0 = c * (1 - Math.abs(((hNorm / 60) % 2) - 1));
+    const m = lNorm - c / 2;
+    let rBase = 0, gBase = 0, bBase = 0;
+    const hi = Math.floor(hNorm / 60);
+    if (hi === 0) { rBase = c; gBase = x0; }
+    else if (hi === 1) { rBase = x0; gBase = c; }
+    else if (hi === 2) { gBase = c; bBase = x0; }
+    else if (hi === 3) { gBase = x0; bBase = c; }
+    else if (hi === 4) { rBase = x0; bBase = c; }
+    else { rBase = c; bBase = x0; }
+    const rr = Math.round((rBase + m) * 255);
+    const gg = Math.round((gBase + m) * 255);
+    const bb = Math.round((bBase + m) * 255);
+
+    const lbmOpacity = p.lbmOpacity != null ? p.lbmOpacity : 0.6;
+
+    for (let i = 0, n = gw * gh; i < n; i++) {
+      const conc = buffer[i];
+      if (conc < 0.002) continue; // skip near-transparent cells
+      const a = Math.min(conc * lbmOpacity, 1.0);
+      const base4 = i * 4;
+      d[base4]     = rr;
+      d[base4 + 1] = gg;
+      d[base4 + 2] = bb;
+      d[base4 + 3] = Math.round(a * 255);
+    }
+
+    tmpCtx.putImageData(imgData, 0, 0);
+
+    // Scale the small LBM grid up to full layer dimensions
+    const layer = this.app.getActiveLayer();
+    const cw = layer.canvas.width;
+    const ch = layer.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(this._lbmCanvas, 0, 0, cw, ch);
+    ctx.restore();
   }
 
   taperFrame(t, p) {
@@ -387,6 +472,11 @@ export class BoidBrush {
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
       ctx.restore();
+    }
+
+    // Render LBM pigment fluid layer during taper
+    if (p.lbmEnabled !== false) {
+      this._renderLbmPigment(layer.ctx, p);
     }
 
     layer.dirty = true;

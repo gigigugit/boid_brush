@@ -32,6 +32,24 @@ export function get_agent_count() {
 }
 
 /**
+ * LBM grid height in lattice cells.  Returns 0 if LBM is not initialised.
+ * @returns {number}
+ */
+export function get_lbm_height() {
+    const ret = wasm.get_lbm_height();
+    return ret >>> 0;
+}
+
+/**
+ * LBM grid width in lattice cells.  Returns 0 if LBM is not initialised.
+ * @returns {number}
+ */
+export function get_lbm_width() {
+    const ret = wasm.get_lbm_width();
+    return ret >>> 0;
+}
+
+/**
  * Pointer to the raw f32 params buffer (32 floats = 128 bytes).
  * JS writes directly here, then calls `set_params()` to parse.
  * @returns {number}
@@ -47,6 +65,24 @@ export function get_params_buffer_ptr() {
  */
 export function get_params_len() {
     const ret = wasm.get_params_len();
+    return ret >>> 0;
+}
+
+/**
+ * Pointer to the pigment Float32Array (one f32 per cell, in [0, 1]).
+ *
+ * ```js
+ * const ptr = get_pigment_ptr();
+ * const w   = get_lbm_width();
+ * const h   = get_lbm_height();
+ * const pig = new Float32Array(wasm.memory.buffer, ptr, w * h);
+ * ```
+ *
+ * Returns null (0) if LBM has not been initialised.
+ * @returns {number}
+ */
+export function get_pigment_ptr() {
+    const ret = wasm.get_pigment_ptr();
     return ret >>> 0;
 }
 
@@ -79,6 +115,33 @@ export function get_stride() {
  */
 export function init_sensing(w, h) {
     wasm.init_sensing(w, h);
+}
+
+/**
+ * Initialise the D2Q9 LBM fluid grid at lattice resolution `lbm_w × lbm_h`.
+ *
+ * The LBM grid is independent of the agent pool and operates at a lower
+ * resolution than the canvas (e.g., canvas_w/4 × canvas_h/4) for real-time
+ * performance.  After calling this, `step()` will automatically inject boid
+ * momentum/pigment into the LBM grid each frame.
+ *
+ * ```js
+ * // Typically called once after sim_init():
+ * lbm_init(Math.floor(canvas.width / 4), Math.floor(canvas.height / 4));
+ * ```
+ * @param {number} lbm_w
+ * @param {number} lbm_h
+ */
+export function lbm_init(lbm_w, lbm_h) {
+    wasm.lbm_init(lbm_w, lbm_h);
+}
+
+/**
+ * Reset the LBM grid to equilibrium and clear all pigment.
+ * Call at the start of a new stroke to remove residual fluid state.
+ */
+export function lbm_reset() {
+    wasm.lbm_reset();
 }
 
 /**
@@ -178,6 +241,17 @@ export function spawn_batch(cx, cy, count, shape, angle, jitter, radius) {
  */
 export function step(dt) {
     wasm.step(dt);
+}
+
+/**
+ * Advance the LBM fluid simulation by one step **without** running boid physics.
+ *
+ * Useful for running extra LBM sub-steps per boid step, or for stepping the
+ * fluid independently.  Boid momentum/pigment injection is **not** performed
+ * by this function — use `step()` for the integrated boid + LBM update.
+ */
+export function step_lbm() {
+    wasm.step_lbm();
 }
 
 /**
