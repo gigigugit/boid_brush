@@ -54,6 +54,109 @@ export const SpawnShapes = {
 // =============================================================================
 
 /**
+ * Apply a texture-aware flow step to the blur canvas.
+ * Shifts paint pixels toward lower-height areas of the canvas texture,
+ * simulating paint flowing into surface valleys.
+ *
+ * Operates on _blurCanvas (pre-blur data) so the subsequent CSS blur
+ * smooths out any stepping artifacts.
+ *
+ * @param {CanvasRenderingContext2D} ctx - blur canvas context (_blurCtx)
+ * @param {HTMLCanvasElement} canvas - blur canvas
+ * @param {App} app - app instance (for texture data + DPR)
+ * @param {number} flow - flow strength 0–1
+ * @param {number} texScale - texture tiling scale (CSS-pixel units)
+ */
+function _applyTextureFlow(ctx, canvas, app, flow, texScale) {
+  const texW = app._canvasTextureW;
+  const texH = app._canvasTextureH;
+  const tex  = app._canvasTextureData;
+  if (!tex || texW <= 0 || texH <= 0 || texScale <= 0 || flow <= 0) return;
+
+  const w   = canvas.width;
+  const h   = canvas.height;
+  const img = ctx.getImageData(0, 0, w, h);
+  const src = img.data;
+
+  // Reuse a cached buffer to avoid large allocation every frame
+  const needed = src.length;
+  if (!_applyTextureFlow._buf || _applyTextureFlow._buf.length < needed) {
+    _applyTextureFlow._buf = new Uint8ClampedArray(needed);
+  }
+  const dst = _applyTextureFlow._buf;
+  dst.set(src);
+
+  const dpr      = app.DPR;
+  const invDpr   = 1 / dpr;
+  const invScale = 1 / texScale;
+  // Maximum pixel shift per iteration (1–4 device pixels depending on strength)
+  const shift = Math.max(1, Math.round(flow * 4 * dpr));
+  const margin = shift;
+
+  for (let py = margin; py < h - margin; py++) {
+    for (let px = margin; px < w - margin; px++) {
+      const idx = (py * w + px) << 2;
+      if (src[idx + 3] < 2) continue; // skip transparent
+
+      // Convert device px → CSS px → texture UV
+      const cx = px * invDpr * invScale;
+      const cy = py * invDpr * invScale;
+      const st = invDpr * invScale; // one device-pixel step in texture coords
+
+      // Inline texture lookups for 4-connected neighbours
+      const ixC = ((Math.floor(cx)      % texW) + texW) % texW;
+      const iyC = ((Math.floor(cy)      % texH) + texH) % texH;
+      const ixL = ((Math.floor(cx - st) % texW) + texW) % texW;
+      const ixR = ((Math.floor(cx + st) % texW) + texW) % texW;
+      const iyU = ((Math.floor(cy - st) % texH) + texH) % texH;
+      const iyD = ((Math.floor(cy + st) % texH) + texH) % texH;
+
+      const hL = tex[iyC * texW + ixL];
+      const hR = tex[iyC * texW + ixR];
+      const hU = tex[iyU * texW + ixC];
+      const hD = tex[iyD * texW + ixC];
+
+      // Gradient (positive = toward higher values)
+      const gx = hR - hL;
+      const gy = hD - hU;
+      const lenSq = gx * gx + gy * gy;
+      if (lenSq < 100) continue; // skip near-flat regions
+
+      const invLen = 1 / Math.sqrt(lenSq);
+      // Flow direction = negative gradient (toward lower height)
+      const fx = Math.round(-gx * invLen * shift);
+      const fy = Math.round(-gy * invLen * shift);
+
+      const tx = px + fx;
+      const ty = py + fy;
+      // Bounds already guaranteed by margin
+      const tidx = (ty * w + tx) << 2;
+
+      // Transfer fraction proportional to gradient steepness × flow strength
+      // tex[] stores 0–255 greyscale values; normalize by 255 to get 0–~1.4 range
+      const steepness = Math.sqrt(lenSq) / 255;
+      const t = Math.min(flow * steepness * 0.3, 0.4); // capped
+
+      const r = src[idx],     g = src[idx + 1], b = src[idx + 2], a = src[idx + 3];
+      const rt = r * t, gt = g * t, bt = b * t, at = a * t;
+
+      dst[idx]     -= rt;
+      dst[idx + 1] -= gt;
+      dst[idx + 2] -= bt;
+      dst[idx + 3] -= at;
+
+      dst[tidx]     = Math.min(255, dst[tidx]     + rt);
+      dst[tidx + 1] = Math.min(255, dst[tidx + 1] + gt);
+      dst[tidx + 2] = Math.min(255, dst[tidx + 2] + bt);
+      dst[tidx + 3] = Math.min(255, dst[tidx + 3] + at);
+    }
+  }
+
+  img.data.set(dst);
+  ctx.putImageData(img, 0, 0);
+}
+
+/**
  * Stamp plain circles (CSS coordinates) into a blur accumulation canvas.
  * Applies the same symmetry as the main stamp but skips all canvas-sampling
  * effects (smudge, KM mix, impasto) to avoid side-effects on app state.
@@ -422,6 +525,10 @@ export class BoidBrush {
       this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurCtx.clearRect(0, 0, lw, lh);
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      // Texture flow: shift blur paint toward lower-height texture areas
+      if (p.trailFlow > 0 && p.canvasTextureEnabled) {
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+      }
       // Apply CSS blur via tmp canvas
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
@@ -1063,6 +1170,10 @@ export class BristleBrush {
       this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurCtx.clearRect(0, 0, lw, lh);
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      // Texture flow: shift blur paint toward lower-height texture areas
+      if (p.trailFlow > 0 && p.canvasTextureEnabled) {
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+      }
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
       this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
@@ -1353,6 +1464,10 @@ export class SimpleBrush {
       this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurCtx.clearRect(0, 0, lw, lh);
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      // Texture flow: shift blur paint toward lower-height texture areas
+      if (p.trailFlow > 0 && p.canvasTextureEnabled) {
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+      }
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
       this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;

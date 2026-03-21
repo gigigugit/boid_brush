@@ -710,6 +710,7 @@ export class App {
       aiNegPrompt: document.getElementById('aiNegPromptText')?.value || '',
       // Trail blur
       trailBlur: val('trailBlur') || 0,
+      trailFlow: val('trailFlow') / 100,
       // Kubelka-Munk pigment mixing
       kmMix: chk('kmMix'),
       kmStrength: val('kmStrength') / 100,
