@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // app.js — Core painting application engine
 //
 // Manages canvases, layers, undo/redo, parameter cache, frame loop,
@@ -9,6 +9,7 @@ import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
+import { SelectionManager } from './selection.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const MAX_UNDO = 20;
@@ -105,6 +106,11 @@ export class App {
 
     // Internal clipboard buffer (fallback when Clipboard API unavailable)
     this._clipboardBlob = null;
+    this._clipboardMetadata = null;  // { x, y, w, h } bounds from selection copy
+
+    // Tool mode ('brush' | 'rect-select' | 'ellipse-select' | 'lasso-select')
+    this.activeTool = 'brush';
+    this.selectionMgr = null;
 
     // Color
     this.primaryEl = document.getElementById('primaryColor');
@@ -127,6 +133,7 @@ export class App {
   // ========================================================
 
   async _init() {
+    this.selectionMgr = new SelectionManager(this);
     this._resizeAll();
     this.compositor = new Compositor(this.compositeCanvas);
     this.compositor.resize(this.W, this.H, this.DPR);
@@ -656,6 +663,7 @@ export class App {
 
   setBrush(name) {
     if (!this.brushes[name]) return;
+    this.setTool('brush'); // restore brush mode when changing brush type
     // Deactivate current
     const cur = this.brushes[this.activeBrush];
     if (cur && cur.deactivate) cur.deactivate();
@@ -686,6 +694,66 @@ export class App {
   }
 
   getCurrentBrush() { return this.brushes[this.activeBrush]; }
+
+  /** Set the active interaction tool. */
+  setTool(name) {
+    this.activeTool = name;
+    this._syncSelectionUI();
+  }
+
+  /** Clear the active selection. Stamps any floating pixels first. */
+  deselect() {
+    if (!this.selectionMgr?.active) return;
+    this._commitFloatingPixels();
+    this.selectionMgr.clear();
+    this._syncSelectionUI();
+    this.showToast('✕ Deselected');
+  }
+
+  /** Stamp floating pixels back onto the active layer (if any). */
+  _commitFloatingPixels() {
+    if (!this.selectionMgr?._floatingPixels) return;
+    const l = this.getActiveLayer();
+    this.selectionMgr.stampPixels(l.ctx, this.DPR);
+    l.dirty = true;
+    this.compositeAllLayers();
+  }
+
+  /** Sync selection toolbar buttons with current tool/selection state. */
+  _syncSelectionUI() {
+    document.getElementById('rectSelectBtn')?.classList.toggle('active', this.activeTool === 'rect-select');
+    document.getElementById('ellipseSelectBtn')?.classList.toggle('active', this.activeTool === 'ellipse-select');
+    document.getElementById('lassoSelectBtn')?.classList.toggle('active', this.activeTool === 'lasso-select');
+    const deselectBtn = document.getElementById('deselectBtn');
+    if (deselectBtn) deselectBtn.style.display = this.selectionMgr?.active ? '' : 'none';
+    const transformBtn = document.getElementById('transformBtn');
+    if (transformBtn) transformBtn.style.display = this.selectionMgr?.active ? '' : 'none';
+    const proportionalBtn = document.getElementById('proportionalToggle');
+    if (proportionalBtn) proportionalBtn.style.display = this.selectionMgr?.transformActive ? '' : 'none';
+    // Update transform button active state
+    document.getElementById('transformBtn')?.classList.toggle('active', this.activeTool === 'transform');
+  }
+
+  _toggleTransform() {
+    if (!this.selectionMgr?.active) return;
+    this.selectionMgr.transformActive = !this.selectionMgr.transformActive;
+    if (this.selectionMgr.transformActive) {
+      this.setTool('transform');
+      this.showToast('🔒 Transform mode ON');
+    } else {
+      this.setTool('brush');
+      this.showToast('🔒 Transform mode OFF');
+    }
+    this._syncSelectionUI();
+  }
+
+  _toggleProportional() {
+    if (!this.selectionMgr) return;
+    this.selectionMgr.keepProportional = !this.selectionMgr.keepProportional;
+    const btn = document.getElementById('proportionalToggle');
+    if (btn) btn.classList.toggle('active', this.selectionMgr.keepProportional);
+    this.showToast(this.selectionMgr.keepProportional ? '🔒 Proportional: ON' : '🔒 Proportional: OFF');
+  }
 
   // ========================================================
   // DRAWING / POINTER EVENTS
@@ -761,6 +829,18 @@ export class App {
       this.setActiveLayer(+e.target.value);
       syncUI(this);
     });
+    // Selection tools
+    document.getElementById('rectSelectBtn')?.addEventListener('click', () => this.setTool('rect-select'));
+    document.getElementById('ellipseSelectBtn')?.addEventListener('click', () => this.setTool('ellipse-select'));
+    document.getElementById('lassoSelectBtn')?.addEventListener('click', () => this.setTool('lasso-select'));
+    document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
+    // Transform tool
+    document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
+    document.getElementById('proportionalToggle')?.addEventListener('click', () => this._toggleProportional());
+    // Copy/cut/paste
+    document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
+    document.getElementById('cutBtn')?.addEventListener('click', () => this.cutToClipboard());
+    document.getElementById('pasteBtn')?.addEventListener('click', () => this.pasteFromClipboard());
     // Color pickers invalidate params
     this.primaryEl.addEventListener('input', () => { this._paramsDirty = true; });
     this.secondaryEl.addEventListener('input', () => { this._paramsDirty = true; });
@@ -838,10 +918,44 @@ export class App {
 
     this.interactionCanvas.setPointerCapture(e.pointerId);
     const { x, y } = this._getEventCoords(e);
+    this._captureTilt(e);
+    // Move selection by dragging inside it (works in any tool mode)
+    if (this.selectionMgr?.active && !this.selectionMgr.transformActive) {
+      if (this.selectionMgr.moveOnDown(x, y)) {
+        // Lift pixels from the layer on first move (noop if already floating)
+        if (!this.selectionMgr._floatingPixels) {
+          const l = this.getActiveLayer();
+          this.pushUndo();
+          this.selectionMgr.liftPixels(l.ctx, l.canvas, this.DPR);
+          l.dirty = true;
+          this.compositeAllLayers();
+        }
+        return;
+      }
+    }
+    // Transform tool dispatch - check for handle drag (resize or move)
+    if (this.activeTool === 'transform' && this.selectionMgr?.transformActive) {
+      if (this.selectionMgr.transformOnDown(x, y)) {
+        // Lift pixels from the layer on first transform drag (noop if already floating)
+        if (!this.selectionMgr._floatingPixels) {
+          const l = this.getActiveLayer();
+          this.pushUndo();
+          this.selectionMgr.liftPixels(l.ctx, l.canvas, this.DPR);
+          l.dirty = true;
+          this.compositeAllLayers();
+        }
+        return;
+      }
+    }
+    // Selection tool dispatch - click outside selection starts a new one
+    if (this.activeTool !== 'brush') {
+      this._commitFloatingPixels(); // stamp any floating pixels before new selection
+      this.selectionMgr.onDown(x, y);
+      return;
+    }
     // Reset EMA pressure at stroke start for immediate response
     this._rawPressure = e.pressure || 0.5;
     this.pressure = this._rawPressure;
-    this._captureTilt(e);
     this.leaderX = x;
     this.leaderY = y;
     this.isDrawing = true;
@@ -857,6 +971,25 @@ export class App {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     // Don't draw during pinch
     if (this._pinchActive) return;
+    // Move-drag dispatch (any tool mode)
+    if (this.selectionMgr?._isMoving) {
+      const { x, y } = this._getEventCoords(e);
+      this.selectionMgr.moveOnMove(x, y);
+      return;
+    }
+    // Transform tool dispatch
+    if (this.activeTool === 'transform' && this.selectionMgr?._transformHandle) {
+      const { x, y } = this._getEventCoords(e);
+      this.selectionMgr.transformOnMove(x, y);
+      return;
+    }
+    if (this.activeTool !== 'brush') {
+      if (this.selectionMgr?._isDragging) {
+        const { x, y } = this._getEventCoords(e);
+        this.selectionMgr.onMove(x, y);
+      }
+      return;
+    }
     if (!this.isDrawing) {
       const { x, y } = this._getEventCoords(e);
       this._rawPressure = e.pressure || 0.5;
@@ -884,6 +1017,24 @@ export class App {
 
   _onPointerUp(e) {
     this._activePointers.delete(e.pointerId);
+    // Move-drag end (any tool mode) — keep pixels floating
+    if (this.selectionMgr?._isMoving) {
+      this.selectionMgr.moveOnUp();
+      return;
+    }
+    // Transform tool dispatch — keep pixels floating
+    if (this.activeTool === 'transform' && this.selectionMgr?._transformHandle) {
+      this.selectionMgr.transformOnUp();
+      return;
+    }
+    // Selection tool dispatch
+    if (this.activeTool !== 'brush') {
+      if (this.selectionMgr?._isDragging) {
+        const { x, y } = this._getEventCoords(e);
+        this.selectionMgr.onUp(x, y);
+      }
+      return;
+    }
     if (!this.isDrawing) return;
     this.isDrawing = false;
     const { x, y } = this._getEventCoords(e);
@@ -908,8 +1059,18 @@ export class App {
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); this.saveImage(); }
     // Ctrl+C = copy canvas to clipboard
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); this.copyToClipboard(); }
+    // Ctrl+X = cut selection
+    if ((e.ctrlKey || e.metaKey) && e.key === 'x') { e.preventDefault(); this.cutToClipboard(); return; }
     // Ctrl+V = paste from clipboard
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') { e.preventDefault(); this.pasteFromClipboard(); }
+    // Escape = deselect
+    if (e.key === 'Escape') this.deselect();
+    // M = rectangle select, L = lasso select, T = transform
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      if (e.key === 'm' || e.key === 'M') { this.setTool('rect-select'); return; }
+      if (e.key === 'l' || e.key === 'L') { this.setTool('lasso-select'); return; }
+      if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
+    }
     // 1/2/3 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('bristle');
@@ -918,17 +1079,14 @@ export class App {
     if (e.key === '5') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
-    // X = swap colors
-    if (e.key === 'x' || e.key === 'X') {
-      if (!e.ctrlKey) {
-        const t = this.primaryEl.value;
-        this.primaryEl.value = this.secondaryEl.value;
-        this.secondaryEl.value = t;
-        this._paramsDirty = true;
-      }
+    // X = swap colors (non-ctrl; Ctrl+X is cut)
+    if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey) {
+      const t = this.primaryEl.value;
+      this.primaryEl.value = this.secondaryEl.value;
+      this.secondaryEl.value = t;
+      this._paramsDirty = true;
     }
   }
-
   // ========================================================
   // PINCH ZOOM / ROTATE / PAN (Touch Gestures)
   // ========================================================
@@ -1074,6 +1232,12 @@ export class App {
     if (brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, this.getP());
     }
+    // Selection overlay (marching ants)
+    if (this.selectionMgr) this.selectionMgr.drawOverlay(this.lctx, elapsed);
+    // Floating pixel preview (during move/transform drag)
+    if (this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
+    // Transform handles
+    if (this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
 
     // Update status
     this._updateStatus(brush);
@@ -1329,12 +1493,35 @@ export class App {
   // ========================================================
 
   async copyToClipboard() {
+    // With an active selection: copy only the selected pixels from the active layer
+    if (this.selectionMgr?.active) {
+      try {
+        const l = this.getActiveLayer();
+        const bounds = this.selectionMgr.getBounds();
+        const extracted = this.selectionMgr.extractPixels(l.canvas, this.DPR);
+        if (!extracted) { this.showToast('⚠ Nothing selected'); return; }
+        const blob = await extracted.convertToBlob({ type: 'image/png' });
+        this._clipboardBlob = blob;
+        this._clipboardMetadata = bounds;  // Store original location & size
+        let clipboardOk = false;
+        try {
+          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            clipboardOk = true;
+          }
+        } catch { /* Clipboard unavailable */ }
+        this.showToast(clipboardOk ? '📋 Selection copied' : '📋 Selection copied (in-app)');
+      } catch { this.showToast('⚠ Copy failed'); }
+      return;
+    }
+    // No selection: copy flat composite of all layers
     try {
       const canvas = this._compositeFlatCanvas();
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       if (!blob) { this.showToast('⚠ Copy failed'); return; }
       // Always store internally for in-app paste fallback
       this._clipboardBlob = blob;
+      this._clipboardMetadata = null;  // No selection = no stored location
       let clipboardOk = false;
       try {
         if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
@@ -1357,7 +1544,51 @@ export class App {
     img.onload = () => {
       this.pushUndo();
       const l = this.getActiveLayer();
-      l.ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, this.W, this.H);
+      // If clipboard has stored bounds metadata, paste at exact original location & size
+      if (this._clipboardMetadata) {
+        const { x, y, w, h } = this._clipboardMetadata;
+        l.ctx.drawImage(img, 0, 0, img.width, img.height, x, y, w, h);
+        l.dirty = true;
+        this.compositeAllLayers();
+        URL.revokeObjectURL(url);
+        this.showToast('📋 Pasted at original location');
+        return;
+      }
+      // If a selection is active, paste into the selection bounding box
+      if (this.selectionMgr?.active) {
+        const bounds = this.selectionMgr.getBounds();
+        if (bounds && bounds.w > 0 && bounds.h > 0) {
+          const dpr = this.DPR;
+          l.ctx.save();
+          l.ctx.setTransform(1, 0, 0, 1, 0, 0);
+          this.selectionMgr._buildPath(l.ctx, dpr);
+          l.ctx.clip();
+          l.ctx.drawImage(img, bounds.x * dpr, bounds.y * dpr, bounds.w * dpr, bounds.h * dpr);
+          l.ctx.restore();
+          l.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          l.dirty = true;
+          this.compositeAllLayers();
+          URL.revokeObjectURL(url);
+          this.showToast('📋 Pasted into selection');
+          return;
+        }
+      }
+      // Otherwise scale to fit canvas while maintaining aspect ratio, centered
+      const srcAspect = img.width / img.height;
+      const canvasAspect = this.W / this.H;
+      let destW, destH;
+      if (srcAspect > canvasAspect) {
+        // Image is wider than canvas; fit to width
+        destW = this.W;
+        destH = this.W / srcAspect;
+      } else {
+        // Image is taller than canvas; fit to height
+        destH = this.H;
+        destW = this.H * srcAspect;
+      }
+      const destX = (this.W - destW) / 2;
+      const destY = (this.H - destH) / 2;
+      l.ctx.drawImage(img, 0, 0, img.width, img.height, destX, destY, destW, destH);
       l.dirty = true;
       this.compositeAllLayers();
       URL.revokeObjectURL(url);
@@ -1403,6 +1634,31 @@ export class App {
       this._pasteImageBlob(file);
     });
     input.click();
+  }
+
+  // ========================================================
+  // SESSION PERSISTENCE
+  /** Cut the selected region from the active layer to clipboard. */
+  async cutToClipboard() {
+    if (!this.selectionMgr?.active) { this.showToast('⚠ No selection to cut'); return; }
+    const l = this.getActiveLayer();
+    if (l.isBackground) { this.showToast('Cannot cut from background layer'); return; }
+    try {
+      const extracted = this.selectionMgr.extractPixels(l.canvas, this.DPR);
+      if (!extracted) { this.showToast('⚠ Cut failed'); return; }
+      const blob = await extracted.convertToBlob({ type: 'image/png' });
+      this._clipboardBlob = blob;
+      try {
+        if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        }
+      } catch { /* Clipboard unavailable */ }
+      this.pushUndo();
+      this.selectionMgr.clearPixels(l.ctx, this.DPR);
+      l.dirty = true;
+      this.compositeAllLayers();
+      this.showToast('✂ Cut');
+    } catch { this.showToast('⚠ Cut failed'); }
   }
 
   // ========================================================

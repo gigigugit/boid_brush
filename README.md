@@ -41,10 +41,19 @@ Open `index.html` in a modern browser. Works on desktop and tablet (iPad) — no
 | `2` | Bristle Brush |
 | `3` | Simple Brush |
 | `4` | Eraser |
+| `5` | AI Diffusion |
+| `M` | Rectangle Select |
+| `L` | Lasso Select |
+| `T` | Transform (when selection active) |
+| `Esc` | Deselect |
 | `Ctrl/⌘ + Z` | Undo |
 | `Ctrl/⌘ + Shift + Z` | Redo |
-| `Ctrl/⌘ + X/C/V` | Cut / Copy / Paste |
-| `Ctrl/⌘ + D` | Deselect |
+| `Ctrl/⌘ + C` | Copy |
+| `Ctrl/⌘ + X` | Cut |
+| `Ctrl/⌘ + V` | Paste |
+| `Ctrl/⌘ + S` | Save |
+| `X` | Swap Colors |
+| `0` | Reset View |
 
 ## Migration Notes
 
