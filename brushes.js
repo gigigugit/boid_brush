@@ -206,6 +206,46 @@ export class BoidBrush {
       // Restore DPR transform so subsequent arc() calls use CSS coordinates
       this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
     }
+
+    // Perform one initial simulation step and stamp agents immediately.
+    // Without this, paint only appears after the first onFrame() call from
+    // requestAnimationFrame. On a quick tap (pointerdown + pointerup faster
+    // than one frame), isDrawing goes false before onFrame runs and no paint
+    // is ever deposited. Skipped in flat-stroke mode where compositing is more
+    // involved and onFrame handles the composite correctly.
+    if (!this._flatActive) {
+      this.sim.writeParams(p, x, y, 0);
+      this.sim.step(1 / 60);
+      const { buffer, count, stride } = this.sim.readAgents();
+      if (count > 0) {
+        const layer = this.app.getActiveLayer();
+        this._baseHSL = hexToHSL(p.color);
+        for (let i = 0; i < count; i++) {
+          const base = i * stride;
+          const ax = buffer[base + 0];
+          const ay = buffer[base + 1];
+          const sm = buffer[base + 8];
+          const om = buffer[base + 9];
+          const agentHue = buffer[base + 20];
+          const agentSat = buffer[base + 21];
+          const agentLit = buffer[base + 22];
+          let sz = p.stampSize * sm;
+          let op = p.stampOpacity * om;
+          if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+          if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+          op = Math.min(op, 1);
+          let color = p.color;
+          if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+            const [bh, bs, bl] = this._baseHSL;
+            color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+          }
+          this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+        }
+        layer.dirty = true;
+      }
+    }
   }
 
   onMove(x, y, pressure) {
@@ -231,6 +271,13 @@ export class BoidBrush {
   }
 
   onUp(x, y) {
+    // Flush any paint that was deposited by the initial onDown stamp or by
+    // onFrame calls that set layer.dirty but didn't composite yet. This covers
+    // the quick-tap case where isDrawing goes false before the next RAF frame.
+    if (!this._flatActive) {
+      const layer = this.app.getActiveLayer();
+      if (layer.dirty) this.app.compositeAllLayers();
+    }
     // Boids keep tailing off via taper
   }
 
