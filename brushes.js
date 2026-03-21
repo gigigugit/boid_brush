@@ -207,12 +207,12 @@ export class BoidBrush {
       this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
     }
 
-    // Perform one initial simulation step and stamp agents immediately.
-    // Without this, paint only appears after the first onFrame() call from
-    // requestAnimationFrame. On a quick tap (pointerdown + pointerup faster
-    // than one frame), isDrawing goes false before onFrame runs and no paint
-    // is ever deposited. Skipped in flat-stroke mode where compositing is more
-    // involved and onFrame handles the composite correctly.
+    // Perform one initial simulation step and stamp agents immediately in
+    // non-flat mode. Without this, paint only appears after the first onFrame()
+    // call from requestAnimationFrame. On a quick tap (pointerdown + pointerup
+    // faster than one frame), isDrawing goes false before onFrame runs and no
+    // paint is ever deposited. In flat-stroke mode the composite path in onFrame
+    // is required, so this initial stamp is omitted there.
     if (!this._flatActive) {
       this.sim.writeParams(p, x, y, 0);
       this.sim.step(1 / 60);
@@ -271,9 +271,10 @@ export class BoidBrush {
   }
 
   onUp(x, y) {
-    // Flush any paint that was deposited by the initial onDown stamp or by
-    // onFrame calls that set layer.dirty but didn't composite yet. This covers
-    // the quick-tap case where isDrawing goes false before the next RAF frame.
+    // Flush paint that was deposited by the initial onDown stamp or by the last
+    // onFrame call. Covers the quick-tap case where isDrawing goes false before
+    // the next RAF frame fires. Only runs in non-flat mode — flat stroke
+    // compositing lives in onFrame and the taper handles the final flush.
     if (!this._flatActive) {
       const layer = this.app.getActiveLayer();
       if (layer.dirty) this.app.compositeAllLayers();
@@ -599,6 +600,19 @@ export class BristleBrush {
     this._pressure = 0.5;
     this._smoothPressure = 0.5; // EMA-smoothed pressure for gradual transitions
     this._active = false;
+    // Flat-stroke (wet buffer) canvases
+    this._strokeCanvas = null;
+    this._strokeCtx = null;
+    this._preStrokeCanvas = null;
+    this._preStrokeCtx = null;
+    this._flatActive = false;
+    // Trail blur offscreen canvases
+    this._blurCanvas = null;
+    this._blurCtx = null;
+    this._blurTmpCanvas = null;
+    this._blurTmpCtx = null;
+    this._blurStrokeCanvas = null;
+    this._blurStrokeCtx = null;
   }
 
   /** Spawn bristles in a line/fan perpendicular to the initial stroke direction */
@@ -831,7 +845,7 @@ export class BristleBrush {
   }
 
   /** Stamp all bristle tips using EMA-smoothed positions */
-  _stampBristles(stampCtx, p, opScale) {
+  _stampBristles(stampCtx, p, opScale, flat = false, blurCtx = null) {
     const app = this.app;
     const pres = this._smoothPressure;
     for (let i = 0; i < this._count; i++) {
@@ -840,9 +854,12 @@ export class BristleBrush {
       const ty = this._smoothY[i];
 
       let sz = p.stampSize * this._varSize[i];
-      let op = p.stampOpacity * opScale * this._varOpacity[i];
+      // In flat mode stamps go at full per-bristle opacity; master opacity applied on composite
+      let op = flat
+        ? Math.min(opScale * this._varOpacity[i], 1)
+        : p.stampOpacity * opScale * this._varOpacity[i];
       if (p.pressureSize) sz *= (0.3 + 0.7 * pres);
-      if (p.pressureOpacity) op *= (0.3 + 0.7 * pres);
+      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pres);
       op = Math.min(op, 1);
 
       // Apply per-bristle hue variance (cached per color change)
@@ -865,9 +882,11 @@ export class BristleBrush {
         for (let j = 1; j <= n; j++) {
           const t = j / n;
           app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
+          if (blurCtx) _stampToBlurAccum(blurCtx, app, prevX + dx * t, prevY + dy * t, sz, color, op);
         }
       } else {
         app.symStamp(stampCtx, tx, ty, sz, color, op);
+        if (blurCtx) _stampToBlurAccum(blurCtx, app, tx, ty, sz, color, op);
       }
 
       this._lastStampX[i] = tx;
@@ -894,6 +913,35 @@ export class BristleBrush {
     if (!this.app.undoPushedThisStroke) {
       this.app.pushUndo();
       this.app.undoPushedThisStroke = true;
+    }
+
+    // Flat-stroke setup: snapshot layer, prepare stroke canvas
+    this._flatActive = !!p.flatStroke;
+    if (this._flatActive) {
+      const layer = this.app.getActiveLayer();
+      const dpr = this.app.DPR;
+      const w = layer.canvas.width, h = layer.canvas.height;
+      if (!this._strokeCanvas || this._strokeCanvas.width !== w || this._strokeCanvas.height !== h) {
+        this._strokeCanvas = document.createElement('canvas');
+        this._strokeCanvas.width = w; this._strokeCanvas.height = h;
+        this._strokeCtx = this._strokeCanvas.getContext('2d');
+        this._preStrokeCanvas = document.createElement('canvas');
+        this._preStrokeCanvas.width = w; this._preStrokeCanvas.height = h;
+        this._preStrokeCtx = this._preStrokeCanvas.getContext('2d');
+      }
+      this._preStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._preStrokeCtx.clearRect(0, 0, w, h);
+      this._preStrokeCtx.drawImage(layer.canvas, 0, 0);
+      this._strokeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this._strokeCtx.clearRect(0, 0, w, h);
+    }
+
+    // Clear per-stroke blur accumulation canvas
+    if (this._blurStrokeCanvas) {
+      const lw = this._blurStrokeCanvas.width, lh = this._blurStrokeCanvas.height;
+      this._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurStrokeCtx.clearRect(0, 0, lw, lh);
+      this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
     }
 
     this._spawnBristles(x, y, p);
@@ -970,7 +1018,65 @@ export class BristleBrush {
 
     // Stamp bristle tips
     const layer = app.getActiveLayer();
-    this._stampBristles(layer.ctx, p, 1.0);
+    const flat = this._flatActive;
+    const stampCtx = flat ? this._strokeCtx : layer.ctx;
+    const blurEnabled = p.trailBlur > 0;
+
+    this._stampBristles(stampCtx, p, 1.0, flat, blurEnabled ? this._blurStrokeCtx : null);
+
+    // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
+    if (flat) {
+      const w = layer.canvas.width, h = layer.canvas.height;
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(this._preStrokeCanvas, 0, 0);
+      let masterOp = p.stampOpacity;
+      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * this._smoothPressure);
+      ctx.globalAlpha = Math.min(masterOp, 1);
+      ctx.drawImage(this._strokeCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    // Trail blur: diffuse freshly stamped paint outward like wet ink
+    if (blurEnabled) {
+      const lw = layer.canvas.width, lh = layer.canvas.height;
+      if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
+        this._blurCanvas = document.createElement('canvas');
+        this._blurCanvas.width = lw;
+        this._blurCanvas.height = lh;
+        this._blurCtx = this._blurCanvas.getContext('2d');
+        this._blurTmpCanvas = document.createElement('canvas');
+        this._blurTmpCanvas.width = lw;
+        this._blurTmpCanvas.height = lh;
+        this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+      }
+      if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== lw || this._blurStrokeCanvas.height !== lh) {
+        this._blurStrokeCanvas = document.createElement('canvas');
+        this._blurStrokeCanvas.width = lw;
+        this._blurStrokeCanvas.height = lh;
+        this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
+        this._blurStrokeCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
+      }
+      this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurCtx.clearRect(0, 0, lw, lh);
+      this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurTmpCtx.clearRect(0, 0, lw, lh);
+      this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
+      this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
+      this._blurTmpCtx.filter = 'none';
+      layer.ctx.save();
+      layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layer.ctx.globalAlpha = 0.18;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.drawImage(this._blurTmpCanvas, 0, 0);
+      layer.ctx.globalAlpha = 1;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.restore();
+    }
 
     layer.dirty = true;
     app.compositeAllLayers();
@@ -989,6 +1095,8 @@ export class BristleBrush {
     this._pushHistory(p.bristleSmoothing);
 
     const layer = app.getActiveLayer();
+    const flat = this._flatActive;
+    const stampCtx = flat ? this._strokeCtx : layer.ctx;
 
     // Stamp with fading opacity/size
     for (let i = 0; i < this._count; i++) {
@@ -996,7 +1104,9 @@ export class BristleBrush {
       const ty = this._smoothY[i];
 
       let sz = p.stampSize * this._varSize[i];
-      let op = p.stampOpacity * this._varOpacity[i];
+      let op = flat
+        ? Math.min(this._varOpacity[i], 1)
+        : p.stampOpacity * this._varOpacity[i];
       if (p.taperSize) sz *= curve;
       if (p.taperOpacity) op *= curve;
       op = Math.min(op, 1);
@@ -1019,14 +1129,30 @@ export class BristleBrush {
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
         for (let j = 1; j <= n; j++) {
           const tt = j / n;
-          app.symStamp(layer.ctx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
+          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
         }
       } else {
-        app.symStamp(layer.ctx, tx, ty, sz, color, op);
+        app.symStamp(stampCtx, tx, ty, sz, color, op);
       }
 
       this._lastStampX[i] = tx;
       this._lastStampY[i] = ty;
+    }
+
+    // Flat-stroke compositing during taper
+    if (flat) {
+      const w = layer.canvas.width, h = layer.canvas.height;
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(this._preStrokeCanvas, 0, 0);
+      let masterOp = p.stampOpacity;
+      if (p.taperOpacity) masterOp *= curve;
+      ctx.globalAlpha = Math.min(masterOp, 1);
+      ctx.drawImage(this._strokeCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
 
     layer.dirty = true;
@@ -1060,6 +1186,7 @@ export class BristleBrush {
   deactivate() {
     this._count = 0;
     this._active = false;
+    this._flatActive = false;
   }
 }
 
@@ -1074,13 +1201,65 @@ export class SimpleBrush {
     this._lastStampY = null;
     this._needsComposite = false;
     this._active = false;
+    // Flat-stroke (wet buffer) canvases
+    this._strokeCanvas = null;
+    this._strokeCtx = null;
+    this._preStrokeCanvas = null;
+    this._preStrokeCtx = null;
+    this._flatActive = false;
+    // Trail blur offscreen canvases
+    this._blurCanvas = null;
+    this._blurCtx = null;
+    this._blurTmpCanvas = null;
+    this._blurTmpCtx = null;
+    this._blurStrokeCanvas = null;
+    this._blurStrokeCtx = null;
   }
 
   onDown(x, y, pressure) {
+    const p = this.app.getP();
     if (!this.app.undoPushedThisStroke) {
       this.app.pushUndo();
       this.app.undoPushedThisStroke = true;
     }
+
+    // Flat-stroke setup: snapshot layer, prepare stroke canvas
+    this._flatActive = !!p.flatStroke;
+    if (this._flatActive) {
+      const layer = this.app.getActiveLayer();
+      const dpr = this.app.DPR;
+      const w = layer.canvas.width, h = layer.canvas.height;
+      if (!this._strokeCanvas || this._strokeCanvas.width !== w || this._strokeCanvas.height !== h) {
+        this._strokeCanvas = document.createElement('canvas');
+        this._strokeCanvas.width = w; this._strokeCanvas.height = h;
+        this._strokeCtx = this._strokeCanvas.getContext('2d');
+        this._preStrokeCanvas = document.createElement('canvas');
+        this._preStrokeCanvas.width = w; this._preStrokeCanvas.height = h;
+        this._preStrokeCtx = this._preStrokeCanvas.getContext('2d');
+      }
+      this._preStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._preStrokeCtx.clearRect(0, 0, w, h);
+      this._preStrokeCtx.drawImage(layer.canvas, 0, 0);
+      this._strokeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this._strokeCtx.clearRect(0, 0, w, h);
+    }
+
+    // Trail blur: set up per-stroke accumulation canvas
+    if (p.trailBlur > 0) {
+      const layer = this.app.getActiveLayer();
+      const lw = layer.canvas.width, lh = layer.canvas.height;
+      if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== lw || this._blurStrokeCanvas.height !== lh) {
+        this._blurStrokeCanvas = document.createElement('canvas');
+        this._blurStrokeCanvas.width = lw; this._blurStrokeCanvas.height = lh;
+        this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
+        this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
+      } else {
+        this._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+        this._blurStrokeCtx.clearRect(0, 0, lw, lh);
+        this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
+      }
+    }
+
     this._lastStampX = x;
     this._lastStampY = y;
     this.app.strokeFrame = 0;
@@ -1140,28 +1319,80 @@ export class SimpleBrush {
   /** Flush pending composite if needed */
   _flushComposite() {
     if (!this._needsComposite) return;
-    this.app.getActiveLayer().dirty = true;
-    this.app.compositeAllLayers();
+    const app = this.app;
+    const layer = app.getActiveLayer();
+    const p = app.getP();
+
+    // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
+    if (this._flatActive && this._preStrokeCanvas) {
+      const w = layer.canvas.width, h = layer.canvas.height;
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(this._preStrokeCanvas, 0, 0);
+      let masterOp = p.stampOpacity;
+      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      ctx.globalAlpha = Math.min(masterOp, 1);
+      ctx.drawImage(this._strokeCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    // Trail blur: diffuse freshly stamped paint outward like wet ink
+    if (p.trailBlur > 0 && this._blurStrokeCtx) {
+      const lw = layer.canvas.width, lh = layer.canvas.height;
+      if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
+        this._blurCanvas = document.createElement('canvas');
+        this._blurCanvas.width = lw; this._blurCanvas.height = lh;
+        this._blurCtx = this._blurCanvas.getContext('2d');
+        this._blurTmpCanvas = document.createElement('canvas');
+        this._blurTmpCanvas.width = lw; this._blurTmpCanvas.height = lh;
+        this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+      }
+      this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurCtx.clearRect(0, 0, lw, lh);
+      this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurTmpCtx.clearRect(0, 0, lw, lh);
+      this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
+      this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
+      this._blurTmpCtx.filter = 'none';
+      layer.ctx.save();
+      layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layer.ctx.globalAlpha = 0.18;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.drawImage(this._blurTmpCanvas, 0, 0);
+      layer.ctx.globalAlpha = 1;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.restore();
+    }
+
+    layer.dirty = true;
+    app.compositeAllLayers();
     this._needsComposite = false;
   }
 
   _stamp(x, y, pressure) {
     const p = this.app.getP();
+    const flat = this._flatActive;
     const layer = this.app.getActiveLayer();
-    const ctx = layer.ctx;
+    const ctx = flat ? this._strokeCtx : layer.ctx;
     let sz = p.stampSize;
-    let op = p.stampOpacity;
     if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-    if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+    // In flat mode stamps go at full opacity; master opacity applied on composite
+    let op = flat ? 1.0 : p.stampOpacity;
+    if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
     op = Math.min(op, 1);
 
     this.app.symStamp(ctx, x, y, sz, p.color, op);
+    if (this._blurStrokeCtx) _stampToBlurAccum(this._blurStrokeCtx, this.app, x, y, sz, p.color, op);
     this.app.strokeFrame++;
   }
 
   drawOverlay() { /* nothing */ }
   getStatusInfo() { return 'Simple'; }
-  deactivate() { this._active = false; }
+  deactivate() { this._active = false; this._flatActive = false; }
 }
 
 // =============================================================================
@@ -1176,6 +1407,7 @@ export class EraserBrush {
     this._inner._stamp = (x, y, pressure) => {
       const p = this.app.getP();
       const layer = this.app.getActiveLayer();
+      // Eraser always stamps directly to layer (flat stroke not meaningful for destination-out)
       const ctx = layer.ctx;
       let sz = p.stampSize;
       let op = p.stampOpacity;
@@ -1190,7 +1422,11 @@ export class EraserBrush {
     };
   }
 
-  onDown(x, y, pr) { this._inner.onDown(x, y, pr); }
+  onDown(x, y, pr) {
+    this._inner.onDown(x, y, pr);
+    // Flat stroke does not apply to eraser (destination-out + flat compositing = no visible erase)
+    this._inner._flatActive = false;
+  }
   onMove(x, y, pr) { this._inner.onMove(x, y, pr); }
   onUp(x, y) { this._inner.onUp(x, y); }
   onFrame(e) { this._inner.onFrame(e); }

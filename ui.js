@@ -64,7 +64,6 @@ export function buildSidebar(app) {
       ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
       <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
-      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
     </div>
 
     <!-- Swarm (boid only) -->
@@ -159,6 +158,7 @@ export function buildSidebar(app) {
       ${sliderRow('skipStamps', 'Skip Start', 0, 60, 0)}
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
+      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
     </div>
 
     <!-- Canvas Texture -->
@@ -212,23 +212,23 @@ export function buildSidebar(app) {
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
     </div>
 
-    <!-- Trail Blur (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Trail Blur -->
+    <div class="section-header" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
+    <div class="section-body">
       ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
     </div>
 
-    <!-- Pigment Mix / KM (boid + bristle) -->
-    <div class="section-header" data-brushes="boid bristle" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid bristle">
+    <!-- Pigment Mix / KM -->
+    <div class="section-header" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
+    <div class="section-body">
       <label>Enable <input type="checkbox" id="kmMix"></label>
       <span class="slider-desc">Physically-based subtractive pigment mixing (blue+yellow→green)</span>
       ${sliderRow('kmStrength', 'Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'How strongly the brush pigment mixes into existing paint')}
     </div>
 
-    <!-- Impasto (boid + bristle) -->
-    <div class="section-header" data-brushes="boid bristle" data-section="impasto">Impasto <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid bristle">
+    <!-- Impasto -->
+    <div class="section-header" data-section="impasto">Impasto <span class="chevron">▼</span></div>
+    <div class="section-body">
       <label>Enable <input type="checkbox" id="impasto"></label>
       <span class="slider-desc">Build up paint height — directional lighting reveals 3D ridges</span>
       ${sliderRow('impastoStrength', 'Strength', 0, 100, 60, v => (v / 100).toFixed(2))}

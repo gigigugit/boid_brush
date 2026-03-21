@@ -708,12 +708,12 @@ export class App {
       aiSeed: +(document.getElementById('aiSeed')?.value || 42),
       aiPrompt: document.getElementById('aiPromptText')?.value || '',
       aiNegPrompt: document.getElementById('aiNegPromptText')?.value || '',
-      // Trail blur (boid only)
+      // Trail blur
       trailBlur: val('trailBlur') || 0,
-      // Kubelka-Munk pigment mixing (boid + bristle)
+      // Kubelka-Munk pigment mixing
       kmMix: chk('kmMix'),
       kmStrength: val('kmStrength') / 100,
-      // Heightmap impasto (boid + bristle)
+      // Heightmap impasto
       impasto: chk('impasto'),
       impastoStrength: val('impastoStrength') / 100,
       impastoLightAngle: val('impastoLightAngle') * Math.PI / 180,
