@@ -1337,7 +1337,7 @@ export class App {
     }
     // Kubelka-Munk pigment mixing: blend brush colour with existing canvas colour
     // physically (subtractive mixing) before smudge logic takes over
-    if (p.kmMix && p.kmStrength > 0 && !(p.smudge > 0)) {
+    if (p.kmMix && p.kmStrength > 0 && !p.smudge) {
       const sampled = this._sampleSmudgeColor(x, y);
       if (sampled.a > 10) {
         const mixed = this._kmMixColors(color, sampled.r, sampled.g, sampled.b, p.kmStrength);
@@ -1564,9 +1564,11 @@ export class App {
         const nx = -(tr + 2 * mr + br - tl - 2 * ml - bl);
         const ny = -(bl + 2 * bc + br - tl - 2 * tc - tr);
         const nz = 1.0;
-        // Normalise
+        // Normalise; nz=1 guarantees len >= 1, but guard for safety
         const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        const Nx = nx / len, Ny = ny / len, Nz = nz / len;
+        const Nx = len > 1e-6 ? nx / len : 0;
+        const Ny = len > 1e-6 ? ny / len : 0;
+        const Nz = len > 1e-6 ? nz / len : 1;
 
         // N·L dot product, clamped
         const NdotL = Math.max(0, Math.min(1, Nx * Lx + Ny * Ly + Nz * Lz));

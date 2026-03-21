@@ -53,6 +53,22 @@ export const SpawnShapes = {
 // BOID BRUSH — WASM-backed swarm simulation
 // =============================================================================
 
+/**
+ * Stamp plain circles (CSS coordinates) into a blur accumulation canvas.
+ * Applies the same symmetry as the main stamp but skips all canvas-sampling
+ * effects (smudge, KM mix, impasto) to avoid side-effects on app state.
+ */
+function _stampToBlurAccum(bctx, app, x, y, sz, color, op) {
+  bctx.fillStyle = color;
+  for (const pt of app.getSymmetryPoints(x, y)) {
+    bctx.beginPath();
+    bctx.arc(pt.x, pt.y, sz / 2, 0, Math.PI * 2);
+    bctx.globalAlpha = op;
+    bctx.fill();
+  }
+  bctx.globalAlpha = 1;
+}
+
 export class BoidBrush {
   constructor(app) {
     this.app = app;
@@ -76,6 +92,10 @@ export class BoidBrush {
     this._blurCtx = null;
     this._blurTmpCanvas = null;
     this._blurTmpCtx = null;
+    // Per-stroke accumulation canvas — cleared each onDown, so blur only affects
+    // paint from the current stroke, not previously painted layers.
+    this._blurStrokeCanvas = null;
+    this._blurStrokeCtx = null;
   }
 
   async init() {
@@ -175,6 +195,16 @@ export class BoidBrush {
       // Clear stroke accumulator; apply DPR transform so stamps use CSS coords
       this._strokeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this._strokeCtx.clearRect(0, 0, w, h);
+    }
+
+    // Clear per-stroke blur accumulation canvas so the blur doesn't affect
+    // paint deposited by previous strokes.
+    if (this._blurStrokeCanvas) {
+      const lw = this._blurStrokeCanvas.width, lh = this._blurStrokeCanvas.height;
+      this._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurStrokeCtx.clearRect(0, 0, lw, lh);
+      // Restore DPR transform so subsequent arc() calls use CSS coordinates
+      this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
     }
   }
 
@@ -284,10 +314,16 @@ export class BoidBrush {
         for (let j = 1; j <= n; j++) {
           const t = j / n;
           app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
+          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+            _stampToBlurAccum(this._blurStrokeCtx, app, prevX + dx * t, prevY + dy * t, sz, color, op);
+          }
         }
       } else {
         // First stamp for this agent
         app.symStamp(stampCtx, ax, ay, sz, color, op);
+        if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+          _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
+        }
       }
 
       this._lastStampX[i] = ax;
@@ -310,10 +346,12 @@ export class BoidBrush {
       ctx.restore();
     }
 
-    // Trail blur: diffuse freshly stamped paint outward like wet ink
+    // Trail blur: diffuse freshly stamped paint outward like wet ink.
+    // Source: _blurStrokeCanvas (current stroke only), not the full layer —
+    // this prevents the blur from re-processing paint from previous strokes.
     if (p.trailBlur > 0 && !flat) {
       const lw = layer.canvas.width, lh = layer.canvas.height;
-      // Create/resize offscreen blur canvases
+      // Create/resize offscreen blur canvases and the per-stroke accumulation canvas
       if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
         this._blurCanvas = document.createElement('canvas');
         this._blurCanvas.width = lw;
@@ -324,10 +362,18 @@ export class BoidBrush {
         this._blurTmpCanvas.height = lh;
         this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
       }
-      // Copy layer into blur canvas
+      if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== lw || this._blurStrokeCanvas.height !== lh) {
+        this._blurStrokeCanvas = document.createElement('canvas');
+        this._blurStrokeCanvas.width = lw;
+        this._blurStrokeCanvas.height = lh;
+        this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
+        // Apply DPR transform so plain arc() calls use CSS coordinates
+        this._blurStrokeCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
+      }
+      // Copy current stroke accumulation into blur canvas
       this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurCtx.clearRect(0, 0, lw, lh);
-      this._blurCtx.drawImage(layer.canvas, 0, 0);
+      this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
       // Apply CSS blur via tmp canvas
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
