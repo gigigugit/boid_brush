@@ -101,12 +101,15 @@ export async function exportPSD(app) {
     };
 
     const buffer = writePsd(psd);
-    const blob = new Blob([buffer], { type: 'application/octet-stream' });
+    const blob = new Blob([buffer], { type: 'image/vnd.adobe.photoshop' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.download = 'boid-brush.psd';
     a.href = url;
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 5000);
     app.showToast('💾 Exported PSD');
   } catch (err) {
@@ -124,7 +127,7 @@ export async function exportPSD(app) {
 export async function importPSD(app) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.psd';
+  input.accept = '.psd,image/vnd.adobe.photoshop,application/x-photoshop,application/photoshop';
   input.addEventListener('change', async () => {
     const file = input.files[0];
     if (!file) return;
