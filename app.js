@@ -728,6 +728,9 @@ export class App {
       antPheromoneSize: val('antPheromoneSize') || 6,
       antTrailVisible: chk('antTrailVisible'),
       antPheromoneToSensing: chk('antPheromoneToSensing'),
+      // Neighbor/separation radii (ant math panel)
+      neighborRadius: val('am_neighborRadius') || 80,
+      separationRadius: val('am_separationRadius') || 25,
     };
     return this._cachedP;
   }
