@@ -216,6 +216,7 @@ export function buildSidebar(app) {
     <div class="section-header" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
     <div class="section-body">
       ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
+      ${sliderRow('trailFlow', 'Texture Flow', 0, 100, 0, v => (v / 100).toFixed(2), 'Bias blur diffusion toward lower-height canvas texture areas (requires texture)')}
     </div>
 
     <!-- Pigment Mix / KM -->
@@ -717,6 +718,7 @@ const _sliderFormats = {
   aiGuidance: v => (v / 10).toFixed(1),
   aiInterval: v => v + '%',
   // Trail blur / KM / Impasto
+  trailFlow: v => (v / 100).toFixed(2),
   kmStrength: v => (v / 100).toFixed(2),
   impastoStrength: v => (v / 100).toFixed(2),
   impastoLightAngle: v => v + '°',
