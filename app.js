@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
@@ -152,6 +152,7 @@ export class App {
 
     // Brush engines
     this.brushes.boid = new BoidBrush(this);
+    this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
@@ -159,6 +160,7 @@ export class App {
 
     // Init WASM for boid brush
     await this.brushes.boid.init();
+    await this.brushes.ant.init();
 
     // Sidebar UI
     buildSidebar(this);
@@ -719,6 +721,16 @@ export class App {
       impastoStrength: val('impastoStrength') / 100,
       impastoLightAngle: val('impastoLightAngle') * Math.PI / 180,
       impastoLightElevation: val('impastoLightElevation') * Math.PI / 180,
+      // Ant brush
+      antFollow: val('antFollow') / 100,
+      antPheromoneRate: val('antPheromoneRate') / 100,
+      antPheromoneDecay: val('antPheromoneDecay') / 1000,
+      antPheromoneSize: val('antPheromoneSize') || 6,
+      antTrailVisible: chk('antTrailVisible'),
+      antPheromoneToSensing: chk('antPheromoneToSensing'),
+      // Neighbor/separation radii (ant math panel)
+      neighborRadius: val('am_neighborRadius') || 80,
+      separationRadius: val('am_separationRadius') || 25,
     };
     return this._cachedP;
   }
@@ -735,7 +747,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;

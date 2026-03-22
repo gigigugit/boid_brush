@@ -1,5 +1,5 @@
 // =============================================================================
-// brushes.js — Boid, Bristle, Simple, and Eraser brush engines
+// brushes.js — Boid, Ant, Bristle, Simple, and Eraser brush engines
 //
 // Each brush implements: onDown(x,y,pressure), onMove(x,y,pressure),
 // onUp(x,y), onFrame(elapsed), taperFrame(t,p), drawOverlay(ctx,p),
@@ -12,6 +12,8 @@ import { BoidSim } from './wasm-bridge.js';
 const BRISTLE_PRESSURE_ALPHA = 0.15;
 // Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
 const MAX_SMOOTH_DAMP = 0.92;
+// Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
+const MAX_PHEROMONE = 255;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -661,6 +663,562 @@ export class BoidBrush {
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
+  }
+}
+
+// =============================================================================
+// ANT BRUSH — Pheromone-trail ant colony simulation
+//
+// Ants crawl across the canvas, depositing pheromone trails that attract
+// other ants.  The pheromone grid feeds into the same pixel-sensing pipeline
+// used by BoidBrush, so the WASM simulation steers ants toward existing
+// pheromone deposits.  A cursor "follow" signal lets the user guide the
+// colony.  Trail deposition is rendered both as paint and as an optional
+// overlay visualisation.
+// =============================================================================
+
+export class AntBrush {
+  constructor(app) {
+    this.app = app;
+    this.sim = null;
+    this._ready = false;
+    this._lastStampX = [];
+    this._lastStampY = [];
+    this._lastSpawnX = 0;
+    this._lastSpawnY = 0;
+    // Pheromone grid (JS-side, quarter-resolution like sensing)
+    this._pheroW = 0;
+    this._pheroH = 0;
+    this._pheroData = null;  // Float32Array — continuous 0-255 values
+    this._pheroFrame = 0;
+    // Trail blur offscreen canvases (shared pattern from BoidBrush)
+    this._blurCanvas = null;
+    this._blurCtx = null;
+    this._blurTmpCanvas = null;
+    this._blurTmpCtx = null;
+    this._blurStrokeCanvas = null;
+    this._blurStrokeCtx = null;
+    // Flat-stroke
+    this._strokeCanvas = null;
+    this._strokeCtx = null;
+    this._preStrokeCanvas = null;
+    this._preStrokeCtx = null;
+    this._flatActive = false;
+  }
+
+  async init() {
+    try {
+      this.sim = await BoidSim.create(
+        this.app.W || 800,
+        this.app.H || 600,
+        10000 // max agent pool capacity
+      );
+      this._ready = true;
+    } catch (e) {
+      console.error('AntBrush: WASM init failed —', e);
+    }
+  }
+
+  // ---- Pheromone grid management ----
+
+  /** Initialise (or resize) the pheromone grid to quarter-canvas resolution */
+  _initPheroGrid() {
+    const app = this.app;
+    const w = Math.max(1, (app.W * app.DPR) >> 2);
+    const h = Math.max(1, (app.H * app.DPR) >> 2);
+    if (this._pheroW !== w || this._pheroH !== h || !this._pheroData) {
+      this._pheroW = w;
+      this._pheroH = h;
+      this._pheroData = new Float32Array(w * h);
+    }
+  }
+
+  /** Deposit pheromone at (cx, cy) CSS coords with given intensity (0-255) */
+  _depositPheromone(cx, cy, radius, intensity) {
+    if (!this._pheroData) return;
+    const dpr = this.app.DPR;
+    // Convert CSS coords to quarter-resolution grid coords
+    const gx = (cx * dpr) / 4;
+    const gy = (cy * dpr) / 4;
+    const gr = Math.max(1, (radius * dpr) / 4);
+    const gr2 = gr * gr;
+    const w = this._pheroW;
+    const h = this._pheroH;
+    const x0 = Math.max(0, Math.floor(gx - gr));
+    const x1 = Math.min(w - 1, Math.ceil(gx + gr));
+    const y0 = Math.max(0, Math.floor(gy - gr));
+    const y1 = Math.min(h - 1, Math.ceil(gy + gr));
+    for (let py = y0; py <= y1; py++) {
+      for (let px = x0; px <= x1; px++) {
+        const dx = px - gx;
+        const dy = py - gy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > gr2) continue;
+        const falloff = 1 - Math.sqrt(d2) / gr;
+        const idx = py * w + px;
+        this._pheroData[idx] = Math.min(MAX_PHEROMONE, this._pheroData[idx] + intensity * falloff);
+      }
+    }
+  }
+
+  /** Evaporate pheromones: multiply by (1 - decayRate) */
+  _decayPheromones(decayRate) {
+    if (!this._pheroData) return;
+    const factor = 1 - decayRate;
+    const data = this._pheroData;
+    for (let i = 0, len = data.length; i < len; i++) {
+      data[i] *= factor;
+      if (data[i] < 0.5) data[i] = 0;
+    }
+  }
+
+  /** Upload pheromone grid to WASM sensing (same pathway as pixel sensing) */
+  _uploadPheromoneToSensing() {
+    if (!this._pheroData || !this.sim) return;
+    const lum = new Uint8Array(this._pheroData.length);
+    for (let i = 0, len = this._pheroData.length; i < len; i++) {
+      lum[i] = Math.min(MAX_PHEROMONE, Math.round(this._pheroData[i]));
+    }
+    this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+  }
+
+  // ---- Brush lifecycle ----
+
+  onDown(x, y, pressure) {
+    if (!this._ready) return;
+    const p = this.app.getP();
+    let r = p.spawnRadius;
+    if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+    this.sim.clearAgents();
+    this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+    this._lastStampX = [];
+    this._lastStampY = [];
+    this._lastSpawnX = x;
+    this._lastSpawnY = y;
+    this.app.strokeFrame = 0;
+    this._pheroFrame = 0;
+
+    // Initialise pheromone grid
+    this._initPheroGrid();
+    // Clear pheromones at stroke start
+    if (this._pheroData) this._pheroData.fill(0);
+
+    // Push undo
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+
+    // Flat-stroke setup
+    this._flatActive = !!p.flatStroke;
+    if (this._flatActive) {
+      const layer = this.app.getActiveLayer();
+      const dpr = this.app.DPR;
+      const w = layer.canvas.width, h = layer.canvas.height;
+      if (!this._strokeCanvas || this._strokeCanvas.width !== w || this._strokeCanvas.height !== h) {
+        this._strokeCanvas = document.createElement('canvas');
+        this._strokeCanvas.width = w; this._strokeCanvas.height = h;
+        this._strokeCtx = this._strokeCanvas.getContext('2d');
+        this._preStrokeCanvas = document.createElement('canvas');
+        this._preStrokeCanvas.width = w; this._preStrokeCanvas.height = h;
+        this._preStrokeCtx = this._preStrokeCanvas.getContext('2d');
+      }
+      this._preStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._preStrokeCtx.clearRect(0, 0, w, h);
+      this._preStrokeCtx.drawImage(layer.canvas, 0, 0);
+      this._strokeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this._strokeCtx.clearRect(0, 0, w, h);
+    }
+
+    // Clear per-stroke blur accumulation
+    if (this._blurStrokeCanvas) {
+      const lw = this._blurStrokeCanvas.width, lh = this._blurStrokeCanvas.height;
+      this._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurStrokeCtx.clearRect(0, 0, lw, lh);
+      this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
+    }
+
+    // Initial step (same as BoidBrush — prevents no-paint on quick taps)
+    if (!this._flatActive) {
+      // Override: set sensing to attract mode for pheromone following
+      const antP = this._buildAntParams(p);
+      this.sim.writeParams(antP, x, y, 0);
+      this.sim.step(1 / 60);
+      const { buffer, count, stride } = this.sim.readAgents();
+      if (count > 0) {
+        const layer = this.app.getActiveLayer();
+        this._baseHSL = hexToHSL(p.color);
+        for (let i = 0; i < count; i++) {
+          const base = i * stride;
+          const ax = buffer[base + 0];
+          const ay = buffer[base + 1];
+          const sm = buffer[base + 8];
+          const om = buffer[base + 9];
+          const agentHue = buffer[base + 20];
+          const agentSat = buffer[base + 21];
+          const agentLit = buffer[base + 22];
+          let sz = p.stampSize * sm;
+          let op = p.stampOpacity * om;
+          if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+          if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+          op = Math.min(op, 1);
+          let color = p.color;
+          if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+            const [bh, bs, bl] = this._baseHSL;
+            color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+          }
+          this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+          // Deposit initial pheromone
+          this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
+        }
+        layer.dirty = true;
+      }
+    }
+  }
+
+  onMove(x, y, pressure) {
+    if (!this._ready) return;
+    const p = this.app.getP();
+    if (p.respawnOnStroke) {
+      const dx = x - this._lastSpawnX;
+      const dy = y - this._lastSpawnY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const minDist = Math.max(p.spawnRadius * 0.5, 8);
+      if (dist >= minDist) {
+        const { count: current } = this.sim.readAgents();
+        if (current >= p.count * 3) return;
+        let r = p.spawnRadius;
+        if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+        this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+        this._lastSpawnX = x;
+        this._lastSpawnY = y;
+      }
+    }
+  }
+
+  onUp(x, y) {
+    if (!this._flatActive) {
+      const layer = this.app.getActiveLayer();
+      if (layer.dirty) this.app.compositeAllLayers();
+    }
+  }
+
+  /**
+   * Build params object with ant-specific overrides.
+   * Pheromone sensing uses the same WASM pathway: sensing is enabled in
+   * attract mode so ants are drawn toward deposited pheromone trails.
+   */
+  _buildAntParams(p) {
+    return Object.assign({}, p, {
+      // Ant follow signal: seek = antFollow strength toward cursor
+      seek: p.antFollow,
+      // Enable sensing in attract mode for pheromone following
+      sensingEnabled: p.antPheromoneToSensing,
+      sensingMode: 'attract',
+      sensingStrength: p.sensingStrength,
+      sensingRadius: p.sensingRadius || 20,
+      sensingThreshold: p.sensingThreshold || 0.1,
+      // Ants wander more by default
+      wander: p.wander,
+      jitter: p.jitter,
+    });
+  }
+
+  onFrame(elapsed) {
+    if (!this._ready) return;
+    const p = this.app.getP();
+    const app = this.app;
+
+    // Decay pheromones each frame
+    if (this._pheroData) {
+      this._decayPheromones(p.antPheromoneDecay);
+    }
+
+    // Upload pheromone grid as sensing data (same pathway as pixel sensing)
+    this._pheroFrame++;
+    if (p.antPheromoneToSensing && this._pheroData) {
+      // Re-upload every 3 frames to balance performance and responsiveness
+      if (this._pheroFrame % 3 === 0) {
+        this._uploadPheromoneToSensing();
+      }
+    }
+
+    // Write params with ant-specific overrides and step sim
+    const antP = this._buildAntParams(p);
+    this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
+    this.sim.step(1 / 60);
+
+    // Read agents
+    const { buffer, count, stride } = this.sim.readAgents();
+    if (count === 0) return;
+
+    // Stamp each agent and deposit pheromones along their paths
+    const layer = app.getActiveLayer();
+    const flat = this._flatActive;
+    const stampCtx = flat ? this._strokeCtx : layer.ctx;
+    const skipN = p.skipStamps || 0;
+    app.strokeFrame++;
+    this._baseHSL = hexToHSL(p.color);
+
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+
+      // Skip first N stamps
+      if (app.strokeFrame <= skipN) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        continue;
+      }
+
+      let sz = p.stampSize * sm;
+      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
+      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
+      op = Math.min(op, 1);
+
+      let color = p.color;
+      if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+        const [bh, bs, bl] = this._baseHSL;
+        color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+      }
+
+      // Deposit pheromone at current ant position
+      this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
+
+      // Interpolation: fill gaps between previous and current position
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < step) continue;
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const t = j / n;
+          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
+          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+            _stampToBlurAccum(this._blurStrokeCtx, app, prevX + dx * t, prevY + dy * t, sz, color, op);
+          }
+        }
+      } else {
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+        if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+          _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
+        }
+      }
+
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
+    }
+
+    // Flat-stroke compositing
+    if (flat) {
+      const w = layer.canvas.width, h = layer.canvas.height;
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(this._preStrokeCanvas, 0, 0);
+      let masterOp = p.stampOpacity;
+      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      ctx.globalAlpha = Math.min(masterOp, 1);
+      ctx.drawImage(this._strokeCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    // Trail blur (identical to BoidBrush)
+    if (p.trailBlur > 0 && !flat) {
+      const lw = layer.canvas.width, lh = layer.canvas.height;
+      if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
+        this._blurCanvas = document.createElement('canvas');
+        this._blurCanvas.width = lw;
+        this._blurCanvas.height = lh;
+        this._blurCtx = this._blurCanvas.getContext('2d');
+        this._blurTmpCanvas = document.createElement('canvas');
+        this._blurTmpCanvas.width = lw;
+        this._blurTmpCanvas.height = lh;
+        this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+      }
+      if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== lw || this._blurStrokeCanvas.height !== lh) {
+        this._blurStrokeCanvas = document.createElement('canvas');
+        this._blurStrokeCanvas.width = lw;
+        this._blurStrokeCanvas.height = lh;
+        this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
+        this._blurStrokeCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
+      }
+      this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurCtx.clearRect(0, 0, lw, lh);
+      this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      if (p.trailFlow > 0 && p.canvasTextureEnabled) {
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+      }
+      this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurTmpCtx.clearRect(0, 0, lw, lh);
+      this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
+      this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
+      this._blurTmpCtx.filter = 'none';
+      layer.ctx.save();
+      layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layer.ctx.globalAlpha = 0.18;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.drawImage(this._blurTmpCanvas, 0, 0);
+      layer.ctx.globalAlpha = 1;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.restore();
+    }
+
+    layer.dirty = true;
+    app.compositeAllLayers();
+  }
+
+  taperFrame(t, p) {
+    if (!this._ready) return;
+    const app = this.app;
+    const curve = Math.pow(1 - t, p.taperCurve);
+
+    this.sim.step(1 / 60);
+    const { buffer, count, stride } = this.sim.readAgents();
+    if (count === 0) return;
+
+    const layer = app.getActiveLayer();
+    const flat = this._flatActive;
+    const stampCtx = flat ? this._strokeCtx : layer.ctx;
+    this._baseHSL = hexToHSL(p.color);
+
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+
+      let sz = p.stampSize * sm;
+      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      if (p.taperSize) sz *= curve;
+      if (p.taperOpacity) op *= curve;
+      op = Math.min(op, 1);
+      if (op < 0.005 || sz < 0.5) continue;
+
+      let color = p.color;
+      if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+        const [bh, bs, bl] = this._baseHSL;
+        color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+      }
+
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < step) continue;
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const tt = j / n;
+          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
+        }
+      } else {
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+      }
+
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
+    }
+
+    if (flat) {
+      const w = layer.canvas.width, h = layer.canvas.height;
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(this._preStrokeCanvas, 0, 0);
+      let masterOp = p.stampOpacity;
+      if (p.taperOpacity) masterOp *= curve;
+      ctx.globalAlpha = Math.min(masterOp, 1);
+      ctx.drawImage(this._strokeCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    layer.dirty = true;
+    app.compositeAllLayers();
+  }
+
+  drawOverlay(ctx, p) {
+    if (!this._ready) return;
+
+    // Show ant agents as small dots
+    if (p.showBoids) {
+      const { buffer, count, stride } = this.sim.readAgents();
+      ctx.fillStyle = 'rgba(180,100,50,0.7)';
+      for (let i = 0; i < count; i++) {
+        const base = i * stride;
+        ctx.fillRect(buffer[base] - 1, buffer[base + 1] - 1, 2, 2);
+      }
+    }
+
+    // Draw spawn area indicator
+    if (p.showSpawn && this.app.isDrawing) {
+      ctx.strokeStyle = 'rgba(180,100,50,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(this.app.leaderX, this.app.leaderY, p.spawnRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Render pheromone trail overlay
+    if (p.antTrailVisible && this._pheroData && this._pheroW > 0 && this._pheroH > 0) {
+      const pw = this._pheroW;
+      const ph = this._pheroH;
+      const data = this._pheroData;
+      const dpr = this.app.DPR;
+      const cellW = 4 / dpr;
+      const cellH = 4 / dpr;
+      ctx.save();
+      for (let py = 0; py < ph; py++) {
+        for (let px = 0; px < pw; px++) {
+          const v = data[py * pw + px];
+          if (v < 2) continue;
+          const a = Math.min(v / MAX_PHEROMONE, 1) * 0.4;
+          ctx.fillStyle = `rgba(120,200,80,${a.toFixed(3)})`;
+          ctx.fillRect(px * cellW, py * cellH, cellW, cellH);
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  getStatusInfo() {
+    if (!this._ready) return 'WASM loading...';
+    const { count } = this.sim.readAgents();
+    return `Ant | Agents: ${count}`;
+  }
+
+  deactivate() {
+    if (this.sim) this.sim.clearAgents();
+    if (this._pheroData) this._pheroData.fill(0);
   }
 }
 

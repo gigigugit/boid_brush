@@ -8,6 +8,7 @@
 *{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;box-sizing:border-box;}
 html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;color:#d0d0d4;}
 #sidebar,#sidebar *{touch-action:pan-y;}
+#antMathPanel,#antMathPanel *{touch-action:pan-y;}
 #topbar,#topbar *{touch-action:pan-x;}
 
 /* ---- Canvas Area ---- */
@@ -112,6 +113,29 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 /* Hide brush-specific sections */
 .brush-hidden{display:none!important;}
 
+/* Ant Math overlay panel */
+#antMathPanel{position:fixed;top:44px;right:0;bottom:24px;width:280px;background:rgba(10,10,14,0.98);backdrop-filter:blur(20px);border-left:1px solid rgba(255,255,255,0.04);z-index:11;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px;font-size:11px;transform:translateX(100%);transition:transform 0.25s ease;}
+#antMathPanel.open{transform:translateX(0);}
+#antMathPanel::-webkit-scrollbar{width:5px;}
+#antMathPanel::-webkit-scrollbar-track{background:transparent;}
+#antMathPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+#antMathPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:#aaa;}
+#antMathPanel label span{color:#ddd;font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
+#antMathPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#antMathPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
+#antMathPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#antMathPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#antMathPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#antMathPanel select{background:rgba(255,255,255,0.08);color:#ddd;border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 6px;font-size:11px;width:105px;cursor:pointer;}
+#antMathPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
+#antMathPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(91,138,240,0.5);}
+#antMathPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+.am-back-btn{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06)!important;border:1px solid rgba(255,255,255,0.1)!important;border-radius:8px!important;padding:8px 12px!important;color:#ccc!important;font-size:12px!important;cursor:pointer;margin-bottom:10px;width:100%;transition:all 0.15s;}
+.am-back-btn:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important;}
+.am-title{color:#e0e0e4;font-size:13px;font-weight:600;margin-bottom:8px;text-align:center;letter-spacing:0.5px;}
+.am-section{margin:6px 0 2px;color:#8ab4f8;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;padding:5px 0 3px;border-bottom:1px solid rgba(255,255,255,0.06);}
+.am-math{display:block;font-size:8px;color:#666;margin:-2px 0 2px 0;line-height:1.2;white-space:normal;font-style:italic;}
+
 /* Edge sliders - left side quick controls */
 #edgeSliders,#edgeSliders *{touch-action:none;}
 #edgeSliders{position:fixed;left:0;top:44px;bottom:24px;z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:20px;pointer-events:none;padding-left:8px;}
@@ -214,6 +238,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 <!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
 <div id="brushDropdown">
   <button data-brush="boid" class="selected">🐦 Boid</button>
+  <button data-brush="ant">🐜 Ant</button>
   <button data-brush="bristle">🖊 Bristle</button>
   <button data-brush="simple">🖌 Simple</button>
   <button data-brush="eraser">◻ Eraser</button>
@@ -251,6 +276,9 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 
 <!-- ══════════ Sidebar ══════════ -->
 <div id="sidebar"></div>
+
+<!-- ══════════ Ant Math Overlay Panel ══════════ -->
+<div id="antMathPanel"></div>
 
 <!-- ══════════ Status Bar ══════════ -->
 <div id="status">Ready</div>
