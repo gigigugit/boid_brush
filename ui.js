@@ -48,9 +48,9 @@ export function buildSidebar(app) {
       ${sliderRow('brushScale', 'Scale', 10, 300, 100, v => (v/100).toFixed(1))}
     </div>
 
-    <!-- Spawn Shape (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Spawn Shape (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       <label>Shape <select id="spawnShape">
         <option value="circle">● Circle</option><option value="ring">◎ Ring</option>
         <option value="gaussian">☁ Gaussian</option><option value="line">═ Line</option>
@@ -66,15 +66,15 @@ export function buildSidebar(app) {
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
     </div>
 
-    <!-- Swarm (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="swarm">Swarm <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Swarm (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       ${sliderRow('count', 'Count', 3, 200, 60)}
     </div>
 
-    <!-- Forces (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="forces">Forces <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Forces (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="forces">Forces <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       ${sliderRow('seek', 'Seek', 0, 100, 75, v => (v/100).toFixed(2))}
       ${sliderRow('cohesion', 'Cohesion', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('separation', 'Separation', 0, 100, 15, v => (v/100).toFixed(2))}
@@ -89,9 +89,9 @@ export function buildSidebar(app) {
       ${sliderRow('individuality', 'Individ.', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
-    <!-- Variance (boid only) -->
-    <div class="section-header closed" data-brushes="boid" data-section="variance">Variance <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid">
+    <!-- Variance (boid + ant) -->
+    <div class="section-header closed" data-brushes="boid ant" data-section="variance">Variance <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid ant">
       ${sliderRow('sizeVar', 'Size Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('opacityVar', 'Opac Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('speedVar', 'Speed Var', 0, 100, 0, v => (v/100).toFixed(2))}
@@ -101,9 +101,9 @@ export function buildSidebar(app) {
       ${sliderRow('litVar', 'Light Var', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
-    <!-- Motion (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="motion">Motion <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Motion (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="motion">Motion <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       ${sliderRow('maxSpeed', 'Max Speed', 1, 30, 8, v => (v/2).toFixed(1))}
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
     </div>
@@ -193,9 +193,9 @@ export function buildSidebar(app) {
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
 
-    <!-- Sensing (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Sensing (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
@@ -205,11 +205,24 @@ export function buildSidebar(app) {
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option></select></label>
     </div>
 
-    <!-- Visual (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="visual">Visual <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Visual (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="visual">Visual <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       <label>Show Particles <input type="checkbox" id="showBoids" checked></label>
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
+    </div>
+
+    <!-- Pheromone (ant only) -->
+    <div class="section-header" data-brushes="ant" data-section="antPheromone">Pheromone <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ant">
+      ${sliderRow('antFollow', 'Follow Cursor', 0, 100, 40, v => (v/100).toFixed(2), 'How strongly ants follow the cursor')}
+      ${sliderRow('antPheromoneRate', 'Deposit Rate', 0, 100, 50, v => (v/100).toFixed(2), 'Intensity of pheromone deposited per ant per frame')}
+      ${sliderRow('antPheromoneDecay', 'Evaporation', 1, 100, 20, v => (v/1000).toFixed(3), 'Pheromone decay rate per frame (higher = faster fade)')}
+      ${sliderRow('antPheromoneSize', 'Trail Width', 1, 30, 6, null, 'Radius of each pheromone deposit in pixels')}
+      <label>Show Trail <input type="checkbox" id="antTrailVisible" checked></label>
+      <span class="slider-desc">Render pheromone trail overlay (green glow)</span>
+      <label>Phero→Sensing <input type="checkbox" id="antPheromoneToSensing" checked></label>
+      <span class="slider-desc">Feed pheromone grid into WASM sensing (ants attract to trails)</span>
     </div>
 
     <!-- Trail Blur -->
