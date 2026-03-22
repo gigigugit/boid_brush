@@ -513,6 +513,21 @@ function _amSlider(id, label, min, max, value, fmt, math) {
   return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${mathHtml}`;
 }
 
+/**
+ * Build the "Ant Math Variables" overlay panel.
+ *
+ * The panel overlays the sidebar (position:fixed, z-index 11) and contains
+ * sliders for every mathematical variable in the ant motion model, grouped
+ * by equation role (seek, flock, flow, integration, pheromone, sensing).
+ *
+ * Most sliders are *mirrors* of existing sidebar controls (_AM_MIRRORS):
+ * changing a mirror slider syncs the value back to the main sidebar input
+ * and fires its 'input' event so getP() picks up the change.
+ *
+ * Two sliders are panel-only (no sidebar counterpart):
+ *   - am_neighborRadius  → getP().neighborRadius  (was hardcoded 80)
+ *   - am_separationRadius → getP().separationRadius (was hardcoded 25)
+ */
 function _buildAntMathPanel(app) {
   const panel = document.getElementById('antMathPanel');
   if (!panel) return;
@@ -523,7 +538,7 @@ function _buildAntMathPanel(app) {
 
     <div class="am-section">Cursor Follow (Seek)</div>
     ${_amSlider('am_antFollow', 'w_follow', 0, 100, 40, v => (v/100).toFixed(2), 'F_seek = ((d̂ · v_max) − v) · w_follow')}
-    ${_amSlider('am_seek', 'w_seek', 0, 100, 75, v => (v/100).toFixed(2), 'Boid seek weight (overridden by antFollow for ants)')}
+    ${_amSlider('am_seek', 'w_seek', 0, 100, 75, v => (v/100).toFixed(2), 'Base seek weight (ant uses w_follow instead via _buildAntParams)')}
 
     <div class="am-section">Exploration Forces</div>
     ${_amSlider('am_jitter', 'w_jitter', 0, 100, 0, v => (v/100).toFixed(2), 'F_jitter = (ξ − 0.5) · 2 · w_j · v_max')}
@@ -578,13 +593,13 @@ function _buildAntMathPanel(app) {
     am_speedVar: v => (v/100).toFixed(2), am_forceVar: v => (v/100).toFixed(2),
   };
 
-  // ── Wire panel sliders: sync mirrored values to main sidebar ──
+  // ── Wire panel sliders: update readout, sync mirrors, invalidate params ──
   panel.querySelectorAll('input[type="range"]').forEach(inp => {
     const span = document.getElementById('v_' + inp.id);
     const fmt = amFormats[inp.id];
     inp.addEventListener('input', () => {
       if (span) span.textContent = fmt ? fmt(+inp.value) : inp.value;
-      // Mirror to main sidebar
+      // Mirror to main sidebar (no-op for panel-only sliders like neighborRadius)
       const pair = _AM_MIRRORS.find(m => m[0] === inp.id);
       if (pair) {
         const main = document.getElementById(pair[1]);
@@ -593,18 +608,6 @@ function _buildAntMathPanel(app) {
           main.dispatchEvent(new Event('input', { bubbles: true }));
         }
       }
-      app.invalidateParams();
-    });
-  });
-
-  // ── New-only sliders (neighborRadius, separationRadius) also invalidate ──
-  const nrInp = document.getElementById('am_neighborRadius');
-  const srInp = document.getElementById('am_separationRadius');
-  [nrInp, srInp].forEach(inp => {
-    if (!inp) return;
-    inp.addEventListener('input', () => {
-      const span = document.getElementById('v_' + inp.id);
-      if (span) span.textContent = inp.value;
       app.invalidateParams();
     });
   });
@@ -622,11 +625,11 @@ function _buildAntMathPanel(app) {
         if (span) span.textContent = fmt ? fmt(+p.value) : p.value;
       }
     });
-    // Also update new-only sliders' readouts
-    [nrInp, srInp].forEach(inp => {
-      if (!inp) return;
+    // Also update panel-only sliders' readouts (neighborRadius, separationRadius)
+    panel.querySelectorAll('input[type="range"]').forEach(inp => {
+      if (_AM_MIRRORS.some(m => m[0] === inp.id)) return; // already synced above
       const span = document.getElementById('v_' + inp.id);
-      if (span) span.textContent = inp.value;
+      if (span) span.textContent = amFormats[inp.id] ? amFormats[inp.id](+inp.value) : inp.value;
     });
     panel.classList.add('open');
   });
