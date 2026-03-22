@@ -14,18 +14,14 @@ let _agPsd = null;
 async function _loadAgPsd() {
   if (_agPsd) return _agPsd;
   _agPsd = await import('https://esm.sh/ag-psd@30.1.0');
-  // Tell ag-psd how to create canvas elements in the browser
-  _agPsd.initializeCanvas(
-    (width, height) => {
-      const c = document.createElement('canvas');
-      c.width = width;
-      c.height = height;
-      return c;
-    },
-    (canvas, width, height) => {
-      return canvas.getContext('2d').createImageData(width, height);
-    }
-  );
+  // Tell ag-psd how to create canvas elements in the browser.
+  // v30 removed the createCanvasFromData parameter — only createCanvas is accepted.
+  _agPsd.initializeCanvas((width, height) => {
+    const c = document.createElement('canvas');
+    c.width = width;
+    c.height = height;
+    return c;
+  });
   return _agPsd;
 }
 
@@ -128,7 +124,10 @@ export async function importPSD(app) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.psd,image/vnd.adobe.photoshop,application/x-photoshop,application/photoshop';
+  input.style.display = 'none';
+  document.body.appendChild(input);
   input.addEventListener('change', async () => {
+    document.body.removeChild(input);
     const file = input.files[0];
     if (!file) return;
     try {
@@ -137,10 +136,8 @@ export async function importPSD(app) {
       const arrayBuffer = await file.arrayBuffer();
       const psd = readPsd(arrayBuffer);
 
-      if (!psd.children || psd.children.length === 0) {
-        app.showToast('⚠ PSD has no layers');
-        return;
-      }
+      // Collect raster layers from children, or fall back to composite image
+      const hasChildren = psd.children && psd.children.length > 0;
 
       app.pushUndo();
 
@@ -157,55 +154,80 @@ export async function importPSD(app) {
 
       // Recursively collect raster layers (flattens groups)
       const newLayers = [];
-      function collectLayers(children, prefix) {
-        for (const child of children) {
-          // Recurse into groups
-          if (child.children) {
-            const groupPrefix = prefix
-              ? `${prefix}/${child.name || 'Group'}`
-              : (child.name || 'Group');
-            collectLayers(child.children, groupPrefix);
-            continue;
+
+      if (hasChildren) {
+        function collectLayers(children, prefix) {
+          for (const child of children) {
+            // Recurse into groups
+            if (child.children) {
+              const groupPrefix = prefix
+                ? `${prefix}/${child.name || 'Group'}`
+                : (child.name || 'Group');
+              collectLayers(child.children, groupPrefix);
+              continue;
+            }
+            if (!child.canvas) continue;  // skip layers without pixel data
+
+            const { canvas: layerCanvas, ctx: layerCtx } = app.makeLayerCanvas();
+            layerCtx.save();
+            layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+            // Scale PSD layer to fit current canvas if dimensions differ
+            const srcW = child.canvas.width;
+            const srcH = child.canvas.height;
+            const dstW = layerCanvas.width;
+            const dstH = layerCanvas.height;
+            const left = (child.left || 0) * (dstW / psdW);
+            const top  = (child.top  || 0) * (dstH / psdH);
+            const drawW = srcW * (dstW / psdW);
+            const drawH = srcH * (dstH / psdH);
+
+            layerCtx.drawImage(child.canvas, 0, 0, srcW, srcH, left, top, drawW, drawH);
+            layerCtx.restore();
+            layerCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
+
+            const blend = PSD_TO_CSS_BLEND[child.blendMode] || 'source-over';
+            const opacity = typeof child.opacity === 'number' ? child.opacity / 255 : 1;
+            const layerName = prefix
+              ? `${prefix}/${child.name || 'Layer'}`
+              : (child.name || 'Layer');
+
+            newLayers.push({
+              canvas: layerCanvas,
+              ctx: layerCtx,
+              name: layerName,
+              visible: !child.hidden,
+              opacity: Math.max(0, Math.min(1, opacity)),
+              blend,
+              dirty: true,
+              glTex: null,
+            });
           }
-          if (!child.canvas) continue;  // skip layers without pixel data
-
-          const { canvas: layerCanvas, ctx: layerCtx } = app.makeLayerCanvas();
-          layerCtx.save();
-          layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-
-          // Scale PSD layer to fit current canvas if dimensions differ
-          const srcW = child.canvas.width;
-          const srcH = child.canvas.height;
-          const dstW = layerCanvas.width;
-          const dstH = layerCanvas.height;
-          const left = (child.left || 0) * (dstW / psdW);
-          const top  = (child.top  || 0) * (dstH / psdH);
-          const drawW = srcW * (dstW / psdW);
-          const drawH = srcH * (dstH / psdH);
-
-          layerCtx.drawImage(child.canvas, 0, 0, srcW, srcH, left, top, drawW, drawH);
-          layerCtx.restore();
-          layerCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
-
-          const blend = PSD_TO_CSS_BLEND[child.blendMode] || 'source-over';
-          const opacity = typeof child.opacity === 'number' ? child.opacity / 255 : 1;
-          const layerName = prefix
-            ? `${prefix}/${child.name || 'Layer'}`
-            : (child.name || 'Layer');
-
-          newLayers.push({
-            canvas: layerCanvas,
-            ctx: layerCtx,
-            name: layerName,
-            visible: !child.hidden,
-            opacity: Math.max(0, Math.min(1, opacity)),
-            blend,
-            dirty: true,
-            glTex: null,
-          });
         }
+        collectLayers(psd.children, '');
       }
-      collectLayers(psd.children, '');
+
+      // Fallback: if no raster layers found but PSD has a composite image, import it
+      if (newLayers.length === 0 && psd.canvas) {
+        const { canvas: layerCanvas, ctx: layerCtx } = app.makeLayerCanvas();
+        layerCtx.save();
+        layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+        const dstW = layerCanvas.width;
+        const dstH = layerCanvas.height;
+        layerCtx.drawImage(psd.canvas, 0, 0, psdW, psdH, 0, 0, dstW, dstH);
+        layerCtx.restore();
+        layerCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
+        newLayers.push({
+          canvas: layerCanvas,
+          ctx: layerCtx,
+          name: 'Imported',
+          visible: true,
+          opacity: 1,
+          blend: 'source-over',
+          dirty: true,
+          glTex: null,
+        });
+      }
 
       if (newLayers.length === 0) {
         app.showToast('⚠ PSD had no raster layers');
