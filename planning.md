@@ -1,34 +1,7 @@
-You are an AI assistant helping to plan enhancements for a painting application called Boid Brush. Your task is to create a structured implementation plan for the following features:
+Now i want to add a feature "mode", which will be a "simulation mode", which will apply to all motion brush types (boid and ants currently), which will entail the ability to "set the parameters" of the simulation and the brush variables and then run the simulation to "paint" with the active agents, then be able to pause/stop via on screen controls.
 
-## Core Features to Plan
+UI for simulation should mirror that used for transform feature (flip hor, vert buttons, rotate buttons—the color and appearance) and other patterns as needed that are visually consistent with that. 
 
-1. **Copy/Paste Functionality** - Enable users to duplicate and manipulate selected artwork areas on the canvas.
+parameters selectable for all types: [spawn location, spreadradius, all stamp/rendering settings (in the usual UI locations)]
 
-2. **Selection Tools** - Implement rectangle, ellipse, and lasso selection tools for precise area selection.
-
-3. **Deselect Option** - Provide ability to clear active selections.
-
-4. **Save and Export** - Support saving as bitmap files and exporting to layered formats (Photoshop, Procreate).
-
-5. **Layer Management** - Create a right-side callout menu (accessible via toolbar button) with:
-    - Layer stack reordering
-    - Layer grouping/ungrouping
-    - Group and subgroup duplication
-    - Drag-and-drop interface
-
-6. **Layer Modifications** - Apply brightness, contrast, saturation adjustments and filters (blur, sharpen, color adjustments).
-
-7. **History Panel** - Implement undo/redo functionality with visual history timeline.
-
-8. **Layer Styles Panel** - Enable effects like drop shadows, glows, and bevels.
-
-9. **Text Tool** - Add text support with font selection, sizing, color, and alignment options.
-
-## Future Considerations
-- Advanced selection tools (magic wand, quick select)
-- Custom brush creation and management
-- Pressure-sensitive stylus support
-- Intuitive UI with clear icons and tooltips
-
-## Your Task
-Analyze the current codebase, prioritize these features, identify dependencies, and propose a phased implementation approach that maintains code quality and usability.
+boids: [set "attraction" and repustion points, which should be click-and-draggable display as either a light orange (repusltion) or light deep blue (attraction) (and deletable with small transparent X superscript above right), "follow-path element", where a path could be drawn and the boids would be drawn to the simulated stroke along that path, with speed options]

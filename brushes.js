@@ -14,6 +14,10 @@ const BRISTLE_PRESSURE_ALPHA = 0.15;
 const MAX_SMOOTH_DAMP = 0.92;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+const AGENT_X = 0;
+const AGENT_Y = 1;
+const AGENT_VX = 2;
+const AGENT_VY = 3;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -172,6 +176,95 @@ function _stampToBlurAccum(bctx, app, x, y, sz, color, op) {
     bctx.fill();
   }
   bctx.globalAlpha = 1;
+}
+
+function _clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function _closestPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 1e-6) return { x: ax, y: ay, t: 0 };
+  const t = _clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1);
+  return { x: ax + dx * t, y: ay + dy * t, t };
+}
+
+function _signedDistanceToLine(px, py, ax, ay, bx, by) {
+  return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+}
+
+function _applySimulationGuides(brush, p, read) {
+  const app = brush.app;
+  const sim = app.simulation;
+  if (!sim?.enabled) return;
+  const data = sim.brushData[app.activeBrush];
+  if (!data) return;
+  const { buffer, count, stride } = read;
+  const pointForce = p.simPointStrength * p.simSpeed;
+  const pointRadius = Math.max(1, p.simPointRadius);
+  const edgeForce = p.simEdgeForce * p.simSpeed;
+  const edgeRadius = Math.max(0, p.simEdgeRadius);
+
+  for (let i = 0; i < count; i++) {
+    const base = i * stride;
+    let x = buffer[base + AGENT_X];
+    let y = buffer[base + AGENT_Y];
+    let vx = buffer[base + AGENT_VX];
+    let vy = buffer[base + AGENT_VY];
+
+    for (const point of data.points) {
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const d = Math.hypot(dx, dy);
+      if (d <= 0.0001 || d > pointRadius) continue;
+      const sign = point.type === 'repel' ? -1 : 1;
+      const falloff = 1 - d / pointRadius;
+      const push = pointForce * falloff * 0.85 * sign;
+      vx += (dx / d) * push;
+      vy += (dy / d) * push;
+    }
+
+    if (app.activeBrush === 'ant' && data.edges?.length) {
+      const prevX = x - vx;
+      const prevY = y - vy;
+      for (const edge of data.edges) {
+        const pts = edge.points || [];
+        for (let j = 1; j < pts.length; j++) {
+          const a = pts[j - 1];
+          const b = pts[j];
+          const closest = _closestPointOnSegment(x, y, a.x, a.y, b.x, b.y);
+          const dx = x - closest.x;
+          const dy = y - closest.y;
+          const dist = Math.hypot(dx, dy);
+          if (edgeRadius > 0 && dist < edgeRadius && dist > 0.0001) {
+            const away = (1 - dist / edgeRadius) * edgeForce;
+            vx += (dx / dist) * away;
+            vy += (dy / dist) * away;
+          }
+          const prevSide = _signedDistanceToLine(prevX, prevY, a.x, a.y, b.x, b.y);
+          const curSide = _signedDistanceToLine(x, y, a.x, a.y, b.x, b.y);
+          if ((prevSide < 0 && curSide > 0) || (prevSide > 0 && curSide < 0)) {
+            const nx = dy === 0 && dx === 0 ? 0 : dx / Math.max(dist, 1);
+            const ny = dy === 0 && dx === 0 ? 0 : dy / Math.max(dist, 1);
+            x = closest.x + nx * Math.max(edgeRadius, 2);
+            y = closest.y + ny * Math.max(edgeRadius, 2);
+            const dot = vx * nx + vy * ny;
+            if (dot < 0) {
+              vx -= 1.8 * dot * nx;
+              vy -= 1.8 * dot * ny;
+            }
+          }
+        }
+      }
+    }
+
+    buffer[base + AGENT_X] = x;
+    buffer[base + AGENT_Y] = y;
+    buffer[base + AGENT_VX] = vx;
+    buffer[base + AGENT_VY] = vy;
+  }
 }
 
 export class BoidBrush {
@@ -387,6 +480,14 @@ export class BoidBrush {
     // Boids keep tailing off via taper
   }
 
+  configureSimulation(data, p) {
+    if (!this._ready || !data?.spawns?.length) return;
+    for (let i = 1; i < data.spawns.length; i++) {
+      const spawn = data.spawns[i];
+      this.sim.spawnBatch(spawn.x, spawn.y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, p.spawnRadius);
+    }
+  }
+
   onFrame(elapsed) {
     if (!this._ready) return;
     const p = this.app.getP();
@@ -406,7 +507,9 @@ export class BoidBrush {
     this.sim.step(1 / 60);
 
     // Read agents
-    const { buffer, count, stride } = this.sim.readAgents();
+    const read = this.sim.readAgents();
+    _applySimulationGuides(this, p, read);
+    const { buffer, count, stride } = read;
     if (count === 0) return;
 
     // Stamp each agent
@@ -646,11 +749,16 @@ export class BoidBrush {
     }
 
     // Draw spawn area indicator
-    if (p.showSpawn && this.app.isDrawing) {
+    const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
+      ? this.app._getSimulationSpawnCenter('boid')
+      : null;
+    if (p.showSpawn && (this.app.isDrawing || simSpawn)) {
+      const sx = simSpawn?.x ?? this.app.leaderX;
+      const sy = simSpawn?.y ?? this.app.leaderY;
       ctx.strokeStyle = 'rgba(100,180,255,0.3)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(this.app.leaderX, this.app.leaderY, p.spawnRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, p.spawnRadius, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -782,6 +890,28 @@ export class AntBrush {
     this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
   }
 
+  paintSimulationPheromone(points, radius, intensity) {
+    if (!points?.length) return;
+    this._initPheroGrid();
+    for (const pt of points) {
+      this._depositPheromone(pt.x, pt.y, radius, intensity * MAX_PHEROMONE);
+    }
+  }
+
+  configureSimulation(data, p) {
+    if (!this._ready || !data?.spawns?.length) return;
+    for (let i = 1; i < data.spawns.length; i++) {
+      const spawn = data.spawns[i];
+      this.sim.spawnBatch(spawn.x, spawn.y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, p.spawnRadius);
+    }
+    this._initPheroGrid();
+    if (this._pheroData) this._pheroData.fill(0);
+    for (const trail of data.pheromonePaths || []) {
+      this.paintSimulationPheromone(trail.points, trail.radius || p.simPheroPaintRadius, trail.intensity || p.simPheroPaintStrength);
+    }
+    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing();
+  }
+
   // ---- Brush lifecycle ----
 
   onDown(x, y, pressure) {
@@ -800,8 +930,8 @@ export class AntBrush {
 
     // Initialise pheromone grid
     this._initPheroGrid();
-    // Clear pheromones at stroke start
-    if (this._pheroData) this._pheroData.fill(0);
+    // Clear pheromones at stroke start unless simulation mode will seed them
+    if (this._pheroData && !this.app.simulation?.enabled) this._pheroData.fill(0);
 
     // Push undo
     if (!this.app.undoPushedThisStroke) {
@@ -951,7 +1081,9 @@ export class AntBrush {
     this.sim.step(1 / 60);
 
     // Read agents
-    const { buffer, count, stride } = this.sim.readAgents();
+    const read = this.sim.readAgents();
+    _applySimulationGuides(this, p, read);
+    const { buffer, count, stride } = read;
     if (count === 0) return;
 
     // Stamp each agent and deposit pheromones along their paths
@@ -1180,11 +1312,16 @@ export class AntBrush {
     }
 
     // Draw spawn area indicator
-    if (p.showSpawn && this.app.isDrawing) {
+    const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'ant'
+      ? this.app._getSimulationSpawnCenter('ant')
+      : null;
+    if (p.showSpawn && (this.app.isDrawing || simSpawn)) {
+      const sx = simSpawn?.x ?? this.app.leaderX;
+      const sy = simSpawn?.y ?? this.app.leaderY;
       ctx.strokeStyle = 'rgba(180,100,50,0.3)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(this.app.leaderX, this.app.leaderY, p.spawnRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, p.spawnRadius, 0, Math.PI * 2);
       ctx.stroke();
     }
 

@@ -104,6 +104,19 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
 #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%) translateY(8px);background:rgba(16,16,20,0.96);backdrop-filter:blur(16px);color:#fff;padding:10px 22px;border-radius:12px;font-size:12px;pointer-events:none;opacity:0;transition:all 0.3s ease;z-index:100;border:1px solid rgba(255,255,255,0.08);box-shadow:0 8px 32px rgba(0,0,0,0.5);}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
+/* Simulation HUD */
+#simHud{position:fixed;left:14px;top:58px;z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;}
+#simHud.open{display:flex;}
+.sim-card{pointer-events:auto;background:rgba(18,18,22,0.94);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:8px;box-shadow:0 10px 28px rgba(0,0,0,0.42);}
+.sim-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.sim-pill{padding:5px 10px;border:1px solid rgba(255,255,255,0.1);border-radius:7px;background:rgba(255,255,255,0.06);color:#ccc;font-size:11px;cursor:pointer;white-space:nowrap;transition:all 0.15s ease;}
+.sim-pill:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.18);color:#fff;}
+.sim-pill.active{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 8px rgba(74,126,255,0.25);}
+.sim-pill.warn{background:rgba(139,58,58,0.7);border-color:rgba(255,59,48,0.3);color:#f6d6d6;}
+.sim-pill.warn:hover{background:rgba(255,59,48,0.4);color:#fff;}
+.sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
+.sim-status{font-size:10px;color:#d2d6df;min-width:90px;}
+
 /* Preset buttons */
 .preset-item{display:flex;align-items:center;gap:4px;margin:2px 0;}
 .preset-item button{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;}
@@ -216,6 +229,7 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
   <button id="lassoSelectBtn" title="Lasso Select (L)">⌇ Lasso</button>
   <button id="deselectBtn" title="Deselect (Esc)" style="display:none">✕ Desel</button>
   <button id="transformBtn" title="Transform (T)" style="display:none">⟷↔ Transform</button>
+  <button id="simulationBtn" title="Simulation mode" style="display:none">◎ Simulation</button>
   <button id="proportionalToggle" title="Keep proportional (default on)"
     style="display:none; background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 8px rgba(74,126,255,0.3);">🔒</button>
   <div class="tb-sep"></div>
@@ -251,6 +265,29 @@ html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-ap
     <canvas id="compositeDisplay"></canvas>
     <canvas id="liveCanvas"></canvas>
     <canvas id="interactionCanvas"></canvas>
+  </div>
+</div>
+
+<div id="simHud">
+  <div class="sim-card">
+    <div class="sim-label">Simulation</div>
+    <div class="sim-row" id="simToolRow">
+      <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
+      <button class="sim-pill" data-sim-tool="attract">Attract</button>
+      <button class="sim-pill" data-sim-tool="repel">Repel</button>
+      <button class="sim-pill" data-sim-tool="path">Path</button>
+      <button class="sim-pill" data-sim-tool="edge">Edge</button>
+      <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+      <button class="sim-pill warn" id="simClearBtn">Clear</button>
+    </div>
+  </div>
+  <div class="sim-card">
+    <div class="sim-row">
+      <button class="sim-pill active" id="simRunBtn">Run</button>
+      <button class="sim-pill" id="simPauseBtn">Pause</button>
+      <button class="sim-pill warn" id="simStopBtn">Stop</button>
+      <span class="sim-status" id="simStatus">Ready</span>
+    </div>
   </div>
 </div>
 

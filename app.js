@@ -117,6 +117,21 @@ export class App {
     // Tool mode ('brush' | 'rect-select' | 'ellipse-select' | 'lasso-select')
     this.activeTool = 'brush';
     this.selectionMgr = null;
+    this.simulation = {
+      enabled: false,
+      running: false,
+      paused: false,
+      editorTool: 'spawn',
+      brushData: {
+        boid: { spawns: [], points: [], path: [] },
+        ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+      },
+      drawingPath: null,
+      dragTarget: null,
+      pathDistance: 0,
+      pathProgress: 0,
+      nextId: 1,
+    };
 
     // Color
     this.primaryEl = document.getElementById('primaryColor');
@@ -171,6 +186,11 @@ export class App {
 
     // Restore session
     this._restoreSession();
+    // Fresh loads start with activeBrush='boid' but had not been run through
+    // the normal brush activation path. Re-applying the current brush keeps
+    // startup behavior consistent with choosing it from the menu.
+    this.setBrush(this.activeBrush);
+    this._syncSimulationUI();
 
     // Composite & start loop
     this.compositeAllLayers();
@@ -731,8 +751,495 @@ export class App {
       // Neighbor/separation radii (ant math panel)
       neighborRadius: val('am_neighborRadius') || 80,
       separationRadius: val('am_separationRadius') || 25,
+      // Simulation mode
+      simSpeed: (val('simSpeed') || 100) / 100,
+      simPointStrength: (val('simPointStrength') || 0) / 100,
+      simPointRadius: val('simPointRadius') || 120,
+      simPathSpeed: (val('simPathSpeed') || 50) / 20,
+      simEdgeForce: (val('simEdgeForce') || 100) / 100,
+      simEdgeRadius: val('simEdgeRadius') || 28,
+      simPheroPaintRadius: val('simPheroPaintRadius') || 18,
+      simPheroPaintStrength: (val('simPheroPaintStrength') || 55) / 100,
     };
     return this._cachedP;
+  }
+
+  // ========================================================
+  // SIMULATION MODE
+  // ========================================================
+
+  _isMotionBrush(name = this.activeBrush) {
+    return name === 'boid' || name === 'ant';
+  }
+
+  _getSimulationBrushData(brush = this.activeBrush) {
+    return this.simulation.brushData[brush] || null;
+  }
+
+  _ensureSimulationSpawns(brush = this.activeBrush) {
+    const data = this._getSimulationBrushData(brush);
+    if (!data) return [];
+    if (!Array.isArray(data.spawns)) {
+      data.spawns = data.spawn ? [data.spawn] : [];
+      delete data.spawn;
+    }
+    if (!data.spawns.length) data.spawns.push({ id: this.simulation.nextId++, x: this.W * 0.5, y: this.H * 0.5 });
+    return data.spawns;
+  }
+
+  _normalizeSimulationData() {
+    for (const brush of ['boid', 'ant']) {
+      const data = this._getSimulationBrushData(brush);
+      if (!data) continue;
+      if (!Array.isArray(data.spawns)) {
+        data.spawns = data.spawn ? [data.spawn] : [];
+        delete data.spawn;
+      }
+      data.spawns = data.spawns.map(spawn => ({ id: spawn.id || this.simulation.nextId++, x: spawn.x, y: spawn.y }));
+      if (!Array.isArray(data.points)) data.points = [];
+      if (brush === 'boid' && !Array.isArray(data.path)) data.path = [];
+      if (brush === 'ant') {
+        if (!Array.isArray(data.edges)) data.edges = [];
+        if (!Array.isArray(data.pheromonePaths)) data.pheromonePaths = [];
+      }
+    }
+  }
+
+  _getSimulationSpawnCenter(brush = this.activeBrush) {
+    const spawns = this._ensureSimulationSpawns(brush);
+    if (!spawns.length) return { x: this.W * 0.5, y: this.H * 0.5 };
+    let sx = 0;
+    let sy = 0;
+    for (const spawn of spawns) {
+      sx += spawn.x;
+      sy += spawn.y;
+    }
+    return { x: sx / spawns.length, y: sy / spawns.length };
+  }
+
+  _toggleSimulationMode(force) {
+    if (!this._isMotionBrush()) return;
+    const next = typeof force === 'boolean' ? force : !this.simulation.enabled;
+    if (!next) this.stopSimulation(false);
+    this.simulation.enabled = next;
+    this.simulation.paused = false;
+    this.simulation.drawingPath = null;
+    this.simulation.dragTarget = null;
+    this._ensureSimulationSpawns();
+    this._syncSimulationUI();
+    this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
+  }
+
+  _setSimulationTool(tool) {
+    if (!this._isMotionBrush()) return;
+    this.simulation.editorTool = tool;
+    this._syncSimulationUI();
+  }
+
+  _syncSimulationUI() {
+    if (this.activeBrush === 'boid' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
+    if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
+    if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
+    const btn = document.getElementById('simulationBtn');
+    const hud = document.getElementById('simHud');
+    const isMotion = this._isMotionBrush();
+    if (btn) {
+      btn.style.display = isMotion ? '' : 'none';
+      btn.classList.toggle('active', !!this.simulation.enabled);
+    }
+    if (hud) hud.classList.toggle('open', !!this.simulation.enabled && isMotion);
+
+    const toolRow = document.getElementById('simToolRow');
+    if (toolRow) {
+      toolRow.querySelectorAll('[data-sim-tool]').forEach(el => {
+        const tool = el.dataset.simTool;
+        const hide =
+          (this.activeBrush === 'boid' && tool === 'edge') ||
+          (this.activeBrush === 'ant' && tool === 'path') ||
+          (this.activeBrush === 'boid' && tool === 'pheromone');
+        el.style.display = hide ? 'none' : '';
+        el.classList.toggle('active', this.simulation.editorTool === tool);
+      });
+    }
+
+    document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
+    document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
+    const status = document.getElementById('simStatus');
+    if (status) {
+      status.textContent = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
+    }
+  }
+
+  startSimulation() {
+    if (!this.simulation.enabled || !this._isMotionBrush()) return;
+    const brush = this.getCurrentBrush();
+    if (!brush) return;
+    if (this.simulation.running) return;
+    const spawns = this._ensureSimulationSpawns();
+    const spawn = spawns[0];
+    this.stopSimulation(false);
+    this.simulation.running = true;
+    this.simulation.paused = false;
+    this.simulation.pathProgress = 0;
+    const center = this._getSimulationSpawnCenter();
+    this.leaderX = center.x;
+    this.leaderY = center.y;
+    this.isDrawing = true;
+    this.undoPushedThisStroke = false;
+    this.strokeFrame = 0;
+    brush.onDown?.(spawn.x, spawn.y, 1);
+    brush.configureSimulation?.(this._getSimulationBrushData(), this.getP());
+    this._syncSimulationUI();
+    this.showToast('Simulation running');
+  }
+
+  pauseSimulation() {
+    if (!this.simulation.running) return;
+    this.simulation.running = false;
+    this.simulation.paused = true;
+    this.isDrawing = false;
+    this._syncSimulationUI();
+    this.showToast('Simulation paused');
+  }
+
+  resumeSimulation() {
+    if (!this.simulation.paused || !this._isMotionBrush()) return;
+    this.simulation.paused = false;
+    this.simulation.running = true;
+    this.isDrawing = true;
+    this._syncSimulationUI();
+    this.showToast('Simulation resumed');
+  }
+
+  stopSimulation(showToast = true) {
+    const brush = this.getCurrentBrush();
+    const wasActive = this.simulation.running || this.simulation.paused;
+    if (this.simulation.running && brush?.onUp) {
+      brush.onUp(this.leaderX, this.leaderY);
+    }
+    if (wasActive && brush?.deactivate) brush.deactivate();
+    this.simulation.running = false;
+    this.simulation.paused = false;
+    this.isDrawing = false;
+    this.isTapering = false;
+    this._syncSimulationUI();
+    if (showToast && wasActive) this.showToast('Simulation stopped');
+  }
+
+  _handleSimulationPointerDown(x, y) {
+    if (!this.simulation.enabled || !this._isMotionBrush()) return false;
+    if (this.simulation.running || this.simulation.paused) return true;
+
+    const hit = this._findSimulationHit(x, y);
+    if (hit?.kind === 'delete') {
+      this._deleteSimulationItem(hit);
+      return true;
+    }
+    if (hit?.kind === 'point') {
+      this.simulation.dragTarget = hit;
+      return true;
+    }
+    if (hit?.kind === 'spawn') {
+      this.simulation.dragTarget = hit;
+      return true;
+    }
+    const tool = this.simulation.editorTool;
+    const data = this._getSimulationBrushData();
+    if (!data) return true;
+
+    if (tool === 'spawn') {
+      data.spawns.push({ id: this.simulation.nextId++, x, y });
+    } else if (tool === 'attract' || tool === 'repel') {
+      data.points.push({ id: this.simulation.nextId++, x, y, type: tool });
+    } else if (tool === 'pheromone' && this.activeBrush === 'ant') {
+      this.simulation.drawingPath = {
+        kind: tool,
+        radius: this.getP().simPheroPaintRadius,
+        intensity: this.getP().simPheroPaintStrength,
+        points: [{ x, y }],
+      };
+    } else if ((tool === 'path' && this.activeBrush === 'boid') || (tool === 'edge' && this.activeBrush === 'ant')) {
+      this.simulation.drawingPath = {
+        kind: tool,
+        points: [{ x, y }],
+      };
+    }
+    return true;
+  }
+
+  _handleSimulationPointerMove(x, y) {
+    if (!this.simulation.enabled || !this._isMotionBrush()) return false;
+    if (this.simulation.dragTarget) {
+      const hit = this.simulation.dragTarget;
+      if (hit.kind === 'spawn' || hit.kind === 'point') {
+        hit.target.x = x;
+        hit.target.y = y;
+      }
+      return true;
+    }
+    if (this.simulation.drawingPath) {
+      const pts = this.simulation.drawingPath.points;
+      const last = pts[pts.length - 1];
+      const dx = x - last.x;
+      const dy = y - last.y;
+      if (dx * dx + dy * dy >= 16) pts.push({ x, y });
+      return true;
+    }
+    return this.simulation.running || this.simulation.paused;
+  }
+
+  _handleSimulationPointerUp() {
+    if (!this.simulation.enabled || !this._isMotionBrush()) return false;
+    this.simulation.dragTarget = null;
+    if (this.simulation.drawingPath) {
+      const path = this.simulation.drawingPath.points.filter((pt, i, arr) => i === 0 || Math.hypot(pt.x - arr[i - 1].x, pt.y - arr[i - 1].y) > 1);
+      const data = this._getSimulationBrushData();
+      if (data && path.length >= 2) {
+        if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') data.path = path;
+        else if (this.simulation.drawingPath.kind === 'edge' && this.activeBrush === 'ant') data.edges.push({ id: this.simulation.nextId++, points: path });
+        else if (this.simulation.drawingPath.kind === 'pheromone' && this.activeBrush === 'ant') {
+          data.pheromonePaths.push({
+            id: this.simulation.nextId++,
+            points: path,
+            radius: this.simulation.drawingPath.radius,
+            intensity: this.simulation.drawingPath.intensity,
+          });
+        }
+      }
+      this.simulation.drawingPath = null;
+      return true;
+    }
+    return this.simulation.running || this.simulation.paused || this.simulation.enabled;
+  }
+
+  _deleteSimulationItem(hit) {
+    const data = this._getSimulationBrushData();
+    if (!data) return;
+    if (hit.collection === 'spawns') {
+      data.spawns = data.spawns.filter(p => p !== hit.target);
+      this._ensureSimulationSpawns();
+    } else if (hit.collection === 'points') {
+      data.points = data.points.filter(p => p !== hit.target);
+    } else if (hit.collection === 'edges') {
+      data.edges = data.edges.filter(p => p !== hit.target);
+    } else if (hit.collection === 'pheromonePaths') {
+      data.pheromonePaths = data.pheromonePaths.filter(p => p !== hit.target);
+    } else if (hit.collection === 'path') {
+      data.path = [];
+    }
+  }
+
+  clearSimulationGuides() {
+    const data = this._getSimulationBrushData();
+    if (!data) return;
+    data.spawns = [];
+    data.points = [];
+    if (this.activeBrush === 'boid') data.path = [];
+    if (this.activeBrush === 'ant') {
+      data.edges = [];
+      data.pheromonePaths = [];
+    }
+    this._ensureSimulationSpawns();
+    this.showToast('Simulation guides cleared');
+  }
+
+  _findSimulationHit(x, y) {
+    const data = this._getSimulationBrushData();
+    if (!data) return null;
+    const hitRadius = 14;
+    const delRadius = 10;
+    const checkDelete = (target, collection) => {
+      const dx = x - (target.x + 12);
+      const dy = y - (target.y - 12);
+      return dx * dx + dy * dy <= delRadius * delRadius ? { kind: 'delete', target, collection } : null;
+    };
+
+    for (const spawn of this._ensureSimulationSpawns()) {
+      const del = checkDelete(spawn, 'spawns');
+      if (del) return del;
+      if (Math.hypot(x - spawn.x, y - spawn.y) <= hitRadius) return { kind: 'spawn', target: spawn, collection: 'spawns' };
+    }
+
+    for (const point of data.points) {
+      const del = checkDelete(point, 'points');
+      if (del) return del;
+      if (Math.hypot(x - point.x, y - point.y) <= hitRadius) return { kind: 'point', target: point, collection: 'points' };
+    }
+
+    if (this.activeBrush === 'ant') {
+      for (const path of data.pheromonePaths || []) {
+        if (!path.points?.length) continue;
+        const anchor = path.points[Math.floor(path.points.length / 2)];
+        const del = checkDelete(anchor, 'pheromonePaths');
+        if (del) return { ...del, target: path };
+      }
+    }
+
+    return null;
+  }
+
+  _updateSimulationLeader(elapsed, p) {
+    const data = this._getSimulationBrushData();
+    if (!data) return;
+    const center = this._getSimulationSpawnCenter();
+    this.leaderX = center.x;
+    this.leaderY = center.y;
+    if (this.activeBrush !== 'boid' || !data.path || data.path.length < 2) return;
+
+    const total = this._polylineLength(data.path);
+    if (total <= 0) return;
+    const dt = 1 / 60;
+    this.simulation.pathDistance += Math.max(0.5, p.maxSpeed * 14 * p.simSpeed * p.simPathSpeed) * dt;
+    const dist = this.simulation.pathDistance % total;
+    const pt = this._samplePolyline(data.path, dist);
+    if (pt) {
+      this.leaderX = pt.x;
+      this.leaderY = pt.y;
+    }
+  }
+
+  _polylineLength(points) {
+    let len = 0;
+    for (let i = 1; i < points.length; i++) len += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    return len;
+  }
+
+  _samplePolyline(points, distance) {
+    let remaining = distance;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const seg = Math.hypot(b.x - a.x, b.y - a.y);
+      if (seg <= 0) continue;
+      if (remaining <= seg) {
+        const t = remaining / seg;
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      }
+      remaining -= seg;
+    }
+    return points[points.length - 1] || null;
+  }
+
+  drawSimulationOverlay(ctx) {
+    if (!this.simulation.enabled || !this._isMotionBrush()) return;
+    const data = this._getSimulationBrushData();
+    if (!data) return;
+    const p = this.getP();
+    const pointRadius = p.simPointRadius;
+    const edgeRadius = p.simEdgeRadius;
+
+    const drawDelete = (x, y) => {
+      ctx.fillStyle = 'rgba(18,18,22,0.55)';
+      ctx.beginPath();
+      ctx.arc(x + 12, y - 12, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('×', x + 12, y - 12);
+    };
+
+    for (const spawn of this._ensureSimulationSpawns()) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(spawn.x, spawn.y, Math.max(8, p.spawnRadius), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(spawn.x, spawn.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fill();
+      drawDelete(spawn.x, spawn.y);
+    }
+
+    for (const point of data.points) {
+      const attract = point.type === 'attract';
+      const color = attract ? 'rgba(94,149,255,0.88)' : 'rgba(255,188,118,0.9)';
+      const fill = attract ? 'rgba(54,98,185,0.18)' : 'rgba(217,147,66,0.18)';
+      ctx.strokeStyle = color;
+      ctx.fillStyle = fill;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      drawDelete(point.x, point.y);
+    }
+
+    if (this.activeBrush === 'boid' && data.path?.length >= 2) {
+      ctx.strokeStyle = 'rgba(116,166,255,0.85)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(data.path[0].x, data.path[0].y);
+      for (let i = 1; i < data.path.length; i++) ctx.lineTo(data.path[i].x, data.path[i].y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    if (this.activeBrush === 'ant') {
+      for (const trail of data.pheromonePaths || []) {
+        if (!trail.points?.length) continue;
+        ctx.strokeStyle = 'rgba(120,200,80,0.8)';
+        ctx.lineWidth = Math.max(2, trail.radius * 2);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalAlpha = Math.max(0.12, trail.intensity * 0.4);
+        ctx.beginPath();
+        ctx.moveTo(trail.points[0].x, trail.points[0].y);
+        for (let i = 1; i < trail.points.length; i++) ctx.lineTo(trail.points[i].x, trail.points[i].y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        const anchor = trail.points[Math.floor(trail.points.length / 2)];
+        drawDelete(anchor.x, anchor.y);
+      }
+      ctx.strokeStyle = 'rgba(255,210,120,0.92)';
+      ctx.fillStyle = 'rgba(255,210,120,0.08)';
+      ctx.lineWidth = 2;
+      for (const edge of data.edges) {
+        if (!edge.points?.length) continue;
+        ctx.beginPath();
+        ctx.moveTo(edge.points[0].x, edge.points[0].y);
+        for (let i = 1; i < edge.points.length; i++) ctx.lineTo(edge.points[i].x, edge.points[i].y);
+        ctx.stroke();
+        if (edgeRadius > 0) {
+          ctx.save();
+          ctx.globalAlpha = 0.25;
+          ctx.lineWidth = edgeRadius * 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
+    if (this.simulation.drawingPath?.points?.length >= 2) {
+      const pts = this.simulation.drawingPath.points;
+      ctx.strokeStyle =
+        this.simulation.drawingPath.kind === 'edge' ? 'rgba(255,210,120,0.85)'
+        : this.simulation.drawingPath.kind === 'pheromone' ? 'rgba(120,200,80,0.85)'
+        : 'rgba(116,166,255,0.85)';
+      ctx.lineWidth = this.simulation.drawingPath.kind === 'pheromone'
+        ? Math.max(2, this.simulation.drawingPath.radius * 2)
+        : 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 
   // ========================================================
@@ -741,6 +1248,7 @@ export class App {
 
   setBrush(name) {
     if (!this.brushes[name]) return;
+    if (this.activeBrush !== name && (this.simulation.running || this.simulation.paused)) this.stopSimulation(false);
     this.setTool('brush'); // restore brush mode when changing brush type
     // Deactivate current
     const cur = this.brushes[this.activeBrush];
@@ -760,6 +1268,9 @@ export class App {
     });
     // Toggle brush-specific sections
     this._toggleBrushSections(name);
+    if (!this._isMotionBrush(name)) this.simulation.enabled = false;
+    this._ensureSimulationSpawns(name);
+    this._syncSimulationUI();
     this._paramsDirty = true;
   }
 
@@ -915,6 +1426,17 @@ export class App {
     // Transform tool
     document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
     document.getElementById('proportionalToggle')?.addEventListener('click', () => this._toggleProportional());
+    document.getElementById('simulationBtn')?.addEventListener('click', () => this._toggleSimulationMode());
+    document.getElementById('simRunBtn')?.addEventListener('click', () => {
+      if (this.simulation.paused) this.resumeSimulation();
+      else this.startSimulation();
+    });
+    document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
+    document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
+    document.querySelectorAll('[data-sim-tool]').forEach(el => {
+      el.addEventListener('click', () => this._setSimulationTool(el.dataset.simTool));
+    });
     // Copy/cut/paste
     document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
     document.getElementById('cutBtn')?.addEventListener('click', () => this.cutToClipboard());
@@ -997,6 +1519,7 @@ export class App {
     this.interactionCanvas.setPointerCapture(e.pointerId);
     const { x, y } = this._getEventCoords(e);
     this._captureTilt(e);
+    if (this._handleSimulationPointerDown(x, y)) return;
     // Move selection by dragging inside it (works in any tool mode)
     if (this.selectionMgr?.active && !this.selectionMgr.transformActive) {
       if (this.selectionMgr.moveOnDown(x, y)) {
@@ -1049,6 +1572,8 @@ export class App {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     // Don't draw during pinch
     if (this._pinchActive) return;
+    const simCoords = this._getEventCoords(e);
+    if (this._handleSimulationPointerMove(simCoords.x, simCoords.y)) return;
     // Move-drag dispatch (any tool mode)
     if (this.selectionMgr?._isMoving) {
       const { x, y } = this._getEventCoords(e);
@@ -1095,6 +1620,7 @@ export class App {
 
   _onPointerUp(e) {
     this._activePointers.delete(e.pointerId);
+    if (this._handleSimulationPointerUp()) return;
     // Move-drag end (any tool mode) — keep pixels floating
     if (this.selectionMgr?._isMoving) {
       this.selectionMgr.moveOnUp();
@@ -1288,6 +1814,7 @@ export class App {
   _frameLoop() {
     const elapsed = (performance.now() - this._startTime) / 1000;
     const brush = this.getCurrentBrush();
+    const p = this.getP();
 
     // Taper pass — after stroke ends
     if (this.isTapering && brush && brush.taperFrame) {
@@ -1296,11 +1823,12 @@ export class App {
       if (t >= 1) {
         this.isTapering = false;
       } else {
-        brush.taperFrame(t, this.getP());
+        brush.taperFrame(t, p);
       }
     }
 
     // Active brush frame (e.g. boid step)
+    if (this.simulation.running) this._updateSimulationLeader(elapsed, p);
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
     }
@@ -1308,8 +1836,9 @@ export class App {
     // Update live overlay (particle visualization)
     this.lctx.clearRect(0, 0, this.W, this.H);
     if (brush && brush.drawOverlay) {
-      brush.drawOverlay(this.lctx, this.getP());
+      brush.drawOverlay(this.lctx, p);
     }
+    this.drawSimulationOverlay(this.lctx);
     // Selection overlay (marching ants)
     if (this.selectionMgr) this.selectionMgr.drawOverlay(this.lctx, elapsed);
     // Floating pixel preview (during move/transform drag)
@@ -1329,6 +1858,8 @@ export class App {
       info += ` | ${Math.round(this.viewZoom * 100)}%`;
       if (this.viewRotation !== 0) info += ` ${Math.round(this.viewRotation * 180 / Math.PI)}°`;
     }
+    if (this.simulation.running) info += ' | Sim: running';
+    else if (this.simulation.paused) info += ' | Sim: paused';
     if (brush && brush.getStatusInfo) info += ` | ${brush.getStatusInfo()}`;
     this.statusEl.textContent = info;
   }
@@ -1903,6 +2434,12 @@ export class App {
       const negPromptEl = document.getElementById('aiNegPromptText');
       if (promptEl) controls._aiPrompt = promptEl.value;
       if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
+      controls._simulation = {
+        enabled: this.simulation.enabled,
+        editorTool: this.simulation.editorTool,
+        brushData: this.simulation.brushData,
+        nextId: this.simulation.nextId,
+      };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
     } catch { /* quota exceeded — ignore */ }
   }
@@ -1929,6 +2466,13 @@ export class App {
           if (el) el.value = val;
           continue;
         }
+        if (id === '_simulation') {
+          if (val?.brushData) this.simulation.brushData = val.brushData;
+          if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
+          if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
+          this.simulation.enabled = !!val?.enabled;
+          continue;
+        }
         const el = document.getElementById(id);
         if (!el) continue;
         if (el.type === 'checkbox') el.checked = val;
@@ -1936,6 +2480,9 @@ export class App {
       }
       this._paramsDirty = true;
       syncUI(this);
+      this._normalizeSimulationData();
+      this._ensureSimulationSpawns();
+      this._syncSimulationUI();
     } catch { /* corrupt — ignore */ }
   }
 
