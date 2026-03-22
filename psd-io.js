@@ -127,7 +127,7 @@ export async function importPSD(app) {
   input.style.display = 'none';
   document.body.appendChild(input);
   input.addEventListener('change', async () => {
-    document.body.removeChild(input);
+    if (input.parentNode) document.body.removeChild(input);
     const file = input.files[0];
     if (!file) return;
     try {
