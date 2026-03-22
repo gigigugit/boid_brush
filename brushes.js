@@ -12,6 +12,8 @@ import { BoidSim } from './wasm-bridge.js';
 const BRISTLE_PRESSURE_ALPHA = 0.15;
 // Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
 const MAX_SMOOTH_DAMP = 0.92;
+// Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
+const MAX_PHEROMONE = 255;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -709,7 +711,7 @@ export class AntBrush {
       this.sim = await BoidSim.create(
         this.app.W || 800,
         this.app.H || 600,
-        10000
+        10000 // max agent pool capacity
       );
       this._ready = true;
     } catch (e) {
@@ -754,7 +756,7 @@ export class AntBrush {
         if (d2 > gr2) continue;
         const falloff = 1 - Math.sqrt(d2) / gr;
         const idx = py * w + px;
-        this._pheroData[idx] = Math.min(255, this._pheroData[idx] + intensity * falloff);
+        this._pheroData[idx] = Math.min(MAX_PHEROMONE, this._pheroData[idx] + intensity * falloff);
       }
     }
   }
@@ -775,7 +777,7 @@ export class AntBrush {
     if (!this._pheroData || !this.sim) return;
     const lum = new Uint8Array(this._pheroData.length);
     for (let i = 0, len = this._pheroData.length; i < len; i++) {
-      lum[i] = Math.min(255, Math.round(this._pheroData[i]));
+      lum[i] = Math.min(MAX_PHEROMONE, Math.round(this._pheroData[i]));
     }
     this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
   }
@@ -869,7 +871,7 @@ export class AntBrush {
           this._lastStampX[i] = ax;
           this._lastStampY[i] = ay;
           // Deposit initial pheromone
-          this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * 255);
+          this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
         }
         layer.dirty = true;
       }
@@ -915,7 +917,7 @@ export class AntBrush {
       // Enable sensing in attract mode for pheromone following
       sensingEnabled: p.antPheromoneToSensing,
       sensingMode: 'attract',
-      sensingStrength: p.antPheromoneRate,
+      sensingStrength: p.sensingStrength,
       sensingRadius: p.sensingRadius || 20,
       sensingThreshold: p.sensingThreshold || 0.1,
       // Ants wander more by default
@@ -990,7 +992,7 @@ export class AntBrush {
       }
 
       // Deposit pheromone at current ant position
-      this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * 255);
+      this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
 
       // Interpolation: fill gaps between previous and current position
       const step = p.stampSeparation > 0
@@ -1199,7 +1201,7 @@ export class AntBrush {
         for (let px = 0; px < pw; px++) {
           const v = data[py * pw + px];
           if (v < 2) continue;
-          const a = Math.min(v / 255, 1) * 0.4;
+          const a = Math.min(v / MAX_PHEROMONE, 1) * 0.4;
           ctx.fillStyle = `rgba(120,200,80,${a.toFixed(3)})`;
           ctx.fillRect(px * cellW, py * cellH, cellW, cellH);
         }
