@@ -189,6 +189,42 @@ export async function importPSD(app) {
             const drawH = srcH * (dstH / psdH);
 
             layerCtx.drawImage(child.canvas, 0, 0, srcW, srcH, left, top, drawW, drawH);
+
+            // Bake layer mask into alpha channel (this app has no native mask support)
+            if (child.mask && child.mask.canvas && !child.mask.disabled) {
+              const maskFull = document.createElement('canvas');
+              maskFull.width = dstW;
+              maskFull.height = dstH;
+              const maskCtx = maskFull.getContext('2d');
+
+              // defaultColor: 255 = visible outside mask bounds, 0 = hidden
+              if (child.mask.defaultColor === 255) {
+                maskCtx.fillStyle = '#ffffff';
+                maskCtx.fillRect(0, 0, dstW, dstH);
+              }
+              // else: canvas starts transparent → black/hidden outside mask
+
+              // Draw mask image at its position, scaled to current canvas
+              const mSrcW = child.mask.canvas.width;
+              const mSrcH = child.mask.canvas.height;
+              const mLeft = (child.mask.left || 0) * (dstW / psdW);
+              const mTop  = (child.mask.top  || 0) * (dstH / psdH);
+              const mDstW = mSrcW * (dstW / psdW);
+              const mDstH = mSrcH * (dstH / psdH);
+              maskCtx.drawImage(child.mask.canvas, 0, 0, mSrcW, mSrcH,
+                                mLeft, mTop, mDstW, mDstH);
+
+              // Multiply layer alpha by mask luminance (R channel)
+              const layerData = layerCtx.getImageData(0, 0, dstW, dstH);
+              const maskData  = maskCtx.getImageData(0, 0, dstW, dstH);
+              const ld = layerData.data;
+              const md = maskData.data;
+              for (let px = 0; px < ld.length; px += 4) {
+                ld[px + 3] = (ld[px + 3] * md[px] / 255) | 0;
+              }
+              layerCtx.putImageData(layerData, 0, 0);
+            }
+
             layerCtx.restore();
             layerCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
 
