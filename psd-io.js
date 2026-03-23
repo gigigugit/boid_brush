@@ -90,7 +90,7 @@ export async function exportPSD(app) {
         top:       0,
         right:     w,
         bottom:    h,
-        opacity:   Math.round(layer.opacity * 255),
+        opacity:   Math.max(0, Math.min(1, layer.opacity ?? 1)),
         blendMode: CSS_TO_PSD_BLEND[layer.blend] || 'normal',
         hidden:    !layer.visible,
       });
@@ -193,7 +193,7 @@ export async function importPSD(app) {
             layerCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
 
             const blend = PSD_TO_CSS_BLEND[child.blendMode] || 'source-over';
-            const opacity = typeof child.opacity === 'number' ? child.opacity / 255 : 1;
+            const opacity = typeof child.opacity === 'number' ? child.opacity : 1;
             const layerName = prefix
               ? `${prefix}/${child.name || 'Layer'}`
               : (child.name || 'Layer');
