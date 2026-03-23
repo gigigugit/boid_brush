@@ -1345,6 +1345,7 @@ export class App {
     document.getElementById('rectSelectBtn')?.classList.toggle('active', this.activeTool === 'rect-select');
     document.getElementById('ellipseSelectBtn')?.classList.toggle('active', this.activeTool === 'ellipse-select');
     document.getElementById('lassoSelectBtn')?.classList.toggle('active', this.activeTool === 'lasso-select');
+    document.getElementById('fillBtn')?.classList.toggle('active', this.activeTool === 'fill');
     const deselectBtn = document.getElementById('deselectBtn');
     if (deselectBtn) deselectBtn.style.display = this.selectionMgr?.active ? '' : 'none';
     const transformBtn = document.getElementById('transformBtn');
@@ -1458,6 +1459,7 @@ export class App {
     document.getElementById('rectSelectBtn')?.addEventListener('click', () => this.setTool('rect-select'));
     document.getElementById('ellipseSelectBtn')?.addEventListener('click', () => this.setTool('ellipse-select'));
     document.getElementById('lassoSelectBtn')?.addEventListener('click', () => this.setTool('lasso-select'));
+    document.getElementById('fillBtn')?.addEventListener('click', () => this.setTool('fill'));
     document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     // Transform tool
     document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
@@ -1585,6 +1587,11 @@ export class App {
         }
         return;
       }
+    }
+    // Fill tool dispatch
+    if (this.activeTool === 'fill') {
+      this._floodFill(x, y);
+      return;
     }
     // Selection tool dispatch - click outside selection starts a new one
     if (this.activeTool !== 'brush') {
@@ -1717,6 +1724,7 @@ export class App {
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
       if (e.key === 'm' || e.key === 'M') { this.setTool('rect-select'); return; }
       if (e.key === 'l' || e.key === 'L') { this.setTool('lasso-select'); return; }
+      if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
     // 1/2/3 = brush switch
@@ -2051,6 +2059,95 @@ export class App {
     c.fillRect(0, 0, 1, 1);
     const d = c.getImageData(0, 0, 1, 1).data;
     return { r: d[0], g: d[1], b: d[2] };
+  }
+
+  /**
+   * Flood-fill a contiguous region of similar colour on the active layer.
+   * Receives CSS-pixel coordinates and converts to device pixels internally.
+   */
+  _floodFill(x, y) {
+    const layer = this.getActiveLayer();
+    if (!layer) return;
+
+    this.pushUndo();
+
+    const dpr = this.DPR;
+    const px = Math.round(x * dpr);
+    const py = Math.round(y * dpr);
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+
+    if (px < 0 || px >= w || py < 0 || py >= h) return;
+
+    // Read current layer pixels
+    layer.ctx.save();
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const imageData = layer.ctx.getImageData(0, 0, w, h);
+    layer.ctx.restore();
+    const data = imageData.data;
+
+    // Target colour at click point
+    const idx = (py * w + px) * 4;
+    const targetR = data[idx], targetG = data[idx + 1], targetB = data[idx + 2], targetA = data[idx + 3];
+
+    // Fill colour from primary colour picker
+    const fill = this._parseColorToRGB(this.primaryEl.value);
+    const fillR = fill.r, fillG = fill.g, fillB = fill.b, fillA = 255;
+
+    // Don't fill if target already matches fill colour
+    if (targetR === fillR && targetG === fillG && targetB === fillB && targetA === fillA) return;
+
+    // Tolerance from sidebar slider
+    const tolEl = document.getElementById('fillTolerance');
+    const tolerance = tolEl ? +tolEl.value : 32;
+
+    function colorMatch(i) {
+      return Math.abs(data[i] - targetR) <= tolerance &&
+             Math.abs(data[i + 1] - targetG) <= tolerance &&
+             Math.abs(data[i + 2] - targetB) <= tolerance &&
+             Math.abs(data[i + 3] - targetA) <= tolerance;
+    }
+
+    // Scanline flood fill
+    const visited = new Uint8Array(w * h);
+    const stack = [[px, py]];
+
+    while (stack.length > 0) {
+      const [cx, cy] = stack.pop();
+      const ci = cy * w + cx;
+      if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+      if (visited[ci]) continue;
+      if (!colorMatch(ci * 4)) continue;
+
+      // Find leftmost pixel in this row
+      let left = cx;
+      while (left > 0 && !visited[cy * w + left - 1] && colorMatch((cy * w + left - 1) * 4)) left--;
+
+      // Find rightmost pixel in this row
+      let right = cx;
+      while (right < w - 1 && !visited[cy * w + right + 1] && colorMatch((cy * w + right + 1) * 4)) right++;
+
+      for (let fx = left; fx <= right; fx++) {
+        const fi = cy * w + fx;
+        visited[fi] = 1;
+        const di = fi * 4;
+        data[di] = fillR;
+        data[di + 1] = fillG;
+        data[di + 2] = fillB;
+        data[di + 3] = fillA;
+
+        if (cy > 0 && !visited[(cy - 1) * w + fx] && colorMatch(((cy - 1) * w + fx) * 4)) stack.push([fx, cy - 1]);
+        if (cy < h - 1 && !visited[(cy + 1) * w + fx] && colorMatch(((cy + 1) * w + fx) * 4)) stack.push([fx, cy + 1]);
+      }
+    }
+
+    layer.ctx.save();
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    layer.ctx.putImageData(imageData, 0, 0);
+    layer.ctx.restore();
+    layer.dirty = true;
+    this.compositeAllLayers();
+    this.showToast('🪣 Filled');
   }
 
   /**

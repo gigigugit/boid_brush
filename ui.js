@@ -54,6 +54,12 @@ export function buildSidebar(app) {
       ${sliderRow('brushScale', 'Scale', 10, 300, 100, v => (v/100).toFixed(1))}
     </div>
 
+    <!-- Fill -->
+    <div class="section-header closed" data-section="fill">Fill <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      ${sliderRow('fillTolerance', 'Tolerance', 0, 255, 32)}
+    </div>
+
     <!-- Spawn Shape (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
