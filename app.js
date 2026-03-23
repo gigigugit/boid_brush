@@ -218,6 +218,12 @@ export class App {
   // ========================================================
 
   _resizeAll() {
+    if (this._docSized) {
+      // Document has explicit size — don't resize to viewport
+      this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
+      this.lctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+      return;
+    }
     this.DPR = window.devicePixelRatio || 1;
     const rect = document.getElementById('canvasArea').getBoundingClientRect();
     this.W = Math.floor(rect.width);
@@ -274,6 +280,108 @@ export class App {
         this._heightCanvas.height = targetH;
       }
     }
+  }
+
+  async resizeDocument(newW, newH, bgColor) {
+    newW = Math.max(1, Math.min(8192, Math.round(newW)));
+    newH = Math.max(1, Math.min(8192, Math.round(newH)));
+
+    this._docSized = true;
+    this._docW = newW;
+    this._docH = newH;
+
+    this.DPR = 1;
+    this.W = newW;
+    this.H = newH;
+
+    // Resize display canvases
+    for (const c of [this.compositeCanvas, this.liveCanvas, this.interactionCanvas]) {
+      c.width = newW;
+      c.height = newH;
+      c.style.width = newW + 'px';
+      c.style.height = newH + 'px';
+    }
+    this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
+    this.lctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Resize layers (preserve content by scaling)
+    for (const l of this.layers) {
+      const tmp = document.createElement('canvas');
+      tmp.width = l.canvas.width;
+      tmp.height = l.canvas.height;
+      tmp.getContext('2d').drawImage(l.canvas, 0, 0);
+      l.canvas.width = newW;
+      l.canvas.height = newH;
+      l.ctx = l.canvas.getContext('2d', { desynchronized: true });
+      l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
+      l.dirty = true;
+      this.compositor?.deleteLayerTex(l);
+    }
+
+    this.compositor?.resize(newW, newH, 1);
+
+    // Background
+    if (bgColor) {
+      this.bgColorEl.value = bgColor;
+    }
+    this._fillBackgroundLayer();
+
+    // Height canvas
+    if (this._heightCanvas) {
+      const tmp = document.createElement('canvas');
+      tmp.width = this._heightCanvas.width;
+      tmp.height = this._heightCanvas.height;
+      tmp.getContext('2d').drawImage(this._heightCanvas, 0, 0);
+      this._heightCanvas.width = newW;
+      this._heightCanvas.height = newH;
+      this._heightCtx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
+    }
+
+    // Reinit WASM sims
+    try {
+      if (this.brushes.boid) await this.brushes.boid.init();
+      if (this.brushes.ant) await this.brushes.ant.init();
+    } catch(e) { console.warn('WASM reinit failed:', e); }
+
+    // Zoom to fit
+    const viewRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const fitZoom = Math.min(viewRect.width / newW, viewRect.height / newH, 1) * 0.95;
+    this.viewZoom = fitZoom;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
+    this.viewRotation = 0;
+    this.viewFlipped = false;
+    this._applyViewTransform();
+
+    this._smudgeImageData = null;
+    this.compositeAllLayers();
+    this.showToast(`📐 Canvas: ${newW}×${newH}`);
+  }
+
+  _showCanvasSizeModal() {
+    const modal = document.getElementById('canvasSizeModal');
+    if (!modal) return;
+    const wEl = document.getElementById('canvasSizeW');
+    const hEl = document.getElementById('canvasSizeH');
+    const bgEl = document.getElementById('canvasSizeBg');
+    if (wEl) wEl.value = this.W;
+    if (hEl) hEl.value = this.H;
+    if (bgEl) bgEl.value = this.bgColorEl?.value || '#ffffff';
+    modal.classList.add('open');
+  }
+
+  _hideCanvasSizeModal() {
+    document.getElementById('canvasSizeModal')?.classList.remove('open');
+  }
+
+  _onCanvasSizePresetChange() {
+    const preset = document.getElementById('canvasSizePreset')?.value;
+    if (!preset || preset === 'custom') return;
+    const [w, h] = preset.split('x').map(Number);
+    const wEl = document.getElementById('canvasSizeW');
+    const hEl = document.getElementById('canvasSizeH');
+    if (wEl) wEl.value = w;
+    if (hEl) hEl.value = h;
   }
 
   makeLayerCanvas() {
@@ -1487,6 +1595,23 @@ export class App {
       this._fillBackgroundLayer();
       this.compositeAllLayers();
     });
+    // Canvas size modal
+    document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
+    document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('canvasSizePreset')?.addEventListener('change', () => this._onCanvasSizePresetChange());
+    document.getElementById('canvasSizeSwap')?.addEventListener('click', () => {
+      const w = document.getElementById('canvasSizeW');
+      const h = document.getElementById('canvasSizeH');
+      if (w && h) { const t = w.value; w.value = h.value; h.value = t; }
+    });
+    document.getElementById('canvasSizeApply')?.addEventListener('click', () => {
+      const w = +document.getElementById('canvasSizeW')?.value || 1920;
+      const h = +document.getElementById('canvasSizeH')?.value || 1080;
+      const bg = document.getElementById('canvasSizeBg')?.value || '#ffffff';
+      this.resizeDocument(w, h, bg);
+      this._hideCanvasSizeModal();
+    });
   }
 
   _getEventCoords(e) {
@@ -1707,6 +1832,8 @@ export class App {
   }
 
   _onKeyDown(e) {
+    // Ctrl+N = new canvas / canvas size
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
     // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
     if (e.ctrlKey && !e.shiftKey && e.key === 'z') { e.preventDefault(); this.doUndo(); }
     if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); this.doRedo(); }
@@ -2663,6 +2790,11 @@ export class App {
       if (promptEl) controls._aiPrompt = promptEl.value;
       if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
       controls._colorHistory = this._colorHistory;
+      if (this._docSized) {
+        controls._docSized = true;
+        controls._docW = this._docW;
+        controls._docH = this._docH;
+      }
       controls._simulation = {
         enabled: this.simulation.enabled,
         editorTool: this.simulation.editorTool,
@@ -2679,6 +2811,7 @@ export class App {
       if (!raw) return;
       const controls = JSON.parse(raw);
       for (const [id, val] of Object.entries(controls)) {
+        if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
         if (id === 'primaryColor') { this.primaryEl.value = val; continue; }
         if (id === 'secondaryColor') { this.secondaryEl.value = val; continue; }
         if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
@@ -2719,6 +2852,12 @@ export class App {
       this._normalizeSimulationData();
       this._ensureSimulationSpawns();
       this._syncSimulationUI();
+      // Restore document size (state only; actual resize happens via _resizeAll or resizeDocument)
+      if (controls._docSized && controls._docW && controls._docH) {
+        this._docSized = true;
+        this._docW = controls._docW;
+        this._docH = controls._docH;
+      }
     } catch { /* corrupt — ignore */ }
   }
 
