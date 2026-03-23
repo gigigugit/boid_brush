@@ -170,6 +170,7 @@ export class App {
     this._addBackgroundLayer();
     this.addLayer('Layer 1');
     this._syncLayerSwitcher();
+    this._syncAlphaLockUI();
 
     // AI server
     this.aiServer = new AIServer();
@@ -288,7 +289,7 @@ export class App {
     const { canvas, ctx } = this.makeLayerCanvas();
     this.layers.splice(this.activeLayerIdx, 0, {
       canvas, ctx, name: name || `Layer ${this.layers.length + 1}`,
-      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null
+      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null, alphaLock: false
     });
     this._syncLayerSwitcher();
     this.compositeAllLayers();
@@ -296,13 +297,30 @@ export class App {
 
   getActiveLayer() { return this.layers[this.activeLayerIdx]; }
 
+  toggleAlphaLock() {
+    const layer = this.getActiveLayer();
+    if (!layer) return;
+    layer.alphaLock = !layer.alphaLock;
+    this._syncAlphaLockUI();
+    if (typeof syncUI === 'function') syncUI(this);
+  }
+
+  _syncAlphaLockUI() {
+    const btn = document.getElementById('alphaLockBtn');
+    if (!btn) return;
+    const layer = this.getActiveLayer();
+    const on = layer && layer.alphaLock;
+    btn.classList.toggle('active-lock', on);
+    btn.title = `Alpha Lock (/) ${on ? 'ON' : 'OFF'}`;
+  }
+
   // ── Background layer ──────────────────────────────────────
 
   _addBackgroundLayer() {
     const { canvas, ctx } = this.makeLayerCanvas();
     const bgLayer = {
       canvas, ctx, name: 'Background', isBackground: true,
-      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null
+      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null, alphaLock: false
     };
     this.layers.push(bgLayer); // always last = bottom
     this._fillBackgroundLayer();
@@ -401,6 +419,7 @@ export class App {
     if (idx >= 0 && idx < this.layers.length && !this.layers[idx].isBackground) {
       this.activeLayerIdx = idx;
       this._syncLayerSwitcher();
+      this._syncAlphaLockUI();
     }
   }
 
@@ -1417,6 +1436,7 @@ export class App {
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('flipViewBtn')?.addEventListener('click', () => this.flipView());
+    document.getElementById('alphaLockBtn')?.addEventListener('click', () => this.toggleAlphaLock());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
     });
@@ -1715,6 +1735,11 @@ export class App {
       this.secondaryEl.value = t;
       this._paramsDirty = true;
     }
+    // / = toggle alpha lock on active layer
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      this.toggleAlphaLock();
+    }
   }
 
   _adjustBrushSize(delta) {
@@ -1982,7 +2007,11 @@ export class App {
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.globalAlpha = opacity;
+    const activeLayer = this.getActiveLayer();
+    const useAlphaLock = activeLayer && activeLayer.alphaLock && this.activeBrush !== 'eraser';
+    if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
     ctx.fill();
+    if (useAlphaLock) ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
 
     // Impasto: stamp onto the height map proportionally to stamp opacity

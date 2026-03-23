@@ -964,6 +964,7 @@ function _renderLayerList(app) {
     div.className = 'layer-item' + (i === app.activeLayerIdx ? ' active' : '');
     div.innerHTML = `
       <button class="vis-btn${l.visible ? '' : ' hidden'}" data-idx="${i}">${l.visible ? '👁' : '⬚'}</button>
+      <button class="lock-btn${l.alphaLock ? ' locked' : ''}" data-idx="${i}" title="Alpha Lock">${l.alphaLock ? '🔒' : '🔓'}</button>
       <span class="layer-name">${l.name}</span>
       <span class="layer-opacity">${Math.round(l.opacity * 100)}%</span>
     `;
@@ -971,6 +972,12 @@ function _renderLayerList(app) {
       if (e.target.classList.contains('vis-btn')) {
         l.visible = !l.visible;
         app.compositeAllLayers();
+        _renderLayerList(app);
+        return;
+      }
+      if (e.target.classList.contains('lock-btn')) {
+        l.alphaLock = !l.alphaLock;
+        app._syncAlphaLockUI();
         _renderLayerList(app);
         return;
       }
