@@ -84,6 +84,9 @@ export class App {
     // Flip view
     this.viewFlipped = false;
 
+    // Tiling mode
+    this.tilingMode = false;
+
     // Cursor preview position (screen-relative to canvasArea)
     this._cursorX = -1;
     this._cursorY = -1;
@@ -1549,6 +1552,7 @@ export class App {
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('flipViewBtn')?.addEventListener('click', () => this.flipView());
+    document.getElementById('tilingBtn')?.addEventListener('click', () => this.toggleTiling());
     document.getElementById('alphaLockBtn')?.addEventListener('click', () => this.toggleAlphaLock());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
@@ -1869,6 +1873,11 @@ export class App {
     if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey) {
       this.flipView();
     }
+    // P = toggle tiling mode
+    if ((e.key === 'p' || e.key === 'P') && !e.ctrlKey && !e.metaKey) {
+      this.toggleTiling();
+      return;
+    }
     // X = swap colors (non-ctrl; Ctrl+X is cut)
     if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey) {
       const t = this.primaryEl.value;
@@ -2024,6 +2033,17 @@ export class App {
     this.showToast(this.viewFlipped ? '🪞 View flipped' : '🪞 View unflipped');
   }
 
+  toggleTiling() {
+    this.tilingMode = !this.tilingMode;
+    this._syncTilingUI();
+    this.showToast(this.tilingMode ? '🔁 Tiling: ON' : '🔁 Tiling: OFF');
+  }
+
+  _syncTilingUI() {
+    const btn = document.getElementById('tilingBtn');
+    if (btn) btn.classList.toggle('active', this.tilingMode);
+  }
+
   // ========================================================
   // FRAME LOOP
   // ========================================================
@@ -2076,6 +2096,16 @@ export class App {
     if (this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
     // Transform handles
     if (this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
+
+    // Tiling mode boundary indicator
+    if (this.tilingMode) {
+      this.lctx.save();
+      this.lctx.strokeStyle = 'rgba(255,200,50,0.3)';
+      this.lctx.lineWidth = 1;
+      this.lctx.setLineDash([8, 4]);
+      this.lctx.strokeRect(0, 0, this.W, this.H);
+      this.lctx.restore();
+    }
 
     // Update status
     this._updateStatus(brush);
@@ -2165,6 +2195,46 @@ export class App {
       hctx.fill();
       hctx.globalAlpha = 1;
       this._heightDirty = true;
+    }
+
+    // Tiling: wrap stamp at canvas edges
+    if (this.tilingMode) {
+      const r = size / 2;
+      const W = this.W, H = this.H;
+      const overLeft = x - r < 0, overRight = x + r > W;
+      const overTop = y - r < 0, overBottom = y + r > H;
+      const wraps = [];
+      if (overLeft)  wraps.push([x + W, y]);
+      if (overRight) wraps.push([x - W, y]);
+      if (overTop)    wraps.push([x, y + H]);
+      if (overBottom) wraps.push([x, y - H]);
+      // Corners
+      if (overLeft  && overTop)    wraps.push([x + W, y + H]);
+      if (overRight && overTop)    wraps.push([x - W, y + H]);
+      if (overLeft  && overBottom) wraps.push([x + W, y - H]);
+      if (overRight && overBottom) wraps.push([x - W, y - H]);
+
+      for (const [wx, wy] of wraps) {
+        if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
+        ctx.beginPath();
+        ctx.arc(wx, wy, r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = opacity;
+        ctx.fill();
+        if (useAlphaLock) ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        // Impasto for wrapped stamps
+        if (p.impasto && p.impastoStrength > 0 && this._heightCtx) {
+          const hctx = this._heightCtx;
+          hctx.beginPath();
+          hctx.arc(wx * this.DPR, wy * this.DPR, r * this.DPR, 0, Math.PI * 2);
+          hctx.fillStyle = '#ffffff';
+          hctx.globalAlpha = Math.min(opacity * p.impastoStrength, 1);
+          hctx.fill();
+          hctx.globalAlpha = 1;
+          this._heightDirty = true;
+        }
+      }
     }
   }
 
@@ -2790,6 +2860,7 @@ export class App {
       if (promptEl) controls._aiPrompt = promptEl.value;
       if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
       controls._colorHistory = this._colorHistory;
+      controls._tilingMode = this.tilingMode;
       if (this._docSized) {
         controls._docSized = true;
         controls._docW = this._docW;
@@ -2833,6 +2904,11 @@ export class App {
             this._colorHistory = val.filter(v => typeof v === 'string' && /^#[0-9a-f]{6}$/.test(v));
           }
           this._renderColorHistory();
+          continue;
+        }
+        if (id === '_tilingMode') {
+          this.tilingMode = !!val;
+          this._syncTilingUI();
           continue;
         }
         if (id === '_simulation') {
