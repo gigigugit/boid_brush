@@ -13,15 +13,21 @@ let _agPsd = null;
  */
 async function _loadAgPsd() {
   if (_agPsd) return _agPsd;
-  _agPsd = await import('https://esm.sh/ag-psd@30.1.0');
+  const mod = await import('https://esm.sh/ag-psd@30.1.0');
+  // esm.sh may wrap exports under .default — resolve the actual library object
+  const lib = (typeof mod.readPsd === 'function') ? mod : (mod.default || mod);
+  if (typeof lib.initializeCanvas !== 'function') {
+    throw new Error('ag-psd loaded but initializeCanvas not found');
+  }
   // Tell ag-psd how to create canvas elements in the browser.
   // v30 removed the createCanvasFromData parameter — only createCanvas is accepted.
-  _agPsd.initializeCanvas((width, height) => {
+  lib.initializeCanvas((width, height) => {
     const c = document.createElement('canvas');
     c.width = width;
     c.height = height;
     return c;
   });
+  _agPsd = lib;
   return _agPsd;
 }
 
@@ -110,7 +116,7 @@ export async function exportPSD(app) {
     app.showToast('💾 Exported PSD');
   } catch (err) {
     console.error('PSD export failed:', err);
-    app.showToast('⚠ PSD export failed');
+    app.showToast('⚠ PSD export failed: ' + (err.message || String(err)));
   }
 }
 
@@ -134,7 +140,7 @@ export async function importPSD(app) {
       app.showToast('⏳ Importing PSD…');
       const { readPsd } = await _loadAgPsd();
       const arrayBuffer = await file.arrayBuffer();
-      const psd = readPsd(arrayBuffer);
+      const psd = readPsd(new Uint8Array(arrayBuffer));
 
       // Collect raster layers from children, or fall back to composite image
       const hasChildren = psd.children && psd.children.length > 0;
@@ -249,7 +255,7 @@ export async function importPSD(app) {
       app.showToast(`📂 Imported ${newLayers.length} layer(s) from PSD`);
     } catch (err) {
       console.error('PSD import failed:', err);
-      app.showToast('⚠ PSD import failed');
+      app.showToast('⚠ PSD import failed: ' + (err.message || String(err)));
     }
   });
   input.click();
