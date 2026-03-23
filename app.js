@@ -18,6 +18,7 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
+const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 
@@ -79,6 +80,13 @@ export class App {
     this._pinchStartMidY = 0;
     this._pinchAnchor = { x: 0, y: 0 };
     this._activePointers = new Map();
+
+    // Flip view
+    this.viewFlipped = false;
+
+    // Cursor preview position (screen-relative to canvasArea)
+    this._cursorX = -1;
+    this._cursorY = -1;
 
     // Taper state
     this.isTapering = false;
@@ -1408,6 +1416,7 @@ export class App {
     document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
+    document.getElementById('flipViewBtn')?.addEventListener('click', () => this.flipView());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
     });
@@ -1465,7 +1474,7 @@ export class App {
 
   _screenToCanvas(sx, sy) {
     // Undo view transform: the CSS transform is:
-    // translate(panX, panY) translate(cx,cy) rotate(rot) scale(zoom) translate(-cx,-cy)
+    // translate(panX, panY) translate(cx,cy) rotate(rot) scale(zoom) scaleX(flip) translate(-cx,-cy)
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
     const cx = areaRect.width / 2;
     const cy = areaRect.height / 2;
@@ -1482,9 +1491,11 @@ export class App {
     const rx = dx * cos - dy * sin;
     const ry = dx * sin + dy * cos;
     // Step 4: undo scale(zoom)
-    const ux = rx / this.viewZoom;
-    const uy = ry / this.viewZoom;
-    // Step 5: undo translate(-cx, -cy)
+    let ux = rx / this.viewZoom;
+    let uy = ry / this.viewZoom;
+    // Step 5: undo scaleX(flip)
+    if (this.viewFlipped) ux = -ux;
+    // Step 6: undo translate(-cx, -cy)
     return { x: ux + cx, y: uy + cy };
   }
 
@@ -1573,6 +1584,10 @@ export class App {
 
   _onPointerMove(e) {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    // Track cursor position for brush size preview
+    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    this._cursorX = e.clientX - areaRect.left;
+    this._cursorY = e.clientY - areaRect.top;
     // Don't draw during pinch
     if (this._pinchActive) return;
     const simCoords = this._getEventCoords(e);
@@ -1686,6 +1701,13 @@ export class App {
     if (e.key === '5') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
+    // [ / ] = decrease / increase brush size
+    if (e.key === '[') this._adjustBrushSize(-1);
+    if (e.key === ']') this._adjustBrushSize(1);
+    // F = flip canvas view
+    if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey) {
+      this.flipView();
+    }
     // X = swap colors (non-ctrl; Ctrl+X is cut)
     if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey) {
       const t = this.primaryEl.value;
@@ -1694,6 +1716,17 @@ export class App {
       this._paramsDirty = true;
     }
   }
+
+  _adjustBrushSize(delta) {
+    const slider = document.getElementById('stampSize');
+    if (!slider) return;
+    slider.value = Math.max(+slider.min, Math.min(+slider.max, +slider.value + delta));
+    this.invalidateParams();
+    const span = document.getElementById('v_stampSize');
+    if (span) span.textContent = slider.value;
+    this.showToast(`🖌 Brush size: ${slider.value}`);
+  }
+
   // ========================================================
   // PINCH ZOOM / ROTATE / PAN (Touch Gestures)
   // ========================================================
@@ -1772,6 +1805,13 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
+    // Shift+scroll = rotate view
+    if (e.shiftKey) {
+      const rotDelta = (e.deltaY > 0 ? 1 : -1) * WHEEL_ROTATION_DEG * Math.PI / 180;
+      this.viewRotation += rotDelta;
+      this._applyViewTransform();
+      return;
+    }
     const zoomFactor = e.deltaY > 0 ? WHEEL_ZOOM_OUT : WHEEL_ZOOM_IN;
     const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.viewZoom * zoomFactor));
 
@@ -1798,7 +1838,8 @@ export class App {
     const cx = areaRect.width / 2;
     const cy = areaRect.height / 2;
     const deg = this.viewRotation * 180 / Math.PI;
-    el.style.transform = `translate(${this.viewPanX}px, ${this.viewPanY}px) translate(${cx}px, ${cy}px) rotate(${deg}deg) scale(${this.viewZoom}) translate(${-cx}px, ${-cy}px)`;
+    const flipScale = this.viewFlipped ? -1 : 1;
+    el.style.transform = `translate(${this.viewPanX}px, ${this.viewPanY}px) translate(${cx}px, ${cy}px) rotate(${deg}deg) scale(${this.viewZoom}) scaleX(${flipScale}) translate(${-cx}px, ${-cy}px)`;
   }
 
   resetView() {
@@ -1806,8 +1847,15 @@ export class App {
     this.viewPanX = 0;
     this.viewPanY = 0;
     this.viewRotation = 0;
+    this.viewFlipped = false;
     this._applyViewTransform();
     this.showToast('🔍 View reset');
+  }
+
+  flipView() {
+    this.viewFlipped = !this.viewFlipped;
+    this._applyViewTransform();
+    this.showToast(this.viewFlipped ? '🪞 View flipped' : '🪞 View unflipped');
   }
 
   // ========================================================
@@ -1838,6 +1886,20 @@ export class App {
 
     // Update live overlay (particle visualization)
     this.lctx.clearRect(0, 0, this.W, this.H);
+
+    // Brush size cursor preview
+    if (this._cursorX >= 0 && this._cursorY >= 0) {
+      const canvasPos = this._screenToCanvas(this._cursorX, this._cursorY);
+      const radius = p.stampSize / 2;
+      this.lctx.save();
+      this.lctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      this.lctx.lineWidth = 1;
+      this.lctx.beginPath();
+      this.lctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+      this.lctx.stroke();
+      this.lctx.restore();
+    }
+
     if (brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, p);
     }
