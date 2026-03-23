@@ -10,6 +10,7 @@ import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusio
 import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
+import { exportPSD, importPSD } from './psd-io.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const MAX_UNDO = 20;
@@ -1404,6 +1405,8 @@ export class App {
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
+    document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
