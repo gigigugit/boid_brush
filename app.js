@@ -64,6 +64,10 @@ export class App {
     this.leaderY = 0;
     this.undoPushedThisStroke = false;
 
+    // Stabilizer (lazy mouse)
+    this._stabX = 0;
+    this._stabY = 0;
+
     // View transform (pinch zoom/rotate/pan)
     this.viewZoom = 1;
     this.viewPanX = 0;
@@ -812,6 +816,7 @@ export class App {
       smudge: val('smudge') / 100,
       smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
+      stabilizer: val('stabilizer') / 100,
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
       symmetryCount: val('symmetryCount') || 4,
@@ -1733,6 +1738,8 @@ export class App {
     this.pressure = this._rawPressure;
     this.leaderX = x;
     this.leaderY = y;
+    this._stabX = x;
+    this._stabY = y;
     this.isDrawing = true;
     this.undoPushedThisStroke = false;
     this.isTapering = false;
@@ -1782,6 +1789,8 @@ export class App {
     }
 
     const brush = this.getCurrentBrush();
+    const p = this.getP();
+    const stab = p.stabilizer || 0;
     // Use coalesced events for smoother brush strokes (sub-frame input samples)
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     const events = coalesced.length > 0 ? coalesced : [e];
@@ -1790,9 +1799,20 @@ export class App {
       this._rawPressure = pe.pressure || 0.5;
       this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
       this._captureTilt(pe);
-      this.leaderX = x;
-      this.leaderY = y;
-      if (brush) brush.onMove(x, y, this.pressure);
+
+      // Apply stabilizer (lazy mouse)
+      if (stab > 0) {
+        const alpha = 1 - stab * 0.95; // keeps min 5% responsiveness at max stabilizer
+        this._stabX += (x - this._stabX) * alpha;
+        this._stabY += (y - this._stabY) * alpha;
+        this.leaderX = this._stabX;
+        this.leaderY = this._stabY;
+        if (brush) brush.onMove(this._stabX, this._stabY, this.pressure);
+      } else {
+        this.leaderX = x;
+        this.leaderY = y;
+        if (brush) brush.onMove(x, y, this.pressure);
+      }
     }
   }
 

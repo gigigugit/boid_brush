@@ -198,6 +198,7 @@ export function buildSidebar(app) {
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
       <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
+      ${sliderRow('stabilizer', 'Stabilizer', 0, 100, 0)}
     </div>
 
     <!-- Canvas Texture -->
