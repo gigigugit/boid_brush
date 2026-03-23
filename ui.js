@@ -42,6 +42,12 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <!-- Color History -->
+    <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div id="colorHistory" style="display:flex;flex-wrap:wrap;gap:2px;min-height:20px;"></div>
+    </div>
+
     <!-- Brush Scale -->
     <div class="section-header" data-section="brushScale">Brush Scale <span class="chevron">▼</span></div>
     <div class="section-body">

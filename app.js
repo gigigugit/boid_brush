@@ -147,6 +147,10 @@ export class App {
     this.secondaryEl = document.getElementById('secondaryColor');
     this.bgColorEl = document.getElementById('bgColor');
 
+    // Color history
+    this._colorHistory = [];
+    this._maxColorHistory = 16;
+
     // Frame loop
     this._rafId = null;
     this._startTime = performance.now();
@@ -1684,6 +1688,8 @@ export class App {
     const brush = this.getCurrentBrush();
     if (brush) brush.onUp(x, y);
 
+    this._recordColor(this.primaryEl.value);
+
     // Start taper if configured
     const p = this.getP();
     if (p.taperLength > 0) {
@@ -2505,6 +2511,37 @@ export class App {
   }
 
   // ========================================================
+  // COLOR HISTORY
+  // ========================================================
+
+  _recordColor(hex) {
+    hex = hex.toLowerCase();
+    if (!/^#[0-9a-f]{6}$/.test(hex)) return;
+    const idx = this._colorHistory.indexOf(hex);
+    if (idx !== -1) this._colorHistory.splice(idx, 1);
+    this._colorHistory.unshift(hex);
+    if (this._colorHistory.length > this._maxColorHistory) this._colorHistory.pop();
+    this._renderColorHistory();
+  }
+
+  _renderColorHistory() {
+    const container = document.getElementById('colorHistory');
+    if (!container) return;
+    container.innerHTML = '';
+    for (const hex of this._colorHistory) {
+      const swatch = document.createElement('div');
+      swatch.style.cssText = `width:20px;height:20px;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:${hex};transition:transform 0.1s;`;
+      swatch.title = hex;
+      swatch.addEventListener('click', () => {
+        this.primaryEl.value = hex;
+        this._paramsDirty = true;
+      });
+      swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.2)');
+      swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
+      container.appendChild(swatch);
+    }
+  }
+
   // SESSION PERSISTENCE
   // ========================================================
 
@@ -2528,6 +2565,7 @@ export class App {
       const negPromptEl = document.getElementById('aiNegPromptText');
       if (promptEl) controls._aiPrompt = promptEl.value;
       if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
+      controls._colorHistory = this._colorHistory;
       controls._simulation = {
         enabled: this.simulation.enabled,
         editorTool: this.simulation.editorTool,
@@ -2558,6 +2596,13 @@ export class App {
         if (id === '_aiNegPrompt') {
           const el = document.getElementById('aiNegPromptText');
           if (el) el.value = val;
+          continue;
+        }
+        if (id === '_colorHistory') {
+          if (Array.isArray(val)) {
+            this._colorHistory = val.filter(v => typeof v === 'string' && /^#[0-9a-f]{6}$/.test(v));
+          }
+          this._renderColorHistory();
           continue;
         }
         if (id === '_simulation') {
