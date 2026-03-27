@@ -42,10 +42,22 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <!-- Color History -->
+    <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div id="colorHistory" style="display:flex;flex-wrap:wrap;gap:2px;min-height:20px;"></div>
+    </div>
+
     <!-- Brush Scale -->
     <div class="section-header" data-section="brushScale">Brush Scale <span class="chevron">▼</span></div>
     <div class="section-body">
       ${sliderRow('brushScale', 'Scale', 10, 300, 100, v => (v/100).toFixed(1))}
+    </div>
+
+    <!-- Fill -->
+    <div class="section-header closed" data-section="fill">Fill <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      ${sliderRow('fillTolerance', 'Tolerance', 0, 255, 32)}
     </div>
 
     <!-- Spawn Shape (boid + ant) -->
@@ -186,6 +198,7 @@ export function buildSidebar(app) {
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
       <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
+      ${sliderRow('stabilizer', 'Stabilizer', 0, 100, 0)}
     </div>
 
     <!-- Canvas Texture -->
@@ -964,6 +977,7 @@ function _renderLayerList(app) {
     div.className = 'layer-item' + (i === app.activeLayerIdx ? ' active' : '');
     div.innerHTML = `
       <button class="vis-btn${l.visible ? '' : ' hidden'}" data-idx="${i}">${l.visible ? '👁' : '⬚'}</button>
+      <button class="lock-btn${l.alphaLock ? ' locked' : ''}" data-idx="${i}" title="Alpha Lock">${l.alphaLock ? '🔒' : '🔓'}</button>
       <span class="layer-name">${l.name}</span>
       <span class="layer-opacity">${Math.round(l.opacity * 100)}%</span>
     `;
@@ -971,6 +985,12 @@ function _renderLayerList(app) {
       if (e.target.classList.contains('vis-btn')) {
         l.visible = !l.visible;
         app.compositeAllLayers();
+        _renderLayerList(app);
+        return;
+      }
+      if (e.target.classList.contains('lock-btn')) {
+        l.alphaLock = !l.alphaLock;
+        app._syncAlphaLockUI();
         _renderLayerList(app);
         return;
       }

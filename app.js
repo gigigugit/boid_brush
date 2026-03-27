@@ -18,6 +18,7 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
+const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 
@@ -63,6 +64,10 @@ export class App {
     this.leaderY = 0;
     this.undoPushedThisStroke = false;
 
+    // Stabilizer (lazy mouse)
+    this._stabX = 0;
+    this._stabY = 0;
+
     // View transform (pinch zoom/rotate/pan)
     this.viewZoom = 1;
     this.viewPanX = 0;
@@ -79,6 +84,16 @@ export class App {
     this._pinchStartMidY = 0;
     this._pinchAnchor = { x: 0, y: 0 };
     this._activePointers = new Map();
+
+    // Flip view
+    this.viewFlipped = false;
+
+    // Tiling mode
+    this.tilingMode = false;
+
+    // Cursor preview position (screen-relative to canvasArea)
+    this._cursorX = -1;
+    this._cursorY = -1;
 
     // Taper state
     this.isTapering = false;
@@ -139,6 +154,10 @@ export class App {
     this.secondaryEl = document.getElementById('secondaryColor');
     this.bgColorEl = document.getElementById('bgColor');
 
+    // Color history
+    this._colorHistory = [];
+    this._maxColorHistory = 16;
+
     // Frame loop
     this._rafId = null;
     this._startTime = performance.now();
@@ -162,6 +181,7 @@ export class App {
     this._addBackgroundLayer();
     this.addLayer('Layer 1');
     this._syncLayerSwitcher();
+    this._syncAlphaLockUI();
 
     // AI server
     this.aiServer = new AIServer();
@@ -205,6 +225,12 @@ export class App {
   // ========================================================
 
   _resizeAll() {
+    if (this._docSized) {
+      // Document has explicit size — don't resize to viewport
+      this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
+      this.lctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+      return;
+    }
     this.DPR = window.devicePixelRatio || 1;
     const rect = document.getElementById('canvasArea').getBoundingClientRect();
     this.W = Math.floor(rect.width);
@@ -263,6 +289,108 @@ export class App {
     }
   }
 
+  async resizeDocument(newW, newH, bgColor) {
+    newW = Math.max(1, Math.min(8192, Math.round(newW)));
+    newH = Math.max(1, Math.min(8192, Math.round(newH)));
+
+    this._docSized = true;
+    this._docW = newW;
+    this._docH = newH;
+
+    this.DPR = 1;
+    this.W = newW;
+    this.H = newH;
+
+    // Resize display canvases
+    for (const c of [this.compositeCanvas, this.liveCanvas, this.interactionCanvas]) {
+      c.width = newW;
+      c.height = newH;
+      c.style.width = newW + 'px';
+      c.style.height = newH + 'px';
+    }
+    this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
+    this.lctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Resize layers (preserve content by scaling)
+    for (const l of this.layers) {
+      const tmp = document.createElement('canvas');
+      tmp.width = l.canvas.width;
+      tmp.height = l.canvas.height;
+      tmp.getContext('2d').drawImage(l.canvas, 0, 0);
+      l.canvas.width = newW;
+      l.canvas.height = newH;
+      l.ctx = l.canvas.getContext('2d', { desynchronized: true });
+      l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
+      l.dirty = true;
+      this.compositor?.deleteLayerTex(l);
+    }
+
+    this.compositor?.resize(newW, newH, 1);
+
+    // Background
+    if (bgColor) {
+      this.bgColorEl.value = bgColor;
+    }
+    this._fillBackgroundLayer();
+
+    // Height canvas
+    if (this._heightCanvas) {
+      const tmp = document.createElement('canvas');
+      tmp.width = this._heightCanvas.width;
+      tmp.height = this._heightCanvas.height;
+      tmp.getContext('2d').drawImage(this._heightCanvas, 0, 0);
+      this._heightCanvas.width = newW;
+      this._heightCanvas.height = newH;
+      this._heightCtx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
+    }
+
+    // Reinit WASM sims
+    try {
+      if (this.brushes.boid) await this.brushes.boid.init();
+      if (this.brushes.ant) await this.brushes.ant.init();
+    } catch(e) { console.warn('WASM reinit failed:', e); }
+
+    // Zoom to fit
+    const viewRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const fitZoom = Math.min(viewRect.width / newW, viewRect.height / newH, 1) * 0.95;
+    this.viewZoom = fitZoom;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
+    this.viewRotation = 0;
+    this.viewFlipped = false;
+    this._applyViewTransform();
+
+    this._smudgeImageData = null;
+    this.compositeAllLayers();
+    this.showToast(`📐 Canvas: ${newW}×${newH}`);
+  }
+
+  _showCanvasSizeModal() {
+    const modal = document.getElementById('canvasSizeModal');
+    if (!modal) return;
+    const wEl = document.getElementById('canvasSizeW');
+    const hEl = document.getElementById('canvasSizeH');
+    const bgEl = document.getElementById('canvasSizeBg');
+    if (wEl) wEl.value = this.W;
+    if (hEl) hEl.value = this.H;
+    if (bgEl) bgEl.value = this.bgColorEl?.value || '#ffffff';
+    modal.classList.add('open');
+  }
+
+  _hideCanvasSizeModal() {
+    document.getElementById('canvasSizeModal')?.classList.remove('open');
+  }
+
+  _onCanvasSizePresetChange() {
+    const preset = document.getElementById('canvasSizePreset')?.value;
+    if (!preset || preset === 'custom') return;
+    const [w, h] = preset.split('x').map(Number);
+    const wEl = document.getElementById('canvasSizeW');
+    const hEl = document.getElementById('canvasSizeH');
+    if (wEl) wEl.value = w;
+    if (hEl) hEl.value = h;
+  }
+
   makeLayerCanvas() {
     const canvas = document.createElement('canvas');
     canvas.width = this.W * this.DPR;
@@ -280,7 +408,7 @@ export class App {
     const { canvas, ctx } = this.makeLayerCanvas();
     this.layers.splice(this.activeLayerIdx, 0, {
       canvas, ctx, name: name || `Layer ${this.layers.length + 1}`,
-      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null
+      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null, alphaLock: false
     });
     this._syncLayerSwitcher();
     this.compositeAllLayers();
@@ -288,13 +416,30 @@ export class App {
 
   getActiveLayer() { return this.layers[this.activeLayerIdx]; }
 
+  toggleAlphaLock() {
+    const layer = this.getActiveLayer();
+    if (!layer) return;
+    layer.alphaLock = !layer.alphaLock;
+    this._syncAlphaLockUI();
+    if (typeof syncUI === 'function') syncUI(this);
+  }
+
+  _syncAlphaLockUI() {
+    const btn = document.getElementById('alphaLockBtn');
+    if (!btn) return;
+    const layer = this.getActiveLayer();
+    const on = layer && layer.alphaLock;
+    btn.classList.toggle('active-lock', on);
+    btn.title = `Alpha Lock (/) ${on ? 'ON' : 'OFF'}`;
+  }
+
   // ── Background layer ──────────────────────────────────────
 
   _addBackgroundLayer() {
     const { canvas, ctx } = this.makeLayerCanvas();
     const bgLayer = {
       canvas, ctx, name: 'Background', isBackground: true,
-      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null
+      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null, alphaLock: false
     };
     this.layers.push(bgLayer); // always last = bottom
     this._fillBackgroundLayer();
@@ -393,6 +538,7 @@ export class App {
     if (idx >= 0 && idx < this.layers.length && !this.layers[idx].isBackground) {
       this.activeLayerIdx = idx;
       this._syncLayerSwitcher();
+      this._syncAlphaLockUI();
     }
   }
 
@@ -670,6 +816,7 @@ export class App {
       smudge: val('smudge') / 100,
       smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
+      stabilizer: val('stabilizer') / 100,
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
       symmetryCount: val('symmetryCount') || 4,
@@ -1314,6 +1461,7 @@ export class App {
     document.getElementById('rectSelectBtn')?.classList.toggle('active', this.activeTool === 'rect-select');
     document.getElementById('ellipseSelectBtn')?.classList.toggle('active', this.activeTool === 'ellipse-select');
     document.getElementById('lassoSelectBtn')?.classList.toggle('active', this.activeTool === 'lasso-select');
+    document.getElementById('fillBtn')?.classList.toggle('active', this.activeTool === 'fill');
     const deselectBtn = document.getElementById('deselectBtn');
     if (deselectBtn) deselectBtn.style.display = this.selectionMgr?.active ? '' : 'none';
     const transformBtn = document.getElementById('transformBtn');
@@ -1408,6 +1556,9 @@ export class App {
     document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
+    document.getElementById('flipViewBtn')?.addEventListener('click', () => this.flipView());
+    document.getElementById('tilingBtn')?.addEventListener('click', () => this.toggleTiling());
+    document.getElementById('alphaLockBtn')?.addEventListener('click', () => this.toggleAlphaLock());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('open');
     });
@@ -1425,6 +1576,7 @@ export class App {
     document.getElementById('rectSelectBtn')?.addEventListener('click', () => this.setTool('rect-select'));
     document.getElementById('ellipseSelectBtn')?.addEventListener('click', () => this.setTool('ellipse-select'));
     document.getElementById('lassoSelectBtn')?.addEventListener('click', () => this.setTool('lasso-select'));
+    document.getElementById('fillBtn')?.addEventListener('click', () => this.setTool('fill'));
     document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     // Transform tool
     document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
@@ -1452,6 +1604,23 @@ export class App {
       this._fillBackgroundLayer();
       this.compositeAllLayers();
     });
+    // Canvas size modal
+    document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
+    document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('canvasSizePreset')?.addEventListener('change', () => this._onCanvasSizePresetChange());
+    document.getElementById('canvasSizeSwap')?.addEventListener('click', () => {
+      const w = document.getElementById('canvasSizeW');
+      const h = document.getElementById('canvasSizeH');
+      if (w && h) { const t = w.value; w.value = h.value; h.value = t; }
+    });
+    document.getElementById('canvasSizeApply')?.addEventListener('click', () => {
+      const w = +document.getElementById('canvasSizeW')?.value || 1920;
+      const h = +document.getElementById('canvasSizeH')?.value || 1080;
+      const bg = document.getElementById('canvasSizeBg')?.value || '#ffffff';
+      this.resizeDocument(w, h, bg);
+      this._hideCanvasSizeModal();
+    });
   }
 
   _getEventCoords(e) {
@@ -1465,7 +1634,7 @@ export class App {
 
   _screenToCanvas(sx, sy) {
     // Undo view transform: the CSS transform is:
-    // translate(panX, panY) translate(cx,cy) rotate(rot) scale(zoom) translate(-cx,-cy)
+    // translate(panX, panY) translate(cx,cy) rotate(rot) scale(zoom) scaleX(flip) translate(-cx,-cy)
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
     const cx = areaRect.width / 2;
     const cy = areaRect.height / 2;
@@ -1482,9 +1651,11 @@ export class App {
     const rx = dx * cos - dy * sin;
     const ry = dx * sin + dy * cos;
     // Step 4: undo scale(zoom)
-    const ux = rx / this.viewZoom;
-    const uy = ry / this.viewZoom;
-    // Step 5: undo translate(-cx, -cy)
+    let ux = rx / this.viewZoom;
+    let uy = ry / this.viewZoom;
+    // Step 5: undo scaleX(flip)
+    if (this.viewFlipped) ux = -ux;
+    // Step 6: undo translate(-cx, -cy)
     return { x: ux + cx, y: uy + cy };
   }
 
@@ -1551,6 +1722,11 @@ export class App {
         return;
       }
     }
+    // Fill tool dispatch
+    if (this.activeTool === 'fill') {
+      this._floodFill(x, y);
+      return;
+    }
     // Selection tool dispatch - click outside selection starts a new one
     if (this.activeTool !== 'brush') {
       this._commitFloatingPixels(); // stamp any floating pixels before new selection
@@ -1562,6 +1738,8 @@ export class App {
     this.pressure = this._rawPressure;
     this.leaderX = x;
     this.leaderY = y;
+    this._stabX = x;
+    this._stabY = y;
     this.isDrawing = true;
     this.undoPushedThisStroke = false;
     this.isTapering = false;
@@ -1573,6 +1751,10 @@ export class App {
 
   _onPointerMove(e) {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    // Track cursor position for brush size preview
+    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    this._cursorX = e.clientX - areaRect.left;
+    this._cursorY = e.clientY - areaRect.top;
     // Don't draw during pinch
     if (this._pinchActive) return;
     const simCoords = this._getEventCoords(e);
@@ -1607,6 +1789,8 @@ export class App {
     }
 
     const brush = this.getCurrentBrush();
+    const p = this.getP();
+    const stab = p.stabilizer || 0;
     // Use coalesced events for smoother brush strokes (sub-frame input samples)
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     const events = coalesced.length > 0 ? coalesced : [e];
@@ -1615,9 +1799,20 @@ export class App {
       this._rawPressure = pe.pressure || 0.5;
       this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
       this._captureTilt(pe);
-      this.leaderX = x;
-      this.leaderY = y;
-      if (brush) brush.onMove(x, y, this.pressure);
+
+      // Apply stabilizer (lazy mouse)
+      if (stab > 0) {
+        const alpha = 1 - stab * 0.95; // keeps min 5% responsiveness at max stabilizer
+        this._stabX += (x - this._stabX) * alpha;
+        this._stabY += (y - this._stabY) * alpha;
+        this.leaderX = this._stabX;
+        this.leaderY = this._stabY;
+        if (brush) brush.onMove(this._stabX, this._stabY, this.pressure);
+      } else {
+        this.leaderX = x;
+        this.leaderY = y;
+        if (brush) brush.onMove(x, y, this.pressure);
+      }
     }
   }
 
@@ -1649,6 +1844,8 @@ export class App {
     const brush = this.getCurrentBrush();
     if (brush) brush.onUp(x, y);
 
+    this._recordColor(this.primaryEl.value);
+
     // Start taper if configured
     const p = this.getP();
     if (p.taperLength > 0) {
@@ -1659,6 +1856,8 @@ export class App {
   }
 
   _onKeyDown(e) {
+    // Ctrl+N = new canvas / canvas size
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
     // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
     if (e.ctrlKey && !e.shiftKey && e.key === 'z') { e.preventDefault(); this.doUndo(); }
     if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); this.doRedo(); }
@@ -1676,6 +1875,7 @@ export class App {
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
       if (e.key === 'm' || e.key === 'M') { this.setTool('rect-select'); return; }
       if (e.key === 'l' || e.key === 'L') { this.setTool('lasso-select'); return; }
+      if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
     // 1/2/3 = brush switch
@@ -1686,6 +1886,18 @@ export class App {
     if (e.key === '5') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
+    // [ / ] = decrease / increase brush size
+    if (e.key === '[') this._adjustBrushSize(-1);
+    if (e.key === ']') this._adjustBrushSize(1);
+    // F = flip canvas view
+    if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey) {
+      this.flipView();
+    }
+    // P = toggle tiling mode
+    if ((e.key === 'p' || e.key === 'P') && !e.ctrlKey && !e.metaKey) {
+      this.toggleTiling();
+      return;
+    }
     // X = swap colors (non-ctrl; Ctrl+X is cut)
     if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey) {
       const t = this.primaryEl.value;
@@ -1693,7 +1905,23 @@ export class App {
       this.secondaryEl.value = t;
       this._paramsDirty = true;
     }
+    // / = toggle alpha lock on active layer
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      this.toggleAlphaLock();
+    }
   }
+
+  _adjustBrushSize(delta) {
+    const slider = document.getElementById('stampSize');
+    if (!slider) return;
+    slider.value = Math.max(+slider.min, Math.min(+slider.max, +slider.value + delta));
+    this.invalidateParams();
+    const span = document.getElementById('v_stampSize');
+    if (span) span.textContent = slider.value;
+    this.showToast(`🖌 Brush size: ${slider.value}`);
+  }
+
   // ========================================================
   // PINCH ZOOM / ROTATE / PAN (Touch Gestures)
   // ========================================================
@@ -1772,6 +2000,13 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
+    // Shift+scroll = rotate view
+    if (e.shiftKey) {
+      const rotDelta = (e.deltaY > 0 ? 1 : -1) * WHEEL_ROTATION_DEG * Math.PI / 180;
+      this.viewRotation += rotDelta;
+      this._applyViewTransform();
+      return;
+    }
     const zoomFactor = e.deltaY > 0 ? WHEEL_ZOOM_OUT : WHEEL_ZOOM_IN;
     const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.viewZoom * zoomFactor));
 
@@ -1798,7 +2033,8 @@ export class App {
     const cx = areaRect.width / 2;
     const cy = areaRect.height / 2;
     const deg = this.viewRotation * 180 / Math.PI;
-    el.style.transform = `translate(${this.viewPanX}px, ${this.viewPanY}px) translate(${cx}px, ${cy}px) rotate(${deg}deg) scale(${this.viewZoom}) translate(${-cx}px, ${-cy}px)`;
+    const flipScale = this.viewFlipped ? -1 : 1;
+    el.style.transform = `translate(${this.viewPanX}px, ${this.viewPanY}px) translate(${cx}px, ${cy}px) rotate(${deg}deg) scale(${this.viewZoom}) scaleX(${flipScale}) translate(${-cx}px, ${-cy}px)`;
   }
 
   resetView() {
@@ -1806,8 +2042,26 @@ export class App {
     this.viewPanX = 0;
     this.viewPanY = 0;
     this.viewRotation = 0;
+    this.viewFlipped = false;
     this._applyViewTransform();
     this.showToast('🔍 View reset');
+  }
+
+  flipView() {
+    this.viewFlipped = !this.viewFlipped;
+    this._applyViewTransform();
+    this.showToast(this.viewFlipped ? '🪞 View flipped' : '🪞 View unflipped');
+  }
+
+  toggleTiling() {
+    this.tilingMode = !this.tilingMode;
+    this._syncTilingUI();
+    this.showToast(this.tilingMode ? '🔁 Tiling: ON' : '🔁 Tiling: OFF');
+  }
+
+  _syncTilingUI() {
+    const btn = document.getElementById('tilingBtn');
+    if (btn) btn.classList.toggle('active', this.tilingMode);
   }
 
   // ========================================================
@@ -1838,6 +2092,20 @@ export class App {
 
     // Update live overlay (particle visualization)
     this.lctx.clearRect(0, 0, this.W, this.H);
+
+    // Brush size cursor preview
+    if (this._cursorX >= 0 && this._cursorY >= 0) {
+      const canvasPos = this._screenToCanvas(this._cursorX, this._cursorY);
+      const radius = p.stampSize / 2;
+      this.lctx.save();
+      this.lctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      this.lctx.lineWidth = 1;
+      this.lctx.beginPath();
+      this.lctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+      this.lctx.stroke();
+      this.lctx.restore();
+    }
+
     if (brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, p);
     }
@@ -1848,6 +2116,16 @@ export class App {
     if (this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
     // Transform handles
     if (this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
+
+    // Tiling mode boundary indicator
+    if (this.tilingMode) {
+      this.lctx.save();
+      this.lctx.strokeStyle = 'rgba(255,200,50,0.3)';
+      this.lctx.lineWidth = 1;
+      this.lctx.setLineDash([8, 4]);
+      this.lctx.strokeRect(0, 0, this.W, this.H);
+      this.lctx.restore();
+    }
 
     // Update status
     this._updateStatus(brush);
@@ -1920,7 +2198,11 @@ export class App {
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.globalAlpha = opacity;
+    const activeLayer = this.getActiveLayer();
+    const useAlphaLock = activeLayer && activeLayer.alphaLock && this.activeBrush !== 'eraser';
+    if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
     ctx.fill();
+    if (useAlphaLock) ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
 
     // Impasto: stamp onto the height map proportionally to stamp opacity
@@ -1933,6 +2215,46 @@ export class App {
       hctx.fill();
       hctx.globalAlpha = 1;
       this._heightDirty = true;
+    }
+
+    // Tiling: wrap stamp at canvas edges
+    if (this.tilingMode) {
+      const r = size / 2;
+      const W = this.W, H = this.H;
+      const overLeft = x - r < 0, overRight = x + r > W;
+      const overTop = y - r < 0, overBottom = y + r > H;
+      const wraps = [];
+      if (overLeft)  wraps.push([x + W, y]);
+      if (overRight) wraps.push([x - W, y]);
+      if (overTop)    wraps.push([x, y + H]);
+      if (overBottom) wraps.push([x, y - H]);
+      // Corners
+      if (overLeft  && overTop)    wraps.push([x + W, y + H]);
+      if (overRight && overTop)    wraps.push([x - W, y + H]);
+      if (overLeft  && overBottom) wraps.push([x + W, y - H]);
+      if (overRight && overBottom) wraps.push([x - W, y - H]);
+
+      for (const [wx, wy] of wraps) {
+        if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
+        ctx.beginPath();
+        ctx.arc(wx, wy, r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = opacity;
+        ctx.fill();
+        if (useAlphaLock) ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        // Impasto for wrapped stamps
+        if (p.impasto && p.impastoStrength > 0 && this._heightCtx) {
+          const hctx = this._heightCtx;
+          hctx.beginPath();
+          hctx.arc(wx * this.DPR, wy * this.DPR, r * this.DPR, 0, Math.PI * 2);
+          hctx.fillStyle = '#ffffff';
+          hctx.globalAlpha = Math.min(opacity * p.impastoStrength, 1);
+          hctx.fill();
+          hctx.globalAlpha = 1;
+          this._heightDirty = true;
+        }
+      }
     }
   }
 
@@ -1954,6 +2276,95 @@ export class App {
     c.fillRect(0, 0, 1, 1);
     const d = c.getImageData(0, 0, 1, 1).data;
     return { r: d[0], g: d[1], b: d[2] };
+  }
+
+  /**
+   * Flood-fill a contiguous region of similar colour on the active layer.
+   * Receives CSS-pixel coordinates and converts to device pixels internally.
+   */
+  _floodFill(x, y) {
+    const layer = this.getActiveLayer();
+    if (!layer) return;
+
+    this.pushUndo();
+
+    const dpr = this.DPR;
+    const px = Math.round(x * dpr);
+    const py = Math.round(y * dpr);
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+
+    if (px < 0 || px >= w || py < 0 || py >= h) return;
+
+    // Read current layer pixels
+    layer.ctx.save();
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const imageData = layer.ctx.getImageData(0, 0, w, h);
+    layer.ctx.restore();
+    const data = imageData.data;
+
+    // Target colour at click point
+    const idx = (py * w + px) * 4;
+    const targetR = data[idx], targetG = data[idx + 1], targetB = data[idx + 2], targetA = data[idx + 3];
+
+    // Fill colour from primary colour picker
+    const fill = this._parseColorToRGB(this.primaryEl.value);
+    const fillR = fill.r, fillG = fill.g, fillB = fill.b, fillA = 255;
+
+    // Don't fill if target already matches fill colour
+    if (targetR === fillR && targetG === fillG && targetB === fillB && targetA === fillA) return;
+
+    // Tolerance from sidebar slider
+    const tolEl = document.getElementById('fillTolerance');
+    const tolerance = tolEl ? +tolEl.value : 32;
+
+    function colorMatch(i) {
+      return Math.abs(data[i] - targetR) <= tolerance &&
+             Math.abs(data[i + 1] - targetG) <= tolerance &&
+             Math.abs(data[i + 2] - targetB) <= tolerance &&
+             Math.abs(data[i + 3] - targetA) <= tolerance;
+    }
+
+    // Scanline flood fill
+    const visited = new Uint8Array(w * h);
+    const stack = [[px, py]];
+
+    while (stack.length > 0) {
+      const [cx, cy] = stack.pop();
+      const ci = cy * w + cx;
+      if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+      if (visited[ci]) continue;
+      if (!colorMatch(ci * 4)) continue;
+
+      // Find leftmost pixel in this row
+      let left = cx;
+      while (left > 0 && !visited[cy * w + left - 1] && colorMatch((cy * w + left - 1) * 4)) left--;
+
+      // Find rightmost pixel in this row
+      let right = cx;
+      while (right < w - 1 && !visited[cy * w + right + 1] && colorMatch((cy * w + right + 1) * 4)) right++;
+
+      for (let fx = left; fx <= right; fx++) {
+        const fi = cy * w + fx;
+        visited[fi] = 1;
+        const di = fi * 4;
+        data[di] = fillR;
+        data[di + 1] = fillG;
+        data[di + 2] = fillB;
+        data[di + 3] = fillA;
+
+        if (cy > 0 && !visited[(cy - 1) * w + fx] && colorMatch(((cy - 1) * w + fx) * 4)) stack.push([fx, cy - 1]);
+        if (cy < h - 1 && !visited[(cy + 1) * w + fx] && colorMatch(((cy + 1) * w + fx) * 4)) stack.push([fx, cy + 1]);
+      }
+    }
+
+    layer.ctx.save();
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    layer.ctx.putImageData(imageData, 0, 0);
+    layer.ctx.restore();
+    layer.dirty = true;
+    this.compositeAllLayers();
+    this.showToast('🪣 Filled');
   }
 
   /**
@@ -2414,6 +2825,37 @@ export class App {
   }
 
   // ========================================================
+  // COLOR HISTORY
+  // ========================================================
+
+  _recordColor(hex) {
+    hex = hex.toLowerCase();
+    if (!/^#[0-9a-f]{6}$/.test(hex)) return;
+    const idx = this._colorHistory.indexOf(hex);
+    if (idx !== -1) this._colorHistory.splice(idx, 1);
+    this._colorHistory.unshift(hex);
+    if (this._colorHistory.length > this._maxColorHistory) this._colorHistory.pop();
+    this._renderColorHistory();
+  }
+
+  _renderColorHistory() {
+    const container = document.getElementById('colorHistory');
+    if (!container) return;
+    container.innerHTML = '';
+    for (const hex of this._colorHistory) {
+      const swatch = document.createElement('div');
+      swatch.style.cssText = `width:20px;height:20px;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:${hex};transition:transform 0.1s;`;
+      swatch.title = hex;
+      swatch.addEventListener('click', () => {
+        this.primaryEl.value = hex;
+        this._paramsDirty = true;
+      });
+      swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.2)');
+      swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
+      container.appendChild(swatch);
+    }
+  }
+
   // SESSION PERSISTENCE
   // ========================================================
 
@@ -2437,6 +2879,13 @@ export class App {
       const negPromptEl = document.getElementById('aiNegPromptText');
       if (promptEl) controls._aiPrompt = promptEl.value;
       if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
+      controls._colorHistory = this._colorHistory;
+      controls._tilingMode = this.tilingMode;
+      if (this._docSized) {
+        controls._docSized = true;
+        controls._docW = this._docW;
+        controls._docH = this._docH;
+      }
       controls._simulation = {
         enabled: this.simulation.enabled,
         editorTool: this.simulation.editorTool,
@@ -2453,6 +2902,7 @@ export class App {
       if (!raw) return;
       const controls = JSON.parse(raw);
       for (const [id, val] of Object.entries(controls)) {
+        if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
         if (id === 'primaryColor') { this.primaryEl.value = val; continue; }
         if (id === 'secondaryColor') { this.secondaryEl.value = val; continue; }
         if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
@@ -2467,6 +2917,18 @@ export class App {
         if (id === '_aiNegPrompt') {
           const el = document.getElementById('aiNegPromptText');
           if (el) el.value = val;
+          continue;
+        }
+        if (id === '_colorHistory') {
+          if (Array.isArray(val)) {
+            this._colorHistory = val.filter(v => typeof v === 'string' && /^#[0-9a-f]{6}$/.test(v));
+          }
+          this._renderColorHistory();
+          continue;
+        }
+        if (id === '_tilingMode') {
+          this.tilingMode = !!val;
+          this._syncTilingUI();
           continue;
         }
         if (id === '_simulation') {
@@ -2486,6 +2948,12 @@ export class App {
       this._normalizeSimulationData();
       this._ensureSimulationSpawns();
       this._syncSimulationUI();
+      // Restore document size (state only; actual resize happens via _resizeAll or resizeDocument)
+      if (controls._docSized && controls._docW && controls._docH) {
+        this._docSized = true;
+        this._docW = controls._docW;
+        this._docH = controls._docH;
+      }
     } catch { /* corrupt — ignore */ }
   }
 
