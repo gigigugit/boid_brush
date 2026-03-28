@@ -357,19 +357,16 @@ export class BoidBrush {
   onHover(x, y) {
     if (!this._ready) return;
     const p = this.app.getP();
-    if (!p.pencilAngle) { this._hoverSpawned = false; return; }
-    // Only activate for pen pointers (Apple Pencil, stylus)
-    if (this.app.pointerType !== 'pen') { this._hoverSpawned = false; return; }
 
     const alt = this.app.altitude;
-    const hasTilt = alt < Math.PI / 2 - TILT_THRESHOLD; // meaningful tilt data present
+    const isPen = this.app.pointerType === 'pen';
+    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
 
-    // Azimuth determines spawn angle; fall back to configured spawnAngle
+    // Pen with tilt → use pencil azimuth; mouse/touch or vertical pen → UI angle
     const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
-    // Altitude determines spawn radius: more tilted (lower altitude) = taller/longer
-    // When no tilt data, use base spawnRadius
-    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0; // 0 = vertical, 1 = flat
-    const r = p.spawnRadius * (1 + tiltFactor * 2); // 1× to 3× radius
+    // Tilt-based radius scaling only when real tilt data is available
+    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
+    const r = p.spawnRadius * (1 + tiltFactor * 2);
 
     // Spawn ALL boids at once — no incremental spawning
     this.sim.clearAgents();
@@ -814,7 +811,8 @@ export class BoidBrush {
       ctx.lineWidth = 1;
       ctx.beginPath();
       const alt = this.app.altitude;
-      const hasTilt = alt < Math.PI / 2 - TILT_THRESHOLD;
+      const isPen = this.app.pointerType === 'pen';
+      const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
       const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
       const r = p.spawnRadius * (1 + tiltFactor * 2);
       ctx.arc(this.app.leaderX, this.app.leaderY, r, 0, Math.PI * 2);
@@ -1788,18 +1786,15 @@ export class BristleBrush {
    *  angle and altitude for bristle length, simulating a real brush preview. */
   onHover(x, y) {
     const p = this.app.getP();
-    if (!p.pencilAngle) { this._hoverActive = false; this._hoverBristlesSpawned = false; return; }
-    // Only activate for pen pointers (Apple Pencil, stylus)
-    if (this.app.pointerType !== 'pen') { this._hoverActive = false; this._hoverBristlesSpawned = false; return; }
 
     const alt = this.app.altitude;
-    const hasTilt = alt < Math.PI / 2 - TILT_THRESHOLD;
+    const isPen = this.app.pointerType === 'pen';
+    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
 
-    // Azimuth determines initial brush angle; 0 when no tilt data
+    // Pen with tilt → use pencil azimuth; mouse/touch → 0
     this._hoverDir = hasTilt ? this.app.azimuth : 0;
     this._strokeDir = this._hoverDir;
-    // Altitude determines bristle length: more tilted = more surface contact = longer
-    // When no tilt data, use default 1.0 scale
+    // Tilt-based bristle length scaling
     const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0.33;
     this._hoverLengthScale = 0.5 + tiltFactor * 1.5;
     this._hoverActive = true;
@@ -1844,7 +1839,7 @@ export class BristleBrush {
     this._lastCursorX = x;
     this._lastCursorY = y;
     // Use hover-derived angle/length if available, else fall back to existing logic
-    if (this._hoverActive && p.pencilAngle) {
+    if (this._hoverActive) {
       this._strokeDir = this._hoverDir;
       // _hoverLengthScale already set during hover
     } else if (p.pencilAngle && this.app.altitude < Math.PI / 2 - TILT_THRESHOLD) {
@@ -2131,7 +2126,7 @@ export class BristleBrush {
 
   drawOverlay(ctx, p) {
     // Hover preview: show live physics-simulated bristle positions
-    if (this._hoverActive && p.pencilAngle && this._hoverBristlesSpawned && this._count > 0) {
+    if (this._hoverActive && this._hoverBristlesSpawned && this._count > 0) {
       ctx.strokeStyle = 'rgba(255,180,100,0.3)';
       ctx.lineWidth = 0.5;
       for (let i = 0; i < this._count; i++) {
