@@ -1504,6 +1504,7 @@ export class App {
     ic.addEventListener('pointermove', e => this._onPointerMove(e));
     ic.addEventListener('pointerup', e => this._onPointerUp(e));
     ic.addEventListener('pointercancel', e => this._onPointerUp(e));
+    ic.addEventListener('pointerleave', e => this._onPointerLeave(e));
 
     // Touch events for pinch zoom/rotate (on canvasArea to capture all fingers)
     const area = document.getElementById('canvasArea');
@@ -1785,6 +1786,9 @@ export class App {
       this._captureTilt(e);
       this.leaderX = x;
       this.leaderY = y;
+      // Notify brush of hover for Apple Pencil hover preview/spawn
+      const brush = this.getCurrentBrush();
+      if (brush && brush.onHover) brush.onHover(x, y);
       return;
     }
 
@@ -1853,6 +1857,13 @@ export class App {
       this.taperFrame = 0;
       this.taperTotal = p.taperLength;
     }
+  }
+
+  _onPointerLeave(e) {
+    // Clear hover state when pointer leaves canvas (e.g. Apple Pencil lifts away)
+    if (this.isDrawing) return;
+    const brush = this.getCurrentBrush();
+    if (brush && brush.onHoverEnd) brush.onHoverEnd();
   }
 
   _onKeyDown(e) {
