@@ -14,6 +14,10 @@ const BRISTLE_PRESSURE_ALPHA = 0.15;
 const MAX_SMOOTH_DAMP = 0.92;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+// Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
+// Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
+// data is available from the hardware.
+const TILT_THRESHOLD = 0.01; // ~0.57°
 const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
@@ -358,7 +362,7 @@ export class BoidBrush {
     if (this.app.pointerType !== 'pen') { this._hoverSpawned = false; return; }
 
     const alt = this.app.altitude;
-    const hasTilt = alt < Math.PI / 2 - 0.01; // meaningful tilt data present
+    const hasTilt = alt < Math.PI / 2 - TILT_THRESHOLD; // meaningful tilt data present
 
     // Azimuth determines spawn angle; fall back to configured spawnAngle
     const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
@@ -799,7 +803,7 @@ export class BoidBrush {
       ctx.lineWidth = 1;
       ctx.beginPath();
       const alt = this.app.altitude;
-      const hasTilt = alt < Math.PI / 2 - 0.01;
+      const hasTilt = alt < Math.PI / 2 - TILT_THRESHOLD;
       const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
       const r = p.spawnRadius * (1 + tiltFactor * 2);
       ctx.arc(this.app.leaderX, this.app.leaderY, r, 0, Math.PI * 2);
@@ -1777,7 +1781,7 @@ export class BristleBrush {
     if (this.app.pointerType !== 'pen') { this._hoverActive = false; return; }
 
     const alt = this.app.altitude;
-    const hasTilt = alt < Math.PI / 2 - 0.01;
+    const hasTilt = alt < Math.PI / 2 - TILT_THRESHOLD;
 
     // Azimuth determines initial brush angle; 0 when no tilt data
     this._hoverDir = hasTilt ? this.app.azimuth : 0;
@@ -1805,7 +1809,7 @@ export class BristleBrush {
     if (this._hoverActive && p.pencilAngle) {
       this._strokeDir = this._hoverDir;
       // _hoverLengthScale already set during hover
-    } else if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.01) {
+    } else if (p.pencilAngle && this.app.altitude < Math.PI / 2 - TILT_THRESHOLD) {
       this._strokeDir = this.app.azimuth;
       // Compute length scale from current altitude
       const tiltFactor = 1 - (this.app.altitude / (Math.PI / 2));
@@ -1876,7 +1880,7 @@ export class BristleBrush {
     }
 
     // Blend with pencil azimuth when enabled and pen is tilted
-    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.01) {
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - TILT_THRESHOLD) {
       const pencilDir = this.app.azimuth;
       const blend = p.pencilBlend; // 0 = all movement, 1 = all pencil
       // Normalize angle difference for blending
