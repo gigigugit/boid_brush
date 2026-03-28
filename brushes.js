@@ -352,12 +352,14 @@ export class BoidBrush {
     this._sensingUploaded = true;
   }
 
-  /** Apple Pencil hover: spawn all boids at hover position using azimuth for
-   *  angle and altitude for spawn radius. All boids appear immediately. */
+  /** Hover: spawn boids once at hover position, then let onHoverFrame step
+   *  the simulation so boids flock exactly as they do during drawing.
+   *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
   onHover(x, y) {
     if (!this._ready) return;
-    const p = this.app.getP();
+    if (this._hoverSpawned) return; // already spawned — sim runs via onHoverFrame
 
+    const p = this.app.getP();
     const alt = this.app.altitude;
     const isPen = this.app.pointerType === 'pen';
     const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
@@ -368,7 +370,6 @@ export class BoidBrush {
     const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
     const r = p.spawnRadius * (1 + tiltFactor * 2);
 
-    // Spawn ALL boids at once — no incremental spawning
     this.sim.clearAgents();
     this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
     this._hoverSpawned = true;
