@@ -2083,7 +2083,7 @@ export class BristleBrush {
       ctx.strokeStyle = 'rgba(255,180,100,0.3)';
       ctx.lineWidth = 0.5;
       for (let i = 0; i < count; i++) {
-        const t = count > 1 ? (i / (count - 1) - 0.5) : 0;
+        const t = (count <= 1) ? 0 : (i / (count - 1) - 0.5);
         const perpDx = t * width;
         // Rotate offset perpendicular to hover direction
         const rx = perpDx * cosA;
