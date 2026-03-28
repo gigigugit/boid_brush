@@ -2102,6 +2102,9 @@ export class App {
     if (this.simulation.running) this._updateSimulationLeader(elapsed, p);
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
+    } else if (!this.isDrawing && brush && brush.onHoverFrame) {
+      // Step hover simulation (boid flocking / bristle physics) without stamping
+      brush.onHoverFrame(elapsed);
     }
 
     // Update live overlay (particle visualization)
