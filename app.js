@@ -60,6 +60,7 @@ export class App {
     this.tiltY = 0;
     this.azimuth = 0;     // stylus azimuth in radians (0..2π)
     this.altitude = Math.PI / 2; // stylus altitude (π/2 = vertical)
+    this.pointerType = 'mouse';  // last pointer type ('mouse', 'pen', 'touch')
     this.leaderX = 0;
     this.leaderY = 0;
     this.undoPushedThisStroke = false;
@@ -1686,6 +1687,7 @@ export class App {
     e.preventDefault();
     // Track active pointers for multi-touch detection
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    this.pointerType = e.pointerType || 'mouse';
     // Don't start drawing during pinch gesture
     if (this._pinchActive) return;
     // Don't start drawing if touch and multiple pointers (pinch incoming)
@@ -1752,6 +1754,7 @@ export class App {
 
   _onPointerMove(e) {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    this.pointerType = e.pointerType || 'mouse';
     // Track cursor position for brush size preview
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
     this._cursorX = e.clientX - areaRect.left;

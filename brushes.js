@@ -354,14 +354,17 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     if (!p.pencilAngle) { this._hoverSpawned = false; return; }
-    // Only activate when pen has meaningful tilt data (not vertical)
-    const alt = this.app.altitude;
-    if (alt >= Math.PI / 2 - 0.05) { this._hoverSpawned = false; return; }
+    // Only activate for pen pointers (Apple Pencil, stylus)
+    if (this.app.pointerType !== 'pen') { this._hoverSpawned = false; return; }
 
-    // Azimuth determines spawn angle
-    const spawnAngle = this.app.azimuth;
+    const alt = this.app.altitude;
+    const hasTilt = alt < Math.PI / 2 - 0.01; // meaningful tilt data present
+
+    // Azimuth determines spawn angle; fall back to configured spawnAngle
+    const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
     // Altitude determines spawn radius: more tilted (lower altitude) = taller/longer
-    const tiltFactor = 1 - (alt / (Math.PI / 2)); // 0 = vertical, 1 = flat
+    // When no tilt data, use base spawnRadius
+    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0; // 0 = vertical, 1 = flat
     const r = p.spawnRadius * (1 + tiltFactor * 2); // 1× to 3× radius
 
     // Spawn ALL boids at once — no incremental spawning
@@ -796,7 +799,8 @@ export class BoidBrush {
       ctx.lineWidth = 1;
       ctx.beginPath();
       const alt = this.app.altitude;
-      const tiltFactor = 1 - (alt / (Math.PI / 2));
+      const hasTilt = alt < Math.PI / 2 - 0.01;
+      const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
       const r = p.spawnRadius * (1 + tiltFactor * 2);
       ctx.arc(this.app.leaderX, this.app.leaderY, r, 0, Math.PI * 2);
       ctx.stroke();
@@ -1769,14 +1773,18 @@ export class BristleBrush {
   onHover(x, y) {
     const p = this.app.getP();
     if (!p.pencilAngle) { this._hoverActive = false; return; }
-    const alt = this.app.altitude;
-    if (alt >= Math.PI / 2 - 0.05) { this._hoverActive = false; return; }
+    // Only activate for pen pointers (Apple Pencil, stylus)
+    if (this.app.pointerType !== 'pen') { this._hoverActive = false; return; }
 
-    // Azimuth determines initial brush angle
-    this._hoverDir = this.app.azimuth;
+    const alt = this.app.altitude;
+    const hasTilt = alt < Math.PI / 2 - 0.01;
+
+    // Azimuth determines initial brush angle; 0 when no tilt data
+    this._hoverDir = hasTilt ? this.app.azimuth : 0;
     // Altitude determines bristle length: more tilted = more surface contact = longer
-    const tiltFactor = 1 - (alt / (Math.PI / 2)); // 0 = vertical, 1 = flat
-    this._hoverLengthScale = 0.5 + tiltFactor * 1.5; // 0.5× to 2×
+    // When no tilt data, use default 1.0 scale
+    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0.33;
+    this._hoverLengthScale = 0.5 + tiltFactor * 1.5;
     this._hoverActive = true;
     this._lastCursorX = x;
     this._lastCursorY = y;
@@ -1797,7 +1805,7 @@ export class BristleBrush {
     if (this._hoverActive && p.pencilAngle) {
       this._strokeDir = this._hoverDir;
       // _hoverLengthScale already set during hover
-    } else if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+    } else if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.01) {
       this._strokeDir = this.app.azimuth;
       // Compute length scale from current altitude
       const tiltFactor = 1 - (this.app.altitude / (Math.PI / 2));
@@ -1868,7 +1876,7 @@ export class BristleBrush {
     }
 
     // Blend with pencil azimuth when enabled and pen is tilted
-    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.01) {
       const pencilDir = this.app.azimuth;
       const blend = p.pencilBlend; // 0 = all movement, 1 = all pencil
       // Normalize angle difference for blending

@@ -169,7 +169,7 @@ export function buildSidebar(app) {
     <!-- Pencil / Hover (boid + bristle) -->
     <div class="section-header" data-brushes="boid bristle" data-section="pencilHover">Pencil / Hover <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid bristle">
-      <label>Pencil Angle <input type="checkbox" id="pencilAngle"></label>
+      <label>Pencil Angle <input type="checkbox" id="pencilAngle" checked></label>
       <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle &amp; hover spawn</span>
       ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
     </div>
