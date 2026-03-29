@@ -32,24 +32,37 @@ function toggleSection(header) {
 }
 
 // ── Build a slider row ──────────────────────────────────────
-function sliderRow(id, label, min, max, value, fmt) {
+function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
-  return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>`;
+  const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
+  return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
 }
 
 // ── Build sidebar DOM ───────────────────────────────────────
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <!-- Color History -->
+    <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div id="colorHistory" style="display:flex;flex-wrap:wrap;gap:2px;min-height:20px;"></div>
+    </div>
+
     <!-- Brush Scale -->
     <div class="section-header" data-section="brushScale">Brush Scale <span class="chevron">▼</span></div>
     <div class="section-body">
       ${sliderRow('brushScale', 'Scale', 10, 300, 100, v => (v/100).toFixed(1))}
     </div>
 
-    <!-- Spawn Shape (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Fill -->
+    <div class="section-header closed" data-section="fill">Fill <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      ${sliderRow('fillTolerance', 'Tolerance', 0, 255, 32)}
+    </div>
+
+    <!-- Spawn Shape (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       <label>Shape <select id="spawnShape">
         <option value="circle">● Circle</option><option value="ring">◎ Ring</option>
         <option value="gaussian">☁ Gaussian</option><option value="line">═ Line</option>
@@ -63,19 +76,18 @@ export function buildSidebar(app) {
       ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
       <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
-      <label>Flat Stroke <input type="checkbox" id="flatStroke" checked></label>
     </div>
 
-    <!-- Swarm (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="swarm">Swarm <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
-      ${sliderRow('count', 'Count', 3, 200, 25)}
+    <!-- Swarm (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
+      ${sliderRow('count', 'Count', 3, 200, 60)}
     </div>
 
-    <!-- Forces (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="forces">Forces <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
-      ${sliderRow('seek', 'Seek', 0, 100, 40, v => (v/100).toFixed(2))}
+    <!-- Forces (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="forces">Forces <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
+      ${sliderRow('seek', 'Seek', 0, 100, 75, v => (v/100).toFixed(2))}
       ${sliderRow('cohesion', 'Cohesion', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('separation', 'Separation', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('alignment', 'Alignment', 0, 100, 20, v => (v/100).toFixed(2))}
@@ -89,9 +101,9 @@ export function buildSidebar(app) {
       ${sliderRow('individuality', 'Individ.', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
-    <!-- Variance (boid only) -->
-    <div class="section-header closed" data-brushes="boid" data-section="variance">Variance <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid">
+    <!-- Variance (boid + ant) -->
+    <div class="section-header closed" data-brushes="boid ant" data-section="variance">Variance <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid ant">
       ${sliderRow('sizeVar', 'Size Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('opacityVar', 'Opac Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('speedVar', 'Speed Var', 0, 100, 0, v => (v/100).toFixed(2))}
@@ -101,29 +113,76 @@ export function buildSidebar(app) {
       ${sliderRow('litVar', 'Light Var', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
-    <!-- Motion (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="motion">Motion <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Motion (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="motion">Motion <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       ${sliderRow('maxSpeed', 'Max Speed', 1, 30, 8, v => (v/2).toFixed(1))}
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
+    </div>
+
+    <!-- Simulation (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="simulation">Simulation <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
+      <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
+      <span class="slider-desc">Playback multiplier for autonomous painting</span>
+      ${sliderRow('simPointStrength', 'Point Force', 0, 200, 90, v => (v/100).toFixed(2))}
+      ${sliderRow('simPointRadius', 'Point Radius', 10, 300, 120)}
+      <span class="slider-desc">Spawn point, spread radius, and stamp settings continue to use the usual controls above</span>
+    </div>
+
+    <!-- Boid Simulation -->
+    <div class="section-header" data-brushes="boid" data-section="boidSimulation">Boid Sim Guides <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid">
+      ${sliderRow('simPathSpeed', 'Path Speed', 5, 200, 50, v => (v/20).toFixed(1) + '×')}
+      <span class="slider-desc">Use the Path tool in Simulation mode to draw a guide stroke that boids follow while painting</span>
+    </div>
+
+    <!-- Ant Simulation -->
+    <div class="section-header" data-brushes="ant" data-section="antSimulation">Ant Sim Guides <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ant">
+      ${sliderRow('simEdgeForce', 'Edge Force', 0, 200, 100, v => (v/100).toFixed(2))}
+      ${sliderRow('simEdgeRadius', 'Avoid Radius', 0, 200, 28)}
+      ${sliderRow('simPheroPaintRadius', 'Phero Radius', 2, 80, 18)}
+      ${sliderRow('simPheroPaintStrength', 'Phero Paint', 0, 100, 55, v => (v/100).toFixed(2))}
+      <span class="slider-desc">Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow</span>
     </div>
 
     <!-- Bristle Shape (bristle only) -->
     <div class="section-header" data-brushes="bristle" data-section="bristleShape">Bristle Shape <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="bristle">
-      ${sliderRow('bristleCount', 'Count', 3, 100, 30)}
-      ${sliderRow('bristleWidth', 'Width', 5, 120, 30)}
-      ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2))}
-      ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleCount', 'Count', 1, 200, 30, null, 'Number of individual bristle hairs')}
+      ${sliderRow('bristleWidth', 'Width', 1, 300, 30, null, 'Spread of bristles across brush head')}
+      ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2), 'Random scatter of bristle positions')}
+      ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2), 'How much pressure fans bristles outward')}
     </div>
 
     <!-- Bristle Physics (bristle only) -->
     <div class="section-header" data-brushes="bristle" data-section="bristlePhysics">Bristle Physics <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="bristle">
-      ${sliderRow('bristleLength', 'Length', 5, 80, 20)}
-      ${sliderRow('bristleStiffness', 'Stiffness', 1, 100, 50, v => (v/100).toFixed(2))}
-      ${sliderRow('bristleDamping', 'Damping', 50, 100, 85, v => (v/100).toFixed(2))}
-      ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2))}
+      ${sliderRow('bristleLength', 'Length', 1, 200, 20, null, 'How far tips trail behind roots')}
+      ${sliderRow('bristleStiffness', 'Stiffness', 1, 100, 50, v => (v/100).toFixed(2), 'Spring force pulling tips toward roots')}
+      ${sliderRow('bristleDamping', 'Damping', 1, 100, 85, v => (v/100).toFixed(2), 'Velocity decay per frame (higher = less bounce)')}
+      ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2), 'Surface drag opposing tip movement')}
+      ${sliderRow('bristleSmoothing', 'Smoothing', 0, 100, 50, v => (v/100).toFixed(2), 'Curve smoothing between tip positions')}
+    </div>
+
+    <!-- Pencil / Hover (boid + bristle) -->
+    <div class="section-header" data-brushes="boid bristle" data-section="pencilHover">Pencil / Hover <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid bristle">
+      <label>Pencil Angle <input type="checkbox" id="pencilAngle" checked></label>
+      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle &amp; hover spawn</span>
+      ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
+    </div>
+
+    <!-- Bristle Variance (bristle only) -->
+    <div class="section-header closed" data-brushes="bristle" data-section="bristleVariance">Bristle Variance <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="bristle">
+      ${sliderRow('bSizeVar', 'Size Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle stamp size variation')}
+      ${sliderRow('bOpacityVar', 'Opacity Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle opacity variation')}
+      ${sliderRow('bStiffVar', 'Stiffness Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle spring stiffness variation')}
+      ${sliderRow('bLengthVar', 'Length Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle trail length variation')}
+      ${sliderRow('bFrictionVar', 'Friction Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle surface drag variation')}
+      ${sliderRow('bHueVar', 'Hue Var', 0, 100, 0, v => (v/100).toFixed(2), 'Per-bristle color hue shift')}
     </div>
 
     <!-- Bristle Visual (bristle only) -->
@@ -135,12 +194,29 @@ export function buildSidebar(app) {
     <!-- Stamp -->
     <div class="section-header" data-section="stamp">Stamp <span class="chevron">▼</span></div>
     <div class="section-body">
-      ${sliderRow('stampSize', 'Size', 1, 40, 6)}
+      ${sliderRow('stampSize', 'Size', 1, 40, 10)}
       ${sliderRow('stampOpacity', 'Opacity', 1, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('stampSeparation', 'Separation', 0, 80, 0)}
+      ${sliderRow('smudge', 'Smudge', 0, 100, 0, v => (v/100).toFixed(2), 'Blend with existing canvas colour')}
+      <label>Smudge Only <input type="checkbox" id="smudgeOnly"></label>
       ${sliderRow('skipStamps', 'Skip Start', 0, 60, 0)}
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
+      <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
+      ${sliderRow('stabilizer', 'Stabilizer', 0, 100, 0)}
+    </div>
+
+    <!-- Canvas Texture -->
+    <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      <label>Enable <input type="checkbox" id="canvasTextureEnabled"></label>
+      <div style="display:flex;gap:4px;align-items:center;margin:4px 0;">
+        <button id="btnUploadTexture" style="flex:1;">📂 Load Texture</button>
+        <button id="btnClearTexture" style="flex-shrink:0;">✕</button>
+      </div>
+      <span id="textureFileName" class="slider-desc">No texture loaded</span>
+      ${sliderRow('canvasTextureStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2), 'How strongly the texture modulates paint deposit')}
+      ${sliderRow('canvasTextureScale', 'Scale', 10, 500, 100, v => (v/100).toFixed(1) + '×', 'Tile scale of the texture pattern')}
     </div>
 
     <!-- Symmetry (closed by default) -->
@@ -162,9 +238,9 @@ export function buildSidebar(app) {
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
 
-    <!-- Sensing (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Sensing (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
@@ -174,11 +250,50 @@ export function buildSidebar(app) {
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option></select></label>
     </div>
 
-    <!-- Visual (boid only) -->
-    <div class="section-header" data-brushes="boid" data-section="visual">Visual <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
+    <!-- Visual (boid + ant) -->
+    <div class="section-header" data-brushes="boid ant" data-section="visual">Visual <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant">
       <label>Show Particles <input type="checkbox" id="showBoids" checked></label>
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
+    </div>
+
+    <!-- Pheromone (ant only) -->
+    <div class="section-header" data-brushes="ant" data-section="antPheromone">Pheromone <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="ant">
+      ${sliderRow('antFollow', 'Follow Cursor', 0, 100, 40, v => (v/100).toFixed(2), 'How strongly ants follow the cursor')}
+      ${sliderRow('antPheromoneRate', 'Deposit Rate', 0, 100, 50, v => (v/100).toFixed(2), 'Intensity of pheromone deposited per ant per frame')}
+      ${sliderRow('antPheromoneDecay', 'Evaporation', 1, 100, 20, v => (v/1000).toFixed(3), 'Pheromone decay rate per frame (higher = faster fade)')}
+      ${sliderRow('antPheromoneSize', 'Trail Width', 1, 30, 6, null, 'Radius of each pheromone deposit in pixels')}
+      <label>Show Trail <input type="checkbox" id="antTrailVisible" checked></label>
+      <span class="slider-desc">Render pheromone trail overlay (green glow)</span>
+      <label>Phero→Sensing <input type="checkbox" id="antPheromoneToSensing" checked></label>
+      <span class="slider-desc">Feed pheromone grid into WASM sensing (ants attract to trails)</span>
+      <button id="btnAntMath" style="width:100%;margin-top:6px;padding:6px;background:rgba(58,106,232,0.2);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#8ab4f8;font-size:11px;cursor:pointer;">🔬 Ant Math Variables</button>
+    </div>
+
+    <!-- Trail Blur -->
+    <div class="section-header" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
+    <div class="section-body">
+      ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
+      ${sliderRow('trailFlow', 'Texture Flow', 0, 100, 0, v => (v / 100).toFixed(2), 'Bias blur diffusion toward lower-height canvas texture areas (requires texture)')}
+    </div>
+
+    <!-- Pigment Mix / KM -->
+    <div class="section-header" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Enable <input type="checkbox" id="kmMix"></label>
+      <span class="slider-desc">Physically-based subtractive pigment mixing (blue+yellow→green)</span>
+      ${sliderRow('kmStrength', 'Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'How strongly the brush pigment mixes into existing paint')}
+    </div>
+
+    <!-- Impasto -->
+    <div class="section-header" data-section="impasto">Impasto <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Enable <input type="checkbox" id="impasto"></label>
+      <span class="slider-desc">Build up paint height — directional lighting reveals 3D ridges</span>
+      ${sliderRow('impastoStrength', 'Strength', 0, 100, 60, v => (v / 100).toFixed(2))}
+      ${sliderRow('impastoLightAngle', 'Light Angle', 0, 360, 45, v => v + '°')}
+      ${sliderRow('impastoLightElevation', 'Light Elev.', 0, 90, 45, v => v + '°')}
     </div>
 
     <!-- AI Connection (ai only) -->
@@ -313,6 +428,25 @@ export function buildSidebar(app) {
   document.getElementById('btnMergeDown')?.addEventListener('click', () => { app.mergeDown(); _refreshLayers(app); });
   document.getElementById('btnFlatten')?.addEventListener('click', () => { app.flattenAll(); _refreshLayers(app); });
 
+  // ── Canvas texture upload ──
+  const _texFileInput = document.createElement('input');
+  _texFileInput.type = 'file';
+  _texFileInput.accept = 'image/*';
+  _texFileInput.addEventListener('change', () => {
+    const file = _texFileInput.files[0];
+    if (!file) return;
+    app.loadCanvasTexture(file);
+    const nameEl = document.getElementById('textureFileName');
+    if (nameEl) nameEl.textContent = file.name;
+    _texFileInput.value = '';
+  });
+  document.getElementById('btnUploadTexture')?.addEventListener('click', () => _texFileInput.click());
+  document.getElementById('btnClearTexture')?.addEventListener('click', () => {
+    app.clearCanvasTexture();
+    const nameEl = document.getElementById('textureFileName');
+    if (nameEl) nameEl.textContent = 'No texture loaded';
+  });
+
   // Layer blend & opacity
   document.getElementById('layerBlend')?.addEventListener('change', () => {
     const l = app.getActiveLayer();
@@ -373,6 +507,9 @@ export function buildSidebar(app) {
   // Initial layer list
   _renderLayerList(app);
 
+  // ── Ant Math overlay panel ──
+  _buildAntMathPanel(app);
+
   // ── AI Diffusion: Modal, Popout, and Button wiring ──
   _initAIModal(app);
   _initAIPromptPopout(app);
@@ -383,6 +520,168 @@ export function buildSidebar(app) {
       _syncModalStatus(app.aiServer);
     });
   }
+}
+
+// ── Ant Math overlay panel ──────────────────────────────────
+// Mirrors for controls that already exist in the main sidebar.
+// Two new controls (neighborRadius, separationRadius) live only here.
+const _AM_MIRRORS = [
+  // [panelId, mainId] — panel slider mirrors the main sidebar slider
+  ['am_seek', 'seek'],
+  ['am_cohesion', 'cohesion'],
+  ['am_separation', 'separation'],
+  ['am_alignment', 'alignment'],
+  ['am_jitter', 'jitter'],
+  ['am_wander', 'wander'],
+  ['am_wanderSpeed', 'wanderSpeed'],
+  ['am_fov', 'fov'],
+  ['am_flowField', 'flowField'],
+  ['am_flowScale', 'flowScale'],
+  ['am_fleeRadius', 'fleeRadius'],
+  ['am_maxSpeed', 'maxSpeed'],
+  ['am_damping', 'damping'],
+  ['am_individuality', 'individuality'],
+  ['am_sensingStrength', 'sensingStrength'],
+  ['am_sensingRadius', 'sensingRadius'],
+  ['am_sensingThreshold', 'sensingThreshold'],
+  ['am_antFollow', 'antFollow'],
+  ['am_antPheromoneRate', 'antPheromoneRate'],
+  ['am_antPheromoneDecay', 'antPheromoneDecay'],
+  ['am_antPheromoneSize', 'antPheromoneSize'],
+  ['am_speedVar', 'speedVar'],
+  ['am_forceVar', 'forceVar'],
+];
+
+function _amSlider(id, label, min, max, value, fmt, math) {
+  const fmtFn = fmt || (v => v);
+  const mathHtml = math ? `<span class="am-math">${math}</span>` : '';
+  return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${mathHtml}`;
+}
+
+/**
+ * Build the "Ant Math Variables" overlay panel.
+ *
+ * The panel overlays the sidebar (position:fixed, z-index 11) and contains
+ * sliders for every mathematical variable in the ant motion model, grouped
+ * by equation role (seek, flock, flow, integration, pheromone, sensing).
+ *
+ * Most sliders are *mirrors* of existing sidebar controls (_AM_MIRRORS):
+ * changing a mirror slider syncs the value back to the main sidebar input
+ * and fires its 'input' event so getP() picks up the change.
+ *
+ * Two sliders are panel-only (no sidebar counterpart):
+ *   - am_neighborRadius  → getP().neighborRadius  (was hardcoded 80)
+ *   - am_separationRadius → getP().separationRadius (was hardcoded 25)
+ */
+function _buildAntMathPanel(app) {
+  const panel = document.getElementById('antMathPanel');
+  if (!panel) return;
+
+  panel.innerHTML = `
+    <button class="am-back-btn" id="amBackBtn">← Back</button>
+    <div class="am-title">🐜 Ant Motion — Math Variables</div>
+
+    <div class="am-section">Cursor Follow (Seek)</div>
+    ${_amSlider('am_antFollow', 'w_follow', 0, 100, 40, v => (v/100).toFixed(2), 'F_seek = ((d̂ · v_max) − v) · w_follow')}
+    ${_amSlider('am_seek', 'w_seek', 0, 100, 75, v => (v/100).toFixed(2), 'Base seek weight (ant uses w_follow instead via _buildAntParams)')}
+
+    <div class="am-section">Exploration Forces</div>
+    ${_amSlider('am_jitter', 'w_jitter', 0, 100, 0, v => (v/100).toFixed(2), 'F_jitter = (ξ − 0.5) · 2 · w_j · v_max')}
+    ${_amSlider('am_wander', 'w_wander', 0, 100, 0, v => (v/100).toFixed(2), 'θ += (ξ − 0.5) · 2 · s_w; F = w_w · v_max · (cosθ, sinθ)')}
+    ${_amSlider('am_wanderSpeed', 's_wander', 1, 100, 30, v => (v/100).toFixed(2), 'Angular step size for Brownian wander walk')}
+
+    <div class="am-section">Flock Forces</div>
+    ${_amSlider('am_cohesion', 'w_coh', 0, 100, 15, v => (v/100).toFixed(2), 'F_coh = seek(centroid_of_neighbors) · w_c')}
+    ${_amSlider('am_separation', 'w_sep', 0, 100, 15, v => (v/100).toFixed(2), 'F_sep = Σ −d̂_ij · w_s (for ‖d‖ < R_sep)')}
+    ${_amSlider('am_alignment', 'w_align', 0, 100, 20, v => (v/100).toFixed(2), 'F_align = (avg_neighbor_v − v_i) · w_a')}
+    ${_amSlider('am_neighborRadius', 'R_neighbor', 10, 200, 80, null, 'Radius for cohesion/alignment neighbor scan')}
+    ${_amSlider('am_separationRadius', 'R_sep', 5, 100, 25, null, 'Radius for separation repulsion')}
+    ${_amSlider('am_fov', 'θ_fov', 30, 360, 115, v => v + '°', 'Field of view angle for neighbor detection')}
+
+    <div class="am-section">Flow Field</div>
+    ${_amSlider('am_flowField', 'w_flow', 0, 100, 0, v => (v/100).toFixed(2), 'α = N(p·σ) · 2π; F = w_f · v_max · (cosα, sinα)')}
+    ${_amSlider('am_flowScale', 'σ_flow', 1, 100, 10, v => (v/1000).toFixed(3), 'Spatial scale of simplex noise field')}
+
+    <div class="am-section">Integration</div>
+    ${_amSlider('am_maxSpeed', 'v_max', 1, 30, 8, v => (v/2).toFixed(1), 'v += a; if ‖v‖ > v_max: v = v̂ · v_max')}
+    ${_amSlider('am_damping', 'δ (damping)', 80, 100, 95, v => (v/100).toFixed(2), 'v *= δ; p += v (Euler integration)')}
+    ${_amSlider('am_fleeRadius', 'R_flee', 0, 150, 0, null, 'F_flee = d̂ · v_max · 0.8 · (1 − d/R) if d < R')}
+
+    <div class="am-section">Pheromone</div>
+    ${_amSlider('am_antPheromoneRate', 'I (deposit)', 0, 100, 50, v => (v/100).toFixed(2), 'P += I · (1 − √d²/r); clamp to 255')}
+    ${_amSlider('am_antPheromoneDecay', 'λ (evapor.)', 1, 100, 20, v => (v/1000).toFixed(3), 'P *= (1 − λ); if P < 0.5: P = 0')}
+    ${_amSlider('am_antPheromoneSize', 'r (trail)', 1, 30, 6, null, 'Radius of radial pheromone deposit kernel')}
+
+    <div class="am-section">Sensing (8-Point Radial)</div>
+    ${_amSlider('am_sensingStrength', 'w_sense', 0, 100, 50, v => (v/100).toFixed(2), 'F_sense = w_s · v_max · Σ s_k · d̂_k')}
+    ${_amSlider('am_sensingRadius', 'R_sense', 5, 80, 20, null, 's_k = P(p + R·(cos θ_k, sin θ_k)), k=0…7')}
+    ${_amSlider('am_sensingThreshold', 'τ (thresh)', 0, 100, 10, v => (v/100).toFixed(2), 'Only accumulate if s_k > τ')}
+
+    <div class="am-section">Per-Agent Variance</div>
+    ${_amSlider('am_individuality', 'individuality', 0, 100, 0, v => (v/100).toFixed(2), 'm = 1 + (ξ − 0.5) · 2 · σ_v (per-agent multipliers)')}
+    ${_amSlider('am_speedVar', 'σ_speed', 0, 100, 0, v => (v/100).toFixed(2), 'Per-agent max-speed multiplier variance')}
+    ${_amSlider('am_forceVar', 'σ_force', 0, 100, 0, v => (v/100).toFixed(2), 'Per-agent seek/coh/sep weight variance')}
+  `;
+
+  // ── Format map for panel sliders ──
+  const amFormats = {
+    am_seek: v => (v/100).toFixed(2), am_cohesion: v => (v/100).toFixed(2),
+    am_separation: v => (v/100).toFixed(2), am_alignment: v => (v/100).toFixed(2),
+    am_jitter: v => (v/100).toFixed(2), am_wander: v => (v/100).toFixed(2),
+    am_wanderSpeed: v => (v/100).toFixed(2), am_fov: v => v + '°',
+    am_flowField: v => (v/100).toFixed(2), am_flowScale: v => (v/1000).toFixed(3),
+    am_maxSpeed: v => (v/2).toFixed(1), am_damping: v => (v/100).toFixed(2),
+    am_individuality: v => (v/100).toFixed(2),
+    am_sensingStrength: v => (v/100).toFixed(2), am_sensingThreshold: v => (v/100).toFixed(2),
+    am_antFollow: v => (v/100).toFixed(2), am_antPheromoneRate: v => (v/100).toFixed(2),
+    am_antPheromoneDecay: v => (v/1000).toFixed(3),
+    am_speedVar: v => (v/100).toFixed(2), am_forceVar: v => (v/100).toFixed(2),
+  };
+
+  // ── Wire panel sliders: update readout, sync mirrors, invalidate params ──
+  panel.querySelectorAll('input[type="range"]').forEach(inp => {
+    const span = document.getElementById('v_' + inp.id);
+    const fmt = amFormats[inp.id];
+    inp.addEventListener('input', () => {
+      if (span) span.textContent = fmt ? fmt(+inp.value) : inp.value;
+      // Mirror to main sidebar (no-op for panel-only sliders like neighborRadius)
+      const pair = _AM_MIRRORS.find(m => m[0] === inp.id);
+      if (pair) {
+        const main = document.getElementById(pair[1]);
+        if (main) {
+          main.value = inp.value;
+          main.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+      app.invalidateParams();
+    });
+  });
+
+  // ── Open / close ──
+  document.getElementById('btnAntMath')?.addEventListener('click', () => {
+    // Sync panel slider values from main sidebar before opening
+    _AM_MIRRORS.forEach(([panelId, mainId]) => {
+      const main = document.getElementById(mainId);
+      const p = document.getElementById(panelId);
+      if (main && p) {
+        p.value = main.value;
+        const span = document.getElementById('v_' + panelId);
+        const fmt = amFormats[panelId];
+        if (span) span.textContent = fmt ? fmt(+p.value) : p.value;
+      }
+    });
+    // Also update panel-only sliders' readouts (neighborRadius, separationRadius)
+    panel.querySelectorAll('input[type="range"]').forEach(inp => {
+      if (_AM_MIRRORS.some(m => m[0] === inp.id)) return; // already synced above
+      const span = document.getElementById('v_' + inp.id);
+      if (span) span.textContent = amFormats[inp.id] ? amFormats[inp.id](+inp.value) : inp.value;
+    });
+    panel.classList.add('open');
+  });
+
+  document.getElementById('amBackBtn')?.addEventListener('click', () => {
+    panel.classList.remove('open');
+  });
 }
 
 // ── AI Setup Modal logic ────────────────────────────────────
@@ -620,6 +919,7 @@ const _sliderFormats = {
   maxSpeed: v => (v / 2).toFixed(1),
   damping: v => (v / 100).toFixed(2),
   stampOpacity: v => (v / 100).toFixed(2),
+  smudge: v => (v / 100).toFixed(2),
   taperCurve: v => (v / 100).toFixed(1),
   sensingStrength: v => (v / 100).toFixed(2),
   sensingThreshold: v => (v / 100).toFixed(2),
@@ -630,10 +930,32 @@ const _sliderFormats = {
   bristleStiffness: v => (v / 100).toFixed(2),
   bristleDamping: v => (v / 100).toFixed(2),
   bristleFriction: v => (v / 100).toFixed(2),
+  bristleSmoothing: v => (v / 100).toFixed(2),
+  bSizeVar: v => (v / 100).toFixed(2),
+  bOpacityVar: v => (v / 100).toFixed(2),
+  bStiffVar: v => (v / 100).toFixed(2),
+  bLengthVar: v => (v / 100).toFixed(2),
+  bFrictionVar: v => (v / 100).toFixed(2),
+  bHueVar: v => (v / 100).toFixed(2),
   // AI diffusion
   aiStrength: v => (v / 100).toFixed(2),
   aiGuidance: v => (v / 10).toFixed(1),
   aiInterval: v => v + '%',
+  // Trail blur / KM / Impasto
+  trailFlow: v => (v / 100).toFixed(2),
+  kmStrength: v => (v / 100).toFixed(2),
+  impastoStrength: v => (v / 100).toFixed(2),
+  impastoLightAngle: v => v + '°',
+  impastoLightElevation: v => v + '°',
+  // Ant brush
+  antFollow: v => (v / 100).toFixed(2),
+  antPheromoneRate: v => (v / 100).toFixed(2),
+  antPheromoneDecay: v => (v / 1000).toFixed(3),
+  simSpeed: v => (v / 100).toFixed(1) + '×',
+  simPointStrength: v => (v / 100).toFixed(2),
+  simPathSpeed: v => (v / 20).toFixed(1) + '×',
+  simEdgeForce: v => (v / 100).toFixed(2),
+  simPheroPaintStrength: v => (v / 100).toFixed(2),
 };
 
 // ── Layer list renderer ─────────────────────────────────────
@@ -660,6 +982,7 @@ function _renderLayerList(app) {
     div.className = 'layer-item' + (i === app.activeLayerIdx ? ' active' : '');
     div.innerHTML = `
       <button class="vis-btn${l.visible ? '' : ' hidden'}" data-idx="${i}">${l.visible ? '👁' : '⬚'}</button>
+      <button class="lock-btn${l.alphaLock ? ' locked' : ''}" data-idx="${i}" title="Alpha Lock">${l.alphaLock ? '🔒' : '🔓'}</button>
       <span class="layer-name">${l.name}</span>
       <span class="layer-opacity">${Math.round(l.opacity * 100)}%</span>
     `;
@@ -667,6 +990,12 @@ function _renderLayerList(app) {
       if (e.target.classList.contains('vis-btn')) {
         l.visible = !l.visible;
         app.compositeAllLayers();
+        _renderLayerList(app);
+        return;
+      }
+      if (e.target.classList.contains('lock-btn')) {
+        l.alphaLock = !l.alphaLock;
+        app._syncAlphaLockUI();
         _renderLayerList(app);
         return;
       }

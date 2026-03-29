@@ -115,8 +115,8 @@ export class BoidSim {
     v[19] = targetX;
     v[20] = targetY;
     v[21] = time;
-    v[22] = 80; // neighbor radius (could be parameterized)
-    v[23] = 25; // separation radius
+    v[22] = p.neighborRadius ?? 80; // neighbor radius
+    v[23] = p.separationRadius ?? 25; // separation radius
     v[24] = p.sizeVar ?? 0;
     v[25] = p.opacityVar ?? 0;
     v[26] = p.speedVar ?? 0;

@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Boid Brush</title>
+<style>
+*{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;box-sizing:border-box;}
+html,body{overflow:hidden;width:100%;height:100%;background:#111;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;color:#d0d0d4;}
+#sidebar,#sidebar *{touch-action:pan-y;}
+#antMathPanel,#antMathPanel *{touch-action:pan-y;}
+#topbar,#topbar *{touch-action:pan-x;}
+
+/* ---- Canvas Area ---- */
+#canvasArea{position:absolute;top:44px;left:0;right:0;bottom:24px;overflow:hidden;}
+#canvasTransform{position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0;will-change:transform;}
+#compositeDisplay{position:absolute;top:0;left:0;width:100%;height:100%;will-change:contents;}
+#liveCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
+#interactionCanvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;}
+
+/* ---- Top Bar ---- */
+#topbar{position:fixed;top:0;left:0;right:0;height:44px;background:rgba(18,18,22,0.97);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,0.06);box-shadow:0 2px 12px rgba(0,0,0,0.5);display:flex;align-items:center;padding:0 10px;gap:5px;z-index:20;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+#topbar::-webkit-scrollbar{display:none;}
+#topbar>*{flex-shrink:0;}
+#topbar button{padding:5px 10px;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:rgba(255,255,255,0.06);color:#ccc;font-size:11px;cursor:pointer;white-space:nowrap;transition:all 0.15s ease;}
+#topbar button:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.18);color:#fff;}
+#topbar button:active{transform:scale(0.96);}
+#topbar button.active{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 8px rgba(74,126,255,0.3);}
+#topbar button.eraser-active{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.5);box-shadow:0 0 6px rgba(224,80,80,0.25);}
+#topbar button.active-lock{background:linear-gradient(135deg,#c77a20,#e8a030);border-color:rgba(232,160,48,0.5);color:#fff;box-shadow:0 0 8px rgba(232,160,48,0.3);}
+.tb-sep{width:1px;height:24px;background:rgba(255,255,255,0.08);margin:0 5px;flex-shrink:0;}
+
+/* Color pickers */
+#primaryColor,#secondaryColor,#bgColor{width:30px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;}
+#primaryColor:hover,#secondaryColor:hover,#bgColor:hover{border-color:rgba(255,255,255,0.35);}
+#primaryColor::-webkit-color-swatch-wrapper,#secondaryColor::-webkit-color-swatch-wrapper,#bgColor::-webkit-color-swatch-wrapper{padding:1px;}
+#primaryColor::-webkit-color-swatch,#secondaryColor::-webkit-color-swatch,#bgColor::-webkit-color-swatch{border:none;border-radius:3px;}
+.bg-label{font-size:9px;color:#777;letter-spacing:0.5px;margin-right:2px;}
+#swapColors{background:none;border:none;color:#888;font-size:15px;cursor:pointer;padding:2px 4px;transition:color 0.15s,transform 0.15s;}
+#swapColors:hover{color:#fff;transform:rotate(180deg);}
+
+/* Layer quick-switcher */
+#layerSwitcher{background:rgba(255,255,255,0.08);color:#ddd;border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 6px;font-size:11px;cursor:pointer;transition:all 0.15s;max-width:120px;}
+#layerSwitcher:hover{border-color:rgba(255,255,255,0.2);}
+
+/* ---- Sidebar ---- */
+#sidebar{position:fixed;top:44px;right:0;bottom:24px;width:280px;background:rgba(10,10,14,0.96);backdrop-filter:blur(20px);border-left:1px solid rgba(255,255,255,0.04);z-index:10;overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateX(100%);transition:transform 0.25s ease;padding:10px;font-size:11px;}
+#sidebar.open{transform:translateX(0);}
+#sidebar::-webkit-scrollbar{width:5px;}
+#sidebar::-webkit-scrollbar-track{background:transparent;}
+#sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+
+/* Section headers */
+.section-header{color:#e0e0e4;margin:4px 0 0;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.04);border-radius:8px 8px 0 0;transition:all 0.15s;}
+.section-header:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.08);}
+.section-header.closed{border-radius:8px;margin-bottom:0;}
+.section-header .chevron{font-size:9px;color:#555;transition:transform 0.25s ease;}
+.section-header.closed .chevron{transform:rotate(-90deg);}
+.section-body{overflow:hidden;transition:max-height 0.3s ease;max-height:600px;border:1px solid rgba(255,255,255,0.04);border-top:none;border-radius:0 0 8px 8px;padding:6px 8px;background:rgba(0,0,0,0.15);margin-bottom:4px;}
+.section-body.collapsed{max-height:0;padding-top:0;padding-bottom:0;border:none;margin-bottom:0;}
+
+/* Controls */
+#sidebar label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:#aaa;}
+#sidebar label span{color:#ddd;font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
+.slider-desc{display:block;font-size:8px;color:#666;margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
+#sidebar input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"]:hover{background:rgba(255,255,255,0.14);}
+#sidebar input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#sidebar select{background:rgba(255,255,255,0.08);color:#ddd;border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 6px;font-size:11px;width:105px;cursor:pointer;}
+#sidebar select:hover{border-color:rgba(255,255,255,0.2);}
+#sidebar button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:#ddd;font-size:10px;cursor:pointer;transition:all 0.15s;}
+#sidebar button:hover{background:rgba(255,255,255,0.15);color:#fff;}
+#sidebar input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
+#sidebar input[type="checkbox"]:checked{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(91,138,240,0.5);}
+#sidebar input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+.save-btn{background:rgba(42,110,63,0.7)!important;border:1px solid rgba(52,199,89,0.3)!important;}
+.save-btn:hover{background:rgba(52,199,89,0.5)!important;}
+.reset-btn{background:rgba(139,58,58,0.7)!important;border:1px solid rgba(255,59,48,0.3)!important;}
+.reset-btn:hover{background:rgba(255,59,48,0.4)!important;}
+
+/* Layer section in sidebar */
+#layerList{max-height:200px;overflow-y:auto;margin:4px 0;}
+#layerList::-webkit-scrollbar{width:4px;}
+#layerList::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:2px;}
+.layer-item{padding:6px 7px;margin:1px 0;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:5px;font-size:11px;border:1px solid transparent;transition:all 0.12s;}
+.layer-item:hover{background:rgba(255,255,255,0.06);}
+.layer-item.active{background:rgba(42,74,122,0.6);border-color:rgba(74,126,255,0.4);}
+.layer-item .vis-btn{background:none;border:none;color:#999;cursor:pointer;font-size:12px;padding:0 2px;}
+.layer-item .vis-btn:hover{color:#fff;}
+.layer-item .vis-btn.hidden{color:#444;}
+.layer-item .lock-btn{background:none;border:none;color:#666;cursor:pointer;font-size:11px;padding:0 2px;}
+.layer-item .lock-btn:hover{color:#e8a030;}
+.layer-item .lock-btn.locked{color:#e8a030;}
+.layer-item .layer-name{flex:1;overflow:hidden;text-overflow:ellipsis;}
+.layer-item .layer-opacity{font-size:9px;color:#666;width:28px;text-align:right;font-variant-numeric:tabular-nums;}
+.blend-row{margin:4px 0;}
+.blend-row label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;color:#aaa;font-size:11px;}
+.blend-row select{background:rgba(255,255,255,0.08);color:#ddd;border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 4px;font-size:10px;cursor:pointer;}
+.blend-row input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+.blend-row input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+
+/* ---- Status Bar ---- */
+#status{position:fixed;bottom:0;left:0;right:0;height:24px;background:rgba(8,8,12,0.95);border-top:1px solid rgba(255,255,255,0.04);color:#555;padding:3px 12px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:10px;z-index:20;display:flex;align-items:center;letter-spacing:0.3px;}
+
+/* ---- Toast ---- */
+#toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%) translateY(8px);background:rgba(16,16,20,0.96);backdrop-filter:blur(16px);color:#fff;padding:10px 22px;border-radius:12px;font-size:12px;pointer-events:none;opacity:0;transition:all 0.3s ease;z-index:100;border:1px solid rgba(255,255,255,0.08);box-shadow:0 8px 32px rgba(0,0,0,0.5);}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* Simulation HUD */
+#simHud{position:fixed;left:14px;top:58px;z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;}
+#simHud.open{display:flex;}
+.sim-card{pointer-events:auto;background:rgba(18,18,22,0.94);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:8px;box-shadow:0 10px 28px rgba(0,0,0,0.42);}
+.sim-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.sim-pill{padding:5px 10px;border:1px solid rgba(255,255,255,0.1);border-radius:7px;background:rgba(255,255,255,0.06);color:#ccc;font-size:11px;cursor:pointer;white-space:nowrap;transition:all 0.15s ease;}
+.sim-pill:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.18);color:#fff;}
+.sim-pill.active{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 8px rgba(74,126,255,0.25);}
+.sim-pill.warn{background:rgba(139,58,58,0.7);border-color:rgba(255,59,48,0.3);color:#f6d6d6;}
+.sim-pill.warn:hover{background:rgba(255,59,48,0.4);color:#fff;}
+.sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
+.sim-status{font-size:10px;color:#d2d6df;min-width:90px;}
+
+/* Preset buttons */
+.preset-item{display:flex;align-items:center;gap:4px;margin:2px 0;}
+.preset-item button{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;}
+.preset-item .preset-del{flex:none;width:20px;padding:2px;text-align:center;color:#888;}
+.preset-item .preset-del:hover{color:#f44;}
+
+/* Hide brush-specific sections */
+.brush-hidden{display:none!important;}
+
+/* Ant Math overlay panel */
+#antMathPanel{position:fixed;top:44px;right:0;bottom:24px;width:280px;background:rgba(10,10,14,0.98);backdrop-filter:blur(20px);border-left:1px solid rgba(255,255,255,0.04);z-index:11;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px;font-size:11px;transform:translateX(100%);transition:transform 0.25s ease;}
+#antMathPanel.open{transform:translateX(0);}
+#antMathPanel::-webkit-scrollbar{width:5px;}
+#antMathPanel::-webkit-scrollbar-track{background:transparent;}
+#antMathPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+#antMathPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:#aaa;}
+#antMathPanel label span{color:#ddd;font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
+#antMathPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#antMathPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
+#antMathPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#antMathPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#antMathPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#antMathPanel select{background:rgba(255,255,255,0.08);color:#ddd;border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 6px;font-size:11px;width:105px;cursor:pointer;}
+#antMathPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
+#antMathPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(91,138,240,0.5);}
+#antMathPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+.am-back-btn{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06)!important;border:1px solid rgba(255,255,255,0.1)!important;border-radius:8px!important;padding:8px 12px!important;color:#ccc!important;font-size:12px!important;cursor:pointer;margin-bottom:10px;width:100%;transition:all 0.15s;}
+.am-back-btn:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important;}
+.am-title{color:#e0e0e4;font-size:13px;font-weight:600;margin-bottom:8px;text-align:center;letter-spacing:0.5px;}
+.am-section{margin:6px 0 2px;color:#8ab4f8;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;padding:5px 0 3px;border-bottom:1px solid rgba(255,255,255,0.06);}
+.am-math{display:block;font-size:8px;color:#666;margin:-2px 0 2px 0;line-height:1.2;white-space:normal;font-style:italic;}
+
+/* Edge sliders - left side quick controls */
+#edgeSliders,#edgeSliders *{touch-action:none;}
+#edgeSliders{position:fixed;left:0;top:44px;bottom:24px;z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:20px;pointer-events:none;padding-left:8px;}
+.edge-slider{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:36px;background:rgba(0,0,0,0.35);border-radius:0 10px 10px 0;padding:10px 6px 6px;cursor:pointer;}
+.edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
+.edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
+.edge-slider-thumb{position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;left:50%;transform:translate(-50%,50%);box-shadow:0 1px 4px rgba(0,0,0,0.5);pointer-events:none;}
+.edge-slider-label{font-size:7px;color:#777;text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;pointer-events:none;}
+.edge-slider-value{font-size:9px;color:#bbb;font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;}
+
+/* Brush type dropdown */
+#brushBtnWrap{position:relative;}
+#brushDropdown{position:fixed;background:rgba(18,18,22,0.97);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px;z-index:100;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:120px;}
+#brushDropdown.open{display:block;}
+#brushDropdown button{display:block;width:100%;text-align:left;padding:8px 12px;border:none!important;background:transparent;color:#ccc;font-size:12px;cursor:pointer;border-radius:6px;white-space:nowrap;}
+#brushDropdown button:hover{background:rgba(255,255,255,0.1);color:#fff;}
+#brushDropdown button.selected{background:rgba(58,106,232,0.3);color:#fff;}
+
+/* AI Setup Modal */
+#aiSetupModal{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;}
+#canvasSizeModal{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;}
+#canvasSizeModal.open{display:flex;}
+#aiSetupModal.open{display:flex;}
+.ai-modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);}
+.ai-modal-panel{position:relative;background:#1a1a1e;border:1px solid rgba(255,255,255,0.1);border-radius:14px;width:520px;max-width:92vw;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.7);color:#d0d0d4;font-size:12px;}
+.ai-modal-panel::-webkit-scrollbar{width:5px;}
+.ai-modal-panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+.ai-modal-panel h2{margin:0 0 6px;font-size:16px;color:#eee;font-weight:600;}
+.ai-modal-panel .ai-subtitle{color:#888;font-size:11px;margin-bottom:16px;}
+.ai-modal-close{position:absolute;top:12px;right:14px;background:none;border:none;color:#888;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px;line-height:1;}
+.ai-modal-close:hover{background:rgba(255,255,255,0.1);color:#fff;}
+.ai-conn-section{border-top:1px solid rgba(255,255,255,0.06);padding-top:14px;}
+.ai-conn-section label{display:block;color:#aaa;font-size:11px;margin-bottom:4px;}
+.ai-conn-row{display:flex;gap:6px;align-items:center;}
+.ai-conn-row input[type="text"]{flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;}
+.ai-conn-row input[type="text"]:focus{outline:none;border-color:rgba(58,106,232,0.5);}
+.ai-conn-test{padding:7px 14px;border:1px solid rgba(255,255,255,0.12);border-radius:6px;background:rgba(255,255,255,0.06);color:#ccc;font-size:11px;cursor:pointer;white-space:nowrap;}
+.ai-conn-test:hover{background:rgba(255,255,255,0.12);color:#fff;}
+.ai-conn-status{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#999;}
+.ai-conn-dot{width:8px;height:8px;border-radius:50%;background:#666;flex-shrink:0;}
+.ai-conn-dot.connected{background:#34c759;}
+.ai-conn-dot.error{background:#ff3b30;}
+.ai-conn-dot.connecting{background:#ff9f0a;animation:ai-pulse 1s infinite;}
+@keyframes ai-pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+.ai-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+.ai-modal-footer button{padding:8px 18px;border-radius:8px;font-size:11px;cursor:pointer;border:none;}
+.ai-save-btn{background:linear-gradient(135deg,#3a6ae8,#5b8af0);color:#fff;}
+.ai-save-btn:hover{filter:brightness(1.1);}
+
+/* AI Prompt Popout */
+#aiPromptPopout{display:none;position:fixed;z-index:110;background:rgba(18,18,22,0.98);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;width:300px;box-shadow:0 12px 40px rgba(0,0,0,0.6);}
+#aiPromptPopout.open{display:block;}
+#aiPromptPopout textarea{width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#ddd;padding:8px;font-size:11px;font-family:inherit;resize:vertical;box-sizing:border-box;}
+#aiPromptPopout textarea:focus{outline:none;border-color:rgba(58,106,232,0.5);}
+#aiPromptPopout label{display:block;color:#aaa;font-size:10px;margin:8px 0 3px;text-transform:uppercase;letter-spacing:0.5px;}
+#aiPromptPopout label:first-child{margin-top:0;}
+.ai-recent-prompts{margin-top:8px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;}
+.ai-recent-prompts .ai-recent-label{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}
+.ai-recent-prompt-item{padding:4px 6px;border-radius:4px;cursor:pointer;font-size:10px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ai-recent-prompt-item:hover{background:rgba(255,255,255,0.06);color:#ddd;}
+</style>
+</head>
+<body>
+
+<!-- ══════════ Top Bar ══════════ -->
+<div id="topbar">
+  <div id="brushBtnWrap">
+    <button id="brushBtn" class="active">🐦 Boid</button>
+  </div>
+  <div class="tb-sep"></div>
+  <input type="color" id="primaryColor" value="#1a1a1a" title="Primary">
+  <button id="swapColors" title="Swap">⇄</button>
+  <input type="color" id="secondaryColor" value="#ffffff" title="Secondary">
+  <div class="tb-sep"></div>
+  <button id="undoBtn">↩ Undo</button>
+  <button id="redoBtn">↪ Redo</button>
+  <div class="tb-sep"></div>
+  <button id="rectSelectBtn" title="Rectangle Select (M)">⬚ Rect</button>
+  <button id="ellipseSelectBtn" title="Ellipse Select">⬭ Ellipse</button>
+  <button id="lassoSelectBtn" title="Lasso Select (L)">⌇ Lasso</button>
+  <button id="fillBtn" title="Fill Tool (G)">🪣 Fill</button>
+  <button id="deselectBtn" title="Deselect (Esc)" style="display:none">✕ Desel</button>
+  <button id="transformBtn" title="Transform (T)" style="display:none">⟷↔ Transform</button>
+  <button id="simulationBtn" title="Simulation mode" style="display:none">◎ Simulation</button>
+  <button id="proportionalToggle" title="Keep proportional (default on)"
+    style="display:none; background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 8px rgba(74,126,255,0.3);">🔒</button>
+  <div class="tb-sep"></div>
+  <button id="copyBtn" title="Copy (Ctrl+C)">📋 Copy</button>
+  <button id="cutBtn" title="Cut (Ctrl+X)">✂ Cut</button>
+  <button id="pasteBtn" title="Paste (Ctrl+V)">📌 Paste</button>
+  <div class="tb-sep"></div>
+  <select id="layerSwitcher" title="Active layer"></select>
+  <div class="tb-sep"></div>
+  <span class="bg-label">BG</span>
+  <input type="color" id="bgColor" value="#ffffff" title="Background color">
+  <div class="tb-sep"></div>
+  <button id="canvasSizeBtn" title="Canvas Size (Ctrl+N)">📐 Size</button>
+  <button id="clearBtn">🗑 Clear</button>
+  <button id="saveBtn">💾 Save</button>
+  <button id="exportPsdBtn" title="Export as Photoshop PSD">📤 Export PSD</button>
+  <button id="importPsdBtn" title="Import Photoshop PSD">📥 Import PSD</button>
+  <button id="resetViewBtn" title="Reset zoom/pan/rotation">🔍 Reset View</button>
+  <button id="flipViewBtn" title="Flip canvas view (F)">🪞 Flip</button>
+  <button id="tilingBtn" title="Tiling Mode (P)">🔁 Tile</button>
+  <button id="alphaLockBtn" title="Alpha Lock (/) OFF">🔒 Alpha</button>
+  <div style="flex:1"></div>
+  <button id="sidebarToggle">☰</button>
+</div>
+
+<!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
+<div id="brushDropdown">
+  <button data-brush="boid" class="selected">🐦 Boid</button>
+  <button data-brush="ant">🐜 Ant</button>
+  <button data-brush="bristle">🖊 Bristle</button>
+  <button data-brush="simple">🖌 Simple</button>
+  <button data-brush="eraser">◻ Eraser</button>
+  <button data-brush="ai">🤖 AI Diffusion</button>
+</div>
+
+<!-- ══════════ Canvas Stack ══════════ -->
+<div id="canvasArea">
+  <div id="canvasTransform">
+    <canvas id="compositeDisplay"></canvas>
+    <canvas id="liveCanvas"></canvas>
+    <canvas id="interactionCanvas"></canvas>
+  </div>
+</div>
+
+<div id="simHud">
+  <div class="sim-card">
+    <div class="sim-label">Simulation</div>
+    <div class="sim-row" id="simToolRow">
+      <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
+      <button class="sim-pill" data-sim-tool="attract">Attract</button>
+      <button class="sim-pill" data-sim-tool="repel">Repel</button>
+      <button class="sim-pill" data-sim-tool="path">Path</button>
+      <button class="sim-pill" data-sim-tool="edge">Edge</button>
+      <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+      <button class="sim-pill warn" id="simClearBtn">Clear</button>
+    </div>
+  </div>
+  <div class="sim-card">
+    <div class="sim-row">
+      <button class="sim-pill active" id="simRunBtn">Run</button>
+      <button class="sim-pill" id="simPauseBtn">Pause</button>
+      <button class="sim-pill warn" id="simStopBtn">Stop</button>
+      <span class="sim-status" id="simStatus">Ready</span>
+    </div>
+  </div>
+</div>
+
+<!-- Left Edge Sliders -->
+<div id="edgeSliders">
+  <div class="edge-slider" data-param="brushScale" data-min="10" data-max="300">
+    <div class="edge-slider-track">
+      <div class="edge-slider-fill"></div>
+      <div class="edge-slider-thumb"></div>
+    </div>
+    <div class="edge-slider-label">Scale</div>
+    <div class="edge-slider-value">1.0</div>
+  </div>
+  <div class="edge-slider" data-param="stampOpacity" data-min="1" data-max="100">
+    <div class="edge-slider-track">
+      <div class="edge-slider-fill"></div>
+      <div class="edge-slider-thumb"></div>
+    </div>
+    <div class="edge-slider-label">Opacity</div>
+    <div class="edge-slider-value">0.15</div>
+  </div>
+</div>
+
+<!-- ══════════ Sidebar ══════════ -->
+<div id="sidebar"></div>
+
+<!-- ══════════ Ant Math Overlay Panel ══════════ -->
+<div id="antMathPanel"></div>
+
+<!-- ══════════ Status Bar ══════════ -->
+<div id="status">Ready</div>
+<div id="toast"></div>
+
+<!-- ══════════ AI Setup Modal (slim — full setup in ai-dashboard.html) ══════════ -->
+<div id="aiSetupModal">
+  <div class="ai-modal-backdrop" id="aiModalBackdrop"></div>
+  <div class="ai-modal-panel" style="width:400px;">
+    <button class="ai-modal-close" id="aiModalClose">✕</button>
+    <h2>🤖 AI Connection</h2>
+    <p class="ai-subtitle">Connect to a local AI server for the diffusion brush.</p>
+
+    <div style="margin-bottom:14px;">
+      <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Backend</label>
+      <select id="aiBackendSelect" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;">
+        <option value="builtin">Built-in Python Server</option>
+        <option value="a1111">Draw Things / A1111 WebUI</option>
+      </select>
+    </div>
+
+    <div class="ai-conn-section" style="border-top:none;padding-top:0;">
+      <label>Server URL</label>
+      <div class="ai-conn-row">
+        <input type="text" id="aiServerUrl" value="http://127.0.0.1:7860" placeholder="http://127.0.0.1:7860">
+        <button class="ai-conn-test" id="aiTestConn">Test</button>
+      </div>
+      <div class="ai-conn-status">
+        <span class="ai-conn-dot" id="aiConnDot"></span>
+        <span id="aiConnLabel">Not connected</span>
+      </div>
+    </div>
+
+    <div class="ai-modal-footer" style="justify-content:space-between;">
+      <a href="ai-dashboard.html" target="_blank" style="color:#5b8af0;font-size:11px;text-decoration:none;padding:8px 0;">Open AI Dashboard ↗</a>
+      <button class="ai-save-btn" id="aiModalSave">Save &amp; Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Canvas Size Modal ══════════ -->
+<div id="canvasSizeModal">
+  <div class="ai-modal-backdrop" id="canvasSizeBackdrop"></div>
+  <div class="ai-modal-panel" style="width:420px;">
+    <button class="ai-modal-close" id="canvasSizeClose">✕</button>
+    <h2>📐 Canvas Size</h2>
+    <p class="ai-subtitle">Choose a preset or enter custom dimensions.</p>
+
+    <div style="margin-bottom:12px;">
+      <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Preset</label>
+      <select id="canvasSizePreset" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;">
+        <option value="custom">Custom</option>
+        <optgroup label="Screen">
+          <option value="1920x1080">HD 1080p (1920×1080)</option>
+          <option value="3840x2160">4K UHD (3840×2160)</option>
+          <option value="1080x1080">Square HD (1080×1080)</option>
+          <option value="1080x1920">Phone / Story (1080×1920)</option>
+        </optgroup>
+        <optgroup label="Social">
+          <option value="1200x675">Twitter/X Post (1200×675)</option>
+          <option value="1640x624">Facebook Cover (1640×624)</option>
+        </optgroup>
+        <optgroup label="Print (300 DPI)">
+          <option value="2480x3508">A4 Portrait (2480×3508)</option>
+          <option value="3508x2480">A4 Landscape (3508×2480)</option>
+          <option value="2550x3300">Letter Portrait (2550×3300)</option>
+          <option value="3300x2550">Letter Landscape (3300×2550)</option>
+        </optgroup>
+        <optgroup label="Texture">
+          <option value="512x512">512×512</option>
+          <option value="1024x1024">1024×1024</option>
+          <option value="2048x2048">2048×2048</option>
+          <option value="4096x4096">4096×4096</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
+      <div style="flex:1;">
+        <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Width (px)</label>
+        <input type="number" id="canvasSizeW" min="1" max="8192" value="1920" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
+      </div>
+      <button id="canvasSizeSwap" style="margin-top:18px;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ccc;cursor:pointer;font-size:14px;" title="Swap width/height">⇄</button>
+      <div style="flex:1;">
+        <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Height (px)</label>
+        <input type="number" id="canvasSizeH" min="1" max="8192" value="1080" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
+      </div>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Background</label>
+      <input type="color" id="canvasSizeBg" value="#ffffff" style="width:40px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;">
+    </div>
+
+    <div class="ai-modal-footer">
+      <button id="canvasSizeApply" class="ai-save-btn">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ AI Prompt Popout ══════════ -->
+<div id="aiPromptPopout">
+  <label>Prompt</label>
+  <textarea id="aiPromptText" rows="3" placeholder="paint green leaves, watercolor style..."></textarea>
+  <label>Negative Prompt</label>
+  <textarea id="aiNegPromptText" rows="2" placeholder="blurry, low quality..."></textarea>
+  <div class="ai-recent-prompts" id="aiRecentPrompts">
+    <div class="ai-recent-label">Recent</div>
+  </div>
+</div>
+
+<!-- ══════════ Scripts ══════════ -->
+<script type="module">
+import { App } from './app.js';
+const app = new App();
+window._app = app; // expose for debugging
+</script>
+</body>
+</html>
