@@ -783,6 +783,9 @@ export class App {
       pressureSpawnRadius: chk('pressureSpawnRadius'),
       // Swarm
       count: val('count') || 60,
+      // Boid Spawn
+      spawnSpread: val('spawnSpread') || 0,
+      spawnInterval: val('spawnInterval') || 1,
       // Forces
       seek: val('seek') / 100,
       cohesion: val('cohesion') / 100,

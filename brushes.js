@@ -300,6 +300,11 @@ export class BoidBrush {
     // paint from the current stroke, not previously painted layers.
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
+    // Gradual spawn queue state
+    this._spawnQueue = null;   // array of { count } per spawn point
+    this._spawnQueueIdx = 0;   // current index into spawn queue
+    this._spawnQueueFrame = 0; // frame counter for spawn interval timing
+    this._spawnQueueArgs = null; // { cx, cy, shape, angle, jitter, radius }
   }
 
   async init() {
@@ -313,6 +318,87 @@ export class BoidBrush {
     } catch (e) {
       console.error('BoidBrush: WASM init failed —', e);
     }
+  }
+
+  /**
+   * Build a spawn schedule: an array of per-point spawn counts distributed
+   * along a discretized normal (Gaussian) curve.
+   * @param {number} totalCount  Total boids to spawn.
+   * @param {number} spread      Standard deviation (in spawn-point units). 0 = all at once.
+   * @returns {number[]} Array where each element is how many boids to spawn at that point.
+   */
+  _buildSpawnSchedule(totalCount, spread) {
+    if (spread <= 0 || totalCount <= 0) return [totalCount];
+    // Number of discrete points: cover ±3σ (99.7% of curve), minimum 3 points
+    const sigma = spread;
+    const halfPoints = Math.ceil(3 * sigma);
+    const numPoints = halfPoints * 2 + 1;
+    // Compute raw Gaussian weights
+    const weights = [];
+    let weightSum = 0;
+    for (let i = 0; i < numPoints; i++) {
+      const x = i - halfPoints; // centered at 0
+      const w = Math.exp(-0.5 * (x / sigma) * (x / sigma));
+      weights.push(w);
+      weightSum += w;
+    }
+    // Distribute totalCount proportionally, using largest-remainder method
+    const schedule = weights.map(w => Math.floor(totalCount * w / weightSum));
+    let assigned = schedule.reduce((a, b) => a + b, 0);
+    // Distribute remaining boids to the positions with largest fractional parts
+    const remainders = weights.map((w, i) => ({
+      idx: i,
+      frac: (totalCount * w / weightSum) - schedule[i]
+    }));
+    remainders.sort((a, b) => b.frac - a.frac);
+    for (let r = 0; r < totalCount - assigned; r++) {
+      schedule[remainders[r].idx]++;
+    }
+    return schedule;
+  }
+
+  /** Start a gradual spawn: builds the schedule and stores spawn parameters. */
+  _startGradualSpawn(cx, cy, p, radius) {
+    const schedule = this._buildSpawnSchedule(p.count, p.spawnSpread);
+    this._spawnQueue = schedule;
+    this._spawnQueueIdx = 0;
+    this._spawnQueueFrame = 0;
+    this._spawnQueueArgs = {
+      cx, cy,
+      shape: p.spawnShape,
+      angle: p.spawnAngle,
+      jitter: p.spawnJitter,
+      radius
+    };
+    // Immediately spawn the first batch (the center of the curve)
+    this._processSpawnQueue();
+  }
+
+  /** Process one tick of the spawn queue, spawning the next batch if the
+   *  frame interval has elapsed. Index 0 spawns immediately (bypasses interval
+   *  wait) so the first boids appear without delay. Returns true if queue
+   *  is still active. */
+  _processSpawnQueue() {
+    if (!this._spawnQueue || this._spawnQueueIdx >= this._spawnQueue.length) {
+      this._spawnQueue = null;
+      return false;
+    }
+    const p = this.app.getP();
+    const interval = Math.max(1, p.spawnInterval);
+    this._spawnQueueFrame++;
+    if (this._spawnQueueFrame < interval && this._spawnQueueIdx > 0) return true; // wait
+    this._spawnQueueFrame = 0;
+    const batch = this._spawnQueue[this._spawnQueueIdx];
+    if (batch > 0) {
+      const a = this._spawnQueueArgs;
+      this.sim.spawnBatch(a.cx, a.cy, batch, a.shape, a.angle, a.jitter, a.radius);
+    }
+    this._spawnQueueIdx++;
+    if (this._spawnQueueIdx >= this._spawnQueue.length) {
+      this._spawnQueue = null;
+      return false;
+    }
+    return true;
   }
 
   /** Capture canvas luminance and upload to WASM for pixel sensing */
@@ -371,7 +457,13 @@ export class BoidBrush {
     const r = p.spawnRadius * (1 + tiltFactor * 2);
 
     this.sim.clearAgents();
-    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+    // Use spawnAngle override in spawn args for hover
+    const hoverP = Object.assign({}, p, { spawnAngle });
+    if (p.spawnSpread > 0) {
+      this._startGradualSpawn(x, y, hoverP, r);
+    } else {
+      this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+    }
     this._hoverSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
@@ -383,6 +475,7 @@ export class BoidBrush {
     if (this._hoverSpawned) {
       this.sim.clearAgents();
       this._hoverSpawned = false;
+      this._spawnQueue = null;
     }
   }
 
@@ -391,6 +484,8 @@ export class BoidBrush {
    *  shape is visible before the pencil touches down. */
   onHoverFrame(elapsed) {
     if (!this._ready || !this._hoverSpawned) return;
+    // Process gradual spawn queue if active
+    this._processSpawnQueue();
     const p = this.app.getP();
     // Write params with the current hover leader position so boids follow
     this.sim.writeParams(p, this.app.leaderX, this.app.leaderY, elapsed);
@@ -408,7 +503,11 @@ export class BoidBrush {
       let r = p.spawnRadius;
       if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
       this.sim.clearAgents();
-      this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+      if (p.spawnSpread > 0) {
+        this._startGradualSpawn(x, y, p, r);
+      } else {
+        this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+      }
     }
     this._lastStampX = [];
     this._lastStampY = [];
@@ -518,7 +617,11 @@ export class BoidBrush {
         if (current >= p.count * 3) return;
         let r = p.spawnRadius;
         if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
-        this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+        if (p.spawnSpread > 0) {
+          this._startGradualSpawn(x, y, p, r);
+        } else {
+          this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+        }
         this._lastSpawnX = x;
         this._lastSpawnY = y;
       }
@@ -549,6 +652,9 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     const app = this.app;
+
+    // Process gradual spawn queue if active
+    this._processSpawnQueue();
 
     // Periodically re-upload sensing data during long strokes (every 30 frames)
     if (p.sensingEnabled) {

@@ -84,6 +84,13 @@ export function buildSidebar(app) {
       ${sliderRow('count', 'Count', 3, 200, 60)}
     </div>
 
+    <!-- Boid Spawn (boid only) -->
+    <div class="section-header closed" data-brushes="boid" data-section="boidSpawn">Boid Spawn <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid">
+      ${sliderRow('spawnSpread', 'Spread', 0, 100, 0, v => v === 0 ? 'off' : v)}
+      ${sliderRow('spawnInterval', 'Frame Interval', 1, 30, 1)}
+    </div>
+
     <!-- Forces (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="forces">Forces <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
@@ -905,6 +912,7 @@ const _sliderFormats = {
   brushScale: v => (v / 100).toFixed(1),
   spawnAngle: v => v + '°',
   spawnJitter: v => (v / 100).toFixed(2),
+  spawnSpread: v => +v === 0 ? 'off' : v,
   seek: v => (v / 100).toFixed(2),
   cohesion: v => (v / 100).toFixed(2),
   separation: v => (v / 100).toFixed(2),
