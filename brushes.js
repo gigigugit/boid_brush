@@ -14,6 +14,10 @@ const BRISTLE_PRESSURE_ALPHA = 0.15;
 const MAX_SMOOTH_DAMP = 0.92;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+// Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
+// Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
+// data is available from the hardware.
+const TILT_THRESHOLD = 0.01; // ~0.57°
 const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
@@ -276,6 +280,8 @@ export class BoidBrush {
     this._lastStampY = [];
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
+    // Hover state — Apple Pencil hover preview
+    this._hoverSpawned = false;
     // Flat-stroke (wet buffer) canvases
     this._strokeCanvas = null;
     this._strokeCtx = null;
@@ -346,13 +352,64 @@ export class BoidBrush {
     this._sensingUploaded = true;
   }
 
+  /** Hover: spawn boids once at hover position, then let onHoverFrame step
+   *  the simulation so boids flock exactly as they do during drawing.
+   *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
+  onHover(x, y) {
+    if (!this._ready) return;
+    if (this._hoverSpawned) return; // already spawned — sim runs via onHoverFrame
+
+    const p = this.app.getP();
+    const alt = this.app.altitude;
+    const isPen = this.app.pointerType === 'pen';
+    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+
+    // Pen with tilt → use pencil azimuth; mouse/touch or vertical pen → UI angle
+    const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
+    // Tilt-based radius scaling only when real tilt data is available
+    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
+    const r = p.spawnRadius * (1 + tiltFactor * 2);
+
+    this.sim.clearAgents();
+    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+    this._hoverSpawned = true;
+    this._lastSpawnX = x;
+    this._lastSpawnY = y;
+  }
+
+  /** Clear hover preview when pointer leaves canvas */
+  onHoverEnd() {
+    if (!this._ready) return;
+    if (this._hoverSpawned) {
+      this.sim.clearAgents();
+      this._hoverSpawned = false;
+    }
+  }
+
+  /** Step the boid simulation during hover (no stamping).
+   *  This lets boids settle into their flocking formation so the swarm
+   *  shape is visible before the pencil touches down. */
+  onHoverFrame(elapsed) {
+    if (!this._ready || !this._hoverSpawned) return;
+    const p = this.app.getP();
+    // Write params with the current hover leader position so boids follow
+    this.sim.writeParams(p, this.app.leaderX, this.app.leaderY, elapsed);
+    this.sim.step(1 / 60);
+  }
+
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
-    let r = p.spawnRadius;
-    if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
-    this.sim.clearAgents();
-    this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+
+    // If boids were already spawned during hover, keep them — skip re-spawn
+    if (this._hoverSpawned) {
+      this._hoverSpawned = false;
+    } else {
+      let r = p.spawnRadius;
+      if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+      this.sim.clearAgents();
+      this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+    }
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
@@ -740,7 +797,31 @@ export class BoidBrush {
   }
 
   drawOverlay(ctx, p) {
-    if (!this._ready || !p.showBoids) return;
+    if (!this._ready) return;
+
+    // Show hover-spawned boids even when showBoids is off (lighter colour)
+    if (this._hoverSpawned) {
+      const { buffer, count, stride } = this.sim.readAgents();
+      ctx.fillStyle = 'rgba(100,180,255,0.35)';
+      for (let i = 0; i < count; i++) {
+        const base = i * stride;
+        ctx.fillRect(buffer[base] - 1, buffer[base + 1] - 1, 2, 2);
+      }
+      // Draw spawn area ring during hover
+      ctx.strokeStyle = 'rgba(100,180,255,0.25)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const alt = this.app.altitude;
+      const isPen = this.app.pointerType === 'pen';
+      const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+      const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
+      const r = p.spawnRadius * (1 + tiltFactor * 2);
+      ctx.arc(this.app.leaderX, this.app.leaderY, r, 0, Math.PI * 2);
+      ctx.stroke();
+      return; // hover preview only — skip normal overlay
+    }
+
+    if (!p.showBoids) return;
     const { buffer, count, stride } = this.sim.readAgents();
     ctx.fillStyle = 'rgba(100,180,255,0.6)';
     for (let i = 0; i < count; i++) {
@@ -771,6 +852,7 @@ export class BoidBrush {
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
+    this._hoverSpawned = false;
   }
 }
 
@@ -1402,6 +1484,11 @@ export class BristleBrush {
     this._pressure = 0.5;
     this._smoothPressure = 0.5; // EMA-smoothed pressure for gradual transitions
     this._active = false;
+    // Hover state — Apple Pencil hover preview
+    this._hoverActive = false;
+    this._hoverBristlesSpawned = false; // true when bristles have been spawned during hover
+    this._hoverDir = 0;          // azimuth-derived angle during hover
+    this._hoverLengthScale = 1;  // altitude-derived bristle length multiplier
     // Flat-stroke (wet buffer) canvases
     this._strokeCanvas = null;
     this._strokeCtx = null;
@@ -1511,7 +1598,7 @@ export class BristleBrush {
     const stiffness = p.bristleStiffness * 12; // spring constant
     const damping = p.bristleDamping;
     const friction = p.bristleFriction;
-    const length = p.bristleLength;
+    const length = p.bristleLength * this._hoverLengthScale;
 
     for (let i = 0; i < this._count; i++) {
       // Apply per-bristle variance
@@ -1696,19 +1783,77 @@ export class BristleBrush {
     }
   }
 
+  /** Apple Pencil hover: spawn bristles at hover position using azimuth for
+   *  angle and altitude for bristle length, simulating a real brush preview. */
+  onHover(x, y) {
+    const p = this.app.getP();
+
+    const alt = this.app.altitude;
+    const isPen = this.app.pointerType === 'pen';
+    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+
+    // Pen with tilt → use pencil azimuth; mouse/touch → 0
+    this._hoverDir = hasTilt ? this.app.azimuth : 0;
+    this._strokeDir = this._hoverDir;
+    // Tilt-based bristle length scaling
+    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0.33;
+    this._hoverLengthScale = 0.5 + tiltFactor * 1.5;
+    this._hoverActive = true;
+    this._lastCursorX = x;
+    this._lastCursorY = y;
+
+    // Spawn actual bristles during hover so physics can settle them
+    if (!this._hoverBristlesSpawned) {
+      this._spawnBristles(x, y, p);
+      this._hoverBristlesSpawned = true;
+    }
+  }
+
+  /** Clear hover preview when pointer leaves canvas */
+  onHoverEnd() {
+    this._hoverActive = false;
+    this._hoverBristlesSpawned = false;
+    this._count = 0; // clear bristle arrays
+  }
+
+  /** Step bristle physics during hover (no stamping).
+   *  This lets bristles settle into their physical positions so the brush
+   *  shape preview matches what will happen when the pencil touches down. */
+  onHoverFrame(elapsed) {
+    if (!this._hoverActive || this._count === 0) return;
+    const p = this.app.getP();
+    // Update root positions to follow the hover leader
+    this._updateRoots(this._lastCursorX, this._lastCursorY, p);
+    // Step physics so tips trail behind roots naturally
+    const dt = 1 / 60;
+    const subSteps = 3;
+    for (let s = 0; s < subSteps; s++) {
+      this._stepPhysics(p, dt / subSteps);
+    }
+    this._pushHistory(p.bristleSmoothing);
+  }
+
   onDown(x, y, pressure) {
     const p = this.app.getP();
     this._pressure = pressure;
     this._smoothPressure = pressure; // Initialize smoothed pressure at stroke start
     this._lastCursorX = x;
     this._lastCursorY = y;
-    // Initialize direction from pencil azimuth if available, else 0
-    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+    // Use hover-derived angle/length if available, else fall back to existing logic
+    if (this._hoverActive) {
+      this._strokeDir = this._hoverDir;
+      // _hoverLengthScale already set during hover
+    } else if (p.pencilAngle && this.app.altitude < Math.PI / 2 - TILT_THRESHOLD) {
       this._strokeDir = this.app.azimuth;
+      // Compute length scale from current altitude
+      const tiltFactor = 1 - (this.app.altitude / (Math.PI / 2));
+      this._hoverLengthScale = 0.5 + tiltFactor * 1.5;
     } else {
       this._strokeDir = 0;
+      this._hoverLengthScale = 1; // reset to default
     }
     this._active = true;
+    this._hoverActive = false; // transition from hover to drawing
     this.app.strokeFrame = 0;
 
     // Push undo
@@ -1746,7 +1891,18 @@ export class BristleBrush {
       this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
     }
 
-    this._spawnBristles(x, y, p);
+    // Reuse hover-spawned bristles if available; otherwise spawn fresh
+    if (this._hoverBristlesSpawned) {
+      this._hoverBristlesSpawned = false;
+      // Bristles already exist and have been physics-stepped during hover;
+      // just clear lastStamp so first drawing stamp starts fresh
+      for (let i = 0; i < this._count; i++) {
+        this._lastStampX[i] = undefined;
+        this._lastStampY[i] = undefined;
+      }
+    } else {
+      this._spawnBristles(x, y, p);
+    }
   }
 
   onMove(x, y, pressure) {
@@ -1769,13 +1925,17 @@ export class BristleBrush {
     }
 
     // Blend with pencil azimuth when enabled and pen is tilted
-    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - 0.05) {
+    if (p.pencilAngle && this.app.altitude < Math.PI / 2 - TILT_THRESHOLD) {
       const pencilDir = this.app.azimuth;
       const blend = p.pencilBlend; // 0 = all movement, 1 = all pencil
       // Normalize angle difference for blending
       const diff = pencilDir - moveDir;
       const wrapped = ((diff + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       this._strokeDir = moveDir + wrapped * blend;
+      // Update bristle length scale from altitude during stroke
+      const tiltFactor = 1 - (this.app.altitude / (Math.PI / 2));
+      const targetScale = 0.5 + tiltFactor * 1.5;
+      this._hoverLengthScale += (targetScale - this._hoverLengthScale) * 0.15;
     } else {
       this._strokeDir = moveDir;
     }
@@ -1966,6 +2126,26 @@ export class BristleBrush {
   }
 
   drawOverlay(ctx, p) {
+    // Hover preview: show live physics-simulated bristle positions
+    if (this._hoverActive && this._hoverBristlesSpawned && this._count > 0) {
+      ctx.strokeStyle = 'rgba(255,180,100,0.3)';
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < this._count; i++) {
+        // Root (anchor point)
+        ctx.fillStyle = 'rgba(255,180,100,0.3)';
+        ctx.fillRect(this._rootX[i] - 1, this._rootY[i] - 1, 2, 2);
+        // Tip (physics-simulated position)
+        ctx.fillStyle = 'rgba(100,255,180,0.4)';
+        ctx.fillRect(this._smoothX[i] - 1, this._smoothY[i] - 1, 2, 2);
+        // Line connecting root to tip
+        ctx.beginPath();
+        ctx.moveTo(this._rootX[i], this._rootY[i]);
+        ctx.lineTo(this._smoothX[i], this._smoothY[i]);
+        ctx.stroke();
+      }
+      return; // hover preview only
+    }
+
     if (!p.showBristles || !this._active) return;
     // Draw bristle roots and tips
     for (let i = 0; i < this._count; i++) {
@@ -1992,6 +2172,9 @@ export class BristleBrush {
   deactivate() {
     this._count = 0;
     this._active = false;
+    this._hoverActive = false;
+    this._hoverBristlesSpawned = false;
+    this._hoverLengthScale = 1;
     this._flatActive = false;
   }
 }

@@ -164,8 +164,13 @@ export function buildSidebar(app) {
       ${sliderRow('bristleDamping', 'Damping', 1, 100, 85, v => (v/100).toFixed(2), 'Velocity decay per frame (higher = less bounce)')}
       ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2), 'Surface drag opposing tip movement')}
       ${sliderRow('bristleSmoothing', 'Smoothing', 0, 100, 50, v => (v/100).toFixed(2), 'Curve smoothing between tip positions')}
-      <label>Pencil Angle <input type="checkbox" id="pencilAngle"></label>
-      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle</span>
+    </div>
+
+    <!-- Pencil / Hover (boid + bristle) -->
+    <div class="section-header" data-brushes="boid bristle" data-section="pencilHover">Pencil / Hover <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid bristle">
+      <label>Pencil Angle <input type="checkbox" id="pencilAngle" checked></label>
+      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle &amp; hover spawn</span>
       ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
     </div>
 

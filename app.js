@@ -60,6 +60,7 @@ export class App {
     this.tiltY = 0;
     this.azimuth = 0;     // stylus azimuth in radians (0..2π)
     this.altitude = Math.PI / 2; // stylus altitude (π/2 = vertical)
+    this.pointerType = 'mouse';  // last pointer type ('mouse', 'pen', 'touch')
     this.leaderX = 0;
     this.leaderY = 0;
     this.undoPushedThisStroke = false;
@@ -1504,6 +1505,7 @@ export class App {
     ic.addEventListener('pointermove', e => this._onPointerMove(e));
     ic.addEventListener('pointerup', e => this._onPointerUp(e));
     ic.addEventListener('pointercancel', e => this._onPointerUp(e));
+    ic.addEventListener('pointerleave', e => this._onPointerLeave(e));
 
     // Touch events for pinch zoom/rotate (on canvasArea to capture all fingers)
     const area = document.getElementById('canvasArea');
@@ -1685,6 +1687,7 @@ export class App {
     e.preventDefault();
     // Track active pointers for multi-touch detection
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    this.pointerType = e.pointerType || 'mouse';
     // Don't start drawing during pinch gesture
     if (this._pinchActive) return;
     // Don't start drawing if touch and multiple pointers (pinch incoming)
@@ -1751,6 +1754,7 @@ export class App {
 
   _onPointerMove(e) {
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    this.pointerType = e.pointerType || 'mouse';
     // Track cursor position for brush size preview
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
     this._cursorX = e.clientX - areaRect.left;
@@ -1785,6 +1789,9 @@ export class App {
       this._captureTilt(e);
       this.leaderX = x;
       this.leaderY = y;
+      // Notify brush of hover for Apple Pencil hover preview/spawn
+      const brush = this.getCurrentBrush();
+      if (brush && brush.onHover) brush.onHover(x, y);
       return;
     }
 
@@ -1853,6 +1860,13 @@ export class App {
       this.taperFrame = 0;
       this.taperTotal = p.taperLength;
     }
+  }
+
+  _onPointerLeave(e) {
+    // Clear hover state when pointer leaves canvas (e.g. Apple Pencil lifts away)
+    if (this.isDrawing) return;
+    const brush = this.getCurrentBrush();
+    if (brush && brush.onHoverEnd) brush.onHoverEnd();
   }
 
   _onKeyDown(e) {
@@ -2088,6 +2102,9 @@ export class App {
     if (this.simulation.running) this._updateSimulationLeader(elapsed, p);
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
+    } else if (!this.isDrawing && brush && brush.onHoverFrame) {
+      // Step hover simulation (boid flocking / bristle physics) without stamping
+      brush.onHoverFrame(elapsed);
     }
 
     // Update live overlay (particle visualization)
