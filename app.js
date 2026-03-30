@@ -7,7 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, syncUI, initEdgeSliders } from './ui.js';
+import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
@@ -201,6 +201,7 @@ export class App {
 
     // Sidebar UI
     buildSidebar(this);
+    buildLayersPanel(this);
     initEdgeSliders(this);
 
     // Events
@@ -573,7 +574,10 @@ export class App {
   }
 
   moveLayerUp() {
-    if (this.activeLayerIdx <= 0) return;
+    if (this.activeLayerIdx <= 0) {
+      this.showToast('Already at top');
+      return;
+    }
     this.pushUndo();
     [this.layers[this.activeLayerIdx - 1], this.layers[this.activeLayerIdx]] =
       [this.layers[this.activeLayerIdx], this.layers[this.activeLayerIdx - 1]];
@@ -583,9 +587,14 @@ export class App {
   }
 
   moveLayerDown() {
-    if (this.activeLayerIdx >= this.layers.length - 1) return;
-    // Don't swap with background layer
-    if (this.layers[this.activeLayerIdx + 1]?.isBackground) return;
+    if (this.activeLayerIdx >= this.layers.length - 1) {
+      this.showToast('Already at bottom');
+      return;
+    }
+    if (this.layers[this.activeLayerIdx + 1]?.isBackground) {
+      this.showToast('Already at bottom');
+      return;
+    }
     this.pushUndo();
     [this.layers[this.activeLayerIdx + 1], this.layers[this.activeLayerIdx]] =
       [this.layers[this.activeLayerIdx], this.layers[this.activeLayerIdx + 1]];
@@ -779,7 +788,6 @@ export class App {
       spawnRadius: Math.round(val('spawnRadius') * scale),
       spawnAngle: (val('spawnAngle') || 0) * Math.PI / 180,
       spawnJitter: val('spawnJitter') / 100,
-      respawnOnStroke: chk('respawnOnStroke'),
       pressureSpawnRadius: chk('pressureSpawnRadius'),
       // Swarm
       count: val('count') || 60,
@@ -1562,7 +1570,14 @@ export class App {
     document.getElementById('tilingBtn')?.addEventListener('click', () => this.toggleTiling());
     document.getElementById('alphaLockBtn')?.addEventListener('click', () => this.toggleAlphaLock());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
-      document.getElementById('sidebar')?.classList.toggle('open');
+      const sb = document.getElementById('sidebar');
+      const open = sb?.classList.toggle('open');
+      document.getElementById('sidebarToggle')?.classList.toggle('active', open);
+    });
+    document.getElementById('layersToggle')?.addEventListener('click', () => {
+      const lp = document.getElementById('layersPanel');
+      const open = lp?.classList.toggle('open');
+      document.getElementById('layersToggle')?.classList.toggle('active', open);
     });
     document.getElementById('swapColors')?.addEventListener('click', () => {
       const t = this.primaryEl.value;
@@ -1790,8 +1805,11 @@ export class App {
       this.leaderX = x;
       this.leaderY = y;
       // Notify brush of hover for Apple Pencil hover preview/spawn
-      const brush = this.getCurrentBrush();
-      if (brush && brush.onHover) brush.onHover(x, y);
+      // Skip during taper — hover would clear the tapering boids
+      if (!this.isTapering) {
+        const brush = this.getCurrentBrush();
+        if (brush && brush.onHover) brush.onHover(x, y);
+      }
       return;
     }
 
@@ -2102,8 +2120,9 @@ export class App {
     if (this.simulation.running) this._updateSimulationLeader(elapsed, p);
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
-    } else if (!this.isDrawing && brush && brush.onHoverFrame) {
+    } else if (!this.isDrawing && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
+      // Skip during taper — taperFrame already steps the sim
       brush.onHoverFrame(elapsed);
     }
 

@@ -504,25 +504,7 @@ export class BoidBrush {
   }
 
   onMove(x, y, pressure) {
-    if (!this._ready) return;
-    const p = this.app.getP();
-    if (p.respawnOnStroke) {
-      const dx = x - this._lastSpawnX;
-      const dy = y - this._lastSpawnY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const minDist = Math.max(p.spawnRadius * 0.5, 8);
-      if (dist >= minDist) {
-        // Cap total agents at 3× count to prevent infinite accumulation
-        // while still allowing a richer trail than a single batch.
-        const { count: current } = this.sim.readAgents();
-        if (current >= p.count * 3) return;
-        let r = p.spawnRadius;
-        if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
-        this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
-        this._lastSpawnX = x;
-        this._lastSpawnY = y;
-      }
-    }
+    // No respawn-on-move: boids are spawned once (on hover or touch-down)
   }
 
   onUp(x, y) {
@@ -534,7 +516,12 @@ export class BoidBrush {
       const layer = this.app.getActiveLayer();
       if (layer.dirty) this.app.compositeAllLayers();
     }
-    // Boids keep tailing off via taper
+    // Touch has no hover phase — clear boids on lift so they don't linger
+    if (this.app.pointerType === 'touch') {
+      this.sim.clearAgents();
+      this._hoverSpawned = false;
+    }
+    // Mouse/pen: boids keep tailing off via taper, fresh spawn on next hover
   }
 
   configureSimulation(data, p) {
@@ -1091,29 +1078,18 @@ export class AntBrush {
   }
 
   onMove(x, y, pressure) {
-    if (!this._ready) return;
-    const p = this.app.getP();
-    if (p.respawnOnStroke) {
-      const dx = x - this._lastSpawnX;
-      const dy = y - this._lastSpawnY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const minDist = Math.max(p.spawnRadius * 0.5, 8);
-      if (dist >= minDist) {
-        const { count: current } = this.sim.readAgents();
-        if (current >= p.count * 3) return;
-        let r = p.spawnRadius;
-        if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
-        this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
-        this._lastSpawnX = x;
-        this._lastSpawnY = y;
-      }
-    }
+    // No respawn-on-move: ants are spawned once (on hover or touch-down)
   }
 
   onUp(x, y) {
     if (!this._flatActive) {
       const layer = this.app.getActiveLayer();
       if (layer.dirty) this.app.compositeAllLayers();
+    }
+    // Touch has no hover phase — clear ants on lift so they don't linger
+    if (this.app.pointerType === 'touch') {
+      this.sim.clearAgents();
+      this._hoverSpawned = false;
     }
   }
 
