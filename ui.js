@@ -153,6 +153,13 @@ export function buildSidebar(app) {
       ${sliderRow('bristleWidth', 'Width', 1, 300, 30, null, 'Spread of bristles across brush head')}
       ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2), 'Random scatter of bristle positions')}
       ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2), 'How much pressure fans bristles outward')}
+      ${sliderRow('bristleAngleOffset', 'Angle Offset', -180, 180, 0, null, 'Rotate bristle fan angle in place')}
+      <div style="display: flex; align-items: center; gap: 8px; padding: 4px; margin: 2px 0;">
+        <input type="checkbox" id="bristleFanEnable" style="width: 14px; height: 14px; cursor: pointer;">
+        <label for="bristleFanEnable" style="color: #cbd7e6; font-weight: 600; cursor: pointer; flex: 1; margin: 0;">Fanning</label>
+      </div>
+      ${sliderRow('bristleFan', 'Amount', 0, 1, 0, v => (v*100).toFixed(0) + '%', 'Spread tips wider than roots')}
+      ${sliderRow('bristleFanAngle', 'Direction', 0, 360, 90, null, 'Angle direction for tip spread')}
     </div>
 
     <!-- Bristle Physics (bristle only) -->

@@ -60,6 +60,12 @@ export class App {
     this.tiltY = 0;
     this.azimuth = 0;     // stylus azimuth in radians (0..2π)
     this.altitude = Math.PI / 2; // stylus altitude (π/2 = vertical)
+    this.prevAzimuth = 0;
+    this.azimuthDeltaDeg = 0;
+    this.azimuthUpdateCount = 0;
+    this.penAngleSampleValid = false; // true once we have any real azimuth sample
+    this.penEventHasAngles = false;   // true for the current/last processed pen event
+    this.penAngleSource = 'none';     // 'azimuthAngle' | 'tilt' | 'none'
     this.pointerType = 'mouse';  // last pointer type ('mouse', 'pen', 'touch')
     this.leaderX = 0;
     this.leaderY = 0;
@@ -857,6 +863,10 @@ export class App {
       bristleFriction: (val('bristleFriction') || 40) / 100 * 20,
       bristleSpread: (val('bristleSpread') || 10) / 100 * 10,
       bristleSplay: (val('bristleSplay') || 30) / 100,
+      bristleAngleOffset: (val('bristleAngleOffset') || 0) * Math.PI / 180,
+      bristleFanEnable: chk('bristleFanEnable'),
+      bristleFan: (chk('bristleFanEnable') ? val('bristleFan') : 0) || 0,
+      bristleFanAngle: (val('bristleFanAngle') || 90) * Math.PI / 180,
       bristleSmoothing: (val('bristleSmoothing') || 50) / 100,
       pencilAngle: chk('pencilAngle'),
       pencilBlend: (val('pencilBlend') || 0) / 100,
@@ -1511,6 +1521,7 @@ export class App {
 
     ic.addEventListener('pointerdown', e => this._onPointerDown(e));
     ic.addEventListener('pointermove', e => this._onPointerMove(e));
+    ic.addEventListener('pointerrawupdate', e => this._onPointerRawUpdate(e));
     ic.addEventListener('pointerup', e => this._onPointerUp(e));
     ic.addEventListener('pointercancel', e => this._onPointerUp(e));
     ic.addEventListener('pointerleave', e => this._onPointerLeave(e));
@@ -1678,12 +1689,17 @@ export class App {
 
   /** Extract stylus tilt/azimuth from a PointerEvent and store on this App */
   _captureTilt(e) {
+    const prevAz = this.azimuth;
+    this.penEventHasAngles = false;
     this.tiltX = e.tiltX || 0;
     this.tiltY = e.tiltY || 0;
     // Prefer the direct azimuthAngle/altitudeAngle (Safari/WebKit on iPad)
     if (typeof e.azimuthAngle === 'number') {
       this.azimuth = e.azimuthAngle;
       this.altitude = typeof e.altitudeAngle === 'number' ? e.altitudeAngle : Math.PI / 2;
+      this.penEventHasAngles = true;
+      this.penAngleSampleValid = true;
+      this.penAngleSource = 'azimuthAngle';
     } else if (this.tiltX !== 0 || this.tiltY !== 0) {
       // Compute azimuth from tiltX/tiltY (Pointer Events Level 2 fallback)
       const tx = this.tiltX * Math.PI / 180;
@@ -1693,9 +1709,27 @@ export class App {
       // Approximate altitude from tilt magnitude
       const tiltMag = Math.sqrt(tx * tx + ty * ty);
       this.altitude = Math.max(0, Math.PI / 2 - tiltMag);
+      this.penEventHasAngles = true;
+      this.penAngleSampleValid = true;
+      this.penAngleSource = 'tilt';
     } else {
       // Pen is vertical or no tilt data — leave previous values
+      this.penAngleSource = 'none';
     }
+
+    // Track azimuth change per processed pen event for live diagnostics.
+    let diff = this.azimuth - prevAz;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    this.prevAzimuth = prevAz;
+    this.azimuthDeltaDeg = diff * 180 / Math.PI;
+    if (Math.abs(this.azimuthDeltaDeg) > 0.01) this.azimuthUpdateCount++;
+  }
+
+  _onPointerRawUpdate(e) {
+    if ((e.pointerType || '') !== 'pen') return;
+    this.pointerType = 'pen';
+    this._captureTilt(e);
   }
 
   _onPointerDown(e) {
