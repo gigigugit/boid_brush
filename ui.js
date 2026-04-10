@@ -278,7 +278,9 @@ export function buildSidebar(app) {
       ${sliderRow('impastoLightElevation', 'Light Elev.', 0, 90, 45, v => v + '°')}
     </div>
 
-    <!-- AI Connection (ai only) -->
+    <!-- AI brush sidebar sections hidden until complete:
+
+    // AI Connection (ai only)
     <div class="section-header" data-brushes="ai" data-section="aiConnection">AI Connection <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="ai">
       <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -290,7 +292,7 @@ export function buildSidebar(app) {
       </div>
     </div>
 
-    <!-- AI Prompt (ai only) -->
+    // AI Prompt (ai only)
     <div class="section-header" data-brushes="ai" data-section="aiPrompt">Prompt <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="ai">
       <div style="display:flex;align-items:center;gap:4px;">
@@ -299,7 +301,7 @@ export function buildSidebar(app) {
       </div>
     </div>
 
-    <!-- AI Generation (ai only) -->
+    // AI Generation (ai only)
     <div class="section-header" data-brushes="ai" data-section="aiGeneration">Generation <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="ai">
       ${sliderRow('aiStampSize', 'Stamp Size', 20, 400, 80)}
@@ -309,7 +311,7 @@ export function buildSidebar(app) {
       ${sliderRow('maskFeather', 'Mask Feather', 0, 100, 20)}
     </div>
 
-    <!-- AI Mode (ai only) -->
+    // AI Mode (ai only)
     <div class="section-header" data-brushes="ai" data-section="aiMode">Mode <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="ai">
       <label>Input Source <select id="aiInputSource">
@@ -324,6 +326,7 @@ export function buildSidebar(app) {
       <label>Random Seed <input type="checkbox" id="aiRandomSeed" checked></label>
       <label style="display:flex;gap:4px;align-items:center;">Seed <input type="number" id="aiSeed" value="42" min="0" max="999999999" style="width:80px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;color:#ddd;padding:3px 6px;font-size:11px;"></label>
     </div>
+    -->
 
     <!-- Layers -->
     <div class="section-header" data-section="layers">Layers <span class="chevron">▼</span></div>
