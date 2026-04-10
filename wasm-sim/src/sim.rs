@@ -173,7 +173,7 @@ impl Simulation {
         self.agent_count -= 1;
     }
 
-    /// Clear all agents (used at stroke start for respawnOnStroke).
+    /// Clear all agents.
     pub fn clear_agents(&mut self) {
         for i in 0..self.agent_count * STRIDE {
             self.buf[i] = 0.0;

@@ -42,10 +42,22 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <!-- Color History -->
+    <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div id="colorHistory" style="display:flex;flex-wrap:wrap;gap:2px;min-height:20px;"></div>
+    </div>
+
     <!-- Brush Scale -->
     <div class="section-header" data-section="brushScale">Brush Scale <span class="chevron">▼</span></div>
     <div class="section-body">
       ${sliderRow('brushScale', 'Scale', 10, 300, 100, v => (v/100).toFixed(1))}
+    </div>
+
+    <!-- Fill -->
+    <div class="section-header closed" data-section="fill">Fill <span class="chevron">▼</span></div>
+    <div class="section-body collapsed">
+      ${sliderRow('fillTolerance', 'Tolerance', 0, 255, 32)}
     </div>
 
     <!-- Spawn Shape (boid + ant) -->
@@ -61,8 +73,7 @@ export function buildSidebar(app) {
       </select></label>
       ${sliderRow('spawnRadius', 'Radius', 5, 200, 5)}
       ${sliderRow('spawnAngle', 'Angle', 0, 360, 0, v => v + '°')}
-      ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v/100).toFixed(2))}
-      <label>Respawn <input type="checkbox" id="respawnOnStroke" checked></label>
+      ${sliderRow('spawnJitter', 'Jitter', 0, 100, 0, v => (v / 100).toFixed(2))}
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
     </div>
 
@@ -142,6 +153,13 @@ export function buildSidebar(app) {
       ${sliderRow('bristleWidth', 'Width', 1, 300, 30, null, 'Spread of bristles across brush head')}
       ${sliderRow('bristleSpread', 'Spread', 0, 100, 10, v => (v/100).toFixed(2), 'Random scatter of bristle positions')}
       ${sliderRow('bristleSplay', 'Pressure Splay', 0, 100, 30, v => (v/100).toFixed(2), 'How much pressure fans bristles outward')}
+      ${sliderRow('bristleAngleOffset', 'Angle Offset', -180, 180, 0, null, 'Rotate bristle fan angle in place')}
+      <div style="display: flex; align-items: center; gap: 8px; padding: 4px; margin: 2px 0;">
+        <input type="checkbox" id="bristleFanEnable" style="width: 14px; height: 14px; cursor: pointer;">
+        <label for="bristleFanEnable" style="color: #cbd7e6; font-weight: 600; cursor: pointer; flex: 1; margin: 0;">Fanning</label>
+      </div>
+      ${sliderRow('bristleFan', 'Amount', 0, 1, 0, v => (v*100).toFixed(0) + '%', 'Spread tips wider than roots')}
+      ${sliderRow('bristleFanAngle', 'Direction', 0, 360, 90, null, 'Angle direction for tip spread')}
     </div>
 
     <!-- Bristle Physics (bristle only) -->
@@ -152,8 +170,13 @@ export function buildSidebar(app) {
       ${sliderRow('bristleDamping', 'Damping', 1, 100, 85, v => (v/100).toFixed(2), 'Velocity decay per frame (higher = less bounce)')}
       ${sliderRow('bristleFriction', 'Friction', 0, 100, 40, v => (v/100).toFixed(2), 'Surface drag opposing tip movement')}
       ${sliderRow('bristleSmoothing', 'Smoothing', 0, 100, 50, v => (v/100).toFixed(2), 'Curve smoothing between tip positions')}
-      <label>Pencil Angle <input type="checkbox" id="pencilAngle"></label>
-      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle</span>
+    </div>
+
+    <!-- Pencil / Hover (boid + bristle) -->
+    <div class="section-header" data-brushes="boid bristle" data-section="pencilHover">Pencil / Hover <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid bristle">
+      <label>Pencil Angle <input type="checkbox" id="pencilAngle" checked></label>
+      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle &amp; hover spawn</span>
       ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
     </div>
 
@@ -186,6 +209,7 @@ export function buildSidebar(app) {
       <label>Press→Size <input type="checkbox" id="pressureSize" checked></label>
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
       <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
+      ${sliderRow('stabilizer', 'Stabilizer', 0, 100, 0)}
     </div>
 
     <!-- Canvas Texture -->
@@ -328,34 +352,6 @@ export function buildSidebar(app) {
     </div>
     -->
 
-    <!-- Layers -->
-    <div class="section-header" data-section="layers">Layers <span class="chevron">▼</span></div>
-    <div class="section-body">
-      <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px;">
-        <button id="btnAddLayer">+ Add</button>
-        <button id="btnDupLayer">⧉ Dup</button>
-        <button id="btnDelLayer">✕ Del</button>
-        <button id="btnLayerUp">▲</button>
-        <button id="btnLayerDown">▼</button>
-        <button id="btnMergeDown">Merge▼</button>
-        <button id="btnFlatten">Flatten</button>
-      </div>
-      <div class="blend-row">
-        <label>Blend <select id="layerBlend">
-          <option value="source-over">Normal</option><option value="multiply">Multiply</option>
-          <option value="screen">Screen</option><option value="overlay">Overlay</option>
-          <option value="darken">Darken</option><option value="lighten">Lighten</option>
-          <option value="color-dodge">Dodge</option><option value="color-burn">Burn</option>
-          <option value="hard-light">Hard Light</option><option value="soft-light">Soft Light</option>
-          <option value="difference">Difference</option><option value="exclusion">Exclusion</option>
-          <option value="hue">Hue</option><option value="saturation">Saturation</option>
-          <option value="color">Color</option><option value="luminosity">Luminosity</option>
-        </select></label>
-        <label>Opacity <span id="v_layerOpacity">100</span>% <input type="range" id="layerOpacity" min="0" max="100" value="100"></label>
-      </div>
-      <div id="layerList"></div>
-    </div>
-
     <!-- Presets -->
     <div class="section-header" data-section="presets">Presets <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -404,15 +400,6 @@ export function buildSidebar(app) {
     el.addEventListener('change', () => app.invalidateParams());
   });
 
-  // ── Layer buttons ──
-  document.getElementById('btnAddLayer')?.addEventListener('click', () => { app.addLayer(); _refreshLayers(app); });
-  document.getElementById('btnDupLayer')?.addEventListener('click', () => { app.duplicateLayer(); _refreshLayers(app); });
-  document.getElementById('btnDelLayer')?.addEventListener('click', () => { app.removeLayer(); _refreshLayers(app); });
-  document.getElementById('btnLayerUp')?.addEventListener('click', () => { app.moveLayerUp(); _refreshLayers(app); });
-  document.getElementById('btnLayerDown')?.addEventListener('click', () => { app.moveLayerDown(); _refreshLayers(app); });
-  document.getElementById('btnMergeDown')?.addEventListener('click', () => { app.mergeDown(); _refreshLayers(app); });
-  document.getElementById('btnFlatten')?.addEventListener('click', () => { app.flattenAll(); _refreshLayers(app); });
-
   // ── Canvas texture upload ──
   const _texFileInput = document.createElement('input');
   _texFileInput.type = 'file';
@@ -431,21 +418,6 @@ export function buildSidebar(app) {
     const nameEl = document.getElementById('textureFileName');
     if (nameEl) nameEl.textContent = 'No texture loaded';
   });
-
-  // Layer blend & opacity
-  document.getElementById('layerBlend')?.addEventListener('change', () => {
-    const l = app.getActiveLayer();
-    if (l) { l.blend = document.getElementById('layerBlend').value; app.compositeAllLayers(); }
-  });
-  document.getElementById('layerOpacity')?.addEventListener('input', () => {
-    const l = app.getActiveLayer();
-    const v = +document.getElementById('layerOpacity').value;
-    document.getElementById('v_layerOpacity').textContent = v;
-    if (l) { l.opacity = v / 100; app.compositeAllLayers(); }
-  });
-
-  // Store layer list renderer on app for external refresh
-  app._renderLayerList = () => _renderLayerList(app);
 
   // ── Preset buttons ──
   _renderBuiltinPresets(app);
@@ -489,9 +461,6 @@ export function buildSidebar(app) {
   // Initial brush-specific visibility
   app._toggleBrushSections(app.activeBrush);
 
-  // Initial layer list
-  _renderLayerList(app);
-
   // ── Ant Math overlay panel ──
   _buildAntMathPanel(app);
 
@@ -505,6 +474,72 @@ export function buildSidebar(app) {
       _syncModalStatus(app.aiServer);
     });
   }
+}
+
+// ── Build Layers Panel (left panel) ─────────────────────────
+export function buildLayersPanel(app) {
+  const lp = document.getElementById('layersPanel');
+  if (!lp) return;
+  lp.innerHTML = `
+    <div class="section-header" data-section="layers">Layers <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px;">
+        <button id="btnAddLayer">+ Add</button>
+        <button id="btnDupLayer">⧉ Dup</button>
+        <button id="btnDelLayer">✕ Del</button>
+        <button id="btnLayerUp">▲</button>
+        <button id="btnLayerDown">▼</button>
+        <button id="btnMergeDown">Merge▼</button>
+        <button id="btnFlatten">Flatten</button>
+      </div>
+      <div class="blend-row">
+        <label>Blend <select id="layerBlend">
+          <option value="source-over">Normal</option><option value="multiply">Multiply</option>
+          <option value="screen">Screen</option><option value="overlay">Overlay</option>
+          <option value="darken">Darken</option><option value="lighten">Lighten</option>
+          <option value="color-dodge">Dodge</option><option value="color-burn">Burn</option>
+          <option value="hard-light">Hard Light</option><option value="soft-light">Soft Light</option>
+          <option value="difference">Difference</option><option value="exclusion">Exclusion</option>
+          <option value="hue">Hue</option><option value="saturation">Saturation</option>
+          <option value="color">Color</option><option value="luminosity">Luminosity</option>
+        </select></label>
+        <label>Opacity <span id="v_layerOpacity">100</span>% <input type="range" id="layerOpacity" min="0" max="100" value="100"></label>
+      </div>
+      <div id="layerList"></div>
+    </div>
+  `;
+
+  // Wire section toggle
+  lp.querySelectorAll('.section-header').forEach(h => {
+    h.addEventListener('click', () => toggleSection(h));
+  });
+
+  // Layer buttons
+  document.getElementById('btnAddLayer')?.addEventListener('click', () => { app.addLayer(); _refreshLayers(app); });
+  document.getElementById('btnDupLayer')?.addEventListener('click', () => { app.duplicateLayer(); _refreshLayers(app); });
+  document.getElementById('btnDelLayer')?.addEventListener('click', () => { app.removeLayer(); _refreshLayers(app); });
+  document.getElementById('btnLayerUp')?.addEventListener('click', () => { app.moveLayerUp(); _refreshLayers(app); });
+  document.getElementById('btnLayerDown')?.addEventListener('click', () => { app.moveLayerDown(); _refreshLayers(app); });
+  document.getElementById('btnMergeDown')?.addEventListener('click', () => { app.mergeDown(); _refreshLayers(app); });
+  document.getElementById('btnFlatten')?.addEventListener('click', () => { app.flattenAll(); _refreshLayers(app); });
+
+  // Layer blend & opacity
+  document.getElementById('layerBlend')?.addEventListener('change', () => {
+    const l = app.getActiveLayer();
+    if (l) { l.blend = document.getElementById('layerBlend').value; app.compositeAllLayers(); }
+  });
+  document.getElementById('layerOpacity')?.addEventListener('input', () => {
+    const l = app.getActiveLayer();
+    const v = +document.getElementById('layerOpacity').value;
+    document.getElementById('v_layerOpacity').textContent = v;
+    if (l) { l.opacity = v / 100; app.compositeAllLayers(); }
+  });
+
+  // Store layer list renderer on app for external refresh
+  app._renderLayerList = () => _renderLayerList(app);
+
+  // Initial layer list
+  _renderLayerList(app);
 }
 
 // ── Ant Math overlay panel ──────────────────────────────────
@@ -944,10 +979,16 @@ const _sliderFormats = {
 };
 
 // ── Layer list renderer ─────────────────────────────────────
+let _dragSrcIdx = null;
+
 function _renderLayerList(app) {
   const list = document.getElementById('layerList');
   if (!list) return;
   list.innerHTML = '';
+
+  // Count non-background (paint) layers to decide if drag/reorder makes sense
+  const paintCount = app.layers.filter(l => !l.isBackground).length;
+
   app.layers.forEach((l, i) => {
     const div = document.createElement('div');
     if (l.isBackground) {
@@ -965,15 +1006,94 @@ function _renderLayerList(app) {
       return;
     }
     div.className = 'layer-item' + (i === app.activeLayerIdx ? ' active' : '');
+    div.draggable = paintCount > 1;
+    div.dataset.layerIdx = i;
     div.innerHTML = `
       <button class="vis-btn${l.visible ? '' : ' hidden'}" data-idx="${i}">${l.visible ? '👁' : '⬚'}</button>
+      <button class="lock-btn${l.alphaLock ? ' locked' : ''}" data-idx="${i}" title="Alpha Lock">${l.alphaLock ? '🔒' : '🔓'}</button>
       <span class="layer-name">${l.name}</span>
       <span class="layer-opacity">${Math.round(l.opacity * 100)}%</span>
     `;
+
+    // Prevent child buttons from starting their own drag
+    div.querySelectorAll('button').forEach(btn => {
+      btn.draggable = false;
+      btn.addEventListener('dragstart', e => e.stopPropagation());
+    });
+
+    // ── Drag-to-reorder ──
+    div.addEventListener('dragstart', e => {
+      _dragSrcIdx = i;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(i));
+      // Slight delay so the dragging class applies after the drag image is captured
+      requestAnimationFrame(() => div.classList.add('dragging'));
+    });
+    div.addEventListener('dragend', () => {
+      _dragSrcIdx = null;
+      div.classList.remove('dragging');
+      _removeDropIndicator(list);
+    });
+    div.addEventListener('dragover', e => {
+      if (_dragSrcIdx === null || _dragSrcIdx === i) return;
+      if (l.isBackground) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      // Show drop indicator above or below this item depending on cursor position
+      const rect = div.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const above = e.clientY < midY;
+      _showDropIndicator(list, div, above);
+    });
+    div.addEventListener('dragleave', (e) => {
+      // Only remove if leaving the item entirely (not entering a child)
+      if (!div.contains(e.relatedTarget)) {
+        // Don't clear here — let dragover on next item handle it
+      }
+    });
+    div.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      _removeDropIndicator(list);
+      if (_dragSrcIdx === null || _dragSrcIdx === i) return;
+      const from = _dragSrcIdx;
+      // Determine insert position based on where indicator was
+      const rect = div.getBoundingClientRect();
+      const midY = e.clientY < rect.top + rect.height / 2;
+      let to = midY ? i : i + 1;
+      // Don't drop onto/past background
+      if (to >= app.layers.length) to = app.layers.length - 1;
+      if (app.layers[to]?.isBackground) to = to - 1;
+      if (from === to) { _dragSrcIdx = null; return; }
+      _dragSrcIdx = null;
+      app.pushUndo();
+      const [moved] = app.layers.splice(from, 1);
+      // Adjust target index after removal
+      const insertAt = from < to ? to - 1 : to;
+      app.layers.splice(insertAt, 0, moved);
+      if (app.activeLayerIdx === from) {
+        app.activeLayerIdx = insertAt;
+      } else if (from < app.activeLayerIdx && insertAt >= app.activeLayerIdx) {
+        app.activeLayerIdx--;
+      } else if (from > app.activeLayerIdx && insertAt <= app.activeLayerIdx) {
+        app.activeLayerIdx++;
+      }
+      app._syncLayerSwitcher();
+      app.compositeAllLayers();
+      _refreshLayers(app);
+    });
+
+    // ── Click handlers ──
     div.addEventListener('click', e => {
       if (e.target.classList.contains('vis-btn')) {
         l.visible = !l.visible;
         app.compositeAllLayers();
+        _renderLayerList(app);
+        return;
+      }
+      if (e.target.classList.contains('lock-btn')) {
+        l.alphaLock = !l.alphaLock;
+        app._syncAlphaLockUI();
         _renderLayerList(app);
         return;
       }
@@ -987,6 +1107,60 @@ function _renderLayerList(app) {
     });
     list.appendChild(div);
   });
+
+  // Allow the list container itself to accept drops (for reordering to end of list)
+  list.ondragover = e => {
+    if (_dragSrcIdx === null) return;
+    if (e.target === list) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      // Show indicator at the end (before background)
+      const lastPaint = list.querySelector('.layer-item:not(.bg-layer):last-of-type') ||
+                        list.querySelector('.layer-item.bg-layer');
+      if (lastPaint) _showDropIndicator(list, lastPaint, false);
+    }
+  };
+  list.ondrop = e => {
+    if (_dragSrcIdx === null) return;
+    if (e.target !== list) return;
+    e.preventDefault();
+    _removeDropIndicator(list);
+    const from = _dragSrcIdx;
+    const bgIdx = app.layers.findIndex(l => l.isBackground);
+    const to = bgIdx >= 0 ? bgIdx - 1 : app.layers.length - 1;
+    if (from === to) return;
+    _dragSrcIdx = null;
+    app.pushUndo();
+    const [moved] = app.layers.splice(from, 1);
+    const insertAt = Math.min(to, app.layers.length);
+    app.layers.splice(insertAt, 0, moved);
+    if (app.activeLayerIdx === from) {
+      app.activeLayerIdx = insertAt;
+    } else if (from < app.activeLayerIdx && insertAt >= app.activeLayerIdx) {
+      app.activeLayerIdx--;
+    } else if (from > app.activeLayerIdx && insertAt <= app.activeLayerIdx) {
+      app.activeLayerIdx++;
+    }
+    app._syncLayerSwitcher();
+    app.compositeAllLayers();
+    _refreshLayers(app);
+  };
+}
+
+// ── Drop indicator helpers ──────────────────────────────────
+function _removeDropIndicator(list) {
+  list.querySelectorAll('.layer-drop-indicator').forEach(el => el.remove());
+}
+
+function _showDropIndicator(list, refElement, above) {
+  _removeDropIndicator(list);
+  const indicator = document.createElement('div');
+  indicator.className = 'layer-drop-indicator';
+  if (above) {
+    refElement.parentNode.insertBefore(indicator, refElement);
+  } else {
+    refElement.parentNode.insertBefore(indicator, refElement.nextSibling);
+  }
 }
 
 function _refreshLayers(app) {
