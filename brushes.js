@@ -282,6 +282,7 @@ export class BoidBrush {
     this._lastStampY = [];
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
+    this._boidsActive = false;
     // Hover state — Apple Pencil hover preview
     this._hoverSpawned = false;
     // Flat-stroke (wet buffer) canvases
@@ -359,21 +360,24 @@ export class BoidBrush {
    *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
   onHover(x, y) {
     if (!this._ready) return;
-    if (this._hoverSpawned) return; // already spawned — sim runs via onHoverFrame
+    if (this._hoverSpawned) return; // already hovering — sim runs via onHoverFrame
 
-    const p = this.app.getP();
-    const alt = this.app.altitude;
-    const isPen = this.app.pointerType === 'pen';
-    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+    if (!this._boidsActive) {
+      const p = this.app.getP();
+      const alt = this.app.altitude;
+      const isPen = this.app.pointerType === 'pen';
+      const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
 
-    // Pen with tilt → use pencil azimuth; mouse/touch or vertical pen → UI angle
-    const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
-    // Tilt-based radius scaling only when real tilt data is available
-    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
-    const r = p.spawnRadius * (1 + tiltFactor * 2);
+      // Pen with tilt → use pencil azimuth; mouse/touch or vertical pen → UI angle
+      const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
+      // Tilt-based radius scaling only when real tilt data is available
+      const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
+      const r = p.spawnRadius * (1 + tiltFactor * 2);
 
-    this.sim.clearAgents();
-    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+      this.sim.clearAgents();
+      this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+      this._boidsActive = true;
+    }
     this._hoverSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
@@ -382,10 +386,7 @@ export class BoidBrush {
   /** Clear hover preview when pointer leaves canvas */
   onHoverEnd() {
     if (!this._ready) return;
-    if (this._hoverSpawned) {
-      this.sim.clearAgents();
-      this._hoverSpawned = false;
-    }
+    this._hoverSpawned = false;
   }
 
   /** Step the boid simulation during hover (no stamping).
@@ -403,15 +404,15 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
 
-    // If boids were already spawned during hover, keep them — skip re-spawn
-    if (this._hoverSpawned) {
-      this._hoverSpawned = false;
-    } else {
+    // If boids already exist from hover or a prior interaction, keep them.
+    if (!this._boidsActive) {
       let r = p.spawnRadius;
       if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
       this.sim.clearAgents();
       this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+      this._boidsActive = true;
     }
+    this._hoverSpawned = false;
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
@@ -518,12 +519,7 @@ export class BoidBrush {
       const layer = this.app.getActiveLayer();
       if (layer.dirty) this.app.compositeAllLayers();
     }
-    // Touch has no hover phase — clear boids on lift so they don't linger
-    if (this.app.pointerType === 'touch') {
-      this.sim.clearAgents();
-      this._hoverSpawned = false;
-    }
-    // Mouse/pen: boids keep tailing off via taper, fresh spawn on next hover
+    this._hoverSpawned = false;
   }
 
   configureSimulation(data, p) {
@@ -841,6 +837,7 @@ export class BoidBrush {
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
+    this._boidsActive = false;
     this._hoverSpawned = false;
   }
 }
