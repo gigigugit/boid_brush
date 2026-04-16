@@ -21,6 +21,13 @@ const WHEEL_ZOOM_OUT = 0.95;
 const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
+// UI taper length is expressed in 60 Hz frames; convert that reference count to seconds.
+const TAPER_FRAME_REFERENCE = 60;
+// Preserve at least one 60 Hz frame of release so a non-zero taper always renders a visible tail.
+const MIN_TAPER_DURATION = 1 / TAPER_FRAME_REFERENCE;
+// Clamp RAF deltas so taper timing stays stable across hitches and very high refresh displays.
+const MIN_FRAME_DT = 1 / 240;
+const MAX_FRAME_DT = 1 / 20;
 
 export class App {
   constructor() {
@@ -1915,7 +1922,7 @@ export class App {
     if (p.taperLength > 0) {
       this.isTapering = true;
       this.taperElapsed = 0;
-      this.taperDuration = Math.max(p.taperLength / 60, 1 / 60);
+      this.taperDuration = Math.max(p.taperLength / TAPER_FRAME_REFERENCE, MIN_TAPER_DURATION);
     }
   }
 
@@ -2142,7 +2149,7 @@ export class App {
   _frameLoop() {
     const now = performance.now();
     const elapsed = (now - this._startTime) / 1000;
-    const frameDt = Math.min(Math.max((now - this._lastFrameTime) / 1000, 1 / 240), 1 / 20);
+    const frameDt = Math.min(Math.max((now - this._lastFrameTime) / 1000, MIN_FRAME_DT), MAX_FRAME_DT);
     this._lastFrameTime = now;
     const brush = this.getCurrentBrush();
     const p = this.getP();
@@ -2156,7 +2163,7 @@ export class App {
         this.taperElapsed = 0;
         this.taperDuration = 0;
       } else {
-        brush.taperFrame(t, p, frameDt);
+        brush.taperFrame(t, p, frameDt, elapsed);
       }
     }
 

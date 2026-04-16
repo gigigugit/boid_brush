@@ -24,6 +24,13 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+// The taper UI never goes below 0.1, which keeps the curve remap well-behaved and avoids a near-step release.
+const MIN_TAPER_STRENGTH = 0.1;
+// Release/taper simulation stays on a tighter clamp than RAF timing so brush tails
+// settle smoothly without taking oversized physics steps after dropped frames.
+const MIN_SIM_DT = 1 / 240;
+const MAX_SIM_DT = 1 / 30;
+const MAX_PHYSICS_SUBSTEP_DT = 1 / 120;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -49,7 +56,7 @@ function hslToCSS(h, s, l) {
   return `hsl(${h.toFixed(1)},${s.toFixed(1)}%,${l.toFixed(1)}%)`;
 }
 
-function clamp01(v) {
+function clampToUnitRange(v) {
   return Math.max(0, Math.min(1, v));
 }
 
@@ -58,16 +65,16 @@ function mix(a, b, t) {
 }
 
 function smootherstep(t) {
-  const x = clamp01(t);
+  const x = clampToUnitRange(t);
   return x * x * x * (x * (x * 6 - 15) + 10);
 }
 
 function getTaperState(t, curve) {
-  const progress = clamp01(t);
-  const strength = Math.max(0.1, curve || 1);
+  const progress = clampToUnitRange(t);
+  const strength = Math.max(MIN_TAPER_STRENGTH, curve || 1);
   const shaped = strength >= 1
     ? 1 - Math.pow(1 - progress, 1 / strength)
-    : Math.pow(progress, 1 / Math.max(strength, 0.01));
+    : Math.pow(progress, 1 / strength);
   const release = smootherstep(shaped);
   return {
     progress,
@@ -744,7 +751,7 @@ export class BoidBrush {
     app.compositeAllLayers();
   }
 
-  taperFrame(t, p, dt = 1 / 60) {
+  taperFrame(t, p, dt = 1 / 60, elapsed = 0) {
     if (!this._ready) return;
     const app = this.app;
     const taper = getTaperState(t, p.taperCurve);
@@ -753,8 +760,8 @@ export class BoidBrush {
 
     // Step sim with a release envelope so the tail settles smoothly instead of
     // hard-cutting or drifting at full stroke energy after lift.
-    this.sim.writeParams(releaseP, app.leaderX, app.leaderY, (performance.now() - app._startTime) / 1000);
-    this.sim.step(Math.min(Math.max(dt, 1 / 240), 1 / 30));
+    this.sim.writeParams(releaseP, app.leaderX, app.leaderY, elapsed);
+    this.sim.step(Math.min(Math.max(dt, MIN_SIM_DT), MAX_SIM_DT));
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -1325,15 +1332,15 @@ export class AntBrush {
     app.compositeAllLayers();
   }
 
-  taperFrame(t, p, dt = 1 / 60) {
+  taperFrame(t, p, dt = 1 / 60, elapsed = 0) {
     if (!this._ready) return;
     const app = this.app;
     const taper = getTaperState(t, p.taperCurve);
     const curve = taper.envelope;
     const antP = this._buildAntParams(getReleaseSimParams(p, taper));
 
-    this.sim.writeParams(antP, app.leaderX, app.leaderY, (performance.now() - app._startTime) / 1000);
-    this.sim.step(Math.min(Math.max(dt, 1 / 240), 1 / 30));
+    this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
+    this.sim.step(Math.min(Math.max(dt, MIN_SIM_DT), MAX_SIM_DT));
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -2248,8 +2255,8 @@ export class BristleBrush {
     const curve = taper.envelope;
 
     // Step physics toward rest (bristles converge back)
-    const stepDt = Math.min(Math.max(dt, 1 / 240), 1 / 30);
-    const subSteps = 3;
+    const stepDt = Math.min(Math.max(dt, MIN_SIM_DT), MAX_SIM_DT);
+    const subSteps = Math.max(1, Math.ceil(stepDt / MAX_PHYSICS_SUBSTEP_DT));
     for (let s = 0; s < subSteps; s++) {
       this._stepPhysics(p, stepDt / subSteps);
     }
