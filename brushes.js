@@ -49,6 +49,49 @@ function hslToCSS(h, s, l) {
   return `hsl(${h.toFixed(1)},${s.toFixed(1)}%,${l.toFixed(1)}%)`;
 }
 
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function mix(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function smootherstep(t) {
+  const x = clamp01(t);
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+function getTaperState(t, curve) {
+  const progress = clamp01(t);
+  const strength = Math.max(0.1, curve || 1);
+  const shaped = strength >= 1
+    ? 1 - Math.pow(1 - progress, 1 / strength)
+    : Math.pow(progress, 1 / Math.max(strength, 0.01));
+  const release = smootherstep(shaped);
+  return {
+    progress,
+    release,
+    envelope: 1 - release,
+  };
+}
+
+function getReleaseSimParams(p, taper) {
+  const release = taper.release;
+  return Object.assign({}, p, {
+    seek: p.seek * (1 - release),
+    cohesion: p.cohesion * mix(1, 0.45, release),
+    separation: p.separation * mix(1, 0.65, release),
+    alignment: p.alignment * mix(1, 0.35, release),
+    jitter: p.jitter * mix(1, 0.45, release),
+    wander: p.wander * mix(1, 0.5, release),
+    flowField: p.flowField * mix(1, 0.5, release),
+    sensingStrength: p.sensingStrength * mix(1, 0.6, release),
+    maxSpeed: Math.max(0.05, p.maxSpeed * mix(1, 0.2, release)),
+    damping: Math.max(0.35, p.damping * mix(1, 0.55, release)),
+  });
+}
+
 // ---- Spawn shape generators (for JS-side simple/eraser line interpolation) ----
 export const SpawnShapes = {
   circle(c, r) {
@@ -701,13 +744,17 @@ export class BoidBrush {
     app.compositeAllLayers();
   }
 
-  taperFrame(t, p) {
+  taperFrame(t, p, dt = 1 / 60) {
     if (!this._ready) return;
     const app = this.app;
-    const curve = Math.pow(1 - t, p.taperCurve);
+    const taper = getTaperState(t, p.taperCurve);
+    const curve = taper.envelope;
+    const releaseP = getReleaseSimParams(p, taper);
 
-    // Step sim without leader tracking (they drift)
-    this.sim.step(1 / 60);
+    // Step sim with a release envelope so the tail settles smoothly instead of
+    // hard-cutting or drifting at full stroke energy after lift.
+    this.sim.writeParams(releaseP, app.leaderX, app.leaderY, (performance.now() - app._startTime) / 1000);
+    this.sim.step(Math.min(Math.max(dt, 1 / 240), 1 / 30));
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -1278,12 +1325,15 @@ export class AntBrush {
     app.compositeAllLayers();
   }
 
-  taperFrame(t, p) {
+  taperFrame(t, p, dt = 1 / 60) {
     if (!this._ready) return;
     const app = this.app;
-    const curve = Math.pow(1 - t, p.taperCurve);
+    const taper = getTaperState(t, p.taperCurve);
+    const curve = taper.envelope;
+    const antP = this._buildAntParams(getReleaseSimParams(p, taper));
 
-    this.sim.step(1 / 60);
+    this.sim.writeParams(antP, app.leaderX, app.leaderY, (performance.now() - app._startTime) / 1000);
+    this.sim.step(Math.min(Math.max(dt, 1 / 240), 1 / 30));
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -2191,14 +2241,18 @@ export class BristleBrush {
     app.compositeAllLayers();
   }
 
-  taperFrame(t, p) {
+  taperFrame(t, p, dt = 1 / 60) {
     if (this._count === 0) return;
     const app = this.app;
-    const curve = Math.pow(1 - t, p.taperCurve);
+    const taper = getTaperState(t, p.taperCurve);
+    const curve = taper.envelope;
 
     // Step physics toward rest (bristles converge back)
-    const dt = 1 / 60;
-    this._stepPhysics(p, dt);
+    const stepDt = Math.min(Math.max(dt, 1 / 240), 1 / 30);
+    const subSteps = 3;
+    for (let s = 0; s < subSteps; s++) {
+      this._stepPhysics(p, stepDt / subSteps);
+    }
 
     // Push history and update EMA-smoothed positions
     this._pushHistory(p.bristleSmoothing);

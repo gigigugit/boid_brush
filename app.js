@@ -104,8 +104,8 @@ export class App {
 
     // Taper state
     this.isTapering = false;
-    this.taperFrame = 0;
-    this.taperTotal = 0;
+    this.taperElapsed = 0;
+    this.taperDuration = 0;
     this.strokeFrame = 0;
 
     // Params
@@ -168,6 +168,7 @@ export class App {
     // Frame loop
     this._rafId = null;
     this._startTime = performance.now();
+    this._lastFrameTime = this._startTime;
 
     // Toast timer
     this._toastTimer = null;
@@ -1089,6 +1090,8 @@ export class App {
     this.simulation.paused = false;
     this.isDrawing = false;
     this.isTapering = false;
+    this.taperElapsed = 0;
+    this.taperDuration = 0;
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
   }
@@ -1795,6 +1798,8 @@ export class App {
     this.isDrawing = true;
     this.undoPushedThisStroke = false;
     this.isTapering = false;
+    this.taperElapsed = 0;
+    this.taperDuration = 0;
     this.strokeFrame = 0;
 
     const brush = this.getCurrentBrush();
@@ -1909,8 +1914,8 @@ export class App {
     const p = this.getP();
     if (p.taperLength > 0) {
       this.isTapering = true;
-      this.taperFrame = 0;
-      this.taperTotal = p.taperLength;
+      this.taperElapsed = 0;
+      this.taperDuration = Math.max(p.taperLength / 60, 1 / 60);
     }
   }
 
@@ -2135,18 +2140,23 @@ export class App {
   // ========================================================
 
   _frameLoop() {
-    const elapsed = (performance.now() - this._startTime) / 1000;
+    const now = performance.now();
+    const elapsed = (now - this._startTime) / 1000;
+    const frameDt = Math.min(Math.max((now - this._lastFrameTime) / 1000, 1 / 240), 1 / 20);
+    this._lastFrameTime = now;
     const brush = this.getCurrentBrush();
     const p = this.getP();
 
     // Taper pass — after stroke ends
     if (this.isTapering && brush && brush.taperFrame) {
-      this.taperFrame++;
-      const t = this.taperFrame / this.taperTotal;
+      this.taperElapsed = Math.min(this.taperElapsed + frameDt, this.taperDuration);
+      const t = this.taperDuration > 0 ? this.taperElapsed / this.taperDuration : 1;
       if (t >= 1) {
         this.isTapering = false;
+        this.taperElapsed = 0;
+        this.taperDuration = 0;
       } else {
-        brush.taperFrame(t, p);
+        brush.taperFrame(t, p, frameDt);
       }
     }
 
