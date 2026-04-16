@@ -317,6 +317,21 @@ export class BoidBrush {
     }
   }
 
+  /** Clear existing agents and spawn a fresh batch at (x, y).
+   *  Applies tilt-based angle and radius when real pen tilt data is available.
+   *  Pass pressure to enable pressure→radius scaling; omit/null to skip it. */
+  _spawnBoidsAt(x, y, p, pressure) {
+    const alt = this.app.altitude;
+    const isPen = this.app.pointerType === 'pen';
+    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+    const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
+    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
+    let r = p.spawnRadius * (1 + tiltFactor * 2);
+    if (pressure != null && p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+    this.sim.clearAgents();
+    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+  }
+
   /** Capture canvas luminance and upload to WASM for pixel sensing */
   _uploadSensing(p) {
     const imgData = this.app.buildSensingData();
@@ -354,38 +369,51 @@ export class BoidBrush {
     this._sensingUploaded = true;
   }
 
-  /** Hover: spawn boids once at hover position, then let onHoverFrame step
-   *  the simulation so boids flock exactly as they do during drawing.
-   *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
+  /** Hover: behaviour controlled by spawnEventHover parameter.
+   *  'spawn'   – spawn once on first hover, then let onHoverFrame step the sim.
+   *  'respawn' – clear and re-spawn on every hover-move (boids always restart at cursor).
+   *  'cull'    – clear boids while hovering (no hover preview).
+   *  'none'    – do nothing on hover. */
   onHover(x, y) {
     if (!this._ready) return;
-    if (this._hoverSpawned) return; // already spawned — sim runs via onHoverFrame
-
     const p = this.app.getP();
-    const alt = this.app.altitude;
-    const isPen = this.app.pointerType === 'pen';
-    const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+    const action = p.spawnEventHover;
 
-    // Pen with tilt → use pencil azimuth; mouse/touch or vertical pen → UI angle
-    const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
-    // Tilt-based radius scaling only when real tilt data is available
-    const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
-    const r = p.spawnRadius * (1 + tiltFactor * 2);
+    if (action === 'none') return;
 
-    this.sim.clearAgents();
-    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+    if (action === 'cull') {
+      this.sim.clearAgents();
+      this._hoverSpawned = false;
+      return;
+    }
+
+    // 'spawn': only spawn once (guard prevents re-spawn on every move event)
+    if (action === 'spawn' && this._hoverSpawned) return;
+
+    // 'spawn' (first time) or 'respawn' (every hover move): clear + spawn
+    this._spawnBoidsAt(x, y, p);
     this._hoverSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
   }
 
-  /** Clear hover preview when pointer leaves canvas */
+  /** Pointer leaves canvas – behaviour controlled by spawnEventUnhover.
+   *  'cull'    – clear boids (default).
+   *  'respawn' – clear and re-spawn at last hover position.
+   *  'spawn'   – keep existing boids running.
+   *  'none'    – keep existing boids running. */
   onHoverEnd() {
     if (!this._ready) return;
-    if (this._hoverSpawned) {
-      this.sim.clearAgents();
-      this._hoverSpawned = false;
+    const p = this.app.getP();
+    const action = p.spawnEventUnhover;
+
+    if (action === 'cull') {
+      if (this._hoverSpawned) this.sim.clearAgents();
+    } else if (action === 'respawn') {
+      this._spawnBoidsAt(this._lastSpawnX, this._lastSpawnY, p);
     }
+    // 'spawn' / 'none': keep boids alive
+    this._hoverSpawned = false;
   }
 
   /** Step the boid simulation during hover (no stamping).
@@ -402,16 +430,22 @@ export class BoidBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    const action = p.spawnEventTouch;
 
-    // If boids were already spawned during hover, keep them — skip re-spawn
-    if (this._hoverSpawned) {
-      this._hoverSpawned = false;
-    } else {
-      let r = p.spawnRadius;
-      if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+    if (action === 'cull') {
       this.sim.clearAgents();
-      this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+    } else if (action === 'none') {
+      // Keep whatever boids currently exist (hover boids or none)
+    } else if (action === 'respawn') {
+      // Always clear and spawn fresh regardless of hover state
+      this._spawnBoidsAt(x, y, p, pressure);
+    } else {
+      // 'spawn': keep hover boids if they exist, otherwise spawn fresh
+      if (!this._hoverSpawned) {
+        this._spawnBoidsAt(x, y, p, pressure);
+      }
     }
+    this._hoverSpawned = false;
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
@@ -518,12 +552,17 @@ export class BoidBrush {
       const layer = this.app.getActiveLayer();
       if (layer.dirty) this.app.compositeAllLayers();
     }
-    // Touch has no hover phase — clear boids on lift so they don't linger
-    if (this.app.pointerType === 'touch') {
+
+    const p = this.app.getP();
+    const action = p.spawnEventUntouch;
+
+    if (action === 'cull') {
       this.sim.clearAgents();
       this._hoverSpawned = false;
+    } else if (action === 'respawn') {
+      this._spawnBoidsAt(x, y, p);
     }
-    // Mouse/pen: boids keep tailing off via taper, fresh spawn on next hover
+    // 'spawn' / 'none': keep boids running (pen/mouse taper, etc.)
   }
 
   configureSimulation(data, p) {
