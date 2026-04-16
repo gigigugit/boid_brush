@@ -73,7 +73,7 @@ function getTaperState(t, curve) {
   const progress = clampToUnitRange(t);
   const strength = Math.max(MIN_TAPER_STRENGTH, curve || 1);
   const shaped = strength >= 1
-    ? 1 - Math.pow(1 - progress, 1 / strength)
+    ? 1 - Math.pow(1 - progress, strength)
     : Math.pow(progress, 1 / strength);
   const release = smootherstep(shaped);
   return {
