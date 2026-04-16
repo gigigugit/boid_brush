@@ -418,8 +418,7 @@ export class BoidBrush {
   onHoverEnd() {
     if (!this._ready) return;
     const p = this.app.getP();
-    this._applyLifecycleAction(p.boidUnhoverAction, p, this.app.leaderX, this.app.leaderY, 1, true);
-    this._hoverSpawned = false;
+    this._hoverSpawned = this._applyLifecycleAction(p.boidUnhoverAction, p, this.app.leaderX, this.app.leaderY, 1, true);
   }
 
   /** Step the boid simulation during hover (no stamping).
@@ -546,8 +545,7 @@ export class BoidBrush {
       if (layer.dirty) this.app.compositeAllLayers();
     }
     const p = this.app.getP();
-    this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
-    this._hoverSpawned = false;
+    this._hoverSpawned = this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
   }
 
   configureSimulation(data, p) {
