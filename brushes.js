@@ -282,7 +282,7 @@ export class BoidBrush {
     this._lastStampY = [];
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
-    this._boidsActive = false;
+    this._boidsSpawned = false;
     // Hover state — Apple Pencil hover preview
     this._hoverSpawned = false;
     // Flat-stroke (wet buffer) canvases
@@ -360,9 +360,9 @@ export class BoidBrush {
    *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
   onHover(x, y) {
     if (!this._ready) return;
-    if (this._hoverSpawned) return; // already hovering — sim runs via onHoverFrame
+    if (this._hoverSpawned) return; // hover state already entered — sim runs via onHoverFrame
 
-    if (!this._boidsActive) {
+    if (!this._boidsSpawned) {
       const p = this.app.getP();
       const alt = this.app.altitude;
       const isPen = this.app.pointerType === 'pen';
@@ -375,7 +375,7 @@ export class BoidBrush {
       const r = p.spawnRadius * (1 + tiltFactor * 2);
 
       this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
-      this._boidsActive = true;
+      this._boidsSpawned = true;
     }
     this._hoverSpawned = true;
     this._lastSpawnX = x;
@@ -404,11 +404,11 @@ export class BoidBrush {
     const p = this.app.getP();
 
     // If boids already exist from hover or a prior interaction, keep them.
-    if (!this._boidsActive) {
+    if (!this._boidsSpawned) {
       let r = p.spawnRadius;
       if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
       this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
-      this._boidsActive = true;
+      this._boidsSpawned = true;
     }
     this._hoverSpawned = false;
     this._lastStampX = [];
@@ -835,7 +835,7 @@ export class BoidBrush {
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
-    this._boidsActive = false;
+    this._boidsSpawned = false;
     this._hoverSpawned = false;
   }
 }
