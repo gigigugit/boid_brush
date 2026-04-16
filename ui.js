@@ -77,6 +77,36 @@ export function buildSidebar(app) {
       <label>Press→Radius <input type="checkbox" id="pressureSpawnRadius"></label>
     </div>
 
+    <!-- Respawn Events (boid only) -->
+    <div class="section-header closed" data-brushes="boid" data-section="respawn">Respawn <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid">
+      <span class="slider-desc">Choose what happens to boids at each interaction event</span>
+      <label>On Hover <select id="spawnEventHover">
+        <option value="spawn">Spawn</option>
+        <option value="respawn">Respawn</option>
+        <option value="cull">Cull</option>
+        <option value="none">None</option>
+      </select></label>
+      <label>On Touch <select id="spawnEventTouch">
+        <option value="spawn">Spawn</option>
+        <option value="respawn">Respawn</option>
+        <option value="cull">Cull</option>
+        <option value="none">None</option>
+      </select></label>
+      <label>On Untouch <select id="spawnEventUntouch">
+        <option value="cull">Cull</option>
+        <option value="respawn">Respawn</option>
+        <option value="spawn">Spawn</option>
+        <option value="none">None</option>
+      </select></label>
+      <label>On Unhover <select id="spawnEventUnhover">
+        <option value="cull">Cull</option>
+        <option value="respawn">Respawn</option>
+        <option value="spawn">Spawn</option>
+        <option value="none">None</option>
+      </select></label>
+    </div>
+
     <!-- Swarm (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
