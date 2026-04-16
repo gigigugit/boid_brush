@@ -178,6 +178,29 @@ export function buildSidebar(app) {
       <label>Pencil Angle <input type="checkbox" id="pencilAngle" checked></label>
       <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle &amp; hover spawn</span>
       ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
+      <div data-brushes="boid">
+        <label>On Hover <select id="boidHoverAction">
+          <option value="spawn" selected>Spawn</option>
+          <option value="cull">Cull</option>
+          <option value="persist">Persist</option>
+        </select></label>
+        <label>On Touch <select id="boidTouchAction">
+          <option value="spawn" selected>Spawn</option>
+          <option value="cull">Cull</option>
+          <option value="persist">Persist</option>
+        </select></label>
+        <label>On Untouch <select id="boidUntouchAction">
+          <option value="spawn">Spawn</option>
+          <option value="cull">Cull</option>
+          <option value="persist" selected>Persist</option>
+        </select></label>
+        <label>On Unhover <select id="boidUnhoverAction">
+          <option value="spawn">Spawn</option>
+          <option value="cull">Cull</option>
+          <option value="persist" selected>Persist</option>
+        </select></label>
+        <span class="slider-desc">Spawn ensures a swarm exists, cull clears it, persist leaves the current boids alone</span>
+      </div>
     </div>
 
     <!-- Bristle Variance (bristle only) -->

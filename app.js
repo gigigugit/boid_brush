@@ -795,6 +795,10 @@ export class App {
       spawnAngle: (val('spawnAngle') || 0) * Math.PI / 180,
       spawnJitter: val('spawnJitter') / 100,
       pressureSpawnRadius: chk('pressureSpawnRadius'),
+      boidHoverAction: sel('boidHoverAction') || 'spawn',
+      boidTouchAction: sel('boidTouchAction') || 'spawn',
+      boidUntouchAction: sel('boidUntouchAction') || 'persist',
+      boidUnhoverAction: sel('boidUnhoverAction') || 'persist',
       // Swarm
       count: val('count') || 60,
       // Forces
