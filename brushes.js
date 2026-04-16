@@ -374,7 +374,6 @@ export class BoidBrush {
       const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
       const r = p.spawnRadius * (1 + tiltFactor * 2);
 
-      this.sim.clearAgents();
       this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
       this._boidsActive = true;
     }
@@ -408,7 +407,6 @@ export class BoidBrush {
     if (!this._boidsActive) {
       let r = p.spawnRadius;
       if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
-      this.sim.clearAgents();
       this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
       this._boidsActive = true;
     }
