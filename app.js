@@ -1919,8 +1919,11 @@ export class App {
   }
 
   _onPointerLeave(e) {
-    // Clear hover state when pointer leaves canvas (e.g. Apple Pencil lifts away)
+    // Clear hover state when a hover-capable pointer leaves canvas.
+    // Touch has no hover phase, so letting pointerleave run unhover logic after
+    // touch-up would incorrectly override the configured untouch action.
     if (this.isDrawing) return;
+    if ((e.pointerType || this.pointerType) === 'touch') return;
     const brush = this.getCurrentBrush();
     if (brush && brush.onHoverEnd) brush.onHoverEnd();
   }
