@@ -199,7 +199,7 @@ export function buildSidebar(app) {
           <option value="cull">Cull</option>
           <option value="persist" selected>Persist</option>
         </select></label>
-        <span class="slider-desc">Spawn ensures a swarm exists, cull clears it, persist leaves the current boids alone</span>
+        <span class="slider-desc">Spawn ensures a swarm exists, cull clears it, persist keeps the current boids alive</span>
       </div>
     </div>
 

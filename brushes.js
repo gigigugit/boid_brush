@@ -438,6 +438,7 @@ export class BoidBrush {
     const p = this.app.getP();
 
     this._applyLifecycleAction(p.boidTouchAction, p, x, y, pressure, false);
+    // Touch-down ends any prior hover preview; the stroke now owns agent motion.
     this._hoverSpawned = false;
     this._lastStampX = [];
     this._lastStampY = [];
