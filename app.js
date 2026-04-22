@@ -795,6 +795,10 @@ export class App {
       spawnAngle: (val('spawnAngle') || 0) * Math.PI / 180,
       spawnJitter: val('spawnJitter') / 100,
       pressureSpawnRadius: chk('pressureSpawnRadius'),
+      boidHoverAction: sel('boidHoverAction') || 'spawn',
+      boidTouchAction: sel('boidTouchAction') || 'spawn',
+      boidUntouchAction: sel('boidUntouchAction') || 'persist',
+      boidUnhoverAction: sel('boidUnhoverAction') || 'persist',
       // Swarm
       count: val('count') || 60,
       // Forces
@@ -1915,8 +1919,11 @@ export class App {
   }
 
   _onPointerLeave(e) {
-    // Clear hover state when pointer leaves canvas (e.g. Apple Pencil lifts away)
+    // Clear hover state when a hover-capable pointer leaves canvas.
+    // Touch has no hover phase, so letting pointerleave run unhover logic after
+    // touch-up would incorrectly override the configured untouch action.
     if (this.isDrawing) return;
+    if ((e.pointerType || this.pointerType) === 'touch') return;
     const brush = this.getCurrentBrush();
     if (brush && brush.onHoverEnd) brush.onHoverEnd();
   }

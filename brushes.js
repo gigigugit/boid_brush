@@ -355,36 +355,70 @@ export class BoidBrush {
     this._sensingUploaded = true;
   }
 
+  _hasAgents() {
+    if (!this._ready || !this.sim) return false;
+    return this.sim.readAgents().count > 0;
+  }
+
+  _clearAgents() {
+    if (!this.sim) return;
+    this.sim.clearAgents();
+    this._boidsSpawned = false;
+  }
+
+  _spawnAgents(x, y, p, pressure = 1, useHoverAngle = false) {
+    if (!this.sim) return false;
+    let spawnAngle = p.spawnAngle;
+    let r = p.spawnRadius;
+    if (useHoverAngle) {
+      const alt = this.app.altitude;
+      const isPen = this.app.pointerType === 'pen';
+      const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
+      spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
+      const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
+      r *= 1 + tiltFactor * 2;
+    } else if (p.pressureSpawnRadius) {
+      r *= 0.3 + 0.7 * pressure;
+    }
+    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+    this._boidsSpawned = true;
+    this._lastSpawnX = x;
+    this._lastSpawnY = y;
+    return true;
+  }
+
+  _applyLifecycleAction(action, p, x, y, pressure = 1, useHoverAngle = false) {
+    if (action === 'cull') {
+      this._clearAgents();
+      return false;
+    }
+    const hasAgents = this._hasAgents();
+    if (action === 'spawn' && !hasAgents) {
+      return this._spawnAgents(x, y, p, pressure, useHoverAngle);
+    }
+    this._boidsSpawned = hasAgents;
+    if (hasAgents && Number.isFinite(x) && Number.isFinite(y)) {
+      this._lastSpawnX = x;
+      this._lastSpawnY = y;
+    }
+    return hasAgents;
+  }
+
   /** Hover: spawn boids once at hover position, then let onHoverFrame step
    *  the simulation so boids flock exactly as they do during drawing.
    *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
   onHover(x, y) {
     if (!this._ready) return;
     if (this._hoverSpawned) return; // hover state already entered — sim runs via onHoverFrame
-
-    if (!this._boidsSpawned) {
-      const p = this.app.getP();
-      const alt = this.app.altitude;
-      const isPen = this.app.pointerType === 'pen';
-      const hasTilt = isPen && alt < Math.PI / 2 - TILT_THRESHOLD;
-
-      // Pen with tilt → use pencil azimuth; mouse/touch or vertical pen → UI angle
-      const spawnAngle = hasTilt ? this.app.azimuth : p.spawnAngle;
-      // Tilt-based radius scaling only when real tilt data is available
-      const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
-      const r = p.spawnRadius * (1 + tiltFactor * 2);
-
-      this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
-      this._boidsSpawned = true;
-    }
-    this._hoverSpawned = true;
-    this._lastSpawnX = x;
-    this._lastSpawnY = y;
+    const p = this.app.getP();
+    this._hoverSpawned = this._applyLifecycleAction(p.boidHoverAction, p, x, y, 1, true);
   }
 
   /** Clear hover preview when pointer leaves canvas */
   onHoverEnd() {
     if (!this._ready) return;
+    const p = this.app.getP();
+    this._applyLifecycleAction(p.boidUnhoverAction, p, this.app.leaderX, this.app.leaderY, 1, true);
     this._hoverSpawned = false;
   }
 
@@ -403,13 +437,8 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
 
-    // If boids already exist from hover or a prior interaction, keep them.
-    if (!this._boidsSpawned) {
-      let r = p.spawnRadius;
-      if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
-      this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
-      this._boidsSpawned = true;
-    }
+    this._applyLifecycleAction(p.boidTouchAction, p, x, y, pressure, false);
+    // Touch-down ends any prior hover preview; the stroke now owns agent motion.
     this._hoverSpawned = false;
     this._lastStampX = [];
     this._lastStampY = [];
@@ -517,6 +546,8 @@ export class BoidBrush {
       const layer = this.app.getActiveLayer();
       if (layer.dirty) this.app.compositeAllLayers();
     }
+    const p = this.app.getP();
+    this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
     this._hoverSpawned = false;
   }
 
