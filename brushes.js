@@ -2757,7 +2757,8 @@ export class FluidBrush {
     const steps = Math.max(1, Math.ceil(dt * 90));
     const subDt = dt / steps;
     const cellSize = Math.max(8, p.fluidBrushRadius * 0.45);
-    const damping = Math.max(0, 1 - (1 - p.fluidVelocityDamping) * subDt * 60);
+    const damping = Math.pow(Math.max(0.0001, p.fluidVelocityDamping), subDt * 60);
+    const evaporation = Math.max(0, 1 - p.fluidEvaporation * subDt * 60);
 
     for (let step = 0; step < steps; step++) {
       const cells = new Map();
@@ -2807,7 +2808,7 @@ export class FluidBrush {
         }
         part.prevX = prevX;
         part.prevY = prevY;
-        part.wetness *= Math.max(0, 1 - p.fluidEvaporation * subDt * 60);
+        part.wetness *= evaporation;
         if (part.wetness < 0.025) this._particles.splice(i, 1);
       }
     }

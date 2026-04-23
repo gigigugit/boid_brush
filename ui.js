@@ -226,7 +226,7 @@ export function buildSidebar(app) {
       ${sliderRow('fluidParticleLimit', 'Drops', 20, 600, 220, null, 'Maximum wet particles kept alive at once')}
       ${sliderRow('fluidEmitRate', 'Emit', 1, 40, 12, null, 'How much fresh fluid the brush lays down per sample')}
       ${sliderRow('fluidBrushRadius', 'Brush Radius', 4, 120, 38, null, 'Area where the brush drags existing fluid')}
-      ${sliderRow('fluidBrushForce', 'Brush Force', 0, 200, 85, v => (v / 100).toFixed(2), 'How strongly brush motion pulls nearby wet paint')}
+      ${sliderRow('fluidBrushForce', 'Brush Force', 0, 200, 85, v => (v / 100).toFixed(2) + '×', 'How strongly brush motion pulls nearby wet paint')}
       ${sliderRow('fluidFlow', 'Flow Speed', 10, 200, 100, v => (v / 100).toFixed(2), 'Overall advection speed of the fluid')}
       ${sliderRow('fluidViscosity', 'Viscosity', 0, 100, 45, v => (v / 100).toFixed(2), 'How much nearby droplet velocities blend into a smoother flow')}
       ${sliderRow('fluidVelocityDamping', 'Damping', 50, 100, 88, v => (v / 100).toFixed(2), 'How quickly moving fluid slows down')}
