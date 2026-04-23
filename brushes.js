@@ -2757,6 +2757,7 @@ export class FluidBrush {
     const steps = Math.max(1, Math.ceil(dt * 90));
     const subDt = dt / steps;
     const cellSize = Math.max(8, p.fluidBrushRadius * 0.45);
+    const damping = Math.max(0, 1 - (1 - p.fluidVelocityDamping) * subDt * 60);
 
     for (let step = 0; step < steps; step++) {
       const cells = new Map();
@@ -2790,8 +2791,8 @@ export class FluidBrush {
         }
         part.vx += (Math.random() - 0.5) * p.fluidSpread * 0.035;
         part.vy += (Math.random() - 0.5) * p.fluidSpread * 0.035;
-        part.vx *= Math.max(0, 1 - (1 - p.fluidVelocityDamping) * subDt * 60);
-        part.vy *= Math.max(0, 1 - (1 - p.fluidVelocityDamping) * subDt * 60);
+        part.vx *= damping;
+        part.vy *= damping;
         const prevX = part.x;
         const prevY = part.y;
         part.x += part.vx * p.fluidFlow * subDt * 60;
