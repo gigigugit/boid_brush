@@ -1,5 +1,5 @@
 // =============================================================================
-// brushes.js — Boid, Ant, Bristle, Simple, and Eraser brush engines
+// brushes.js — Boid, Ant, Bristle, Fluid, Simple, and Eraser brush engines
 //
 // Each brush implements: onDown(x,y,pressure), onMove(x,y,pressure),
 // onUp(x,y), onFrame(elapsed), taperFrame(t,p), drawOverlay(ctx,p),
@@ -199,6 +199,27 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
 
 function _signedDistanceToLine(px, py, ax, ay, bx, by) {
   return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+}
+
+function _sampleTextureFlowVector(app, x, y, texScale) {
+  const texW = app._canvasTextureW;
+  const texH = app._canvasTextureH;
+  const tex = app._canvasTextureData;
+  if (!tex || texW <= 0 || texH <= 0 || texScale <= 0) return { x: 0, y: 0 };
+
+  const cx = x / texScale;
+  const cy = y / texScale;
+  const ix = ((Math.floor(cx) % texW) + texW) % texW;
+  const iy = ((Math.floor(cy) % texH) + texH) % texH;
+  const ixL = ((ix - 1) % texW + texW) % texW;
+  const ixR = (ix + 1) % texW;
+  const iyU = ((iy - 1) % texH + texH) % texH;
+  const iyD = (iy + 1) % texH;
+  const gx = tex[iy * texW + ixR] - tex[iy * texW + ixL];
+  const gy = tex[iyD * texW + ix] - tex[iyU * texW + ix];
+  const len = Math.hypot(gx, gy);
+  if (len < 1e-3) return { x: 0, y: 0 };
+  return { x: -gx / len, y: -gy / len };
 }
 
 function _applySimulationGuides(brush, p, read) {
@@ -2599,6 +2620,323 @@ export class SimpleBrush {
   drawOverlay() { /* nothing */ }
   getStatusInfo() { return 'Simple'; }
   deactivate() { this._active = false; this._flatActive = false; }
+}
+
+// =============================================================================
+// FLUID BRUSH — Particle-based wet paint dragged by the brush
+// =============================================================================
+
+export class FluidBrush {
+  constructor(app) {
+    this.app = app;
+    this._particles = [];
+    this._active = false;
+    this._lastX = null;
+    this._lastY = null;
+    this._lastFrameElapsed = null;
+    this._blurCanvas = null;
+    this._blurCtx = null;
+    this._blurTmpCanvas = null;
+    this._blurTmpCtx = null;
+    this._blurStrokeCanvas = null;
+    this._blurStrokeCtx = null;
+  }
+
+  onDown(x, y, pressure) {
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    this._active = true;
+    this._lastX = x;
+    this._lastY = y;
+    this._lastFrameElapsed = null;
+    this.app.strokeFrame = 0;
+    this._injectAt(x, y, pressure, 0, 0, true);
+  }
+
+  onMove(x, y, pressure) {
+    if (this._lastX == null || this._lastY == null) {
+      this._lastX = x;
+      this._lastY = y;
+      return;
+    }
+    const dx = x - this._lastX;
+    const dy = y - this._lastY;
+    const dist = Math.hypot(dx, dy);
+    const p = this.app.getP();
+    const step = Math.max(2, p.fluidBrushRadius * 0.3);
+    const n = Math.max(1, Math.ceil(dist / step));
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      this._injectAt(
+        this._lastX + dx * t,
+        this._lastY + dy * t,
+        pressure,
+        dx / n,
+        dy / n
+      );
+    }
+    this._lastX = x;
+    this._lastY = y;
+  }
+
+  onUp() {
+    this._active = false;
+    this._lastX = null;
+    this._lastY = null;
+  }
+
+  onFrame(elapsed) {
+    this._step(elapsed);
+  }
+
+  onHoverFrame(elapsed) {
+    this._step(elapsed);
+  }
+
+  taperFrame() {
+    // Fluid particles keep moving in onHoverFrame after stroke end.
+  }
+
+  _injectAt(x, y, pressure, dx, dy, forceStamp = false) {
+    const p = this.app.getP();
+    const radius = Math.max(4, p.fluidBrushRadius);
+    const emit = Math.max(1, Math.round(p.fluidEmitRate * (0.35 + pressure * 0.65)));
+    const pushX = dx * p.fluidBrushForce * 0.12;
+    const pushY = dy * p.fluidBrushForce * 0.12;
+
+    for (let i = 0; i < this._particles.length; i++) {
+      const part = this._particles[i];
+      const ox = part.x - x;
+      const oy = part.y - y;
+      const d = Math.hypot(ox, oy);
+      if (d > radius || d < 1e-4) continue;
+      const falloff = 1 - d / radius;
+      const swirl = p.fluidSpread * 0.06 * falloff;
+      part.vx += pushX * falloff + (-oy / d) * swirl;
+      part.vy += pushY * falloff + (ox / d) * swirl;
+      part.wetness = Math.min(1, part.wetness + 0.02 * falloff);
+      part.pressure = Math.max(part.pressure || 0, pressure);
+    }
+
+    const spread = radius * 0.35;
+    const layer = this.app.getActiveLayer();
+    for (let i = 0; i < emit; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const mag = Math.sqrt(Math.random()) * spread;
+      this._particles.push({
+        x: x + Math.cos(ang) * mag,
+        y: y + Math.sin(ang) * mag,
+        vx: pushX + (Math.random() - 0.5) * p.fluidSpread * 0.18,
+        vy: pushY + (Math.random() - 0.5) * p.fluidSpread * 0.18,
+        wetness: 0.55 + Math.random() * 0.45,
+        size: 0.75 + Math.random() * 0.7,
+        pressure,
+        color: p.color,
+        layer,
+      });
+    }
+
+    const overflow = this._particles.length - p.fluidParticleLimit;
+    if (overflow > 0) this._particles.splice(0, overflow);
+    if (forceStamp) this._stampFrame(p);
+  }
+
+  _step(elapsed) {
+    if (!this._particles.length) {
+      this._lastFrameElapsed = elapsed;
+      return;
+    }
+    let dt = this._lastFrameElapsed == null ? 1 / 60 : elapsed - this._lastFrameElapsed;
+    this._lastFrameElapsed = elapsed;
+    if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
+    dt = Math.min(dt, 0.05);
+
+    const p = this.app.getP();
+    const steps = Math.max(1, Math.ceil(dt * 90));
+    const subDt = dt / steps;
+    const cellSize = Math.max(8, p.fluidBrushRadius * 0.45);
+
+    for (let step = 0; step < steps; step++) {
+      const cells = new Map();
+      for (let i = 0; i < this._particles.length; i++) {
+        const part = this._particles[i];
+        const key = `${Math.floor(part.x / cellSize)},${Math.floor(part.y / cellSize)}`;
+        let cell = cells.get(key);
+        if (!cell) {
+          cell = { vx: 0, vy: 0, count: 0 };
+          cells.set(key, cell);
+        }
+        cell.vx += part.vx;
+        cell.vy += part.vy;
+        cell.count++;
+      }
+
+      for (let i = this._particles.length - 1; i >= 0; i--) {
+        const part = this._particles[i];
+        const key = `${Math.floor(part.x / cellSize)},${Math.floor(part.y / cellSize)}`;
+        const cell = cells.get(key);
+        if (cell && cell.count > 0) {
+          const avx = cell.vx / cell.count;
+          const avy = cell.vy / cell.count;
+          part.vx += (avx - part.vx) * p.fluidViscosity * 0.12;
+          part.vy += (avy - part.vy) * p.fluidViscosity * 0.12;
+        }
+        if (p.canvasTextureEnabled && p.fluidTextureFollow > 0) {
+          const flow = _sampleTextureFlowVector(this.app, part.x, part.y, p.canvasTextureScale);
+          part.vx += flow.x * p.fluidTextureFollow * 0.7;
+          part.vy += flow.y * p.fluidTextureFollow * 0.7;
+        }
+        part.vx += (Math.random() - 0.5) * p.fluidSpread * 0.035;
+        part.vy += (Math.random() - 0.5) * p.fluidSpread * 0.035;
+        part.vx *= Math.max(0, 1 - (1 - p.fluidVelocityDamping) * subDt * 60);
+        part.vy *= Math.max(0, 1 - (1 - p.fluidVelocityDamping) * subDt * 60);
+        const prevX = part.x;
+        const prevY = part.y;
+        part.x += part.vx * p.fluidFlow * subDt * 60;
+        part.y += part.vy * p.fluidFlow * subDt * 60;
+        if (part.x < 0 || part.x > this.app.W) {
+          part.x = _clamp(part.x, 0, this.app.W);
+          part.vx *= -0.28;
+        }
+        if (part.y < 0 || part.y > this.app.H) {
+          part.y = _clamp(part.y, 0, this.app.H);
+          part.vy *= -0.28;
+        }
+        part.prevX = prevX;
+        part.prevY = prevY;
+        part.wetness *= Math.max(0, 1 - p.fluidEvaporation * subDt * 60);
+        if (part.wetness < 0.025) this._particles.splice(i, 1);
+      }
+    }
+
+    this._stampFrame(p);
+  }
+
+  _stampFrame(p) {
+    if (!this._particles.length) return;
+    const blurEnabled = p.trailBlur > 0;
+    const blurCtx = blurEnabled ? this._prepareBlurFrame() : null;
+    const touched = new Set();
+
+    for (let i = 0; i < this._particles.length; i++) {
+      const part = this._particles[i];
+      if (!part.layer || !this.app.layers.includes(part.layer)) continue;
+      const ctx = part.layer.ctx;
+      touched.add(part.layer);
+      const pressureScale = p.pressureSize ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
+      const opacityScale = p.pressureOpacity ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
+      const size = Math.max(1, p.stampSize * pressureScale * part.size * (0.45 + part.wetness * 0.75));
+      const opacity = Math.min(1, p.stampOpacity * p.fluidDeposit * part.wetness * opacityScale);
+      const fromX = part.prevX ?? part.x;
+      const fromY = part.prevY ?? part.y;
+      const dx = part.x - fromX;
+      const dy = part.y - fromY;
+      const dist = Math.hypot(dx, dy);
+      const step = Math.max(1, size * 0.28);
+      const n = Math.max(1, Math.ceil(dist / step));
+      for (let j = 1; j <= n; j++) {
+        const t = j / n;
+        const sx = fromX + dx * t;
+        const sy = fromY + dy * t;
+        this.app.symStamp(ctx, sx, sy, size, part.color, opacity);
+        if (blurCtx) _stampToBlurAccum(blurCtx, this.app, sx, sy, size, part.color, opacity);
+      }
+      part.prevX = part.x;
+      part.prevY = part.y;
+      this.app.strokeFrame++;
+    }
+
+    if (blurCtx && touched.size) this._applyBlurFrame(touched, p);
+    if (touched.size) {
+      touched.forEach(layer => { layer.dirty = true; });
+      this.app.compositeAllLayers();
+    }
+  }
+
+  _prepareBlurFrame() {
+    const layer = this.app.getActiveLayer();
+    if (!layer) return null;
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== w || this._blurStrokeCanvas.height !== h) {
+      this._blurStrokeCanvas = document.createElement('canvas');
+      this._blurStrokeCanvas.width = w;
+      this._blurStrokeCanvas.height = h;
+      this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
+    }
+    this._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._blurStrokeCtx.clearRect(0, 0, w, h);
+    this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
+    return this._blurStrokeCtx;
+  }
+
+  _applyBlurFrame(touched, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer) return;
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    if (!this._blurCanvas || this._blurCanvas.width !== w || this._blurCanvas.height !== h) {
+      this._blurCanvas = document.createElement('canvas');
+      this._blurCanvas.width = w;
+      this._blurCanvas.height = h;
+      this._blurCtx = this._blurCanvas.getContext('2d');
+      this._blurTmpCanvas = document.createElement('canvas');
+      this._blurTmpCanvas.width = w;
+      this._blurTmpCanvas.height = h;
+      this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+    }
+    this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._blurCtx.clearRect(0, 0, w, h);
+    this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+    if (p.trailFlow > 0 && p.canvasTextureEnabled) {
+      _applyTextureFlow(this._blurCtx, this._blurCanvas, this.app, p.trailFlow, p.canvasTextureScale);
+    }
+    this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._blurTmpCtx.clearRect(0, 0, w, h);
+    this._blurTmpCtx.filter = `blur(${p.trailBlur * this.app.DPR}px)`;
+    this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
+    this._blurTmpCtx.filter = 'none';
+    touched.forEach(layerRef => {
+      if (!layerRef?.ctx) return;
+      layerRef.ctx.save();
+      layerRef.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layerRef.ctx.globalAlpha = 0.16;
+      layerRef.ctx.drawImage(this._blurTmpCanvas, 0, 0);
+      layerRef.ctx.globalAlpha = 1;
+      layerRef.ctx.restore();
+    });
+  }
+
+  drawOverlay(ctx, p) {
+    if (!p.fluidShowParticles) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(120,190,255,0.45)';
+    for (let i = 0; i < this._particles.length; i++) {
+      const part = this._particles[i];
+      ctx.globalAlpha = Math.max(0.08, Math.min(0.65, part.wetness * 0.65));
+      ctx.fillRect(part.x - 1, part.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(120,190,255,0.28)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(this.app.leaderX, this.app.leaderY, p.fluidBrushRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  getStatusInfo() {
+    return `Fluid | Drops: ${this._particles.length}`;
+  }
+
+  deactivate() {
+    this._active = false;
+    this._lastX = null;
+    this._lastY = null;
+    this._lastFrameElapsed = null;
+  }
 }
 
 // =============================================================================

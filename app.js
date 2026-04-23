@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
@@ -197,6 +197,7 @@ export class App {
     this.brushes.boid = new BoidBrush(this);
     this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
+    this.brushes.fluid = new FluidBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
     this.brushes.ai = new AIDiffusionBrush(this);
@@ -875,6 +876,19 @@ export class App {
       pencilAngle: chk('pencilAngle'),
       pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
+      // Fluid brush
+      fluidParticleLimit: val('fluidParticleLimit') || 220,
+      fluidEmitRate: val('fluidEmitRate') || 12,
+      fluidBrushRadius: Math.max(4, Math.round((val('fluidBrushRadius') || 38) * scale)),
+      fluidBrushForce: (val('fluidBrushForce') || 85) / 100,
+      fluidFlow: (val('fluidFlow') || 100) / 100,
+      fluidViscosity: (val('fluidViscosity') || 45) / 100,
+      fluidVelocityDamping: (val('fluidVelocityDamping') || 88) / 100,
+      fluidSpread: val('fluidSpread') || 18,
+      fluidEvaporation: (val('fluidEvaporation') || 12) / 1000,
+      fluidTextureFollow: (val('fluidTextureFollow') || 40) / 100,
+      fluidDeposit: (val('fluidDeposit') || 70) / 100,
+      fluidShowParticles: chk('fluidShowParticles'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
       bOpacityVar: val('bOpacityVar') / 100,
@@ -1426,7 +1440,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 Fluid', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -1951,12 +1965,13 @@ export class App {
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
-    // 1/2/3 = brush switch
+    // 1-6 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('bristle');
     if (e.key === '3') this.setBrush('simple');
     if (e.key === '4') this.setBrush('eraser');
-    if (e.key === '5') this.setBrush('ai');
+    if (e.key === '5') this.setBrush('fluid');
+    if (e.key === '6') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // [ / ] = decrease / increase brush size
