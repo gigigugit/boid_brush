@@ -879,8 +879,9 @@ export class App {
       // Fluid brush
       fluidParticleLimit: val('fluidParticleLimit') || 220,
       fluidEmitRate: val('fluidEmitRate') || 12,
-      fluidBrushRadius: Math.max(4, Math.round((val('fluidBrushRadius') || 38) * scale)),
+      fluidBrushRadius: Math.max(2, Math.round((val('fluidBrushRadius') || 38) * scale)),
       fluidBrushForce: (val('fluidBrushForce') || 85) / 100,
+      fluidLateralSpread: val('fluidLateralSpread') || 40,
       fluidFlow: (val('fluidFlow') || 100) / 100,
       fluidViscosity: (val('fluidViscosity') || 45) / 100,
       fluidVelocityDamping: (val('fluidVelocityDamping') || 88) / 100,

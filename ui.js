@@ -223,21 +223,22 @@ export function buildSidebar(app) {
     <!-- Fluid Motion (fluid only) -->
     <div class="section-header" data-brushes="fluid" data-section="fluidMotion">Fluid Motion <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
-      ${sliderRow('fluidParticleLimit', 'Drops', 20, 600, 220, null, 'Maximum wet particles kept alive at once')}
-      ${sliderRow('fluidEmitRate', 'Emit', 1, 40, 12, null, 'How much fresh fluid the brush lays down per sample')}
-      ${sliderRow('fluidBrushRadius', 'Brush Radius', 4, 120, 38, null, 'Area where the brush drags existing fluid')}
-      ${sliderRow('fluidBrushForce', 'Brush Force', 0, 200, 85, v => (v / 100).toFixed(2) + '×', 'How strongly brush motion pulls nearby wet paint')}
-      ${sliderRow('fluidFlow', 'Flow Speed', 10, 200, 100, v => (v / 100).toFixed(2), 'Overall advection speed of the fluid')}
+      ${sliderRow('fluidParticleLimit', 'Drops', 10, 2000, 220, null, 'Maximum wet particles kept alive at once')}
+      ${sliderRow('fluidEmitRate', 'Emit', 1, 100, 12, null, 'How much fresh fluid the brush lays down per sample')}
+      ${sliderRow('fluidBrushRadius', 'Brush Radius', 2, 400, 38, null, 'Area where the brush drags existing fluid')}
+      ${sliderRow('fluidBrushForce', 'Brush Force', 0, 600, 85, v => (v / 100).toFixed(2) + '×', 'How strongly brush motion pulls nearby wet paint')}
+      ${sliderRow('fluidLateralSpread', 'Lateral Spread', 0, 400, 40, null, 'How far fluid fans out sideways from the stroke direction during painting')}
+      ${sliderRow('fluidFlow', 'Flow Speed', 1, 500, 100, v => (v / 100).toFixed(2), 'Overall advection speed of the fluid')}
       ${sliderRow('fluidViscosity', 'Viscosity', 0, 100, 45, v => (v / 100).toFixed(2), 'How much nearby droplet velocities blend into a smoother flow')}
-      ${sliderRow('fluidVelocityDamping', 'Damping', 50, 100, 88, v => (v / 100).toFixed(2), 'How quickly moving fluid slows down')}
+      ${sliderRow('fluidVelocityDamping', 'Damping', 1, 100, 88, v => (v / 100).toFixed(2), 'How quickly moving fluid slows down (100 = no damping)')}
     </div>
 
     <!-- Fluid Surface (fluid only) -->
     <div class="section-header closed" data-brushes="fluid" data-section="fluidSurface">Fluid Surface <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       ${sliderRow('fluidDeposit', 'Deposit', 1, 100, 70, v => (v / 100).toFixed(2), 'Opacity of wet paint deposited by each particle')}
-      ${sliderRow('fluidSpread', 'Spread', 0, 100, 18, null, 'How much random turbulence is mixed into the flow')}
-      ${sliderRow('fluidEvaporation', 'Drying', 1, 60, 12, v => (v / 1000).toFixed(3), 'How quickly wet particles fade out')}
+      ${sliderRow('fluidSpread', 'Spread', 0, 400, 18, null, 'How much random turbulence is mixed into the flow')}
+      ${sliderRow('fluidEvaporation', 'Drying', 1, 300, 12, v => (v / 1000).toFixed(3), 'How quickly wet particles fade out')}
       ${sliderRow('fluidTextureFollow', 'Texture Flow', 0, 100, 40, v => (v / 100).toFixed(2), 'How strongly fluid slides into loaded canvas texture valleys')}
       <label>Show Particles <input type="checkbox" id="fluidShowParticles" checked></label>
     </div>

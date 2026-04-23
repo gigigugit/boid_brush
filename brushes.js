@@ -2703,8 +2703,13 @@ export class FluidBrush {
     const p = this.app.getP();
     const radius = Math.max(4, p.fluidBrushRadius);
     const emit = Math.max(1, Math.round(p.fluidEmitRate * (0.35 + pressure * 0.65)));
+    const len = Math.hypot(dx, dy);
     const pushX = dx * p.fluidBrushForce * 0.12;
     const pushY = dy * p.fluidBrushForce * 0.12;
+    // Perpendicular (lateral) direction to stroke — zero when there is no motion
+    const latX = len > 1e-4 ? -dy / len : 0;
+    const latY = len > 1e-4 ? dx / len : 0;
+    const latScale = p.fluidLateralSpread * 0.1;
 
     for (let i = 0; i < this._particles.length; i++) {
       const part = this._particles[i];
@@ -2716,6 +2721,12 @@ export class FluidBrush {
       const swirl = p.fluidSpread * 0.06 * falloff;
       part.vx += pushX * falloff + (-oy / d) * swirl;
       part.vy += pushY * falloff + (ox / d) * swirl;
+      // Lateral (sideways) impulse on existing particles so they spread during stroke
+      if (latScale > 0) {
+        const lat = (Math.random() * 2 - 1) * latScale * falloff;
+        part.vx += latX * lat;
+        part.vy += latY * lat;
+      }
       part.wetness = Math.min(1, part.wetness + 0.02 * falloff);
       part.pressure = Math.max(part.pressure || 0, pressure);
     }
@@ -2725,11 +2736,13 @@ export class FluidBrush {
     for (let i = 0; i < emit; i++) {
       const ang = Math.random() * Math.PI * 2;
       const mag = Math.sqrt(Math.random()) * spread;
+      // Lateral velocity for new particles — perpendicular to stroke direction
+      const lat = (Math.random() * 2 - 1) * latScale;
       this._particles.push({
         x: x + Math.cos(ang) * mag,
         y: y + Math.sin(ang) * mag,
-        vx: pushX + (Math.random() - 0.5) * p.fluidSpread * 0.18,
-        vy: pushY + (Math.random() - 0.5) * p.fluidSpread * 0.18,
+        vx: pushX + latX * lat + (Math.random() - 0.5) * p.fluidSpread * 0.18,
+        vy: pushY + latY * lat + (Math.random() - 0.5) * p.fluidSpread * 0.18,
         wetness: 0.55 + Math.random() * 0.45,
         size: 0.75 + Math.random() * 0.7,
         pressure,
