@@ -234,7 +234,7 @@ export function buildSidebar(app) {
       ${sliderRow('fluidLateralSpread', 'Lateral Spread', 0, 400, 70, null, 'How far fluid fans out sideways from the stroke direction during painting')}
       ${sliderRow('fluidFlow', 'Flow Speed', 1, 500, 120, v => (v / 100).toFixed(2), 'Overall advection speed of the fluid')}
       ${sliderRow('fluidViscosity', 'Viscosity', 0, 100, 28, v => (v / 100).toFixed(2), 'How much nearby droplet velocities blend into coherent streams instead of jitter')}
-      ${sliderRow('fluidVelocityDamping', 'Damping', 1, 100, 92, v => (v / 100).toFixed(2), 'How quickly moving fluid slows down (100 = no damping)')}
+      ${sliderRow('fluidVelocityDamping', 'Damping', 0, 99, 8, v => v + '%', 'How strongly fluid velocity decays each frame (0 = no damping, higher = fluid stops faster)')}
       ${sliderRow('fluidImpact', 'Impact', 0, 100, 65, v => (v / 100).toFixed(2), 'How strongly fresh paint bursts outward into a splash on contact')}
       ${sliderRow('fluidSplashRadius', 'Splash Radius', 0, 100, 55, v => (v / 100).toFixed(2), 'How far the impact burst throws fluid beyond the core brush area')}
       ${sliderRow('fluidBreakup', 'Breakup', 0, 100, 35, v => (v / 100).toFixed(2), 'How often fast splashes shed smaller detached droplets')}

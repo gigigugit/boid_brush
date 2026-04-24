@@ -888,7 +888,7 @@ export class App {
       fluidLateralSpread: numOr('fluidLateralSpread', 70),
       fluidFlow: numOr('fluidFlow', 120) / 100,
       fluidViscosity: numOr('fluidViscosity', 28) / 100,
-      fluidVelocityDamping: numOr('fluidVelocityDamping', 92) / 100,
+      fluidVelocityDamping: 1 - numOr('fluidVelocityDamping', 8) / 100,
       fluidImpact: numOr('fluidImpact', 65) / 100,
       fluidSplashRadius: numOr('fluidSplashRadius', 55) / 100,
       fluidBreakup: numOr('fluidBreakup', 35) / 100,

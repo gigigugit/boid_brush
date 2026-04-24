@@ -35,7 +35,7 @@ Previous versions only spread randomly after lift-off. The brush now computes th
 | **Lateral Spread** | `fluidLateralSpread` | 0 – 400 | 70 | How far fluid fans sideways from the stroke direction **during the stroke**. At 0 the old behaviour (no in-stroke lateral motion) is restored. At 70 the pool broadens visibly as you paint. At 200+ the result is wide and splashy. |
 | **Flow Speed** | `fluidFlow` | 0.01 – 5.00 | 1.20 | Multiplier on particle advection distance per frame. Low values make the fluid sluggish; high values let it race across the canvas. |
 | **Viscosity** | `fluidViscosity` | 0.00 – 1.00 | 0.28 | How strongly each particle's velocity is blended toward the local cell field. Higher values give smoother streams; lower values allow more breakup and wandering droplets. |
-| **Damping** | `fluidVelocityDamping` | 0.01 – 1.00 | 0.92 | Velocity decay per frame (applied as `v × damping^dt`). Values near 1.00 let particles coast for a long time; lower values stop them quickly. |
+| **Damping** | `fluidVelocityDamping` | 0 – 99% | 8% | Velocity decay per frame. Higher values stop fluid faster; 0 means no damping (particles coast indefinitely). Internally stored as the preservation factor `1 – value/100`. |
 | **Impact** | `fluidImpact` | 0.00 – 1.00 | 0.65 | Strength of the outward impact burst added when fresh paint lands. Higher values make strokes bloom into splash crowns faster. |
 | **Splash Radius** | `fluidSplashRadius` | 0.00 – 1.00 | 0.55 | How far the impact burst throws fluid from the core deposit. Higher values widen the crown and the detached rim. |
 | **Breakup** | `fluidBreakup` | 0.00 – 1.00 | 0.35 | How readily fast-moving fluid splits into smaller detached droplets and flecks. |
