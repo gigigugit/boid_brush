@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_batch_spawn_shapes() {
         let mut sim = Simulation::new(800, 600, 1000);
-        for shape_id in 0..=10u32 {
+        for shape_id in 0..=18u32 {
             sim.clear_agents();
             sim.spawn_batch(400.0, 300.0, 25, shape_id, 0.0, 0.0, 50.0);
             assert_eq!(

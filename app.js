@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
@@ -197,6 +197,7 @@ export class App {
     this.brushes.boid = new BoidBrush(this);
     this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
+    this.brushes.fluid = new FluidBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
     this.brushes.ai = new AIDiffusionBrush(this);
@@ -781,6 +782,10 @@ export class App {
 
     const el = id => document.getElementById(id);
     const val = id => { const e = el(id); return e ? +e.value : 0; };
+    const numOr = (id, fallback) => {
+      const e = el(id);
+      return e ? +e.value : fallback;
+    };
     const chk = id => { const e = el(id); return e ? e.checked : false; };
     const sel = id => { const e = el(id); return e ? e.value : ''; };
 
@@ -875,6 +880,25 @@ export class App {
       pencilAngle: chk('pencilAngle'),
       pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
+      // Fluid brush
+      fluidParticleLimit: numOr('fluidParticleLimit', 320),
+      fluidEmitRate: numOr('fluidEmitRate', 16),
+      fluidBrushRadius: Math.max(2, Math.round(numOr('fluidBrushRadius', 42) * scale)),
+      fluidBrushForce: numOr('fluidBrushForce', 95) / 100,
+      fluidLateralSpread: numOr('fluidLateralSpread', 70),
+      fluidFlow: numOr('fluidFlow', 120) / 100,
+      fluidViscosity: numOr('fluidViscosity', 28) / 100,
+      fluidVelocityDamping: 1 - numOr('fluidVelocityDamping', 8) / 100,
+      fluidImpact: numOr('fluidImpact', 65) / 100,
+      fluidSplashRadius: numOr('fluidSplashRadius', 55) / 100,
+      fluidBreakup: numOr('fluidBreakup', 35) / 100,
+      fluidSpread: numOr('fluidSpread', 10),
+      fluidEvaporation: numOr('fluidEvaporation', 8) / 1000,
+      fluidTextureFollow: numOr('fluidTextureFollow', 28) / 100,
+      fluidDeposit: numOr('fluidDeposit', 78) / 100,
+      fluidPooling: numOr('fluidPooling', 70) / 100,
+      fluidEdgeBleed: numOr('fluidEdgeBleed', 45) / 100,
+      fluidShowParticles: chk('fluidShowParticles'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
       bOpacityVar: val('bOpacityVar') / 100,
@@ -1426,7 +1450,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 Fluid', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -1951,12 +1975,13 @@ export class App {
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
-    // 1/2/3 = brush switch
+    // 1-6 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('bristle');
     if (e.key === '3') this.setBrush('simple');
     if (e.key === '4') this.setBrush('eraser');
-    if (e.key === '5') this.setBrush('ai');
+    if (e.key === '5') this.setBrush('fluid');
+    if (e.key === '6') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // [ / ] = decrease / increase brush size

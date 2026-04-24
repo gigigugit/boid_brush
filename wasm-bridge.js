@@ -31,7 +31,8 @@
 const SHAPE_MAP = {
   circle: 0, ring: 1, gaussian: 2, line: 3, ellipse: 4,
   diamond: 5, grid: 6, sunburst: 7, spiral: 8, poisson: 9,
-  random_cluster: 10,
+  random_cluster: 10, burst: 11, lemniscate: 12, phyllotaxis: 13,
+  noise_scatter: 14, bullseye: 15, cross: 16, wave: 17, voronoi: 18,
 };
 
 export class BoidSim {

@@ -9,6 +9,7 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 ## Features
 
 - **Boid Brush** – A swarm of boids follows the cursor, each stamping paint as it moves. Flocking forces (cohesion, separation, alignment, wander, flow fields, etc.) shape the resulting stroke.
+- **Fluid Brush** – Wet paint droplets are deposited onto the canvas and keep flowing, letting the brush drag and reshape the fluid after it lands.
 - **Simple Brush** – A single-stamp brush for direct painting without boid simulation.
 - **Brush Scale** – A proportional scale slider that adjusts stamp size, spawn radius, and spread together, keeping the overall look consistent at different sizes.
 - **Spawn Shapes** – Circle, ring, gaussian, line, ellipse, diamond, grid, sunburst, spiral, poisson, and cluster distributions for boid placement.
@@ -41,7 +42,8 @@ Open `app.html` in a modern browser (or `index.html` for the landing page with l
 | `2` | Bristle Brush |
 | `3` | Simple Brush |
 | `4` | Eraser |
-| `5` | AI Diffusion |
+| `5` | Fluid Brush |
+| `6` | AI Diffusion |
 | `M` | Rectangle Select |
 | `L` | Lasso Select |
 | `T` | Transform (when selection active) |
