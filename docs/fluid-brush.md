@@ -12,8 +12,8 @@ Keyboard shortcut: **`5`**
 
 1. **Deposit** — On each stroke sample the brush injects a burst of new particles near the cursor. New fluid gets forward push, lateral fan-out, and an impact-driven radial splash so the deposit can burst outward instead of only smearing.
 2. **Drag** — The brush radius acts as a force field. Particles already in range receive forward drag, sideways spread, and outward splash energy, so the pool deforms and opens up while the brush moves.
-3. **Physics step** — Every frame, live particles are advected through a local cell field: neighboring cell velocities are blended into coherent flow, density adds pooling and edge push, mild turbulence is added, velocity is damped, and each particle moves. Particles that drift off-canvas bounce back with reduced speed.
-4. **Stamping** — After each physics step each particle draws both a motion trail and a soft pooled deposit, with optional edge bleed to make puddle rims read more like settling liquid.
+3. **Physics step** — Every frame, live particles are advected through a local cell field: neighboring cell velocities are blended into coherent flow, density adds pooling and edge push, nearby drops are pulled into a more connected group motion, mild turbulence is added, velocity is damped, and each particle moves. Particles that drift off-canvas bounce back with reduced speed.
+4. **Stamping** — After each physics step each particle draws both a motion trail and a soft pooled deposit, with optional edge bleed to make puddle rims read more like settling liquid. When a canvas texture is enabled, darker texture regions now also increase pooled density inside the wet stamps instead of only steering motion.
 5. **Drying** — Wetness decays each frame. When a particle's wetness drops below ~0.025 it is removed. Particles also keep flowing after the stroke ends until they dry out completely.
 
 ### Lateral diffusion during a stroke
@@ -47,7 +47,7 @@ Previous versions only spread randomly after lift-off. The brush now computes th
 | **Deposit** | `fluidDeposit` | 0.01 – 1.00 | 0.78 | Opacity multiplier for each stamp. Lower values give a more transparent, glazed look. Combines with the global Stamp Opacity. |
 | **Spread** | `fluidSpread` | 0 – 400 | 10 | Random turbulence added to every particle's velocity each frame. Low values keep the pool coherent; high values break it into chaotic spatter. Also controls the width of the initial lateral scatter on new particles. |
 | **Drying** | `fluidEvaporation` | 0.001 – 0.300 | 0.008 | Rate at which wetness decays. High values dry the pool quickly; very low values leave fluid alive on canvas for seconds. |
-| **Texture Flow** | `fluidTextureFollow` | 0.00 – 1.00 | 0.28 | When a canvas texture is loaded and enabled, particles are steered into texture valleys. At 1.0 the fluid follows texture contours strongly, giving a paper-grain effect. |
+| **Texture Flow** | `fluidTextureFollow` | 0.00 – 1.00 | 0.28 | When a canvas texture is loaded and enabled, particles are steered into texture valleys. Darker texture regions also hold denser pooled deposits inside the stamps, so motion and rendered density read from the same bitmap. |
 | **Pooling** | `fluidPooling` | 0.00 – 1.00 | 0.70 | How strongly dense wet paint gathers into connected puddles instead of staying as isolated streaks. |
 | **Edge Bleed** | `fluidEdgeBleed` | 0.00 – 1.00 | 0.45 | How strongly the outer rim of each puddle darkens and softens as the paint settles. |
 | **Show Particles** | `fluidShowParticles` | checkbox | ✓ | Renders live particle positions as faint blue dots and a circle showing the brush radius. Useful for understanding particle behaviour; uncheck for a cleaner working view. |

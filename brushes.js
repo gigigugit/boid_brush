@@ -275,6 +275,11 @@ function _sampleTextureFlowVector(app, x, y, texScale) {
   return { x: -gx / len, y: -gy / len };
 }
 
+function _textureDepositDensity(app, p, x, y) {
+  if (!app?._canvasTextureData || !p?.canvasTextureEnabled || p.canvasTextureStrength <= 0) return 1;
+  return _clamp(1 - p.canvasTextureStrength * app._sampleTexture(x, y, p.canvasTextureScale), 0.05, 1);
+}
+
 function _applySimulationGuides(brush, p, read) {
   const app = brush.app;
   const sim = app.simulation;
@@ -2776,23 +2781,28 @@ export class FluidBrush {
       const d = Math.hypot(ox, oy);
       if (d > radius || d < 1e-4) continue;
       const falloff = 1 - d / radius;
+      const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
+      const cohesionBias = 0.65 + texDensity * 0.35;
       const swirl = p.fluidSpread * 0.028 * falloff;
       const radialX = ox / d;
       const radialY = oy / d;
       const burst = burstSpeed * (0.3 + falloff * 0.7);
-      part.vx += pushX * falloff + radialX * burst + (-oy / d) * swirl;
-      part.vy += pushY * falloff + radialY * burst + (ox / d) * swirl;
+      part.vx += pushX * falloff + radialX * burst * (1.08 - texDensity * 0.28) + (-oy / d) * swirl * (1.08 - texDensity * 0.28);
+      part.vy += pushY * falloff + radialY * burst * (1.08 - texDensity * 0.28) + (ox / d) * swirl * (1.08 - texDensity * 0.28);
       // Lateral (sideways) impulse on existing particles so they spread during stroke
       if (latScale > 0) {
-        const lat = (Math.random() * 2 - 1) * latScale * falloff;
+        const lat = (Math.random() * 2 - 1) * latScale * falloff * (1.08 - texDensity * 0.4);
         part.vx += latX * lat;
         part.vy += latY * lat;
       }
-      part.wetness = Math.min(1, part.wetness + 0.02 * falloff);
+      part.wetness = Math.min(1, part.wetness + 0.02 * falloff * (0.65 + texDensity * 0.55));
       part.pressure = Math.max(part.pressure || 0, pressure);
-      part.pool = _clamp((part.pool || 0) + p.fluidPooling * 0.045 * falloff, 0, 1.6);
-      part.edge = Math.max(part.edge || 0, p.fluidEdgeBleed * falloff);
+      part.pool = _clamp((part.pool || 0) + p.fluidPooling * 0.045 * falloff * (0.55 + texDensity * 0.7), 0, 1.6);
+      part.edge = Math.max(part.edge || 0, p.fluidEdgeBleed * falloff * cohesionBias);
       part.splash = Math.max(part.splash || 0, impact * falloff);
+      part.textureDensity = part.textureDensity == null
+        ? texDensity
+        : part.textureDensity * 0.7 + texDensity * 0.3;
     }
 
     const spread = splashRadius;
@@ -2810,22 +2820,29 @@ export class FluidBrush {
       const tangential = (Math.random() - 0.5) * p.fluidLateralSpread * 0.035;
       // Lateral velocity for new particles — perpendicular to stroke direction
       const lat = (Math.random() * 2 - 1) * latScale;
-      const breakup = Math.random() < breakupChance;
-      const size = breakup ? 0.28 + Math.random() * 0.34 : 0.62 + Math.random() * 0.82;
-      const wetness = breakup ? 0.28 + Math.random() * 0.28 : 0.58 + Math.random() * 0.42;
+      const px = x + radialX * mag;
+      const py = y + radialY * mag;
+      const texDensity = _textureDepositDensity(this.app, p, px, py);
+      const breakup = Math.random() < breakupChance * (1.15 - texDensity * 0.45);
+      const sizeBase = breakup ? 0.28 + Math.random() * 0.34 : 0.62 + Math.random() * 0.82;
+      const wetBase = breakup ? 0.28 + Math.random() * 0.28 : 0.58 + Math.random() * 0.42;
+      const size = sizeBase * (0.72 + texDensity * 0.42);
+      const wetness = Math.min(1, wetBase * (0.76 + texDensity * 0.36));
+      const spray = 0.55 + (1 - texDensity) * 0.65;
       this._particles.push({
-        x: x + radialX * mag,
-        y: y + radialY * mag,
-        vx: pushX + radialX * radialVel + latX * lat - radialY * tangential + (Math.random() - 0.5) * p.fluidSpread * 0.08,
-        vy: pushY + radialY * radialVel + latY * lat + radialX * tangential + (Math.random() - 0.5) * p.fluidSpread * 0.08,
+        x: px,
+        y: py,
+        vx: pushX + radialX * radialVel * (1.1 - texDensity * 0.3) + latX * lat - radialY * tangential * spray + (Math.random() - 0.5) * p.fluidSpread * 0.08 * spray,
+        vy: pushY + radialY * radialVel * (1.1 - texDensity * 0.3) + latY * lat + radialX * tangential * spray + (Math.random() - 0.5) * p.fluidSpread * 0.08 * spray,
         wetness,
         size,
         pressure,
         color: p.color,
         layer,
-        pool: _clamp(p.fluidPooling * (breakup ? 0.18 : 0.55 + Math.random() * 0.55), 0, 1.6),
-        edge: crown ? (0.35 + p.fluidEdgeBleed * 0.65) : p.fluidEdgeBleed * 0.28,
+        pool: _clamp(p.fluidPooling * (breakup ? 0.18 : 0.55 + Math.random() * 0.55) * (0.65 + texDensity * 0.55), 0, 1.6),
+        edge: (crown ? (0.35 + p.fluidEdgeBleed * 0.65) : p.fluidEdgeBleed * 0.28) * (0.65 + texDensity * 0.35),
         splash: impact * (crown ? 1 : 0.65),
+        textureDensity: texDensity,
       });
     }
 
@@ -2875,6 +2892,10 @@ export class FluidBrush {
         const cellY = Math.floor(part.y / cellSize);
         const key = `${cellX},${cellY}`;
         const cell = cells.get(key);
+        const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
+        part.textureDensity = part.textureDensity == null
+          ? texDensity
+          : part.textureDensity * 0.76 + texDensity * 0.24;
         let flowVX = 0;
         let flowVY = 0;
         let flowWeight = 0;
@@ -2891,7 +2912,7 @@ export class FluidBrush {
         if (flowWeight > 0) {
           const avx = flowVX / flowWeight;
           const avy = flowVY / flowWeight;
-          const blend = 0.05 + p.fluidViscosity * 0.22;
+          const blend = 0.05 + p.fluidViscosity * 0.22 + texDensity * 0.04;
           part.vx += (avx - part.vx) * blend;
           part.vy += (avy - part.vy) * blend;
         }
@@ -2902,8 +2923,9 @@ export class FluidBrush {
           const toCenterY = centerY - part.y;
           const centerDist = Math.hypot(toCenterX, toCenterY);
           const density = Math.min(1.6, cell.count / 7);
-          part.vx += toCenterX * p.fluidPooling * density * 0.008;
-          part.vy += toCenterY * p.fluidPooling * density * 0.008;
+          const groupPull = (0.004 + p.fluidViscosity * 0.006 + p.fluidPooling * 0.008) * (0.65 + texDensity * 0.35);
+          part.vx += toCenterX * (p.fluidPooling * density * 0.008 + groupPull);
+          part.vy += toCenterY * (p.fluidPooling * density * 0.008 + groupPull);
           if (centerDist > 1e-4) {
             const edgeFactor = _clamp(centerDist / (cellSize * 0.85), 0, 1);
             const edgePush = p.fluidImpact * p.fluidSplashRadius * density * edgeFactor * (0.08 + (part.edge || 0) * 0.08);
@@ -2911,19 +2933,21 @@ export class FluidBrush {
             part.vy -= (toCenterY / centerDist) * edgePush;
           }
           const speed = Math.hypot(part.vx, part.vy);
-          part.pool = _clamp((part.pool || 0) + p.fluidPooling * part.wetness * 0.02 - speed * 0.0015, 0, 1.8);
-          part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05, 0, 1.4);
+          part.pool = _clamp((part.pool || 0) + p.fluidPooling * part.wetness * 0.02 * (0.6 + texDensity * 0.55) - speed * 0.0015, 0, 1.8);
+          part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05 * (0.55 + texDensity * 0.45), 0, 1.4);
         }
         if (p.canvasTextureEnabled && p.fluidTextureFollow > 0) {
           const flow = _sampleTextureFlowVector(this.app, part.x, part.y, p.canvasTextureScale);
-          part.vx += flow.x * p.fluidTextureFollow * 0.7;
-          part.vy += flow.y * p.fluidTextureFollow * 0.7;
+          const follow = p.fluidTextureFollow * (0.45 + texDensity * 0.55);
+          part.vx += flow.x * follow * 0.7;
+          part.vy += flow.y * follow * 0.7;
         }
-        part.vx += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012);
-        part.vy += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012);
+        const turbulence = 1 - Math.min(0.72, p.fluidPooling * 0.18 + p.fluidViscosity * 0.14 + texDensity * 0.28);
+        part.vx += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012) * turbulence;
+        part.vy += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012) * turbulence;
         part.vx *= damping;
         part.vy *= damping;
-        const poolDrag = Math.max(0.72, 1 - (part.pool || 0) * p.fluidPooling * 0.08);
+        const poolDrag = Math.max(0.72, 1 - (part.pool || 0) * p.fluidPooling * (0.06 + texDensity * 0.03));
         part.vx *= poolDrag;
         part.vy *= poolDrag;
         const prevX = part.x;
@@ -2962,12 +2986,15 @@ export class FluidBrush {
       touched.add(part.layer);
       const pressureScale = p.pressureSize ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
       const opacityScale = p.pressureOpacity ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
+      const texDensity = part.textureDensity == null
+        ? _textureDepositDensity(this.app, p, part.x, part.y)
+        : part.textureDensity;
       const size = Math.max(1, p.stampSize * pressureScale * part.size * (0.45 + part.wetness * 0.75));
       const opacity = Math.min(1, p.stampOpacity * p.fluidDeposit * part.wetness * opacityScale);
       const trailOpacity = opacity * (0.2 + (1 - p.fluidPooling) * 0.35 + (part.splash || 0) * 0.12);
-      const poolRadius = Math.max(size * 0.55, size * (0.7 + p.fluidPooling * 0.55 + (part.pool || 0) * 0.35));
-      const poolOpacity = Math.min(1, opacity * (0.28 + p.fluidPooling * 0.34 + (part.pool || 0) * 0.22));
-      const edgeOpacity = Math.min(0.55, opacity * p.fluidEdgeBleed * (0.18 + (part.edge || 0) * 0.32));
+      const poolRadius = Math.max(size * 0.55, size * (0.66 + p.fluidPooling * 0.55 + (part.pool || 0) * 0.35) * (0.82 + texDensity * 0.28));
+      const poolOpacity = Math.min(1, opacity * (0.22 + p.fluidPooling * 0.28 + (part.pool || 0) * 0.2) * (0.38 + texDensity * 0.92));
+      const edgeOpacity = Math.min(0.55, opacity * p.fluidEdgeBleed * (0.14 + (part.edge || 0) * 0.26) * (0.3 + texDensity * 0.9));
       const fromX = part.prevX ?? part.x;
       const fromY = part.prevY ?? part.y;
       const dx = part.x - fromX;
