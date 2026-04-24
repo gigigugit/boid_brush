@@ -16,6 +16,7 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+const DEFAULT_BRUSH_COLOR = '#4a7af5';
 const MAX_BLOB_STAMPS_PER_MOVE = 256;
 const BLOB_MIN_METABALLS = 4;
 const BLOB_METABALL_RANGE = 4;
@@ -233,7 +234,7 @@ function _sampleGridBilinear(field, size, x, y) {
 }
 
 function _hexToRgb(hex) {
-  const normalized = typeof hex === 'string' && /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#4a7af5';
+  const normalized = typeof hex === 'string' && /^#[0-9a-f]{6}$/i.test(hex) ? hex : DEFAULT_BRUSH_COLOR;
   return {
     r: parseInt(normalized.slice(1, 3), 16),
     g: parseInt(normalized.slice(3, 5), 16),

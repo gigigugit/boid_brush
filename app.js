@@ -1972,7 +1972,7 @@ export class App {
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
-    // 1..6 = brush switch
+    // 1-6 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('bristle');
     if (e.key === '3') this.setBrush('simple');

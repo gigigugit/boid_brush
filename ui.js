@@ -4,7 +4,7 @@
 
 const PRESETS_KEY = 'bb_presets_v1';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
-const STAMP_SECTION_BRUSHES = 'boid ant bristle simple eraser';
+const STAMP_SECTION_BRUSH_NAMES = 'boid ant bristle simple eraser';
 
 // ── Built-in presets ────────────────────────────────────────
 const BUILTIN_PRESETS = {
@@ -238,8 +238,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Stamp -->
-    <div class="section-header" data-brushes="${STAMP_SECTION_BRUSHES}" data-section="stamp">Stamp <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="${STAMP_SECTION_BRUSHES}">
+    <div class="section-header" data-brushes="${STAMP_SECTION_BRUSH_NAMES}" data-section="stamp">Stamp <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="${STAMP_SECTION_BRUSH_NAMES}">
       ${sliderRow('stampSize', 'Size', 1, 40, 10)}
       ${sliderRow('stampOpacity', 'Opacity', 1, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('stampSeparation', 'Separation', 0, 80, 0)}
