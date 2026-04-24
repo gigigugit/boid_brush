@@ -49,6 +49,59 @@ function hslToCSS(h, s, l) {
   return `hsl(${h.toFixed(1)},${s.toFixed(1)}%,${l.toFixed(1)}%)`;
 }
 
+function _colorWithAlpha(color, alpha) {
+  const a = _clamp(alpha, 0, 1);
+  if (a <= 0) return 'rgba(0,0,0,0)';
+  if (typeof color === 'string') {
+    let hex = null;
+    if (/^#[\da-f]{6}$/i.test(color)) hex = color.slice(1);
+    else if (/^#[\da-f]{3}$/i.test(color)) hex = color.slice(1).split('').map(ch => ch + ch).join('');
+    if (hex) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+  }
+  return color;
+}
+
+function _shadeColor(color, lightnessDelta = -12, saturationDelta = 4) {
+  if (typeof color !== 'string' || !/^#[\da-f]{3,6}$/i.test(color)) return color;
+  const [h, s, l] = hexToHSL(color.length === 4
+    ? '#' + color.slice(1).split('').map(ch => ch + ch).join('')
+    : color);
+  return hslToCSS(h, s + saturationDelta, l + lightnessDelta);
+}
+
+function _fillRadialPool(ctx, app, x, y, radius, color, opacity) {
+  if (!ctx || radius <= 0 || opacity <= 0) return;
+  for (const pt of app.getSymmetryPoints(x, y)) {
+    const grad = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, radius);
+    grad.addColorStop(0, _colorWithAlpha(color, opacity));
+    grad.addColorStop(0.58, _colorWithAlpha(color, opacity * 0.52));
+    grad.addColorStop(1, _colorWithAlpha(color, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function _strokePoolRing(ctx, app, x, y, radius, color, opacity, width) {
+  if (!ctx || radius <= 0 || opacity <= 0 || width <= 0) return;
+  ctx.save();
+  ctx.strokeStyle = _shadeColor(color);
+  ctx.globalAlpha = opacity;
+  ctx.lineWidth = width;
+  for (const pt of app.getSymmetryPoints(x, y)) {
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // ---- Spawn shape generators (for JS-side simple/eraser line interpolation) ----
 export const SpawnShapes = {
   circle(c, r) {
@@ -2704,12 +2757,17 @@ export class FluidBrush {
     const radius = Math.max(4, p.fluidBrushRadius);
     const emit = Math.max(1, Math.round(p.fluidEmitRate * (0.35 + pressure * 0.65)));
     const len = Math.hypot(dx, dy);
+    const motion = Math.min(1.4, len / Math.max(1, radius * 0.45));
     const pushX = dx * p.fluidBrushForce * 0.12;
     const pushY = dy * p.fluidBrushForce * 0.12;
+    const impact = p.fluidImpact * (0.25 + Math.min(1, pressure) * 0.45 + Math.min(1, motion) * 0.45);
     // Perpendicular (lateral) direction to stroke — zero when there is no motion
     const latX = len > 1e-4 ? -dy / len : 0;
     const latY = len > 1e-4 ? dx / len : 0;
     const latScale = p.fluidLateralSpread * 0.1;
+    const splashRadius = radius * (0.35 + p.fluidSplashRadius * 0.9);
+    const burstSpeed = impact * (2.6 + splashRadius * 0.03);
+    const breakupChance = _clamp(p.fluidBreakup * (0.05 + motion * 0.24 + pressure * 0.18), 0, 0.75);
 
     for (let i = 0; i < this._particles.length; i++) {
       const part = this._particles[i];
@@ -2718,9 +2776,12 @@ export class FluidBrush {
       const d = Math.hypot(ox, oy);
       if (d > radius || d < 1e-4) continue;
       const falloff = 1 - d / radius;
-      const swirl = p.fluidSpread * 0.06 * falloff;
-      part.vx += pushX * falloff + (-oy / d) * swirl;
-      part.vy += pushY * falloff + (ox / d) * swirl;
+      const swirl = p.fluidSpread * 0.028 * falloff;
+      const radialX = ox / d;
+      const radialY = oy / d;
+      const burst = burstSpeed * (0.3 + falloff * 0.7);
+      part.vx += pushX * falloff + radialX * burst + (-oy / d) * swirl;
+      part.vy += pushY * falloff + radialY * burst + (ox / d) * swirl;
       // Lateral (sideways) impulse on existing particles so they spread during stroke
       if (latScale > 0) {
         const lat = (Math.random() * 2 - 1) * latScale * falloff;
@@ -2729,25 +2790,42 @@ export class FluidBrush {
       }
       part.wetness = Math.min(1, part.wetness + 0.02 * falloff);
       part.pressure = Math.max(part.pressure || 0, pressure);
+      part.pool = _clamp((part.pool || 0) + p.fluidPooling * 0.045 * falloff, 0, 1.6);
+      part.edge = Math.max(part.edge || 0, p.fluidEdgeBleed * falloff);
+      part.splash = Math.max(part.splash || 0, impact * falloff);
     }
 
-    const spread = radius * 0.35;
+    const spread = splashRadius;
     const layer = this.app.getActiveLayer();
     for (let i = 0; i < emit; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const mag = Math.sqrt(Math.random()) * spread;
+      const crown = Math.random() < 0.4 + impact * 0.35;
+      const rim = crown
+        ? 0.55 + Math.random() * 0.45
+        : Math.pow(Math.random(), 0.7);
+      const mag = rim * spread;
+      const radialX = Math.cos(ang);
+      const radialY = Math.sin(ang);
+      const radialVel = burstSpeed * (0.55 + Math.random() * 0.9) * (crown ? 1.15 : 0.8);
+      const tangential = (Math.random() - 0.5) * p.fluidLateralSpread * 0.035;
       // Lateral velocity for new particles — perpendicular to stroke direction
       const lat = (Math.random() * 2 - 1) * latScale;
+      const breakup = Math.random() < breakupChance;
+      const size = breakup ? 0.28 + Math.random() * 0.34 : 0.62 + Math.random() * 0.82;
+      const wetness = breakup ? 0.28 + Math.random() * 0.28 : 0.58 + Math.random() * 0.42;
       this._particles.push({
-        x: x + Math.cos(ang) * mag,
-        y: y + Math.sin(ang) * mag,
-        vx: pushX + latX * lat + (Math.random() - 0.5) * p.fluidSpread * 0.18,
-        vy: pushY + latY * lat + (Math.random() - 0.5) * p.fluidSpread * 0.18,
-        wetness: 0.55 + Math.random() * 0.45,
-        size: 0.75 + Math.random() * 0.7,
+        x: x + radialX * mag,
+        y: y + radialY * mag,
+        vx: pushX + radialX * radialVel + latX * lat - radialY * tangential + (Math.random() - 0.5) * p.fluidSpread * 0.08,
+        vy: pushY + radialY * radialVel + latY * lat + radialX * tangential + (Math.random() - 0.5) * p.fluidSpread * 0.08,
+        wetness,
+        size,
         pressure,
         color: p.color,
         layer,
+        pool: _clamp(p.fluidPooling * (breakup ? 0.18 : 0.55 + Math.random() * 0.55), 0, 1.6),
+        edge: crown ? (0.35 + p.fluidEdgeBleed * 0.65) : p.fluidEdgeBleed * 0.28,
+        splash: impact * (crown ? 1 : 0.65),
       });
     }
 
@@ -2780,33 +2858,74 @@ export class FluidBrush {
         const key = `${Math.floor(part.x / cellSize)},${Math.floor(part.y / cellSize)}`;
         let cell = cells.get(key);
         if (!cell) {
-          cell = { vx: 0, vy: 0, count: 0 };
+          cell = { vx: 0, vy: 0, x: 0, y: 0, wet: 0, count: 0 };
           cells.set(key, cell);
         }
         cell.vx += part.vx;
         cell.vy += part.vy;
+        cell.x += part.x;
+        cell.y += part.y;
+        cell.wet += part.wetness;
         cell.count++;
       }
 
       for (let i = this._particles.length - 1; i >= 0; i--) {
         const part = this._particles[i];
-        const key = `${Math.floor(part.x / cellSize)},${Math.floor(part.y / cellSize)}`;
+        const cellX = Math.floor(part.x / cellSize);
+        const cellY = Math.floor(part.y / cellSize);
+        const key = `${cellX},${cellY}`;
         const cell = cells.get(key);
+        let flowVX = 0;
+        let flowVY = 0;
+        let flowWeight = 0;
+        for (let oy = -1; oy <= 1; oy++) {
+          for (let ox = -1; ox <= 1; ox++) {
+            const nearby = cells.get(`${cellX + ox},${cellY + oy}`);
+            if (!nearby || nearby.count <= 0) continue;
+            const weight = 1 / (1 + Math.abs(ox) + Math.abs(oy));
+            flowVX += (nearby.vx / nearby.count) * weight;
+            flowVY += (nearby.vy / nearby.count) * weight;
+            flowWeight += weight;
+          }
+        }
+        if (flowWeight > 0) {
+          const avx = flowVX / flowWeight;
+          const avy = flowVY / flowWeight;
+          const blend = 0.05 + p.fluidViscosity * 0.22;
+          part.vx += (avx - part.vx) * blend;
+          part.vy += (avy - part.vy) * blend;
+        }
         if (cell && cell.count > 0) {
-          const avx = cell.vx / cell.count;
-          const avy = cell.vy / cell.count;
-          part.vx += (avx - part.vx) * p.fluidViscosity * 0.12;
-          part.vy += (avy - part.vy) * p.fluidViscosity * 0.12;
+          const centerX = cell.x / cell.count;
+          const centerY = cell.y / cell.count;
+          const toCenterX = centerX - part.x;
+          const toCenterY = centerY - part.y;
+          const centerDist = Math.hypot(toCenterX, toCenterY);
+          const density = Math.min(1.6, cell.count / 7);
+          part.vx += toCenterX * p.fluidPooling * density * 0.008;
+          part.vy += toCenterY * p.fluidPooling * density * 0.008;
+          if (centerDist > 1e-4) {
+            const edgeFactor = _clamp(centerDist / (cellSize * 0.85), 0, 1);
+            const edgePush = p.fluidImpact * p.fluidSplashRadius * density * edgeFactor * (0.08 + (part.edge || 0) * 0.08);
+            part.vx -= (toCenterX / centerDist) * edgePush;
+            part.vy -= (toCenterY / centerDist) * edgePush;
+          }
+          const speed = Math.hypot(part.vx, part.vy);
+          part.pool = _clamp((part.pool || 0) + p.fluidPooling * part.wetness * 0.02 - speed * 0.0015, 0, 1.8);
+          part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05, 0, 1.4);
         }
         if (p.canvasTextureEnabled && p.fluidTextureFollow > 0) {
           const flow = _sampleTextureFlowVector(this.app, part.x, part.y, p.canvasTextureScale);
           part.vx += flow.x * p.fluidTextureFollow * 0.7;
           part.vy += flow.y * p.fluidTextureFollow * 0.7;
         }
-        part.vx += (Math.random() - 0.5) * p.fluidSpread * 0.035;
-        part.vy += (Math.random() - 0.5) * p.fluidSpread * 0.035;
+        part.vx += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012);
+        part.vy += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012);
         part.vx *= damping;
         part.vy *= damping;
+        const poolDrag = Math.max(0.72, 1 - (part.pool || 0) * p.fluidPooling * 0.08);
+        part.vx *= poolDrag;
+        part.vy *= poolDrag;
         const prevX = part.x;
         const prevY = part.y;
         part.x += part.vx * p.fluidFlow * subDt * 60;
@@ -2821,7 +2940,8 @@ export class FluidBrush {
         }
         part.prevX = prevX;
         part.prevY = prevY;
-        part.wetness *= evaporation;
+        part.splash = Math.max(0, (part.splash || 0) * (0.9 - p.fluidImpact * 0.08));
+        part.wetness *= Math.min(1, evaporation + (part.pool || 0) * p.fluidPooling * 0.016);
         if (part.wetness < 0.025) this._particles.splice(i, 1);
       }
     }
@@ -2844,6 +2964,10 @@ export class FluidBrush {
       const opacityScale = p.pressureOpacity ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
       const size = Math.max(1, p.stampSize * pressureScale * part.size * (0.45 + part.wetness * 0.75));
       const opacity = Math.min(1, p.stampOpacity * p.fluidDeposit * part.wetness * opacityScale);
+      const trailOpacity = opacity * (0.2 + (1 - p.fluidPooling) * 0.35 + (part.splash || 0) * 0.12);
+      const poolRadius = Math.max(size * 0.55, size * (0.7 + p.fluidPooling * 0.55 + (part.pool || 0) * 0.35));
+      const poolOpacity = Math.min(1, opacity * (0.28 + p.fluidPooling * 0.34 + (part.pool || 0) * 0.22));
+      const edgeOpacity = Math.min(0.55, opacity * p.fluidEdgeBleed * (0.18 + (part.edge || 0) * 0.32));
       const fromX = part.prevX ?? part.x;
       const fromY = part.prevY ?? part.y;
       const dx = part.x - fromX;
@@ -2855,9 +2979,21 @@ export class FluidBrush {
         const t = j / n;
         const sx = fromX + dx * t;
         const sy = fromY + dy * t;
-        this.app.symStamp(ctx, sx, sy, size, part.color, opacity);
-        if (blurCtx) _stampToBlurAccum(blurCtx, this.app, sx, sy, size, part.color, opacity);
+        this.app.symStamp(ctx, sx, sy, size, part.color, trailOpacity);
+        if (blurCtx) _stampToBlurAccum(blurCtx, this.app, sx, sy, size, part.color, trailOpacity);
       }
+      _fillRadialPool(ctx, this.app, part.x, part.y, poolRadius, part.color, poolOpacity);
+      if (blurCtx) _stampToBlurAccum(blurCtx, this.app, part.x, part.y, poolRadius * 1.05, part.color, Math.min(0.85, poolOpacity * 0.55));
+      _strokePoolRing(
+        ctx,
+        this.app,
+        part.x,
+        part.y,
+        poolRadius * (0.68 + p.fluidEdgeBleed * 0.16),
+        part.color,
+        edgeOpacity,
+        Math.max(0.75, poolRadius * (0.06 + p.fluidEdgeBleed * 0.05))
+      );
       part.prevX = part.x;
       part.prevY = part.y;
       this.app.strokeFrame++;

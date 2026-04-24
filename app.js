@@ -782,6 +782,10 @@ export class App {
 
     const el = id => document.getElementById(id);
     const val = id => { const e = el(id); return e ? +e.value : 0; };
+    const numOr = (id, fallback) => {
+      const e = el(id);
+      return e ? +e.value : fallback;
+    };
     const chk = id => { const e = el(id); return e ? e.checked : false; };
     const sel = id => { const e = el(id); return e ? e.value : ''; };
 
@@ -877,18 +881,23 @@ export class App {
       pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
       // Fluid brush
-      fluidParticleLimit: val('fluidParticleLimit') || 220,
-      fluidEmitRate: val('fluidEmitRate') || 12,
-      fluidBrushRadius: Math.max(2, Math.round((val('fluidBrushRadius') || 38) * scale)),
-      fluidBrushForce: (val('fluidBrushForce') || 85) / 100,
-      fluidLateralSpread: val('fluidLateralSpread') || 40,
-      fluidFlow: (val('fluidFlow') || 100) / 100,
-      fluidViscosity: (val('fluidViscosity') || 45) / 100,
-      fluidVelocityDamping: (val('fluidVelocityDamping') || 88) / 100,
-      fluidSpread: val('fluidSpread') || 18,
-      fluidEvaporation: (val('fluidEvaporation') || 12) / 1000,
-      fluidTextureFollow: (val('fluidTextureFollow') || 40) / 100,
-      fluidDeposit: (val('fluidDeposit') || 70) / 100,
+      fluidParticleLimit: numOr('fluidParticleLimit', 320),
+      fluidEmitRate: numOr('fluidEmitRate', 16),
+      fluidBrushRadius: Math.max(2, Math.round(numOr('fluidBrushRadius', 42) * scale)),
+      fluidBrushForce: numOr('fluidBrushForce', 95) / 100,
+      fluidLateralSpread: numOr('fluidLateralSpread', 70),
+      fluidFlow: numOr('fluidFlow', 120) / 100,
+      fluidViscosity: numOr('fluidViscosity', 28) / 100,
+      fluidVelocityDamping: numOr('fluidVelocityDamping', 92) / 100,
+      fluidImpact: numOr('fluidImpact', 65) / 100,
+      fluidSplashRadius: numOr('fluidSplashRadius', 55) / 100,
+      fluidBreakup: numOr('fluidBreakup', 35) / 100,
+      fluidSpread: numOr('fluidSpread', 10),
+      fluidEvaporation: numOr('fluidEvaporation', 8) / 1000,
+      fluidTextureFollow: numOr('fluidTextureFollow', 28) / 100,
+      fluidDeposit: numOr('fluidDeposit', 78) / 100,
+      fluidPooling: numOr('fluidPooling', 70) / 100,
+      fluidEdgeBleed: numOr('fluidEdgeBleed', 45) / 100,
       fluidShowParticles: chk('fluidShowParticles'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
