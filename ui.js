@@ -70,6 +70,10 @@ export function buildSidebar(app) {
         <option value="grid">▥ Grid</option><option value="sunburst">✱ Sunburst</option>
         <option value="spiral">≋ Spiral</option><option value="poisson">⁘ Poisson</option>
         <option value="random_cluster">✦ Clusters</option>
+        <option value="burst">💥 Burst</option><option value="lemniscate">∞ Lemniscate</option>
+        <option value="phyllotaxis">🌻 Phyllotaxis</option><option value="noise_scatter">🌧 Noise Scatter</option>
+        <option value="bullseye">🎯 Bullseye</option><option value="cross">✚ Cross</option>
+        <option value="wave">〜 Wave</option><option value="voronoi">⬡ Voronoi</option>
       </select></label>
       ${sliderRow('spawnRadius', 'Radius', 5, 200, 5)}
       ${sliderRow('spawnAngle', 'Angle', 0, 360, 0, v => v + '°')}
