@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, SimpleBrush, EraserBrush, BlobFluidBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
@@ -198,6 +198,7 @@ export class App {
     this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
     this.brushes.simple = new SimpleBrush(this);
+    this.brushes.blob = new BlobFluidBrush(this);
     this.brushes.eraser = new EraserBrush(this);
     this.brushes.ai = new AIDiffusionBrush(this);
 
@@ -901,6 +902,18 @@ export class App {
       aiSeed: +(document.getElementById('aiSeed')?.value || 42),
       aiPrompt: document.getElementById('aiPromptText')?.value || '',
       aiNegPrompt: document.getElementById('aiNegPromptText')?.value || '',
+      // Blob fluid
+      blobSize: Math.max(8, Math.round((val('blobSize') || 96) * scale)),
+      blobResolution: Math.max(16, val('blobResolution') || 48),
+      blobSoftness: (val('blobSoftness') || 35) / 100,
+      blobIterations: Math.max(1, val('blobIterations') || 8),
+      blobContrast: Math.max(0.1, (val('blobContrast') || 140) / 100),
+      blobThreshold: (val('blobThreshold') || 18) / 100,
+      blobColorMix: (val('blobColorMix') || 70) / 100,
+      blobOpacity: (val('blobOpacity') || 85) / 100,
+      blobSpacing: Math.max(0.01, (val('blobSpacing') || 30) / 100),
+      blobPressureSize: chk('blobPressureSize'),
+      blobPressureOpacity: chk('blobPressureOpacity'),
       // Trail blur
       trailBlur: val('trailBlur') || 0,
       trailFlow: val('trailFlow') / 100,
@@ -1426,7 +1439,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', simple: '🖌 Simple', blob: '🫧 Blob Fluid', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -1951,12 +1964,13 @@ export class App {
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
-    // 1/2/3 = brush switch
+    // 1..6 = brush switch
     if (e.key === '1') this.setBrush('boid');
     if (e.key === '2') this.setBrush('bristle');
     if (e.key === '3') this.setBrush('simple');
     if (e.key === '4') this.setBrush('eraser');
-    if (e.key === '5') this.setBrush('ai');
+    if (e.key === '5') this.setBrush('blob');
+    if (e.key === '6') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // [ / ] = decrease / increase brush size
@@ -1986,11 +2000,16 @@ export class App {
   }
 
   _adjustBrushSize(delta) {
-    const slider = document.getElementById('stampSize');
+    const sliderId = this.activeBrush === 'blob'
+      ? 'blobSize'
+      : this.activeBrush === 'ai'
+        ? 'aiStampSize'
+        : 'stampSize';
+    const slider = document.getElementById(sliderId);
     if (!slider) return;
     slider.value = Math.max(+slider.min, Math.min(+slider.max, +slider.value + delta));
     this.invalidateParams();
-    const span = document.getElementById('v_stampSize');
+    const span = document.getElementById('v_' + sliderId);
     if (span) span.textContent = slider.value;
     this.showToast(`🖌 Brush size: ${slider.value}`);
   }
@@ -2173,7 +2192,12 @@ export class App {
     // Brush size cursor preview
     if (this._cursorX >= 0 && this._cursorY >= 0) {
       const canvasPos = this._screenToCanvas(this._cursorX, this._cursorY);
-      const radius = p.stampSize / 2;
+      const previewSize = this.activeBrush === 'blob'
+        ? p.blobSize
+        : this.activeBrush === 'ai'
+          ? p.aiStampSize
+          : p.stampSize;
+      const radius = previewSize / 2;
       this.lctx.save();
       this.lctx.strokeStyle = 'rgba(255,255,255,0.5)';
       this.lctx.lineWidth = 1;

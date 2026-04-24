@@ -188,6 +188,48 @@ function _clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
+function _lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function _smoothstep(edge0, edge1, x) {
+  const t = _clamp((x - edge0) / Math.max(1e-6, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function _fract(v) {
+  return v - Math.floor(v);
+}
+
+function _hash2D(x, y, seed = 0) {
+  return _fract(Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453123);
+}
+
+function _sampleGridBilinear(field, size, x, y) {
+  const x0 = _clamp(Math.floor(x), 0, size - 1);
+  const y0 = _clamp(Math.floor(y), 0, size - 1);
+  const x1 = _clamp(x0 + 1, 0, size - 1);
+  const y1 = _clamp(y0 + 1, 0, size - 1);
+  const tx = _clamp(x - x0, 0, 1);
+  const ty = _clamp(y - y0, 0, 1);
+  const i00 = y0 * size + x0;
+  const i10 = y0 * size + x1;
+  const i01 = y1 * size + x0;
+  const i11 = y1 * size + x1;
+  const a = _lerp(field[i00], field[i10], tx);
+  const b = _lerp(field[i01], field[i11], tx);
+  return _lerp(a, b, ty);
+}
+
+function _hexToRgb(hex) {
+  const normalized = typeof hex === 'string' && /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#4a7af5';
+  return {
+    r: parseInt(normalized.slice(1, 3), 16),
+    g: parseInt(normalized.slice(3, 5), 16),
+    b: parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
 function _closestPointOnSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
   const dy = by - ay;
@@ -2640,6 +2682,272 @@ export class EraserBrush {
   drawOverlay(ctx, p) { this._inner.drawOverlay(ctx, p); }
   getStatusInfo() { return 'Eraser'; }
   deactivate() { this._inner.deactivate(); }
+}
+
+// =============================================================================
+// BLOB FLUID BRUSH — Deterministic blob mask + density bitmap stamp
+// =============================================================================
+
+export class BlobFluidBrush {
+  constructor(app) {
+    this.app = app;
+    this._lastStampX = null;
+    this._lastStampY = null;
+    this._needsComposite = false;
+    this._active = false;
+    this._stampSerial = 0;
+    this._gridSize = 0;
+    this._stampSize = 0;
+    this._density = new Float32Array(0);
+    this._scratch = new Float32Array(0);
+    this._mask = new Float32Array(0);
+    this._maskCanvas = document.createElement('canvas');
+    this._maskCtx = this._maskCanvas.getContext('2d');
+    this._densityCanvas = document.createElement('canvas');
+    this._densityCtx = this._densityCanvas.getContext('2d');
+    this._stampCanvas = document.createElement('canvas');
+    this._stampCtx = this._stampCanvas.getContext('2d');
+  }
+
+  onDown(x, y, pressure) {
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    this._active = true;
+    this._lastStampX = x;
+    this._lastStampY = y;
+    this._stamp(x, y, pressure);
+    this._markDirty();
+  }
+
+  onMove(x, y, pressure) {
+    if (this._lastStampX == null) return;
+    const dx = x - this._lastStampX;
+    const dy = y - this._lastStampY;
+    const dist = Math.hypot(dx, dy);
+    const p = this.app.getP();
+    let size = p.blobSize;
+    if (p.blobPressureSize) size *= (0.3 + 0.7 * pressure);
+    const step = Math.max(1, size * p.blobSpacing);
+    if (dist < step) return;
+    const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    for (let j = 1; j <= n; j++) {
+      const t = j / n;
+      this._stamp(this._lastStampX + dx * t, this._lastStampY + dy * t, pressure);
+    }
+    this._lastStampX = x;
+    this._lastStampY = y;
+    this._markDirty();
+  }
+
+  onUp() {
+    this._lastStampX = null;
+    this._lastStampY = null;
+    this._active = false;
+    this._flushComposite();
+  }
+
+  onFrame() {
+    if (!this._active) return;
+    this._flushComposite();
+  }
+
+  taperFrame() {}
+
+  drawOverlay() {}
+
+  getStatusInfo() { return 'Blob Fluid'; }
+
+  deactivate() {
+    this._active = false;
+    this._lastStampX = null;
+    this._lastStampY = null;
+  }
+
+  _markDirty() {
+    this.app.getActiveLayer().dirty = true;
+    this._needsComposite = true;
+  }
+
+  _flushComposite() {
+    if (!this._needsComposite) return;
+    this.app.getActiveLayer().dirty = true;
+    this.app.compositeAllLayers();
+    this._needsComposite = false;
+  }
+
+  _ensureBuffers(gridSize, stampSize) {
+    if (this._gridSize !== gridSize) {
+      this._gridSize = gridSize;
+      this._density = new Float32Array(gridSize * gridSize);
+      this._scratch = new Float32Array(gridSize * gridSize);
+      this._mask = new Float32Array(gridSize * gridSize);
+      this._maskCanvas.width = gridSize;
+      this._maskCanvas.height = gridSize;
+      this._densityCanvas.width = gridSize;
+      this._densityCanvas.height = gridSize;
+    }
+    if (this._stampSize !== stampSize) {
+      this._stampSize = stampSize;
+      this._stampCanvas.width = stampSize;
+      this._stampCanvas.height = stampSize;
+    }
+  }
+
+  _buildMaskField(gridSize, seed, p) {
+    const metas = [];
+    const metaCount = 4 + Math.floor(_hash2D(3.1, 7.7, seed) * 4);
+    for (let i = 0; i < metaCount; i++) {
+      const a = (i / metaCount) * Math.PI * 2 + _hash2D(11 + i, 17 + i * 3, seed) * 1.6;
+      const d = 0.08 + _hash2D(23 + i * 5, 29 + i, seed) * 0.32;
+      metas.push({
+        x: Math.cos(a) * d * (0.88 + _hash2D(31 + i, 37 + i, seed) * 0.3),
+        y: Math.sin(a) * d * (0.72 + _hash2D(41 + i, 43 + i, seed) * 0.45),
+        radius: 0.18 + _hash2D(47 + i, 53 + i * 2, seed) * 0.18,
+        weight: 0.7 + _hash2D(59 + i, 61 + i, seed) * 1.2,
+      });
+    }
+    metas.push({ x: 0, y: 0, radius: 0.32, weight: 1.25 });
+    const softness = _lerp(0.02, 0.22, p.blobSoftness);
+    const threshold = 0.88;
+    for (let y = 0; y < gridSize; y++) {
+      const ny = ((y + 0.5) / gridSize) * 2 - 1;
+      for (let x = 0; x < gridSize; x++) {
+        const nx = ((x + 0.5) / gridSize) * 2 - 1;
+        let field = 0;
+        for (const meta of metas) {
+          const dx = nx - meta.x;
+          const dy = ny - meta.y;
+          field += meta.weight * Math.exp(-(dx * dx + dy * dy) / Math.max(0.001, meta.radius * meta.radius));
+        }
+        const warp = (_hash2D(x * 0.23, y * 0.19, seed) - 0.5) * 0.18;
+        const edge = field + warp;
+        this._mask[y * gridSize + x] = _smoothstep(threshold - softness, threshold + softness, edge);
+      }
+    }
+  }
+
+  _seedDensity(gridSize, seed) {
+    this._density.fill(0);
+    const droplets = 3 + Math.floor(_hash2D(71, 73, seed) * 4);
+    for (let i = 0; i < droplets; i++) {
+      const cx = (0.18 + _hash2D(79 + i, 83 + i, seed) * 0.64) * (gridSize - 1);
+      const cy = (0.18 + _hash2D(89 + i, 97 + i, seed) * 0.64) * (gridSize - 1);
+      const radius = 1.4 + _hash2D(101 + i, 103 + i * 2, seed) * (gridSize * 0.12);
+      const amp = 0.6 + _hash2D(107 + i, 109 + i, seed) * 0.85;
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const idx = y * gridSize + x;
+          if (this._mask[idx] <= 0.001) continue;
+          const dx = x - cx;
+          const dy = y - cy;
+          this._density[idx] += amp * Math.exp(-(dx * dx + dy * dy) / Math.max(1e-3, radius * radius));
+        }
+      }
+    }
+  }
+
+  _simulateDensity(gridSize, seed, p) {
+    const center = (gridSize - 1) * 0.5;
+    for (let iter = 0; iter < p.blobIterations; iter++) {
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const idx = y * gridSize + x;
+          const mask = this._mask[idx];
+          if (mask <= 0.001) {
+            this._scratch[idx] = 0;
+            continue;
+          }
+          const gx = (x - center) / Math.max(1, center);
+          const gy = (y - center) / Math.max(1, center);
+          const vx = Math.sin((y + seed * 0.17) * 0.33) * 0.7 + Math.cos((x - seed * 0.11) * 0.21) * 0.45 - gy * 0.5;
+          const vy = Math.cos((x + seed * 0.19) * 0.31) * 0.7 - Math.sin((y + seed * 0.13) * 0.27) * 0.45 + gx * 0.5;
+          const sampleX = x - vx * 0.55;
+          const sampleY = y - vy * 0.55;
+          const advected = _sampleGridBilinear(this._density, gridSize, sampleX, sampleY);
+          const left = this._density[y * gridSize + Math.max(0, x - 1)];
+          const right = this._density[y * gridSize + Math.min(gridSize - 1, x + 1)];
+          const up = this._density[Math.max(0, y - 1) * gridSize + x];
+          const down = this._density[Math.min(gridSize - 1, y + 1) * gridSize + x];
+          const diffuse = (left + right + up + down) * 0.25;
+          const mixed = advected * 0.72 + diffuse * 0.28;
+          this._scratch[idx] = mixed * (0.985 + mask * 0.03) * mask;
+        }
+      }
+      const tmp = this._density;
+      this._density = this._scratch;
+      this._scratch = tmp;
+    }
+  }
+
+  _renderStamp(size, pressure, p) {
+    const gridSize = Math.max(16, Math.round(p.blobResolution));
+    const stampSize = Math.max(8, Math.round(size));
+    const seed = this._stampSerial++;
+    this._ensureBuffers(gridSize, stampSize);
+    this._buildMaskField(gridSize, seed, p);
+    this._seedDensity(gridSize, seed);
+    this._simulateDensity(gridSize, seed, p);
+
+    let maxDensity = 0;
+    for (let i = 0; i < this._density.length; i++) {
+      if (this._mask[i] <= 0.001) continue;
+      if (this._density[i] > maxDensity) maxDensity = this._density[i];
+    }
+    maxDensity = Math.max(maxDensity, 1e-6);
+
+    const rgb = _hexToRgb(p.color);
+    const opacityScale = p.blobPressureOpacity ? (0.3 + 0.7 * pressure) : 1;
+    const maskImg = this._maskCtx.createImageData(gridSize, gridSize);
+    const densityImg = this._densityCtx.createImageData(gridSize, gridSize);
+    const maskData = maskImg.data;
+    const densityData = densityImg.data;
+
+    for (let i = 0; i < this._density.length; i++) {
+      const mask = this._mask[i];
+      const base = i * 4;
+      const raw = this._clampDensity(this._density[i] / maxDensity, p);
+      const shade = 1 - p.blobColorMix * 0.55 + raw * p.blobColorMix * 0.9;
+      densityData[base] = _clamp(Math.round(rgb.r * shade), 0, 255);
+      densityData[base + 1] = _clamp(Math.round(rgb.g * shade), 0, 255);
+      densityData[base + 2] = _clamp(Math.round(rgb.b * shade), 0, 255);
+      densityData[base + 3] = _clamp(Math.round(255 * p.blobOpacity * opacityScale * (0.15 + raw * 0.85)), 0, 255);
+      maskData[base] = 255;
+      maskData[base + 1] = 255;
+      maskData[base + 2] = 255;
+      maskData[base + 3] = _clamp(Math.round(mask * 255), 0, 255);
+    }
+
+    this._densityCtx.putImageData(densityImg, 0, 0);
+    this._maskCtx.putImageData(maskImg, 0, 0);
+    this._stampCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._stampCtx.clearRect(0, 0, stampSize, stampSize);
+    this._stampCtx.imageSmoothingEnabled = true;
+    this._stampCtx.drawImage(this._densityCanvas, 0, 0, stampSize, stampSize);
+    this._stampCtx.globalCompositeOperation = 'destination-in';
+    this._stampCtx.drawImage(this._maskCanvas, 0, 0, stampSize, stampSize);
+    this._stampCtx.globalCompositeOperation = 'source-over';
+    return this._stampCanvas;
+  }
+
+  _clampDensity(density, p) {
+    const thresholded = _clamp((density - p.blobThreshold) / Math.max(1e-4, 1 - p.blobThreshold), 0, 1);
+    return _clamp((thresholded - 0.5) * p.blobContrast + 0.5, 0, 1);
+  }
+
+  _stamp(x, y, pressure) {
+    const p = this.app.getP();
+    let size = p.blobSize;
+    if (p.blobPressureSize) size *= (0.3 + 0.7 * pressure);
+    size = Math.max(8, size);
+    const stamp = this._renderStamp(size, pressure, p);
+    const half = stamp.width / 2;
+    const ctx = this.app.getActiveLayer().ctx;
+    for (const pt of this.app.getSymmetryPoints(x, y)) {
+      ctx.drawImage(stamp, pt.x - half, pt.y - half, stamp.width, stamp.height);
+    }
+  }
 }
 
 // =============================================================================
