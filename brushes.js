@@ -16,6 +16,11 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+const BLOB_WARP_FREQ_X = 0.23;
+const BLOB_WARP_FREQ_Y = 0.19;
+const BLOB_WARP_AMPLITUDE = 0.18;
+const BLOB_COLOR_MIX_BASE = 0.55;
+const BLOB_COLOR_MIX_DENSITY = 0.9;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -2821,7 +2826,7 @@ export class BlobFluidBrush {
           const dy = ny - meta.y;
           field += meta.weight * Math.exp(-(dx * dx + dy * dy) / Math.max(0.001, meta.radius * meta.radius));
         }
-        const warp = (_hash2D(x * 0.23, y * 0.19, seed) - 0.5) * 0.18;
+        const warp = (_hash2D(x * BLOB_WARP_FREQ_X, y * BLOB_WARP_FREQ_Y, seed) - 0.5) * BLOB_WARP_AMPLITUDE;
         const edge = field + warp;
         this._mask[y * gridSize + x] = _smoothstep(threshold - softness, threshold + softness, edge);
       }
@@ -2908,7 +2913,7 @@ export class BlobFluidBrush {
       const mask = this._mask[i];
       const base = i * 4;
       const raw = this._clampDensity(this._density[i] / maxDensity, p);
-      const shade = 1 - p.blobColorMix * 0.55 + raw * p.blobColorMix * 0.9;
+      const shade = 1 - p.blobColorMix * BLOB_COLOR_MIX_BASE + raw * p.blobColorMix * BLOB_COLOR_MIX_DENSITY;
       densityData[base] = _clamp(Math.round(rgb.r * shade), 0, 255);
       densityData[base + 1] = _clamp(Math.round(rgb.g * shade), 0, 255);
       densityData[base + 2] = _clamp(Math.round(rgb.b * shade), 0, 255);
