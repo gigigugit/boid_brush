@@ -2742,7 +2742,7 @@ export class BlobFluidBrush {
     if (p.blobPressureSize) size *= (0.3 + 0.7 * pressure);
     const step = Math.max(1, size * p.blobSpacing);
     if (dist < step) return;
-    const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    const n = Math.min(Math.max(1, Math.ceil(dist / step)), MAX_BLOB_STAMPS_PER_MOVE);
     for (let j = 1; j <= n; j++) {
       const t = j / n;
       this._stamp(this._lastStampX + dx * t, this._lastStampY + dy * t, pressure);
@@ -2918,7 +2918,7 @@ export class BlobFluidBrush {
     for (let i = 0; i < this._density.length; i++) {
       const mask = this._mask[i];
       const base = i * 4;
-      const raw = this._clampDensity(this._density[i] / maxDensity, p);
+      const raw = this._processDensity(this._density[i] / maxDensity, p);
       const shade = 1 - p.blobColorMix * BLOB_COLOR_MIX_BASE + raw * p.blobColorMix * BLOB_COLOR_MIX_DENSITY;
       densityData[base] = _clamp(Math.round(rgb.r * shade), 0, 255);
       densityData[base + 1] = _clamp(Math.round(rgb.g * shade), 0, 255);
@@ -2942,7 +2942,7 @@ export class BlobFluidBrush {
     return this._stampCanvas;
   }
 
-  _clampDensity(density, p) {
+  _processDensity(density, p) {
     const thresholded = _clamp((density - p.blobThreshold) / Math.max(1e-4, 1 - p.blobThreshold), 0, 1);
     return _clamp((thresholded - 0.5) * p.blobContrast + 0.5, 0, 1);
   }
