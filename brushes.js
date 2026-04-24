@@ -1,5 +1,5 @@
 // =============================================================================
-// brushes.js — Boid, Ant, Bristle, Fluid, Simple, and Eraser brush engines
+// brushes.js — Ant, Boid, Bristle, Eraser, Fluid, and Simple brush engines
 //
 // Each brush implements: onDown(x,y,pressure), onMove(x,y,pressure),
 // onUp(x,y), onFrame(elapsed), taperFrame(t,p), drawOverlay(ctx,p),

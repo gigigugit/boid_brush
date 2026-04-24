@@ -98,7 +98,7 @@ Very wide range values to explore extreme behaviour: paint flies in all directio
 ## Technical Notes
 
 - **Particle cap**: When the particle pool reaches `fluidParticleLimit`, the oldest particles are removed. This keeps performance stable regardless of stroke length.
-- **Sub-stepping**: The physics integrator sub-steps up to ~90× per frame (capped at 50 ms Δt) to remain stable at low frame rates.
+- **Sub-stepping**: The physics integrator uses `ceil(dt × 90)` sub-steps per frame (with Δt capped at 50 ms), so typical 60 FPS frames use a small number of sub-steps while slower frames get more stabilization work.
 - **Cell grid**: Velocity averaging for viscosity uses a spatial hash grid with cell size `fluidBrushRadius × 0.45`. Particles in the same cell share velocity, so tighter radii produce finer, more independent flow.
 - **Bounce**: Particles that leave the canvas boundary are reflected with a coefficient of 0.28, so they don't escape but do lose most of their speed on contact.
 - **Undo**: One undo entry is pushed at stroke start (`onDown`). The full particle state is not saved — only the canvas layer content. A full undo returns the layer to its pre-stroke state and clears the particle pool implicitly on next stroke.
