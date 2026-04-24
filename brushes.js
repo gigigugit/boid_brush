@@ -2782,6 +2782,7 @@ export class FluidBrush {
       if (d > radius || d < 1e-4) continue;
       const falloff = 1 - d / radius;
       const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
+      // Darker texture valleys keep the fluid mass together instead of shedding as much spray.
       const cohesionBias = 0.65 + texDensity * 0.35;
       const swirl = p.fluidSpread * 0.028 * falloff;
       const radialX = ox / d;
@@ -2923,6 +2924,8 @@ export class FluidBrush {
           const toCenterY = centerY - part.y;
           const centerDist = Math.hypot(toCenterX, toCenterY);
           const density = Math.min(1.6, cell.count / 7);
+          // Blend viscosity, pooling, and texture density into a mild extra pull so droplets
+          // read more like a connected wet group instead of isolated particles.
           const groupPull = (0.004 + p.fluidViscosity * 0.006 + p.fluidPooling * 0.008) * (0.65 + texDensity * 0.35);
           part.vx += toCenterX * (p.fluidPooling * density * 0.008 + groupPull);
           part.vy += toCenterY * (p.fluidPooling * density * 0.008 + groupPull);
