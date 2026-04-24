@@ -16,6 +16,11 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+const MAX_BLOB_STAMPS_PER_MOVE = 256;
+const BLOB_MIN_METABALLS = 4;
+const BLOB_METABALL_RANGE = 4;
+const BLOB_MIN_DROPLETS = 3;
+const BLOB_DROPLET_RANGE = 4;
 const BLOB_WARP_FREQ_X = 0.23;
 const BLOB_WARP_FREQ_Y = 0.19;
 const BLOB_WARP_AMPLITUDE = 0.18;
@@ -207,6 +212,7 @@ function _fract(v) {
 }
 
 function _hash2D(x, y, seed = 0) {
+  // Standard sine-hash constants commonly used for cheap deterministic procedural noise.
   return _fract(Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453123);
 }
 
@@ -2531,7 +2537,7 @@ export class SimpleBrush {
 
     if (dist < step) return; // accumulate distance until next stamp
 
-    const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    const n = Math.min(Math.max(1, Math.ceil(dist / step)), MAX_BLOB_STAMPS_PER_MOVE);
     for (let j = 1; j <= n; j++) {
       const t = j / n;
       this._stamp(this._lastStampX + dx * t, this._lastStampY + dy * t, pressure);
@@ -2802,7 +2808,7 @@ export class BlobFluidBrush {
 
   _buildMaskField(gridSize, seed, p) {
     const metas = [];
-    const metaCount = 4 + Math.floor(_hash2D(3.1, 7.7, seed) * 4);
+    const metaCount = BLOB_MIN_METABALLS + Math.floor(_hash2D(3.1, 7.7, seed) * BLOB_METABALL_RANGE);
     for (let i = 0; i < metaCount; i++) {
       const a = (i / metaCount) * Math.PI * 2 + _hash2D(11 + i, 17 + i * 3, seed) * 1.6;
       const d = 0.08 + _hash2D(23 + i * 5, 29 + i, seed) * 0.32;
@@ -2835,7 +2841,7 @@ export class BlobFluidBrush {
 
   _seedDensity(gridSize, seed) {
     this._density.fill(0);
-    const droplets = 3 + Math.floor(_hash2D(71, 73, seed) * 4);
+    const droplets = BLOB_MIN_DROPLETS + Math.floor(_hash2D(71, 73, seed) * BLOB_DROPLET_RANGE);
     for (let i = 0; i < droplets; i++) {
       const cx = (0.18 + _hash2D(79 + i, 83 + i, seed) * 0.64) * (gridSize - 1);
       const cy = (0.18 + _hash2D(89 + i, 97 + i, seed) * 0.64) * (gridSize - 1);

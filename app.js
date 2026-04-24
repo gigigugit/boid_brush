@@ -21,6 +21,15 @@ const WHEEL_ZOOM_OUT = 0.95;
 const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
+const BRUSH_LABELS = {
+  boid: '🐦 Boid',
+  ant: '🐜 Ant',
+  bristle: '🖊 Bristle',
+  simple: '🖌 Simple',
+  blob: '🫧 Blob Fluid',
+  eraser: '◻ Eraser',
+  ai: '🤖 AI Diffusion',
+};
 
 export class App {
   constructor() {
@@ -1439,10 +1448,9 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', simple: '🖌 Simple', blob: '🫧 Blob Fluid', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
-      btn.textContent = brushLabels[name] || name;
+      btn.textContent = BRUSH_LABELS[name] || name;
       btn.classList.remove('active', 'eraser-active');
       btn.classList.add(name === 'eraser' ? 'eraser-active' : 'active');
     }
