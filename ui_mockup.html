@@ -1,0 +1,815 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Boid Brush UI Mockup</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,500,0,0">
+<style>
+  :root {
+    --topbar-h: clamp(44px, 6.2vw, 56px);
+    --status-h: 24px;
+    --sidebar-w: 280px;
+    --layers-w: 230px;
+    --ink-0: #f2f4f8;
+    --ink-1: #cdd2de;
+    --ink-2: #9ea7b8;
+    --ink-3: #8893a7;
+    --line-0: rgba(255, 255, 255, 0.08);
+    --line-1: rgba(255, 255, 255, 0.14);
+    --panel-0: rgba(10, 12, 18, 0.94);
+    --accent-a: #3a6ae8;
+    --accent-b: #5b8af0;
+    --accent-c: #8bb3ff;
+    --warn-a: #b43b3b;
+    --shadow-lg: 0 14px 38px rgba(0, 0, 0, 0.45);
+    --rad-1: 8px;
+    --tap-min: 40px;
+  }
+
+  @media (max-width: 1100px) {
+    :root {
+      --sidebar-w: 244px;
+      --layers-w: 210px;
+      --tap-min: 44px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    :root {
+      --sidebar-w: min(86vw, 232px);
+      --layers-w: min(76vw, 220px);
+      --topbar-h: 54px;
+      --tap-min: 44px;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    color: var(--ink-1);
+    background:
+      radial-gradient(1200px 700px at 10% 10%, #1a1f2c 0%, transparent 55%),
+      radial-gradient(800px 560px at 90% 90%, #131928 0%, transparent 50%),
+      linear-gradient(180deg, #0d1118 0%, #0a0d14 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button, input, select { font: inherit; color: inherit; }
+
+  .chrome { position: fixed; inset: 0; }
+
+  .topbar-wrap {
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: var(--topbar-h);
+    display: flex;
+    align-items: center;
+    z-index: 30;
+    backdrop-filter: blur(20px);
+    background: rgba(17, 20, 28, 0.9);
+    border-bottom: 1px solid var(--line-0);
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.45);
+  }
+
+  .topbar {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    touch-action: pan-x;
+    mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  }
+
+  .topbar::-webkit-scrollbar { display: none; }
+  .topbar > * { flex-shrink: 0; scroll-snap-align: start; }
+
+  .tb-btn,
+  .compact-btn,
+  .sidebar-toggle,
+  .layers-toggle {
+    border: 1px solid var(--line-0);
+    border-radius: var(--rad-1);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ink-1);
+    min-height: var(--tap-min);
+    padding: 8px 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    transition: all 140ms ease;
+  }
+
+  .icon-only {
+    min-width: var(--tap-min);
+    padding: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .bi {
+    pointer-events: none;
+  }
+
+  .material-symbols-outlined {
+    font-size: 20px;
+    line-height: 1;
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 500,
+      'GRAD' 0,
+      'opsz' 24;
+    pointer-events: none;
+  }
+
+  .tb-btn:hover,
+  .compact-btn:hover,
+  .sidebar-toggle:hover,
+  .layers-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--line-1);
+    color: var(--ink-0);
+  }
+
+  .tb-btn.active,
+  .layers-toggle.active,
+  .sidebar-toggle.active {
+    background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    border-color: rgba(117, 162, 255, 0.55);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(75, 120, 241, 0.36);
+  }
+
+  .tb-sep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.1); margin-inline: 2px; }
+
+  .color {
+    width: var(--tap-min);
+    min-width: var(--tap-min);
+    height: var(--tap-min);
+    border-radius: 10px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .color::-webkit-color-swatch-wrapper { padding: 1px; }
+  .color::-webkit-color-swatch { border: 0; border-radius: 6px; }
+
+  .bg-tag {
+    color: var(--ink-3);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.85px;
+    text-transform: uppercase;
+  }
+
+  .topbar-right { display: flex; align-items: center; gap: 8px; padding-right: 8px; }
+  .compact-wrap { position: relative; }
+
+  .compact-menu {
+    position: absolute;
+    top: calc(var(--topbar-h) - 2px);
+    right: 0;
+    width: min(88vw, 320px);
+    border-radius: 12px;
+    border: 1px solid var(--line-1);
+    background: rgba(14, 17, 24, 0.97);
+    box-shadow: var(--shadow-lg);
+    padding: 8px;
+    display: none;
+    z-index: 50;
+  }
+
+  .compact-menu.open { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .compact-menu button {
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line-0);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ink-1);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .canvas-area {
+    position: absolute;
+    top: var(--topbar-h);
+    right: 0;
+    left: 0;
+    bottom: var(--status-h);
+    overflow: hidden;
+  }
+
+  .canvas-stage {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background:
+      linear-gradient(45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.03) 75%),
+      linear-gradient(45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.03) 75%);
+    background-size: 28px 28px;
+    background-position: 0 0, 14px 14px;
+  }
+
+  .mock-canvas {
+    width: min(70vw, 960px);
+    aspect-ratio: 16 / 9;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background:
+      radial-gradient(circle at 20% 30%, rgba(116, 167, 255, 0.2), transparent 35%),
+      radial-gradient(circle at 75% 60%, rgba(194, 125, 255, 0.17), transparent 40%),
+      linear-gradient(180deg, #f8f9fc 0%, #f1f4fb 100%);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
+  }
+
+  .sim-hud { position: absolute; left: 20px; top: 14px; display: grid; gap: 8px; z-index: 12; }
+
+  .sim-card {
+    border: 1px solid var(--line-0);
+    background: rgba(17, 20, 29, 0.88);
+    border-radius: 12px;
+    padding: 8px;
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(14px);
+  }
+
+  .sim-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .sim-pill {
+    min-height: 34px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line-0);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ink-1);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .sim-pill.active {
+    background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    border-color: rgba(117, 162, 255, 0.55);
+    color: #fff;
+  }
+
+  .sim-pill.warn {
+    background: rgba(146, 54, 54, 0.72);
+    border-color: rgba(225, 99, 99, 0.35);
+    color: #ffd6d6;
+  }
+
+  .layers-panel,
+  .sidebar {
+    position: absolute;
+    top: var(--topbar-h);
+    bottom: var(--status-h);
+    transition: transform 220ms ease;
+    background: var(--panel-0);
+    border: 1px solid var(--line-0);
+    backdrop-filter: blur(22px);
+    box-shadow: var(--shadow-lg);
+    z-index: 20;
+    overflow-y: auto;
+    padding: 10px;
+    touch-action: pan-y;
+  }
+
+  .layers-panel {
+    left: 0;
+    width: var(--layers-w);
+    transform: translateX(-100%);
+    border-left: 0;
+  }
+
+  .layers-panel.open { transform: translateX(0); }
+
+  .sidebar {
+    right: 0;
+    width: var(--sidebar-w);
+    transform: translateX(100%);
+    border-right: 0;
+  }
+
+  .sidebar.open { transform: translateX(0); }
+
+  .panel { margin-bottom: 8px; }
+
+  .panel-h {
+    min-height: 40px;
+    padding: 10px 12px;
+    border-radius: 10px 10px 0 0;
+    border: 1px solid var(--line-0);
+    background: rgba(255, 255, 255, 0.04);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--ink-0);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .panel-h .chev { color: var(--ink-3); transition: transform 220ms ease; }
+  .panel.closed .panel-h { border-radius: 10px; }
+  .panel.closed .panel-h .chev { transform: rotate(-90deg); }
+
+  .panel-b {
+    border: 1px solid var(--line-0);
+    border-top: 0;
+    border-radius: 0 0 10px 10px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 8px;
+    display: grid;
+    gap: 6px;
+  }
+
+  .panel.closed .panel-b { display: none; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 4px;
+    border-radius: 8px;
+  }
+
+  .row:hover { background: rgba(255, 255, 255, 0.04); }
+  .row label { color: var(--ink-1); font-size: 11px; font-weight: 600; }
+
+  .meta {
+    color: var(--ink-3);
+    font-size: 9px;
+    line-height: 1.25;
+    margin-top: -2px;
+  }
+
+  .slider-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .slider {
+    width: 88px;
+    accent-color: #7aa1ff;
+  }
+
+  .slider-value {
+    min-width: 34px;
+    text-align: right;
+    color: #f0f4ff;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .slider-number {
+    width: 54px;
+    min-height: 28px;
+    padding: 4px 6px;
+    border-radius: 7px;
+    border: 1px solid var(--line-1);
+    background: rgba(20, 25, 36, 0.98);
+    color: #eef3ff;
+    text-align: right;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .slider-number:focus-visible {
+    outline: 2px solid var(--accent-c);
+    outline-offset: 1px;
+  }
+
+  .slider-number::-webkit-outer-spin-button,
+  .slider-number::-webkit-inner-spin-button {
+    margin: 0;
+  }
+
+  .slider-number {
+    -moz-appearance: textfield;
+  }
+
+  .check { width: 18px; height: 18px; }
+
+  select {
+    min-height: 34px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line-1);
+    background: rgba(20, 25, 36, 0.98);
+    color: #eef3ff;
+  }
+
+  select option {
+    background: #171c28;
+    color: #eef3ff;
+  }
+
+  .section-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+  .section-btns button {
+    min-height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--line-0);
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--ink-1);
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .section-btns button.primary {
+    background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    color: #fff;
+    border-color: rgba(117, 162, 255, 0.55);
+  }
+
+  .layer-list { display: grid; gap: 6px; }
+
+  .layer-item {
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid var(--line-0);
+    border-radius: 8px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .layer-item.active {
+    background: rgba(58, 106, 232, 0.25);
+    border-color: rgba(117, 162, 255, 0.45);
+  }
+
+  .layer-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #8bb3ff;
+  }
+
+  .layer-tools { display: flex; gap: 6px; }
+
+  .layer-tools button {
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 7px;
+    border: 1px solid var(--line-0);
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--ink-1);
+  }
+
+  .status {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--status-h);
+    border-top: 1px solid var(--line-0);
+    background: rgba(8, 10, 14, 0.94);
+    color: #99a3b7;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    letter-spacing: 0.25px;
+    font-size: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    z-index: 26;
+  }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: calc(var(--status-h) + 14px);
+    transform: translateX(-50%);
+    min-height: 40px;
+    display: grid;
+    place-items: center;
+    padding: 8px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--line-1);
+    background: rgba(12, 15, 22, 0.95);
+    color: #f5f7ff;
+    box-shadow: var(--shadow-lg);
+    z-index: 40;
+  }
+
+  .focusable:focus-visible,
+  button:focus-visible,
+  select:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--accent-c);
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 1000px) {
+    .mock-canvas { width: min(82vw, 860px); }
+  }
+
+  @media (max-width: 760px) {
+    .tb-hide-compact { display: none; }
+    .sim-hud { left: 10px; top: 10px; }
+    .sim-pill { min-height: 38px; }
+    .mock-canvas { width: min(90vw, 760px); }
+  }
+</style>
+</head>
+<body>
+<div class="chrome">
+  <div class="topbar-wrap" role="banner" aria-label="Main toolbar region">
+    <div class="topbar" aria-label="Primary tools">
+      <button id="layersToggle" class="layers-toggle focusable" aria-expanded="false" aria-controls="layersPanel" aria-label="Toggle layers panel">Layers</button>
+      <div class="tb-sep" aria-hidden="true"></div>
+      <button class="tb-btn active focusable icon-only" aria-label="Active brush" title="Brush"><i class="bi bi-brush-fill" aria-hidden="true"></i></button>
+      <div class="tb-sep" aria-hidden="true"></div>
+      <input class="color focusable" type="color" value="#233f92" aria-label="Primary color">
+      <button class="tb-btn focusable icon-only" aria-label="Swap colors" title="Swap colors"><i class="bi bi-arrow-left-right" aria-hidden="true"></i></button>
+      <input class="color focusable" type="color" value="#f7f8ff" aria-label="Secondary color">
+      <div class="tb-sep" aria-hidden="true"></div>
+      <button class="tb-btn focusable icon-only" aria-label="Undo" title="Undo"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
+      <button class="tb-btn focusable icon-only" aria-label="Redo" title="Redo"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+      <div class="tb-sep" aria-hidden="true"></div>
+      <button class="tb-btn focusable icon-only" aria-label="Rectangle select" title="Rectangle select"><i class="bi bi-bounding-box" aria-hidden="true"></i></button>
+      <button class="tb-btn tb-hide-compact focusable icon-only" aria-label="Ellipse select" title="Ellipse select"><i class="bi bi-circle" aria-hidden="true"></i></button>
+      <button class="tb-btn focusable icon-only" aria-label="Lasso select" title="Lasso select"><span class="material-symbols-outlined" aria-hidden="true">lasso_select</span></button>
+      <button class="tb-btn focusable icon-only" aria-label="Fill tool" title="Fill tool"><i class="bi bi-paint-bucket" aria-hidden="true"></i></button>
+      <button class="tb-btn tb-hide-compact focusable icon-only" aria-label="Simulation mode" title="Simulation"><i class="bi bi-play-circle" aria-hidden="true"></i></button>
+      <div class="tb-sep tb-hide-compact" aria-hidden="true"></div>
+      <button class="tb-btn tb-hide-compact focusable icon-only" aria-label="Copy" title="Copy"><i class="bi bi-files" aria-hidden="true"></i></button>
+      <button class="tb-btn tb-hide-compact focusable icon-only" aria-label="Paste" title="Paste"><i class="bi bi-clipboard-plus" aria-hidden="true"></i></button>
+      <div class="tb-sep" aria-hidden="true"></div>
+      <span class="bg-tag">BG</span>
+      <input class="color focusable" type="color" value="#ffffff" aria-label="Background color">
+      <div class="tb-sep" aria-hidden="true"></div>
+      <button class="tb-btn tb-hide-compact focusable icon-only" aria-label="Canvas size" title="Canvas size"><i class="bi bi-aspect-ratio" aria-hidden="true"></i></button>
+      <button class="tb-btn tb-hide-compact focusable icon-only" aria-label="Save" title="Save"><i class="bi bi-save" aria-hidden="true"></i></button>
+    </div>
+
+    <div class="topbar-right">
+      <div class="compact-wrap">
+        <button id="compactBtn" class="compact-btn focusable icon-only" aria-expanded="false" aria-controls="compactMenu" aria-label="More tools" title="More tools"><i class="bi bi-three-dots" aria-hidden="true"></i></button>
+        <div id="compactMenu" class="compact-menu" role="menu" aria-label="Compact overflow actions">
+          <button role="menuitem" aria-label="Export PSD" title="Export PSD"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Import PSD" title="Import PSD"><i class="bi bi-box-arrow-in-down" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Reset view" title="Reset view"><i class="bi bi-arrow-repeat" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Flip view" title="Flip view"><i class="bi bi-symmetry-vertical" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Tiling" title="Tiling"><i class="bi bi-grid-3x3-gap" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Alpha lock" title="Alpha lock"><i class="bi bi-lock" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Copy" title="Copy"><i class="bi bi-files" aria-hidden="true"></i></button>
+          <button role="menuitem" aria-label="Cut" title="Cut"><i class="bi bi-scissors" aria-hidden="true"></i></button>
+        </div>
+      </div>
+      <button id="sidebarToggle" class="sidebar-toggle focusable icon-only" aria-expanded="false" aria-controls="sidebar" aria-label="Toggle settings sidebar" title="Settings"><i class="bi bi-sliders" aria-hidden="true"></i></button>
+    </div>
+  </div>
+
+  <div class="canvas-area" aria-label="Canvas workspace">
+    <div class="canvas-stage">
+      <div class="mock-canvas" aria-hidden="true"></div>
+    </div>
+
+    <div class="sim-hud" aria-label="Simulation controls">
+      <div class="sim-card">
+        <div class="sim-row">
+          <div class="sim-pill active">Spawn</div>
+          <div class="sim-pill">Attract</div>
+          <div class="sim-pill">Repel</div>
+          <div class="sim-pill">Path</div>
+        </div>
+      </div>
+      <div class="sim-card">
+        <div class="sim-row">
+          <div class="sim-pill active">Run</div>
+          <div class="sim-pill">Pause</div>
+          <div class="sim-pill warn">Stop</div>
+        </div>
+      </div>
+    </div>
+
+    <aside id="layersPanel" class="layers-panel" aria-label="Layers panel">
+      <section class="panel">
+        <button class="panel-h focusable" aria-expanded="true">Layers <span class="chev"><i class="bi bi-chevron-down" aria-hidden="true"></i></span></button>
+        <div class="panel-b">
+          <div class="section-btns">
+            <button class="primary">Add</button>
+            <button>Duplicate</button>
+            <button>Merge</button>
+            <button>Flatten</button>
+          </div>
+          <div class="layer-list">
+            <div class="layer-item active">
+              <span class="layer-dot"></span>
+              <span>Layer 3</span>
+              <div class="layer-tools"><button aria-label="Visible" title="Visible"><i class="bi bi-eye" aria-hidden="true"></i></button><button aria-label="Locked" title="Locked"><i class="bi bi-lock" aria-hidden="true"></i></button></div>
+            </div>
+            <div class="layer-item">
+              <span class="layer-dot" style="background:#c7d5ff"></span>
+              <span>Layer 2</span>
+              <div class="layer-tools"><button aria-label="Visible" title="Visible"><i class="bi bi-eye" aria-hidden="true"></i></button><button aria-label="Unlocked" title="Unlocked"><i class="bi bi-unlock" aria-hidden="true"></i></button></div>
+            </div>
+            <div class="layer-item">
+              <span class="layer-dot" style="background:#9cc0ff"></span>
+              <span>Background</span>
+              <div class="layer-tools"><button aria-label="Visible" title="Visible"><i class="bi bi-eye" aria-hidden="true"></i></button><button aria-label="Locked" title="Locked"><i class="bi bi-lock" aria-hidden="true"></i></button></div>
+            </div>
+          </div>
+          <div class="row">
+            <label>Blend Mode</label>
+            <select class="focusable"><option>Normal</option><option>Multiply</option><option>Screen</option></select>
+          </div>
+          <div class="row">
+            <label>Opacity</label>
+            <input class="slider focusable" type="range" value="88">
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <aside id="sidebar" class="sidebar" aria-label="Settings panel">
+      <section class="panel">
+        <button class="panel-h focusable" aria-expanded="true">Brush Scale <span class="chev"><i class="bi bi-chevron-down" aria-hidden="true"></i></span></button>
+        <div class="panel-b">
+          <div class="row">
+            <div>
+              <label>Scale</label>
+              <div class="meta">Large labels and bigger targets for iPad comfort</div>
+            </div>
+            <input class="slider focusable" type="range" value="100">
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <button class="panel-h focusable" aria-expanded="true">Forces <span class="chev"><i class="bi bi-chevron-down" aria-hidden="true"></i></span></button>
+        <div class="panel-b">
+          <div class="row"><label>Seek</label><input class="slider focusable" type="range" value="72"></div>
+          <div class="row"><label>Cohesion</label><input class="slider focusable" type="range" value="20"></div>
+          <div class="row"><label>Separation</label><input class="slider focusable" type="range" value="44"></div>
+          <div class="row"><label>Alignment</label><input class="slider focusable" type="range" value="31"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <button class="panel-h focusable" aria-expanded="true">Stamp <span class="chev"><i class="bi bi-chevron-down" aria-hidden="true"></i></span></button>
+        <div class="panel-b">
+          <div class="row"><label>Size</label><input class="slider focusable" type="range" value="28"></div>
+          <div class="row"><label>Opacity</label><input class="slider focusable" type="range" value="66"></div>
+          <div class="row"><label>Pressure to Size</label><input class="check focusable" type="checkbox" checked></div>
+          <div class="row"><label>Pressure to Opacity</label><input class="check focusable" type="checkbox" checked></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <button class="panel-h focusable" aria-expanded="true">Readability + Accessibility <span class="chev"><i class="bi bi-chevron-down" aria-hidden="true"></i></span></button>
+        <div class="panel-b">
+          <div class="row">
+            <div>
+              <label>Focus Rings</label>
+              <div class="meta">Visible keyboard focus across all controls</div>
+            </div>
+            <input class="check focusable" type="checkbox" checked>
+          </div>
+          <div class="row">
+            <div>
+              <label>High-Contrast Text</label>
+              <div class="meta">Boosted helper and status contrast</div>
+            </div>
+            <input class="check focusable" type="checkbox" checked>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <div class="toast" aria-live="polite">Layers are now in a dedicated left-side panel</div>
+  </div>
+
+  <div class="status">status: ui_mockup preview - separate left layers panel + right settings panel</div>
+</div>
+
+<script>
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  const sidebar = document.getElementById('sidebar');
+  const layersToggle = document.getElementById('layersToggle');
+  const layersPanel = document.getElementById('layersPanel');
+  const compactBtn = document.getElementById('compactBtn');
+  const compactMenu = document.getElementById('compactMenu');
+
+  sidebarToggle.addEventListener('click', () => {
+    const open = sidebar.classList.toggle('open');
+    sidebarToggle.setAttribute('aria-expanded', String(open));
+    sidebarToggle.classList.toggle('active', open);
+  });
+
+  layersToggle.addEventListener('click', () => {
+    const open = layersPanel.classList.toggle('open');
+    layersToggle.setAttribute('aria-expanded', String(open));
+    layersToggle.classList.toggle('active', open);
+  });
+
+  compactBtn.addEventListener('click', () => {
+    const open = compactMenu.classList.toggle('open');
+    compactBtn.setAttribute('aria-expanded', String(open));
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!compactBtn.contains(e.target) && !compactMenu.contains(e.target)) {
+      compactMenu.classList.remove('open');
+      compactBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.querySelectorAll('.panel-h').forEach((header) => {
+    header.addEventListener('click', () => {
+      const panel = header.closest('.panel');
+      const closed = panel.classList.toggle('closed');
+      header.setAttribute('aria-expanded', String(!closed));
+    });
+  });
+
+  // Show live slider values and allow direct number entry.
+  document.querySelectorAll('input.slider').forEach((slider, index) => {
+    if (slider.dataset.enhanced === '1') return;
+    slider.dataset.enhanced = '1';
+
+    if (!slider.hasAttribute('min')) slider.min = '0';
+    if (!slider.hasAttribute('max')) slider.max = '100';
+    if (!slider.hasAttribute('step')) slider.step = '1';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'slider-control';
+
+    const value = document.createElement('span');
+    value.className = 'slider-value';
+    value.id = `sliderValue${index}`;
+
+    const number = document.createElement('input');
+    number.type = 'number';
+    number.className = 'slider-number focusable';
+    number.min = slider.min;
+    number.max = slider.max;
+    number.step = slider.step;
+    number.setAttribute('aria-label', 'Enter numeric value');
+
+    const min = () => Number(slider.min);
+    const max = () => Number(slider.max);
+
+    const syncFromSlider = () => {
+      value.textContent = slider.value;
+      number.value = slider.value;
+    };
+
+    const syncFromNumber = () => {
+      const parsed = Number(number.value);
+      if (Number.isNaN(parsed)) {
+        syncFromSlider();
+        return;
+      }
+      const bounded = Math.min(max(), Math.max(min(), parsed));
+      slider.value = String(bounded);
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      syncFromSlider();
+    };
+
+    slider.parentNode.insertBefore(wrap, slider);
+    wrap.appendChild(slider);
+    wrap.appendChild(value);
+    wrap.appendChild(number);
+
+    slider.addEventListener('input', syncFromSlider);
+    number.addEventListener('change', syncFromNumber);
+    number.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') syncFromNumber();
+    });
+
+    syncFromSlider();
+  });
+</script>
+</body>
+</html>

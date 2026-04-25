@@ -8,6 +8,121 @@ export function clear_agents() {
 }
 
 /**
+ * @param {number} handle
+ * @param {Float32Array} packed
+ * @param {number} stride
+ */
+export function fluid_add_particles(handle, packed, stride) {
+    const ptr0 = passArrayF32ToWasm0(packed, wasm.__wbindgen_export);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.fluid_add_particles(handle, ptr0, len0, stride);
+}
+
+/**
+ * @param {number} handle
+ */
+export function fluid_clear_particles(handle) {
+    wasm.fluid_clear_particles(handle);
+}
+
+/**
+ * @param {number} width
+ * @param {number} height
+ * @returns {number}
+ */
+export function fluid_create_simulator(width, height) {
+    const ret = wasm.fluid_create_simulator(width, height);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ */
+export function fluid_destroy_simulator(handle) {
+    wasm.fluid_destroy_simulator(handle);
+}
+
+/**
+ * @param {number} handle
+ * @returns {number}
+ */
+export function fluid_get_particle_count(handle) {
+    const ret = wasm.fluid_get_particle_count(handle);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @returns {Float32Array}
+ */
+export function fluid_get_particles(handle) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.fluid_get_particles(retptr, handle);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayF32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * @param {number} handle
+ * @returns {Uint8Array}
+ */
+export function fluid_read_pixels(handle) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.fluid_read_pixels(retptr, handle);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * @param {number} handle
+ * @param {Uint8Array} rgba
+ */
+export function fluid_set_mask_rgba(handle, rgba) {
+    const ptr0 = passArray8ToWasm0(rgba, wasm.__wbindgen_export);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.fluid_set_mask_rgba(handle, ptr0, len0);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} particle_radius
+ * @param {number} viscosity
+ * @param {number} density
+ * @param {number} surface_tension
+ * @param {number} time_step
+ * @param {number} substeps
+ * @param {number} motion_decay
+ * @param {number} stop_speed
+ * @param {number} simulation_type
+ * @param {number} render_mode
+ */
+export function fluid_set_params(handle, particle_radius, viscosity, density, surface_tension, time_step, substeps, motion_decay, stop_speed, simulation_type, render_mode) {
+    wasm.fluid_set_params(handle, particle_radius, viscosity, density, surface_tension, time_step, substeps, motion_decay, stop_speed, simulation_type, render_mode);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} dt
+ */
+export function fluid_step(handle, dt) {
+    wasm.fluid_step(handle, dt);
+}
+
+/**
  * Pointer to the raw f32 agent buffer. JS creates a typed view:
  * ```js
  * new Float32Array(wasm.memory.buffer, ptr, count * STRIDE)
@@ -198,10 +313,63 @@ function __wbg_get_imports() {
     };
 }
 
+function getArrayF32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
+}
+
+let cachedFloat32ArrayMemory0 = null;
+function getFloat32ArrayMemory0() {
+    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
+        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
+    }
+    return cachedFloat32ArrayMemory0;
+}
+
+let cachedUint8ArrayMemory0 = null;
+function getUint8ArrayMemory0() {
+    if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
+        cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
+    }
+    return cachedUint8ArrayMemory0;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayF32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getFloat32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+let WASM_VECTOR_LEN = 0;
+
 let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
+    cachedDataViewMemory0 = null;
+    cachedFloat32ArrayMemory0 = null;
+    cachedUint8ArrayMemory0 = null;
     return wasm;
 }
 

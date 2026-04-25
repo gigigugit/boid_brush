@@ -19,6 +19,7 @@
 // =============================================================================
 
 mod boid;
+mod fluid;
 mod forces;
 mod noise;
 mod params;
@@ -27,6 +28,7 @@ mod sim;
 mod spawn;
 
 use boid::STRIDE;
+use fluid::FluidSimulation;
 use params::PARAMS_LEN;
 use sim::Simulation;
 use wasm_bindgen::prelude::*;
@@ -35,6 +37,7 @@ use std::cell::RefCell;
 
 thread_local! {
     static SIM: RefCell<Option<Simulation>> = RefCell::new(None);
+    static FLUID_SIMS: RefCell<Vec<Option<FluidSimulation>>> = RefCell::new(Vec::new());
 }
 
 fn with_sim<F, R>(f: F) -> R
@@ -44,6 +47,20 @@ where
     SIM.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let sim = borrow.as_mut().expect("Simulation not initialized — call init() first");
+        f(sim)
+    })
+}
+
+fn with_fluid_sim<F, R>(handle: u32, f: F) -> R
+where
+    F: FnOnce(&mut FluidSimulation) -> R,
+{
+    FLUID_SIMS.with(|cell| {
+        let mut sims = cell.borrow_mut();
+        let sim = sims
+            .get_mut(handle as usize)
+            .and_then(Option::as_mut)
+            .expect("Fluid simulator not initialized");
         f(sim)
     })
 }
@@ -205,6 +222,95 @@ pub fn update_sensing() {
     // No-op: the data is already in place. This function exists as a
     // synchronization point — if we add threading later, this would
     // include a memory fence.
+}
+
+#[wasm_bindgen]
+pub fn fluid_create_simulator(width: u32, height: u32) -> u32 {
+    FLUID_SIMS.with(|cell| {
+        let mut sims = cell.borrow_mut();
+        let sim = FluidSimulation::new(width, height);
+        if let Some((index, slot)) = sims.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
+            *slot = Some(sim);
+            index as u32
+        } else {
+            sims.push(Some(sim));
+            (sims.len() - 1) as u32
+        }
+    })
+}
+
+#[wasm_bindgen]
+pub fn fluid_destroy_simulator(handle: u32) {
+    FLUID_SIMS.with(|cell| {
+        if let Some(slot) = cell.borrow_mut().get_mut(handle as usize) {
+            *slot = None;
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn fluid_set_params(
+    handle: u32,
+    particle_radius: f32,
+    viscosity: f32,
+    density: f32,
+    surface_tension: f32,
+    time_step: f32,
+    substeps: u32,
+    motion_decay: f32,
+    stop_speed: f32,
+    simulation_type: u32,
+    render_mode: u32,
+) {
+    with_fluid_sim(handle, |sim| {
+        sim.set_params(
+            particle_radius,
+            viscosity,
+            density,
+            surface_tension,
+            time_step,
+            substeps,
+            motion_decay,
+            stop_speed,
+            simulation_type,
+            render_mode,
+        )
+    });
+}
+
+#[wasm_bindgen]
+pub fn fluid_set_mask_rgba(handle: u32, rgba: &[u8]) {
+    with_fluid_sim(handle, |sim| sim.set_mask_rgba(rgba));
+}
+
+#[wasm_bindgen]
+pub fn fluid_add_particles(handle: u32, packed: &[f32], stride: u32) {
+    with_fluid_sim(handle, |sim| sim.add_particles_from_slice(packed, stride as usize));
+}
+
+#[wasm_bindgen]
+pub fn fluid_clear_particles(handle: u32) {
+    with_fluid_sim(handle, |sim| sim.clear_particles());
+}
+
+#[wasm_bindgen]
+pub fn fluid_step(handle: u32, dt: f32) {
+    with_fluid_sim(handle, |sim| sim.step(dt));
+}
+
+#[wasm_bindgen]
+pub fn fluid_read_pixels(handle: u32) -> Vec<u8> {
+    with_fluid_sim(handle, |sim| sim.read_pixels())
+}
+
+#[wasm_bindgen]
+pub fn fluid_get_particle_count(handle: u32) -> u32 {
+    with_fluid_sim(handle, |sim| sim.particle_count())
+}
+
+#[wasm_bindgen]
+pub fn fluid_get_particles(handle: u32) -> Vec<f32> {
+    with_fluid_sim(handle, |sim| sim.read_particles())
 }
 
 // =============================================================================

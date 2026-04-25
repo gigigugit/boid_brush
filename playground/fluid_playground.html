@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blob Fluid Playground</title>
+<style>
+:root {
+  --bg-0: #08111b;
+  --bg-1: #0d1724;
+  --bg-2: rgba(10, 19, 31, 0.88);
+  --bg-3: rgba(6, 12, 20, 0.76);
+  --bg-4: rgba(255, 255, 255, 0.05);
+  --line-0: rgba(147, 178, 214, 0.14);
+  --line-1: rgba(147, 178, 214, 0.24);
+  --line-2: rgba(147, 178, 214, 0.08);
+  --text-0: #ebf3ff;
+  --text-1: #cfdded;
+  --text-2: #8ca2bf;
+  --accent-0: #45d6ff;
+  --accent-1: #1ba8df;
+  --accent-2: #9dedff;
+  --warm-0: #ffbf6f;
+  --ok-0: #7be5a8;
+  --warn-0: #ff8c8c;
+  --shadow-0: 0 30px 60px rgba(0, 0, 0, 0.42);
+  --radius-0: 18px;
+  --radius-1: 12px;
+  --radius-2: 999px;
+  --sidebar-w: 338px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font: 12px/1.25 "Segoe UI", Arial, sans-serif;
+  color: var(--text-1);
+  color-scheme: dark;
+  background:
+    radial-gradient(980px 700px at 8% 8%, rgba(56, 130, 214, 0.16), transparent 52%),
+    radial-gradient(760px 540px at 86% 18%, rgba(34, 188, 204, 0.14), transparent 54%),
+    linear-gradient(180deg, #0b1420 0%, var(--bg-0) 100%);
+  overflow: hidden;
+}
+
+button,
+input,
+select { font: inherit; }
+
+button,
+select,
+input[type="color"] {
+  min-height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--line-0);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-0);
+}
+
+select,
+option,
+optgroup {
+  background: #0d1622;
+  color: var(--text-0);
+}
+
+button {
+  cursor: pointer;
+  padding: 6px 10px;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+button:hover,
+select:hover,
+input[type="color"]:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--line-1);
+}
+
+button:active { transform: translateY(1px); }
+
+.shell {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line-0);
+  border-radius: 14px;
+  background: rgba(8, 15, 24, 0.7);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-0);
+}
+
+.brand {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.brand-kicker {
+  color: var(--text-2);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.brand-title {
+  color: var(--text-0);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brand-note {
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.runtime-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  padding: 4px 9px;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 10px;
+}
+
+.runtime-pill strong { color: var(--text-0); }
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok-0);
+  box-shadow: 0 0 0 4px rgba(123, 229, 168, 0.14);
+}
+
+.topbar-cluster {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.topbar .ghost-btn {
+  min-height: 34px;
+  padding: 6px 11px;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(166, 202, 234, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.topbar .ghost-btn.active,
+.topbar .primary-btn.active,
+.topbar .ghost-btn[aria-pressed="true"] {
+  background: linear-gradient(180deg, rgba(69, 214, 255, 0.94), rgba(27, 168, 223, 0.92));
+  color: #042033;
+  border-color: rgba(69, 214, 255, 0.48);
+  font-weight: 700;
+}
+
+.topbar .primary-btn {
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
+.workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-w);
+  gap: 10px;
+}
+
+.stage-panel,
+.sidebar {
+  min-height: 0;
+  border: 1px solid var(--line-0);
+  border-radius: 16px;
+  background: var(--bg-2);
+  box-shadow: var(--shadow-0);
+  overflow: hidden;
+}
+
+.stage-panel {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.viewport {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  background:
+    linear-gradient(180deg, rgba(7, 13, 22, 0.92), rgba(5, 10, 18, 0.98)),
+    radial-gradient(circle at 20% 20%, rgba(69, 214, 255, 0.12), transparent 30%);
+}
+
+.canvas-stack {
+  position: absolute;
+  inset: 0;
+}
+
+canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#simCanvas { cursor: crosshair; }
+#overlayCanvas { pointer-events: none; }
+
+.viewport-overlay {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+
+.hint,
+.legend {
+  max-width: min(420px, 100%);
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.hint strong,
+.legend strong { color: var(--text-0); }
+
+.sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.sidebar-head {
+  display: grid;
+  gap: 6px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.sidebar-title {
+  color: var(--text-0);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sidebar-subtle {
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.sidebar-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.section {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--bg-3);
+}
+
+.section-title {
+  color: var(--accent-2);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.field-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.field-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--text-1);
+  font-size: 10px;
+}
+
+.field-header output {
+  color: var(--accent-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.field-header span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent-0);
+}
+
+input[type="color"] {
+  width: 100%;
+  padding: 3px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stat {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stat-label {
+  color: var(--text-2);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.stat-value {
+  color: var(--text-0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hidden-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+}
+
+@media (max-width: 1180px) {
+  :root { --sidebar-w: 310px; }
+  .workspace { grid-template-columns: minmax(0, 1fr) var(--sidebar-w); }
+  .topbar { grid-template-columns: 1fr; }
+  .topbar-cluster { justify-content: flex-start; }
+}
+
+@media (max-width: 920px) {
+  body { overflow: auto; }
+  .shell {
+    height: auto;
+    min-height: 100%;
+  }
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 58vh) auto;
+  }
+  .sidebar {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .field-grid.two-col,
+  .stats-grid { grid-template-columns: 1fr; }
+  .topbar-cluster { width: 100%; }
+  .topbar-cluster > * { flex: 1; }
+  .viewport-overlay {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <section class="brand">
+      <div class="brand-kicker">particleless lattice fluid sandbox</div>
+      <div class="brand-title">LBM Blob Playground</div>
+      <span class="runtime-pill"><span class="dot" id="runtimeDot"></span><strong id="runtimeLabel">Booting</strong><span id="runtimeMeta">Loading solver adapter…</span></span>
+      <div class="brand-note">This playground is now surfaced as an LBM-only tuning view. The non-LBM code paths remain in source but are not exposed here.</div>
+    </section>
+
+    <section class="topbar-cluster" aria-label="Tool actions">
+      <button id="toolBlob" class="ghost-btn active" type="button">Blob</button>
+      <button id="toolPigment" class="ghost-btn" type="button">Pigment</button>
+      <button id="toolErase" class="ghost-btn" type="button">Erase</button>
+    </section>
+
+    <section class="topbar-cluster" aria-label="Playback and actions">
+      <button id="togglePlayback" class="ghost-btn active" type="button">Pause</button>
+      <button id="stepOnce" class="ghost-btn" type="button">Step</button>
+      <button id="seedCenter" class="ghost-btn" type="button">Center Inject</button>
+      <button id="seedBlob" class="ghost-btn" type="button">Flood Blob</button>
+      <button id="clearPigment" class="ghost-btn" type="button">Clear Pigment</button>
+      <button id="clearAll" class="ghost-btn" type="button">Clear All</button>
+      <button id="exportSnapshot" class="ghost-btn" type="button">Snapshot</button>
+    </section>
+  </header>
+
+  <div class="workspace">
+    <main class="stage-panel">
+      <div class="viewport" id="viewport">
+        <div class="canvas-stack">
+          <canvas id="simCanvas"></canvas>
+          <canvas id="overlayCanvas"></canvas>
+        </div>
+        <div class="viewport-overlay">
+          <div class="hint">
+            <strong>Pointer Flow</strong><br>
+            Blob defines the LBM boundary. Pigment injects into the lattice. Shift erases. Space pauses playback.
+          </div>
+          <div class="legend">
+            <strong>Status</strong><br>
+            <span id="statusText">Preparing playground…</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="sidebar-title">LBM Controls</div>
+        <div class="sidebar-subtle">All visible controls in this panel tune the particleless LBM solver, blob modeling, rendering, or direct interaction behavior.</div>
+      </div>
+
+      <div class="sidebar-scroll">
+        <section class="section">
+          <div class="section-title">Interaction</div>
+          <div class="field-grid two-col">
+            <label class="field">
+              <span class="field-header"><span>Brush Radius</span><output id="brushRadiusValue" for="brushRadius"></output></span>
+              <input id="brushRadius" type="range" min="8" max="180" value="54">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Spawn Count</span><output id="spawnCountValue" for="spawnCount"></output></span>
+              <input id="spawnCount" type="range" min="8" max="220" value="54">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Pigment</span></span>
+              <input id="pigmentColor" type="color" value="#47c7ff">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Resolution</span><output id="resolutionScaleValue" for="resolutionScale"></output></span>
+              <select id="resolutionScale">
+                <option value="1">100%</option>
+                <option value="0.75">75%</option>
+                <option value="0.5" selected>50%</option>
+                <option value="0.33">33%</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Fluid Scale</span><output id="fluidScaleValue" for="fluidScale"></output></span>
+              <input id="fluidScale" type="range" min="50" max="200" value="100">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Free Flow</span></span>
+              <input id="freeFlowMode" type="checkbox">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Stroke Pull</span><output id="strokePullValue" for="strokePull"></output></span>
+              <input id="strokePull" type="range" min="0" max="100" value="62">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Bristle Rake</span><output id="strokeRakeValue" for="strokeRake"></output></span>
+              <input id="strokeRake" type="range" min="0" max="100" value="48">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Stroke Jitter</span><output id="strokeJitterValue" for="strokeJitter"></output></span>
+              <input id="strokeJitter" type="range" min="0" max="100" value="36">
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">LBM Solver</div>
+          <div class="field-grid two-col">
+            <label class="field">
+              <span class="field-header"><span>Lattice Radius</span><output id="particleRadiusValue" for="particleRadius"></output></span>
+              <input id="particleRadius" type="range" min="2" max="18" value="6">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Viscosity</span><output id="viscosityValue" for="viscosity"></output></span>
+              <input id="viscosity" type="range" min="0" max="100" value="42">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Density</span><output id="densityValue" for="density"></output></span>
+              <input id="density" type="range" min="0" max="100" value="55">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Surface Tension</span><output id="surfaceTensionValue" for="surfaceTension"></output></span>
+              <input id="surfaceTension" type="range" min="0" max="100" value="58">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Time Step</span><output id="timeStepValue" for="timeStep"></output></span>
+              <input id="timeStep" type="range" min="4" max="40" value="16">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Substeps</span><output id="solverSubstepsValue" for="solverSubsteps"></output></span>
+              <input id="solverSubsteps" type="range" min="1" max="8" value="3">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Motion Decay</span><output id="motionDecayValue" for="motionDecay"></output></span>
+              <input id="motionDecay" type="range" min="0" max="160" value="16">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Rest Threshold</span><output id="stopSpeedValue" for="stopSpeed"></output></span>
+              <input id="stopSpeed" type="range" min="0" max="120" value="8">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Render Mode</span></span>
+              <select id="renderMode">
+                <option value="hybrid" selected>Hybrid</option>
+                <option value="particles">Particles</option>
+                <option value="grid">Grid</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Blob Modeling</div>
+          <div class="field-grid two-col">
+            <button id="presetCircle" type="button">Circle Preset</button>
+            <button id="presetRibbon" type="button">Ribbon Preset</button>
+            <label class="field">
+              <span class="field-header"><span>Blob Tightness</span><output id="blobTightnessValue" for="blobTightness"></output></span>
+              <input id="blobTightness" type="range" min="20" max="100" value="68">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Overlay</span></span>
+              <select id="displayOverlay">
+                <option value="mask">Mask Overlay</option>
+                <option value="maskVectors">Mask + Vectors</option>
+                <option value="none">Minimal Overlay</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Runtime Stats</div>
+          <div class="stats-grid">
+            <div class="stat">
+              <div class="stat-label">Active Samples</div>
+              <div class="stat-value" id="particleCount">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Blob Coverage</div>
+              <div class="stat-value" id="maskCoverage">0%</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Lattice Resolution</div>
+              <div class="stat-value" id="internalResolution">0 x 0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Sim Time</div>
+              <div class="stat-value" id="simMs">0.0 ms</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Frame Time</div>
+              <div class="stat-value" id="frameMs">0.0 ms</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<input id="simulationType" class="hidden-input" type="hidden" value="lbm" aria-hidden="true">
+
+<script type="module" src="./fluid_playground.js?v=20260424-refresh-1"></script>
+</body>
+</html>

@@ -6,6 +6,26 @@
  */
 export function clear_agents(): void;
 
+export function fluid_add_particles(handle: number, packed: Float32Array, stride: number): void;
+
+export function fluid_clear_particles(handle: number): void;
+
+export function fluid_create_simulator(width: number, height: number): number;
+
+export function fluid_destroy_simulator(handle: number): void;
+
+export function fluid_get_particle_count(handle: number): number;
+
+export function fluid_get_particles(handle: number): Float32Array;
+
+export function fluid_read_pixels(handle: number): Uint8Array;
+
+export function fluid_set_mask_rgba(handle: number, rgba: Uint8Array): void;
+
+export function fluid_set_params(handle: number, particle_radius: number, viscosity: number, density: number, surface_tension: number, time_step: number, substeps: number, motion_decay: number, stop_speed: number, simulation_type: number, render_mode: number): void;
+
+export function fluid_step(handle: number, dt: number): void;
+
 /**
  * Pointer to the raw f32 agent buffer. JS creates a typed view:
  * ```js
@@ -133,6 +153,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly fluid_add_particles: (a: number, b: number, c: number, d: number) => void;
+    readonly fluid_create_simulator: (a: number, b: number) => number;
+    readonly fluid_get_particles: (a: number, b: number) => void;
+    readonly fluid_read_pixels: (a: number, b: number) => void;
+    readonly fluid_set_mask_rgba: (a: number, b: number, c: number) => void;
+    readonly fluid_set_params: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly get_agent_buffer_ptr: () => number;
     readonly get_params_buffer_ptr: () => number;
     readonly get_params_len: () => number;
@@ -143,11 +169,18 @@ export interface InitOutput {
     readonly sim_init: (a: number, b: number, c: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly update_sensing: () => void;
+    readonly fluid_clear_particles: (a: number) => void;
     readonly step: (a: number) => void;
+    readonly fluid_destroy_simulator: (a: number) => void;
+    readonly fluid_get_particle_count: (a: number) => number;
     readonly get_agent_count: () => number;
     readonly clear_agents: () => void;
     readonly spawn_agent: (a: number, b: number) => number;
+    readonly fluid_step: (a: number, b: number) => void;
     readonly set_params: () => void;
+    readonly __wbindgen_export: (a: number, b: number) => number;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
