@@ -1637,6 +1637,7 @@ mod tests {
         let pixels = sim.read_pixels();
         let px = index * 4;
         assert!(pixels[px] > pixels[px + 2], "expected rendered pigment to stay closer to the injected color");
+        assert!(pixels[px + 1] > pixels[px + 2], "expected rendered pigment to keep the warmer pigment balance");
         assert!(pixels[px + 3] > 0, "expected rendered pigment to remain visible");
     }
 
