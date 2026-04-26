@@ -224,32 +224,37 @@ export function buildSidebar(app) {
       <label>Show Bristles <input type="checkbox" id="showBristles" checked></label>
     </div>
 
-    <!-- Fluid Motion (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="fluidMotion">Fluid Motion <span class="chevron">▼</span></div>
+    <!-- LBM Brush (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="fluidMotion">LBM Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
-      ${sliderRow('fluidParticleLimit', 'Drops', 10, 2000, 320, null, 'Maximum wet particles kept alive at once')}
-      ${sliderRow('fluidEmitRate', 'Emit', 1, 100, 16, null, 'How much fresh fluid the brush lays down per sample')}
-      ${sliderRow('fluidBrushRadius', 'Brush Radius', 2, 400, 42, null, 'Area where the brush drags existing fluid')}
-      ${sliderRow('fluidBrushForce', 'Brush Force', 0, 600, 95, v => (v / 100).toFixed(2) + '×', 'How strongly brush motion pulls nearby wet paint')}
-      ${sliderRow('fluidLateralSpread', 'Lateral Spread', 0, 400, 70, null, 'How far fluid fans out sideways from the stroke direction during painting')}
-      ${sliderRow('fluidFlow', 'Flow Speed', 1, 500, 120, v => (v / 100).toFixed(2), 'Overall advection speed of the fluid')}
-      ${sliderRow('fluidViscosity', 'Viscosity', 0, 100, 28, v => (v / 100).toFixed(2), 'How much nearby droplet velocities blend into coherent streams instead of jitter')}
-      ${sliderRow('fluidVelocityDamping', 'Damping', 0, 99, 8, v => v + '%', 'How strongly fluid velocity decays each frame (0 = no damping, higher = fluid stops faster)')}
-      ${sliderRow('fluidImpact', 'Impact', 0, 100, 65, v => (v / 100).toFixed(2), 'How strongly fresh paint bursts outward into a splash on contact')}
-      ${sliderRow('fluidSplashRadius', 'Splash Radius', 0, 100, 55, v => (v / 100).toFixed(2), 'How far the impact burst throws fluid beyond the core brush area')}
-      ${sliderRow('fluidBreakup', 'Breakup', 0, 100, 35, v => (v / 100).toFixed(2), 'How often fast splashes shed smaller detached droplets')}
+      ${sliderRow('lbmBrushRadius', 'Brush Radius', 2, 240, 42, null, 'Footprint of each free-flow injection along the stroke')}
+      ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 36, null, 'How much pigment mass is injected at each pointer sample')}
+      ${sliderRow('lbmParticleRadius', 'Seed Radius', 1, 24, 4, null, 'Radius of the seed packets used to feed the lattice')}
+      ${sliderRow('lbmStrokePull', 'Stroke Pull', 0, 100, 55, v => (v / 100).toFixed(2), 'How strongly new fluid follows the stroke tangent')}
+      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 28, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
+      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 18, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
+      ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
+      ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
+      <label>Show Flow <input type="checkbox" id="lbmShowFlow"></label>
     </div>
 
-    <!-- Fluid Surface (fluid only) -->
-    <div class="section-header closed" data-brushes="fluid" data-section="fluidSurface">Fluid Surface <span class="chevron">▼</span></div>
+    <!-- LBM Solver (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidSurface">LBM Solver <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
-      ${sliderRow('fluidDeposit', 'Deposit', 1, 100, 78, v => (v / 100).toFixed(2), 'Opacity of wet paint deposited by each particle')}
-      ${sliderRow('fluidSpread', 'Spread', 0, 400, 10, null, 'How much random turbulence is mixed into the flow')}
-      ${sliderRow('fluidEvaporation', 'Drying', 1, 300, 8, v => (v / 1000).toFixed(3), 'How quickly wet particles fade out')}
-      ${sliderRow('fluidTextureFollow', 'Texture Flow', 0, 100, 28, v => (v / 100).toFixed(2), 'How strongly fluid slides into loaded canvas texture valleys')}
-      ${sliderRow('fluidPooling', 'Pooling', 0, 100, 70, v => (v / 100).toFixed(2), 'How much wet paint gathers into connected puddles before drying')}
-      ${sliderRow('fluidEdgeBleed', 'Edge Bleed', 0, 100, 45, v => (v / 100).toFixed(2), 'How much pooled paint darkens and softens around the puddle edge')}
-      <label>Show Particles <input type="checkbox" id="fluidShowParticles" checked></label>
+      <label>Render <select id="lbmRenderMode">
+        <option value="hybrid">Hybrid</option>
+        <option value="grid">Grid</option>
+        <option value="particles">Particles</option>
+      </select></label>
+      ${sliderRow('lbmViscosity', 'Viscosity', 0, 100, 45, v => (v / 100).toFixed(2), 'Relaxation strength for the lattice flow')}
+      ${sliderRow('lbmDensity', 'Density', 0, 100, 70, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
+      ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 58, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
+      ${sliderRow('lbmTimeStep', 'Time Step', 1, 64, 16, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
+      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 3, null, 'How many solver iterations run per frame')}
+      ${sliderRow('lbmMotionDecay', 'Decay', 0, 100, 12, v => (v / 100).toFixed(2), 'How quickly motion energy dissipates')}
+      ${sliderRow('lbmStopSpeed', 'Stop Speed', 0, 100, 3, v => (v / 100).toFixed(2), 'Velocity threshold below which motion settles')}
+      ${sliderRow('lbmResolutionScale', 'Resolution', 50, 200, 100, v => v + '%', 'Internal lattice resolution relative to the canvas')}
+      ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 100, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
     </div>
 
     <!-- Stamp -->
@@ -1046,6 +1051,19 @@ const _sliderFormats = {
   individuality: v => (v / 100).toFixed(2),
   maxSpeed: v => (v / 2).toFixed(1),
   damping: v => (v / 100).toFixed(2),
+  lbmStrokePull: v => (v / 100).toFixed(2),
+  lbmStrokeRake: v => (v / 100).toFixed(2),
+  lbmStrokeJitter: v => (v / 100).toFixed(2),
+  lbmHueJitter: v => v + '°',
+  lbmLightnessJitter: v => v + '%',
+  lbmViscosity: v => (v / 100).toFixed(2),
+  lbmDensity: v => (v / 100).toFixed(2),
+  lbmSurfaceTension: v => (v / 100).toFixed(2),
+  lbmTimeStep: v => (v / 16).toFixed(2) + '×',
+  lbmMotionDecay: v => (v / 100).toFixed(2),
+  lbmStopSpeed: v => (v / 100).toFixed(2),
+  lbmResolutionScale: v => v + '%',
+  lbmFluidScale: v => (v / 100).toFixed(2) + '×',
   stampOpacity: v => (v / 100).toFixed(2),
   smudge: v => (v / 100).toFixed(2),
   canvasTextureStrength: v => (v / 100).toFixed(2),
