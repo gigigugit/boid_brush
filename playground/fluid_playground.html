@@ -304,6 +304,12 @@ canvas {
   text-transform: uppercase;
 }
 
+.section-copy {
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .field-grid {
   display: grid;
   gap: 8px;
@@ -431,7 +437,7 @@ input[type="color"] {
       <div class="brand-kicker">particleless lattice fluid sandbox</div>
       <div class="brand-title">LBM Blob Playground</div>
       <span class="runtime-pill"><span class="dot" id="runtimeDot"></span><strong id="runtimeLabel">Booting</strong><span id="runtimeMeta">Loading solver adapter…</span></span>
-      <div class="brand-note">This playground is now surfaced as an LBM-only tuning view. The non-LBM code paths remain in source but are not exposed here.</div>
+      <div class="brand-note">Focused controls for shaping an LBM blob, injecting pigment, and checking the rendered result.</div>
     </section>
 
     <section class="topbar-cluster" aria-label="Tool actions">
@@ -479,36 +485,20 @@ input[type="color"] {
 
       <div class="sidebar-scroll">
         <section class="section">
-          <div class="section-title">Interaction</div>
+          <div class="section-title">Paint &amp; Stroke</div>
+          <div class="section-copy">How much pigment enters the lattice and how the pointer pushes or colors it while you paint.</div>
           <div class="field-grid two-col">
             <label class="field">
               <span class="field-header"><span>Brush Radius</span><output id="brushRadiusValue" for="brushRadius"></output></span>
-              <input id="brushRadius" type="range" min="8" max="180" value="54">
+              <input id="brushRadius" type="range" min="8" max="180" value="44">
             </label>
             <label class="field">
               <span class="field-header"><span>Spawn Count</span><output id="spawnCountValue" for="spawnCount"></output></span>
-              <input id="spawnCount" type="range" min="8" max="220" value="54">
+              <input id="spawnCount" type="range" min="8" max="220" value="20">
             </label>
             <label class="field">
               <span class="field-header"><span>Pigment</span></span>
               <input id="pigmentColor" type="color" value="#47c7ff">
-            </label>
-            <label class="field">
-              <span class="field-header"><span>Resolution</span><output id="resolutionScaleValue" for="resolutionScale"></output></span>
-              <select id="resolutionScale">
-                <option value="1">100%</option>
-                <option value="0.75">75%</option>
-                <option value="0.5" selected>50%</option>
-                <option value="0.33">33%</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-header"><span>Fluid Scale</span><output id="fluidScaleValue" for="fluidScale"></output></span>
-              <input id="fluidScale" type="range" min="50" max="200" value="100">
-            </label>
-            <label class="field">
-              <span class="field-header"><span>Free Flow</span></span>
-              <input id="freeFlowMode" type="checkbox">
             </label>
             <label class="field">
               <span class="field-header"><span>Stroke Pull</span><output id="strokePullValue" for="strokePull"></output></span>
@@ -534,15 +524,44 @@ input[type="color"] {
         </section>
 
         <section class="section">
-          <div class="section-title">LBM Solver</div>
+          <div class="section-title">Solver Scale</div>
+          <div class="section-copy">Resolution and timestep controls for the LBM grid itself. Use these first when you want cleaner or faster motion.</div>
           <div class="field-grid two-col">
+            <label class="field">
+              <span class="field-header"><span>Resolution</span><output id="resolutionScaleValue" for="resolutionScale"></output></span>
+              <select id="resolutionScale">
+                <option value="1">100%</option>
+                <option value="0.75">75%</option>
+                <option value="0.5" selected>50%</option>
+                <option value="0.33">33%</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Fluid Scale</span><output id="fluidScaleValue" for="fluidScale"></output></span>
+              <input id="fluidScale" type="range" min="50" max="200" value="100">
+            </label>
             <label class="field">
               <span class="field-header"><span>Lattice Radius</span><output id="particleRadiusValue" for="particleRadius"></output></span>
               <input id="particleRadius" type="range" min="2" max="18" value="6">
             </label>
             <label class="field">
+              <span class="field-header"><span>Time Step</span><output id="timeStepValue" for="timeStep"></output></span>
+              <input id="timeStep" type="range" min="4" max="40" value="16">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Substeps</span><output id="solverSubstepsValue" for="solverSubsteps"></output></span>
+              <input id="solverSubsteps" type="range" min="1" max="8" value="3">
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Fluid Motion</div>
+          <div class="section-copy">Controls how quickly the pigment spreads, settles, and comes to rest inside the committed blob domain.</div>
+          <div class="field-grid two-col">
+            <label class="field">
               <span class="field-header"><span>Viscosity</span><output id="viscosityValue" for="viscosity"></output></span>
-              <input id="viscosity" type="range" min="0" max="100" value="34">
+              <input id="viscosity" type="range" min="0" max="100" value="20">
             </label>
             <label class="field">
               <span class="field-header"><span>Density</span><output id="densityValue" for="density"></output></span>
@@ -553,14 +572,6 @@ input[type="color"] {
               <input id="surfaceTension" type="range" min="0" max="100" value="68">
             </label>
             <label class="field">
-              <span class="field-header"><span>Time Step</span><output id="timeStepValue" for="timeStep"></output></span>
-              <input id="timeStep" type="range" min="4" max="40" value="16">
-            </label>
-            <label class="field">
-              <span class="field-header"><span>Substeps</span><output id="solverSubstepsValue" for="solverSubsteps"></output></span>
-              <input id="solverSubsteps" type="range" min="1" max="8" value="3">
-            </label>
-            <label class="field">
               <span class="field-header"><span>Motion Decay</span><output id="motionDecayValue" for="motionDecay"></output></span>
               <input id="motionDecay" type="range" min="0" max="160" value="8">
             </label>
@@ -569,24 +580,36 @@ input[type="color"] {
               <input id="stopSpeed" type="range" min="0" max="120" value="8">
             </label>
             <label class="field">
-              <span class="field-header"><span>Render Mode</span></span>
-              <select id="renderMode">
-                <option value="hybrid" selected>Hybrid</option>
-                <option value="particles">Particles</option>
-                <option value="grid">Grid</option>
-              </select>
+              <span class="field-header"><span>Free Flow</span></span>
+              <input id="freeFlowMode" type="checkbox">
             </label>
           </div>
         </section>
 
         <section class="section">
-          <div class="section-title">Blob Modeling</div>
+          <div class="section-title">Blob &amp; Display</div>
+          <div class="section-copy">Blob tools define the active LBM boundary. Display controls let you inspect the solver output or just the pigment that has been rendered onto the canvas.</div>
           <div class="field-grid two-col">
             <button id="presetCircle" type="button">Circle Preset</button>
             <button id="presetRibbon" type="button">Ribbon Preset</button>
             <label class="field">
               <span class="field-header"><span>Blob Tightness</span><output id="blobTightnessValue" for="blobTightness"></output></span>
               <input id="blobTightness" type="range" min="20" max="100" value="68">
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Display</span></span>
+              <select id="displayMode">
+                <option value="composite" selected>Composite</option>
+                <option value="pigment">Pigment Only</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-header"><span>Render Mode</span></span>
+              <select id="renderMode">
+                <option value="hybrid" selected>Hybrid</option>
+                <option value="particles">Particles</option>
+                <option value="grid">Grid</option>
+              </select>
             </label>
             <label class="field">
               <span class="field-header"><span>Overlay</span></span>
@@ -631,6 +654,6 @@ input[type="color"] {
 
 <input id="simulationType" class="hidden-input" type="hidden" value="lbm" aria-hidden="true">
 
-<script type="module" src="./fluid_playground.js?v=20260424-refresh-1"></script>
+<script type="module" src="./fluid_playground.js?v=20260426-pigment-ui-1"></script>
 </body>
 </html>

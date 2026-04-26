@@ -19,6 +19,7 @@ const dom = {
   frameMs: document.getElementById('frameMs'),
   statusText: document.getElementById('statusText'),
   displayOverlay: document.getElementById('displayOverlay'),
+  displayMode: document.getElementById('displayMode'),
   renderMode: document.getElementById('renderMode'),
   simulationType: document.getElementById('simulationType'),
   resolutionScale: document.getElementById('resolutionScale'),
@@ -1316,7 +1317,9 @@ function commitStagedPaintLayer() {
 
 function depositFluidToPaint(frame) {
   ensurePaintSurface(frame.width, frame.height);
-  const targetCtx = state.freeFlowMode ? bufferCtx.paint : bufferCtx.stagedPaint;
+  const targetCtx = state.freeFlowMode || !state.activeBlobStroke
+    ? bufferCtx.paint
+    : bufferCtx.stagedPaint;
   targetCtx.save();
   targetCtx.globalCompositeOperation = 'source-over';
   targetCtx.drawImage(buffers.fluidCanvas, 0, 0);
@@ -1392,23 +1395,25 @@ function renderFluid({ depositPaint = false } = {}) {
   ctx.sim.clearRect(0, 0, state.width, state.height);
   ctx.sim.fillStyle = 'rgba(3, 9, 16, 0.7)';
   ctx.sim.fillRect(0, 0, state.width, state.height);
-  if (!state.sim) return;
+  const displayMode = dom.displayMode?.value || 'composite';
+  const frame = state.sim?.readPixels?.() ?? null;
 
-  const frame = state.sim.readPixels();
-  if (buffers.fluidCanvas.width !== frame.width || buffers.fluidCanvas.height !== frame.height) {
-    buffers.fluidCanvas.width = frame.width;
-    buffers.fluidCanvas.height = frame.height;
-  }
-  bufferCtx.fluid.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
-  if (depositPaint) {
-    depositFluidToPaint(frame);
-  } else if (
-    buffers.paintCanvas.width !== frame.width
-    || buffers.paintCanvas.height !== frame.height
-    || buffers.stagedPaintCanvas.width !== frame.width
-    || buffers.stagedPaintCanvas.height !== frame.height
-  ) {
-    ensurePaintSurface(frame.width, frame.height);
+  if (frame) {
+    if (buffers.fluidCanvas.width !== frame.width || buffers.fluidCanvas.height !== frame.height) {
+      buffers.fluidCanvas.width = frame.width;
+      buffers.fluidCanvas.height = frame.height;
+    }
+    bufferCtx.fluid.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
+    if (depositPaint) {
+      depositFluidToPaint(frame);
+    } else if (
+      buffers.paintCanvas.width !== frame.width
+      || buffers.paintCanvas.height !== frame.height
+      || buffers.stagedPaintCanvas.width !== frame.width
+      || buffers.stagedPaintCanvas.height !== frame.height
+    ) {
+      ensurePaintSurface(frame.width, frame.height);
+    }
   }
 
   if (buffers.paintCanvas.width && buffers.paintCanvas.height) {
@@ -1419,9 +1424,13 @@ function renderFluid({ depositPaint = false } = {}) {
     ctx.sim.imageSmoothingEnabled = buffers.stagedPaintCanvas.width >= state.width * 0.95 && buffers.stagedPaintCanvas.height >= state.height * 0.95;
     ctx.sim.drawImage(buffers.stagedPaintCanvas, 0, 0, state.width, state.height);
   }
-  ctx.sim.imageSmoothingEnabled = frame.width >= state.width * 0.95 && frame.height >= state.height * 0.95;
-  ctx.sim.drawImage(buffers.fluidCanvas, 0, 0, state.width, state.height);
-  dom.internalResolution.textContent = `${frame.width} x ${frame.height}`;
+  if (frame && displayMode !== 'pigment') {
+    ctx.sim.imageSmoothingEnabled = frame.width >= state.width * 0.95 && frame.height >= state.height * 0.95;
+    ctx.sim.drawImage(buffers.fluidCanvas, 0, 0, state.width, state.height);
+    dom.internalResolution.textContent = `${frame.width} x ${frame.height}`;
+  } else if (frame) {
+    dom.internalResolution.textContent = `${frame.width} x ${frame.height}`;
+  }
 }
 
 async function tick(now) {
@@ -1655,6 +1664,10 @@ function bindEvents() {
 
   dom.exportSnapshot.addEventListener('click', exportSnapshot);
   dom.displayOverlay.addEventListener('change', renderOverlay);
+  dom.displayMode?.addEventListener('change', () => {
+    renderFluid();
+    renderOverlay();
+  });
 
   dom.simCanvas.addEventListener('pointerdown', (event) => handlePointerDown(event).catch(console.error));
   dom.simCanvas.addEventListener('pointermove', (event) => handlePointerMove(event).catch(console.error));
