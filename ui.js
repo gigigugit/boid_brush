@@ -235,7 +235,7 @@ export function buildSidebar(app) {
       ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 18, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
       ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
-      <label>Show Flow <input type="checkbox" id="lbmShowFlow"></label>
+      <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>
     </div>
 
     <!-- LBM Solver (fluid only) -->

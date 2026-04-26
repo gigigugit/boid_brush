@@ -14,6 +14,7 @@ const BRISTLE_PRESSURE_ALPHA = 0.15;
 const MAX_SMOOTH_DAMP = 0.92;
 // Low-pass filter strength for Pencil angle changes (higher = snappier, lower = smoother)
 const BRISTLE_ANGLE_ALPHA = 0.16;
+// Move samples inject less mass than pointer-down so a continuous stroke does not over-pack the lattice.
 const FLUID_MOVE_SEED_RATIO = 0.45;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
@@ -2907,8 +2908,9 @@ export class FluidBrush {
     this._maskSynced = true;
   }
 
-  _seedAt(x, y, pressure, previousPoint, amount, p = this.app.getP()) {
+  _seedAt(x, y, pressure, previousPoint, amount, p) {
     if (!this._updateSimulator()) return;
+    p = p ?? this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
     const scaledCount = Math.max(1, Math.round(amount * (0.4 + pressure * 0.6)));

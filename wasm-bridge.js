@@ -237,6 +237,7 @@ const FLUID_RENDER_MODE_MAP = {
   grid: 1,
   hybrid: 2,
 };
+const MIN_FLUID_SCALE = 0.35;
 
 let _fluidModulePromise = null;
 let _fluidModulePath = '';
@@ -257,7 +258,7 @@ function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, source
   return targetCtx.getImageData(0, 0, width, height);
 }
 
-async function _loadFluidModule(wasmPath) {
+async function _getOrLoadFluidModule(wasmPath) {
   if (!_fluidModulePromise || _fluidModulePath !== wasmPath) {
     _fluidModulePath = wasmPath;
     _fluidModulePromise = (async () => {
@@ -274,7 +275,7 @@ async function _loadFluidModule(wasmPath) {
 
 export class FluidSim {
   static async create(width, height, params = {}, wasmPath = './wasm-sim/pkg/boid_sim.js') {
-    const mod = await _loadFluidModule(wasmPath);
+    const mod = await _getOrLoadFluidModule(wasmPath);
     const instance = new FluidSim(mod, width, height, params);
     instance.updateParams(params);
     return instance;
@@ -413,7 +414,7 @@ export class FluidSim {
 
   _targetSize(params) {
     const scale = Number(params.resolutionScale) || 1;
-    const fluidScale = Math.max(0.35, Number(params.fluidScale) || 1);
+    const fluidScale = Math.max(MIN_FLUID_SCALE, Number(params.fluidScale) || 1);
     return {
       width: Math.max(96, Math.round((this.displayWidth * scale) / fluidScale)),
       height: Math.max(72, Math.round((this.displayHeight * scale) / fluidScale)),
