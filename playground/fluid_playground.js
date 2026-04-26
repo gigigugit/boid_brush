@@ -27,6 +27,8 @@ const dom = {
   strokePull: document.getElementById('strokePull'),
   strokeRake: document.getElementById('strokeRake'),
   strokeJitter: document.getElementById('strokeJitter'),
+  hueJitter: document.getElementById('hueJitter'),
+  lightnessJitter: document.getElementById('lightnessJitter'),
   pigmentColor: document.getElementById('pigmentColor'),
   brushRadius: document.getElementById('brushRadius'),
   spawnCount: document.getElementById('spawnCount'),
@@ -53,6 +55,8 @@ const dom = {
   strokePullValue: document.getElementById('strokePullValue'),
   strokeRakeValue: document.getElementById('strokeRakeValue'),
   strokeJitterValue: document.getElementById('strokeJitterValue'),
+  hueJitterValue: document.getElementById('hueJitterValue'),
+  lightnessJitterValue: document.getElementById('lightnessJitterValue'),
   blobTightness: document.getElementById('blobTightness'),
   blobTightnessValue: document.getElementById('blobTightnessValue'),
   toolBlob: document.getElementById('toolBlob'),
@@ -717,6 +721,8 @@ function readParams() {
     strokePull: Number(dom.strokePull.value) / 100,
     strokeRake: Number(dom.strokeRake.value) / 100,
     strokeJitter: Number(dom.strokeJitter.value) / 100,
+    hueJitter: Number(dom.hueJitter.value),
+    lightnessJitter: Number(dom.lightnessJitter.value),
     blobTightness: Number(dom.blobTightness.value) / 100,
     renderMode: dom.renderMode.value,
     simulationType: 'lbm',
@@ -764,6 +770,8 @@ function updateOutputs() {
   dom.strokePullValue.value = `${Math.round(params.strokePull * 100)}%`;
   dom.strokeRakeValue.value = `${Math.round(params.strokeRake * 100)}%`;
   dom.strokeJitterValue.value = `${Math.round(params.strokeJitter * 100)}%`;
+  dom.hueJitterValue.value = `${Math.round(params.hueJitter)}°`;
+  dom.lightnessJitterValue.value = `${Math.round(params.lightnessJitter)}%`;
   dom.blobTightnessValue.value = `${Math.round(params.blobTightness * 100)}%`;
   dom.presetCircle.disabled = params.freeFlowMode;
   dom.presetRibbon.disabled = params.freeFlowMode;
@@ -1045,10 +1053,78 @@ function makeSpawnProfile(x, y, previousPoint = null) {
   };
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function hexToHsl(hex) {
+  const rgba = hexToRgba(hex, 1);
+  const r = rgba.r / 255;
+  const g = rgba.g / 255;
+  const b = rgba.b / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) * 0.5;
+  if (max === min) {
+    return { h: 0, s: 0, l: lightness * 100 };
+  }
+
+  const delta = max - min;
+  const saturation = lightness > 0.5
+    ? delta / (2 - max - min)
+    : delta / (max + min);
+  let hue = 0;
+  if (max === r) hue = ((g - b) / delta + (g < b ? 6 : 0)) / 6;
+  else if (max === g) hue = ((b - r) / delta + 2) / 6;
+  else hue = ((r - g) / delta + 4) / 6;
+  return { h: hue * 360, s: saturation * 100, l: lightness * 100 };
+}
+
+function hslToHex(h, s, l) {
+  const hue = ((h % 360) + 360) % 360 / 360;
+  const sat = clamp(s, 0, 100) / 100;
+  const light = clamp(l, 0, 100) / 100;
+
+  if (sat <= 0) {
+    const grey = Math.round(light * 255);
+    const hex = grey.toString(16).padStart(2, '0');
+    return `#${hex}${hex}${hex}`;
+  }
+
+  const q = light < 0.5 ? light * (1 + sat) : light + sat - light * sat;
+  const p = 2 * light - q;
+  const hueToRgb = (t) => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+
+  const r = Math.round(hueToRgb(hue + 1 / 3) * 255);
+  const g = Math.round(hueToRgb(hue) * 255);
+  const b = Math.round(hueToRgb(hue - 1 / 3) * 255);
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+function jitterPigmentColor(baseColor, params, profile, index) {
+  if (params.hueJitter <= 0 && params.lightnessJitter <= 0) return baseColor;
+  const { h, s, l } = hexToHsl(baseColor);
+  const phase = (profile?.spawnTime ?? performance.now()) * 0.0026 + index * 0.71;
+  const structured = Math.sin(phase) * 0.62 + Math.cos(phase * 0.53 + 1.1) * 0.38;
+  const randomBias = (Math.random() - 0.5) * 2;
+  const hueOffset = (structured * 0.7 + randomBias * 0.3) * params.hueJitter;
+  const lightOffset = (Math.cos(phase * 0.91 + 0.6) * 0.58 + randomBias * 0.42) * params.lightnessJitter;
+  const saturationOffset = clamp(-Math.abs(lightOffset) * 0.18 + structured * 2.4, -8, 8);
+  return hslToHex(h + hueOffset, s + saturationOffset, l + lightOffset);
+}
+
 function makeParticlesAt(x, y, amount, color, spawnProfile = null) {
   const params = readParams();
   const particles = [];
-  const speedScale = 0.32 + params.density * 0.45;
+  const speedScale = 0.42 + params.density * 0.58 + params.surfaceTension * 0.18;
   const profile = spawnProfile ?? makeSpawnProfile(x, y, null);
   const travel = Math.min(1, profile.distance / Math.max(8, params.brushRadius * 0.75));
   const laneCount = Math.max(2, 2 + Math.round(params.strokeRake * 5));
@@ -1059,14 +1135,16 @@ function makeParticlesAt(x, y, amount, color, spawnProfile = null) {
     if (profile.distance <= 1e-3) {
       const angle = Math.random() * Math.PI * 2;
       const distance = Math.sqrt(Math.random()) * params.brushRadius;
+      const radialVelocity = speedScale * (0.3 + Math.random() * 1.05);
+      const swirlVelocity = speedScale * (0.12 + params.strokeJitter * 0.72) * (Math.random() - 0.5);
       particles.push({
         x: x + Math.cos(angle) * distance,
         y: y + Math.sin(angle) * distance,
-        vx: Math.cos(angle) * (Math.random() - 0.5) * speedScale,
-        vy: Math.sin(angle) * (Math.random() - 0.5) * speedScale,
+        vx: Math.cos(angle) * radialVelocity - Math.sin(angle) * swirlVelocity,
+        vy: Math.sin(angle) * radialVelocity + Math.cos(angle) * swirlVelocity,
         radius: params.particleRadius,
-        color,
-        alpha: 0.72,
+        color: jitterPigmentColor(color, params, profile, index),
+        alpha: 0.68 + Math.random() * 0.1,
       });
       continue;
     }
@@ -1082,11 +1160,14 @@ function makeParticlesAt(x, y, amount, color, spawnProfile = null) {
     const scatterAngle = phase + index * 0.53;
     const scatterX = Math.cos(scatterAngle) * scatterRadius;
     const scatterY = Math.sin(scatterAngle) * scatterRadius;
-    const tangentVelocity = speedScale * (0.34 + params.strokePull * 1.85) * (0.48 + travel * 0.92 + Math.random() * 0.4);
-    const crossVelocity = speedScale * (lanePosition * (0.22 + params.strokeRake * 1.2)
+    const tangentVelocity = speedScale * (0.62 + params.strokePull * 2.2 + params.surfaceTension * 0.24) * (0.66 + travel * 0.96 + Math.random() * 0.5);
+    const crossVelocity = speedScale * (lanePosition * (0.36 + params.strokeRake * 1.45)
       + Math.sin(phase + index * 0.83) * params.strokeJitter * 0.28
       + (Math.random() - 0.5) * (0.12 + params.strokeJitter * 0.45));
-    const dragNoise = speedScale * (Math.random() - 0.5) * 0.18;
+    const curlVelocity = speedScale * Math.sin(phase * 0.74 + lanePosition * 5.6 + index * 0.21)
+      * (0.16 + params.strokeJitter * 0.72 + params.strokeRake * 0.24);
+    const backfill = speedScale * (Math.random() - 0.5) * (0.08 + params.strokePull * 0.22);
+    const dragNoise = speedScale * (Math.random() - 0.5) * 0.2;
 
     particles.push({
       x: x
@@ -1097,11 +1178,15 @@ function makeParticlesAt(x, y, amount, color, spawnProfile = null) {
         + profile.tangentY * alongOffset
         + profile.normalY * (laneOffset + swirlOffset)
         + scatterY * 0.35,
-      vx: profile.tangentX * tangentVelocity + profile.normalX * crossVelocity + dragNoise,
-      vy: profile.tangentY * tangentVelocity + profile.normalY * crossVelocity + dragNoise,
-      radius: params.particleRadius * (1 + (Math.random() - 0.5) * params.strokeJitter * 0.18),
-      color,
-      alpha: 0.68 + travel * 0.08,
+      vx: profile.tangentX * (tangentVelocity + backfill)
+        + profile.normalX * (crossVelocity + curlVelocity)
+        + dragNoise,
+      vy: profile.tangentY * (tangentVelocity + backfill)
+        + profile.normalY * (crossVelocity + curlVelocity)
+        + dragNoise,
+      radius: params.particleRadius * (1 + (Math.random() - 0.5) * (0.08 + params.strokeJitter * 0.22)),
+      color: jitterPigmentColor(color, params, profile, index),
+      alpha: 0.66 + travel * 0.12 + Math.random() * 0.05,
     });
   }
   return particles;
@@ -1161,11 +1246,11 @@ async function seedBlob() {
       particles.push({
         x: x + (Math.random() - 0.5) * stride,
         y: y + (Math.random() - 0.5) * stride,
-        vx: (Math.random() - 0.5) * 0.22,
-        vy: (Math.random() - 0.5) * 0.22,
+        vx: (Math.random() - 0.5) * (0.28 + params.surfaceTension * 0.28),
+        vy: (Math.random() - 0.5) * (0.28 + params.surfaceTension * 0.28),
         radius: params.particleRadius,
-        color: dom.pigmentColor.value,
-        alpha: 0.58,
+        color: jitterPigmentColor(dom.pigmentColor.value, params, { spawnTime: performance.now() }, particles.length),
+        alpha: 0.56 + Math.random() * 0.08,
       });
     }
   }
@@ -1513,6 +1598,8 @@ function bindEvents() {
     dom.strokePull,
     dom.strokeRake,
     dom.strokeJitter,
+    dom.hueJitter,
+    dom.lightnessJitter,
     dom.blobTightness,
     dom.renderMode,
     dom.resolutionScale,

@@ -550,12 +550,12 @@ impl FluidSimulation {
         let phase = self.lbm.phase.clone();
         self.lbm.next_dist.fill([0.0; 9]);
 
-        let tau = 0.58 + self.params.viscosity * 1.35;
+        let tau = 0.56 + self.params.viscosity * 1.22;
         let omega = 1.0 / tau.max(0.52);
-        let decay = (1.0 - self.params.motion_decay * 0.08).clamp(0.90, 0.999);
-        let max_speed = 0.12 + self.params.density * 0.18;
-        let surface_tension = 0.008 + self.params.surface_tension * 0.075;
-        let interface_drag = 0.035 + self.params.motion_decay * 0.02;
+        let decay = (1.0 - self.params.motion_decay * 0.05).clamp(0.935, 0.9995);
+        let max_speed = 0.14 + self.params.density * 0.22 + self.params.surface_tension * 0.04;
+        let surface_tension = 0.01 + self.params.surface_tension * 0.09;
+        let interface_drag = 0.02 + self.params.motion_decay * 0.014;
 
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -591,6 +591,9 @@ impl FluidSimulation {
                 let phase_force = surface_tension * interface_band;
                 ux += -grad_x * phase_force * 0.9 + curvature * grad_x * phase_force * 2.8;
                 uy += -grad_y * phase_force * 0.9 + curvature * grad_y * phase_force * 2.8;
+                let vortex_force = (0.01 + self.params.surface_tension * 0.045 + self.params.density * 0.012) * interface_band;
+                ux += -grad_y * curvature * vortex_force;
+                uy += grad_x * curvature * vortex_force;
                 ux *= 1.0 - interface_band * interface_drag;
                 uy *= 1.0 - interface_band * interface_drag;
 
@@ -611,7 +614,7 @@ impl FluidSimulation {
                         let nindex = (ny as u32 * width + nx as u32) as usize;
                         let neighbor_phase = Self::sample_phase(&phase, width, height, nx, ny);
                         let anchor_phase = Self::sample_mask(mask, mask_has_content, width, height, nx, ny);
-                        let forward = (neighbor_phase * 0.82 + anchor_phase * 0.14 + 0.04).clamp(0.0, 1.0);
+                        let forward = (neighbor_phase * 0.86 + anchor_phase * 0.1 + 0.06).clamp(0.0, 1.0);
                         let bounce = (1.0 - forward).clamp(0.0, 1.0);
                         self.lbm.next_dist[nindex][dir] += f_post * forward;
                         if bounce > 0.0 {
@@ -761,11 +764,11 @@ impl FluidSimulation {
         let radius = chunk[8].clamp(0.5, 64.0);
         let spread = radius.max(self.params.particle_radius * 0.9).clamp(1.0, 8.0);
         let reach = spread.ceil() as i32;
-        let velocity_scale = 0.085 + self.params.density * 0.03;
-        let ux = (chunk[2] * velocity_scale).clamp(-0.28, 0.28);
-        let uy = (chunk[3] * velocity_scale).clamp(-0.28, 0.28);
+        let velocity_scale = 0.12 + self.params.density * 0.07 + self.params.surface_tension * 0.03;
+        let ux = (chunk[2] * velocity_scale).clamp(-0.42, 0.42);
+        let uy = (chunk[3] * velocity_scale).clamp(-0.42, 0.42);
         let alpha = chunk[7].clamp(0.0, 1.0);
-        let mass_base = (radius / self.params.particle_radius.max(0.5)).clamp(0.45, 2.4) * alpha.max(0.2);
+        let mass_base = (radius / self.params.particle_radius.max(0.5)).clamp(0.45, 2.8) * alpha.max(0.2) * 1.08;
 
         let base_x = x.floor() as i32;
         let base_y = y.floor() as i32;
@@ -856,10 +859,10 @@ impl FluidSimulation {
     fn advect_lbm_phase(&mut self, mask: &[u8], mask_has_content: bool, width: u32, height: u32) {
         let phase = self.lbm.phase.clone();
         self.lbm.next_phase.fill(0.0);
-        let advect_scale = 2.1 + self.params.density * 2.8;
-        let tension_mix = (0.06 + self.params.viscosity * 0.08 + self.params.density * 0.05).clamp(0.04, 0.18);
-        let anchor_mix = if mask_has_content { 0.01 + self.params.viscosity * 0.015 } else { 0.0 };
-        let retain = (0.992 - self.params.motion_decay * 0.014).clamp(0.93, 0.996);
+        let advect_scale = 2.7 + self.params.density * 3.6 + self.params.surface_tension * 0.6;
+        let tension_mix = (0.04 + self.params.viscosity * 0.06 + self.params.density * 0.04).clamp(0.03, 0.14);
+        let anchor_mix = if mask_has_content { 0.006 + self.params.viscosity * 0.01 } else { 0.0 };
+        let retain = (0.994 - self.params.motion_decay * 0.009).clamp(0.95, 0.998);
 
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -912,7 +915,7 @@ impl FluidSimulation {
     fn advect_lbm_pigment(&mut self, mask: &[u8], mask_has_content: bool, width: u32, height: u32) {
         let pigment = self.lbm.pigment.clone();
         self.lbm.next_pigment.fill([0.0; 4]);
-        let advect_scale = 3.5 + self.params.density * 4.0;
+        let advect_scale = 4.2 + self.params.density * 4.6 + self.params.surface_tension * 0.7;
 
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -928,7 +931,7 @@ impl FluidSimulation {
                 let sample_x = x as f32 - vel[0] * advect_scale;
                 let sample_y = y as f32 - vel[1] * advect_scale;
                 let mut sampled = Self::sample_pigment_field(&pigment, width, height, sample_x, sample_y);
-                let retain = (0.992 - self.params.motion_decay * 0.01).clamp(0.94, 0.999);
+                let retain = (0.994 - self.params.motion_decay * 0.007).clamp(0.955, 0.999);
                 for channel in 0..4 {
                     sampled[channel] *= retain;
                 }
