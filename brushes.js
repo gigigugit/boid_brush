@@ -14,6 +14,7 @@ const BRISTLE_PRESSURE_ALPHA = 0.15;
 const MAX_SMOOTH_DAMP = 0.92;
 // Low-pass filter strength for Pencil angle changes (higher = snappier, lower = smoother)
 const BRISTLE_ANGLE_ALPHA = 0.16;
+const FLUID_MOVE_SEED_RATIO = 0.45;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
 // Skip texture flow on nearly flat regions where the sampled slope is only a tiny fraction
@@ -2817,12 +2818,13 @@ export class FluidBrush {
       this.app.undoPushedThisStroke = true;
     }
     if (!this._ready || !this.sim) return;
+    const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
     this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
     this._updateSimulator();
-    this._seedAt(x, y, pressure, null, this.app.getP().lbmSpawnCount);
+    this._seedAt(x, y, pressure, null, p.lbmSpawnCount, p);
   }
 
   onMove(x, y, pressure) {
@@ -2845,7 +2847,8 @@ export class FluidBrush {
         previousPoint.y + dy * t,
         pressure,
         { x: previousPoint.x + dx * ((index - 1) / count), y: previousPoint.y + dy * ((index - 1) / count) },
-        Math.max(4, Math.round(p.lbmSpawnCount * 0.45)),
+        Math.max(4, Math.round(p.lbmSpawnCount * FLUID_MOVE_SEED_RATIO)),
+        p,
       );
     }
     this._lastPoint = { x, y };
@@ -2904,9 +2907,8 @@ export class FluidBrush {
     this._maskSynced = true;
   }
 
-  _seedAt(x, y, pressure, previousPoint, amount) {
+  _seedAt(x, y, pressure, previousPoint, amount, p = this.app.getP()) {
     if (!this._updateSimulator()) return;
-    const p = this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
     const scaledCount = Math.max(1, Math.round(amount * (0.4 + pressure * 0.6)));
@@ -2932,9 +2934,11 @@ export class FluidBrush {
   }
 
   _depositFrame() {
-    const layer = this._strokeLayer && this.app.layers.includes(this._strokeLayer)
-      ? this._strokeLayer
-      : this.app.getActiveLayer();
+    if (this._strokeLayer && !this.app.layers.includes(this._strokeLayer)) {
+      this._strokeLayer = null;
+      return;
+    }
+    const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer) return;
     const frame = this.sim.readPixels();
     if (!frame.width || !frame.height) return;

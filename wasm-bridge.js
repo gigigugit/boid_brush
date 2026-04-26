@@ -241,7 +241,7 @@ const FLUID_RENDER_MODE_MAP = {
 let _fluidModulePromise = null;
 let _fluidModulePath = '';
 
-function _scaleImageData(imageData, width, height, sourceCanvas, sourceCtx, targetCanvas, targetCtx) {
+function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, sourceCtx, targetCanvas, targetCtx) {
   if (sourceCanvas.width !== imageData.width || sourceCanvas.height !== imageData.height) {
     sourceCanvas.width = imageData.width;
     sourceCanvas.height = imageData.height;
@@ -315,8 +315,8 @@ export class FluidSim {
       this.params.substeps ?? 3,
       this.params.motionDecay ?? 0.12,
       this._scaleDistance(this.params.stopSpeed ?? 0.025),
-      FLUID_TYPE_MAP[this.params.simulationType] ?? FLUID_TYPE_MAP.lbm,
-      FLUID_RENDER_MODE_MAP[this.params.renderMode] ?? FLUID_RENDER_MODE_MAP.hybrid,
+      FLUID_TYPE_MAP[this.params.simulationType ?? 'lbm'] ?? 2,
+      FLUID_RENDER_MODE_MAP[this.params.renderMode ?? 'hybrid'] ?? 2,
     );
   }
 
@@ -329,7 +329,7 @@ export class FluidSim {
   setMask(imageData) {
     this.maskImageData = imageData;
     if (this.handle === null) return;
-    const scaled = _scaleImageData(
+    const scaled = _scaleImageDataViaCanvas(
       imageData,
       this.internalWidth,
       this.internalHeight,
