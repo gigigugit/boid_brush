@@ -6,7 +6,7 @@
 // getStatusInfo(), deactivate().
 // =============================================================================
 
-import { BoidSim } from './wasm-bridge.js';
+import { BoidSim, FluidSim } from './wasm-bridge.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -14,6 +14,8 @@ const BRISTLE_PRESSURE_ALPHA = 0.15;
 const MAX_SMOOTH_DAMP = 0.92;
 // Low-pass filter strength for Pencil angle changes (higher = snappier, lower = smoother)
 const BRISTLE_ANGLE_ALPHA = 0.16;
+// Move samples inject less mass than pointer-down so a continuous stroke does not over-pack the lattice.
+const FLUID_MOVE_SEED_RATIO = 0.45;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
 // Skip texture flow on nearly flat regions where the sampled slope is only a tiny fraction
@@ -53,6 +55,31 @@ function hslToCSS(h, s, l) {
   s = Math.max(0, Math.min(100, s));
   l = Math.max(0, Math.min(100, l));
   return `hsl(${h.toFixed(1)},${s.toFixed(1)}%,${l.toFixed(1)}%)`;
+}
+
+function hslToHex(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  s = Math.max(0, Math.min(100, s)) / 100;
+  l = Math.max(0, Math.min(100, l)) / 100;
+  if (s <= 0) {
+    const channel = Math.round(l * 255).toString(16).padStart(2, '0');
+    return `#${channel}${channel}${channel}`;
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hueToRgb = (t) => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+  const r = Math.round(hueToRgb(h + 1 / 3) * 255).toString(16).padStart(2, '0');
+  const g = Math.round(hueToRgb(h) * 255).toString(16).padStart(2, '0');
+  const b = Math.round(hueToRgb(h - 1 / 3) * 255).toString(16).padStart(2, '0');
+  return `#${r}${g}${b}`;
 }
 
 function _colorWithAlpha(color, alpha) {
@@ -2640,23 +2667,150 @@ export class SimpleBrush {
 }
 
 // =============================================================================
-// FLUID BRUSH — Particle-based wet paint dragged by the brush
+// FLUID BRUSH — Free-flow LBM painter backed by the fluid WASM solver
 // =============================================================================
+
+function _fluidHexToRgba(hex, alpha = 1) {
+  const normalized = String(hex || '#000000').replace('#', '');
+  const value = normalized.length === 3
+    ? normalized.split('').map((chunk) => chunk + chunk).join('')
+    : normalized.padStart(6, '0').slice(0, 6);
+  const int = Number.parseInt(value, 16) || 0;
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255,
+    a: _clamp(alpha, 0, 1),
+  };
+}
+
+function _makeFluidSpawnProfile(x, y, previousPoint = null) {
+  if (!previousPoint) {
+    return {
+      distance: 0,
+      tangentX: 1,
+      tangentY: 0,
+      normalX: 0,
+      normalY: 1,
+      spawnTime: performance.now(),
+    };
+  }
+  const dx = x - previousPoint.x;
+  const dy = y - previousPoint.y;
+  const distance = Math.hypot(dx, dy);
+  const tangentX = distance > 1e-3 ? dx / distance : 1;
+  const tangentY = distance > 1e-3 ? dy / distance : 0;
+  return {
+    distance,
+    tangentX,
+    tangentY,
+    normalX: -tangentY,
+    normalY: tangentX,
+    spawnTime: performance.now(),
+  };
+}
+
+function _jitterFluidColor(baseColor, p, profile, index) {
+  if (p.lbmHueJitter <= 0 && p.lbmLightnessJitter <= 0) return baseColor;
+  const [h, s, l] = hexToHSL(baseColor);
+  const phase = (profile?.spawnTime ?? performance.now()) * 0.0026 + index * 0.71;
+  const structured = Math.sin(phase) * 0.62 + Math.cos(phase * 0.53 + 1.1) * 0.38;
+  const randomBias = (Math.random() - 0.5) * 2;
+  const hueOffset = (structured * 0.7 + randomBias * 0.3) * p.lbmHueJitter;
+  const lightOffset = (Math.cos(phase * 0.91 + 0.6) * 0.58 + randomBias * 0.42) * p.lbmLightnessJitter;
+  const saturationOffset = _clamp(-Math.abs(lightOffset) * 0.18 + structured * 2.4, -8, 8);
+  return hslToHex(h + hueOffset, s + saturationOffset, l + lightOffset);
+}
+
+function _makeFluidSeeds(x, y, amount, color, p, profile) {
+  const particles = [];
+  const speedScale = 0.42 + p.lbmDensity * 0.58 + p.lbmSurfaceTension * 0.18;
+  const travel = Math.min(1, profile.distance / Math.max(8, p.lbmBrushRadius * 0.75));
+  const laneCount = Math.max(2, 2 + Math.round(p.lbmStrokeRake * 5));
+  const laneSpacing = p.lbmBrushRadius * (0.08 + p.lbmStrokeRake * 0.2);
+  const phase = profile.spawnTime * 0.018;
+
+  for (let index = 0; index < amount; index += 1) {
+    if (profile.distance <= 1e-3) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = Math.sqrt(Math.random()) * p.lbmBrushRadius;
+      const radialVelocity = speedScale * (0.3 + Math.random() * 1.05);
+      const swirlVelocity = speedScale * (0.12 + p.lbmStrokeJitter * 0.72) * (Math.random() - 0.5);
+      const seed = _fluidHexToRgba(_jitterFluidColor(color, p, profile, index), 0.68 + Math.random() * 0.1);
+      particles.push({
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance,
+        vx: Math.cos(angle) * radialVelocity - Math.sin(angle) * swirlVelocity,
+        vy: Math.sin(angle) * radialVelocity + Math.cos(angle) * swirlVelocity,
+        radius: p.lbmParticleRadius,
+        ...seed,
+      });
+      continue;
+    }
+
+    const laneIndex = index % laneCount;
+    const lanePosition = laneCount > 1 ? laneIndex / (laneCount - 1) - 0.5 : 0;
+    const alongOffset = ((Math.random() - 0.42) * p.lbmBrushRadius * (0.32 + p.lbmStrokePull * 0.9))
+      + travel * p.lbmBrushRadius * (0.12 + p.lbmStrokePull * 0.42);
+    const laneOffset = lanePosition * laneSpacing * (1 + travel * 1.4)
+      + (Math.random() - 0.5) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.22);
+    const swirlOffset = Math.sin(phase + laneIndex * 1.37 + index * 0.31) * p.lbmBrushRadius * p.lbmStrokeJitter * 0.16;
+    const scatterRadius = Math.sqrt(Math.random()) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.24);
+    const scatterAngle = phase + index * 0.53;
+    const tangentVelocity = speedScale * (0.62 + p.lbmStrokePull * 2.2 + p.lbmSurfaceTension * 0.24) * (0.66 + travel * 0.96 + Math.random() * 0.5);
+    const crossVelocity = speedScale * (lanePosition * (0.36 + p.lbmStrokeRake * 1.45)
+      + Math.sin(phase + index * 0.83) * p.lbmStrokeJitter * 0.28
+      + (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.45));
+    const curlVelocity = speedScale * Math.sin(phase * 0.74 + lanePosition * 5.6 + index * 0.21)
+      * (0.16 + p.lbmStrokeJitter * 0.72 + p.lbmStrokeRake * 0.24);
+    const backfill = speedScale * (Math.random() - 0.5) * (0.08 + p.lbmStrokePull * 0.22);
+    const dragNoise = speedScale * (Math.random() - 0.5) * 0.2;
+    const seed = _fluidHexToRgba(_jitterFluidColor(color, p, profile, index), 0.66 + travel * 0.12 + Math.random() * 0.05);
+
+    particles.push({
+      x: x + profile.tangentX * alongOffset + profile.normalX * (laneOffset + swirlOffset) + Math.cos(scatterAngle) * scatterRadius * 0.35,
+      y: y + profile.tangentY * alongOffset + profile.normalY * (laneOffset + swirlOffset) + Math.sin(scatterAngle) * scatterRadius * 0.35,
+      vx: profile.tangentX * (tangentVelocity + backfill) + profile.normalX * (crossVelocity + curlVelocity) + dragNoise,
+      vy: profile.tangentY * (tangentVelocity + backfill) + profile.normalY * (crossVelocity + curlVelocity) + dragNoise,
+      radius: p.lbmParticleRadius * (1 + (Math.random() - 0.5) * (0.08 + p.lbmStrokeJitter * 0.22)),
+      ...seed,
+    });
+  }
+
+  return particles;
+}
 
 export class FluidBrush {
   constructor(app) {
     this.app = app;
-    this._particles = [];
+    this.sim = null;
+    this._ready = false;
+    this._initPromise = null;
     this._active = false;
-    this._lastX = null;
-    this._lastY = null;
+    this._lastPoint = null;
     this._lastFrameElapsed = null;
-    this._blurCanvas = null;
-    this._blurCtx = null;
-    this._blurTmpCanvas = null;
-    this._blurTmpCtx = null;
-    this._blurStrokeCanvas = null;
-    this._blurStrokeCtx = null;
+    this._strokeLayer = null;
+    this._maskCanvas = document.createElement('canvas');
+    this._maskCtx = this._maskCanvas.getContext('2d', { willReadFrequently: true });
+    this._frameCanvas = document.createElement('canvas');
+    this._frameCtx = this._frameCanvas.getContext('2d', { willReadFrequently: true });
+    this._maskSynced = false;
+  }
+
+  async init() {
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = (async () => {
+      try {
+        this.sim = await FluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams());
+        this._ready = true;
+        this._syncMask();
+      } catch (error) {
+        this._ready = false;
+        console.error('FluidBrush: WASM init failed —', error);
+      }
+      return this.sim;
+    })();
+    return this._initPromise;
   }
 
   onDown(x, y, pressure) {
@@ -2664,44 +2818,46 @@ export class FluidBrush {
       this.app.pushUndo();
       this.app.undoPushedThisStroke = true;
     }
+    if (!this._ready || !this.sim) return;
+    const p = this.app.getP();
     this._active = true;
-    this._lastX = x;
-    this._lastY = y;
+    this._strokeLayer = this.app.getActiveLayer();
+    this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
-    this.app.strokeFrame = 0;
-    this._injectAt(x, y, pressure, 0, 0, true);
+    this._updateSimulator();
+    this._seedAt(x, y, pressure, null, p.lbmSpawnCount, p);
   }
 
   onMove(x, y, pressure) {
-    if (this._lastX == null || this._lastY == null) {
-      this._lastX = x;
-      this._lastY = y;
+    if (!this._ready || !this.sim) return;
+    const previousPoint = this._lastPoint;
+    if (!previousPoint) {
+      this._lastPoint = { x, y };
       return;
     }
-    const dx = x - this._lastX;
-    const dy = y - this._lastY;
-    const dist = Math.hypot(dx, dy);
     const p = this.app.getP();
-    const step = Math.max(2, p.fluidBrushRadius * 0.3);
-    const n = Math.max(1, Math.ceil(dist / step));
-    for (let i = 1; i <= n; i++) {
-      const t = i / n;
-      this._injectAt(
-        this._lastX + dx * t,
-        this._lastY + dy * t,
+    const dx = x - previousPoint.x;
+    const dy = y - previousPoint.y;
+    const distance = Math.hypot(dx, dy);
+    const step = Math.max(2, p.lbmBrushRadius * 0.3);
+    const count = Math.max(1, Math.ceil(distance / step));
+    for (let index = 1; index <= count; index += 1) {
+      const t = index / count;
+      this._seedAt(
+        previousPoint.x + dx * t,
+        previousPoint.y + dy * t,
         pressure,
-        dx / n,
-        dy / n
+        { x: previousPoint.x + dx * ((index - 1) / count), y: previousPoint.y + dy * ((index - 1) / count) },
+        Math.max(4, Math.round(p.lbmSpawnCount * FLUID_MOVE_SEED_RATIO)),
+        p,
       );
     }
-    this._lastX = x;
-    this._lastY = y;
+    this._lastPoint = { x, y };
   }
 
-  onUp() {
+  onUp(x, y) {
     this._active = false;
-    this._lastX = null;
-    this._lastY = null;
+    this._lastPoint = null;
   }
 
   onFrame(elapsed) {
@@ -2712,375 +2868,120 @@ export class FluidBrush {
     this._step(elapsed);
   }
 
-  taperFrame() {
-    // Fluid particles keep moving in onHoverFrame after stroke end.
+  taperFrame() {}
+
+  _solverParams() {
+    const p = this.app.getP();
+    return {
+      particleRadius: p.lbmParticleRadius,
+      viscosity: p.lbmViscosity,
+      density: p.lbmDensity,
+      surfaceTension: p.lbmSurfaceTension,
+      timeStep: p.lbmTimeStep,
+      substeps: p.lbmSubsteps,
+      motionDecay: p.lbmMotionDecay,
+      stopSpeed: p.lbmStopSpeed,
+      resolutionScale: p.lbmResolutionScale,
+      fluidScale: p.lbmFluidScale,
+      renderMode: p.lbmRenderMode,
+      simulationType: 'lbm',
+    };
   }
 
-  _injectAt(x, y, pressure, dx, dy, forceStamp = false) {
-    const p = this.app.getP();
-    const radius = Math.max(4, p.fluidBrushRadius);
-    const emit = Math.max(1, Math.round(p.fluidEmitRate * (0.35 + pressure * 0.65)));
-    const len = Math.hypot(dx, dy);
-    const motion = Math.min(1.4, len / Math.max(1, radius * 0.45));
-    const pushX = dx * p.fluidBrushForce * 0.12;
-    const pushY = dy * p.fluidBrushForce * 0.12;
-    const impact = p.fluidImpact * (0.25 + Math.min(1, pressure) * 0.45 + Math.min(1, motion) * 0.45);
-    // Perpendicular (lateral) direction to stroke — zero when there is no motion
-    const latX = len > 1e-4 ? -dy / len : 0;
-    const latY = len > 1e-4 ? dx / len : 0;
-    const latScale = p.fluidLateralSpread * 0.1;
-    const splashRadius = radius * (0.35 + p.fluidSplashRadius * 0.9);
-    const burstSpeed = impact * (2.6 + splashRadius * 0.03);
-    const breakupChance = _clamp(p.fluidBreakup * (0.05 + motion * 0.24 + pressure * 0.18), 0, 0.75);
+  _updateSimulator() {
+    if (!this._ready || !this.sim) return false;
+    const needsMaskSync = this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H || !this._maskSynced;
+    this.sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
+    this.sim.updateParams(this._solverParams());
+    if (needsMaskSync) this._syncMask();
+    return true;
+  }
 
-    for (let i = 0; i < this._particles.length; i++) {
-      const part = this._particles[i];
-      const ox = part.x - x;
-      const oy = part.y - y;
-      const d = Math.hypot(ox, oy);
-      if (d > radius || d < 1e-4) continue;
-      const falloff = 1 - d / radius;
-      const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
-      const poolDensity = this.app.getTexturePoolingDensity(part.x, part.y, p);
-      const edgeBreakup = this.app.getTextureEdgeBreakup(part.x, part.y, p);
-      // Darker texture valleys keep the fluid mass together instead of shedding as much spray.
-      const cohesionBias = 0.65 + texDensity * 0.35;
-      const swirl = p.fluidSpread * 0.028 * falloff;
-      const radialX = ox / d;
-      const radialY = oy / d;
-      const burst = burstSpeed * (0.3 + falloff * 0.7);
-      part.vx += pushX * falloff + radialX * burst * (1.08 - texDensity * 0.28) + (-oy / d) * swirl * (1.08 - texDensity * 0.28);
-      part.vy += pushY * falloff + radialY * burst * (1.08 - texDensity * 0.28) + (ox / d) * swirl * (1.08 - texDensity * 0.28);
-      // Lateral (sideways) impulse on existing particles so they spread during stroke
-      if (latScale > 0) {
-        const lat = (Math.random() * 2 - 1) * latScale * falloff * (1.08 - texDensity * 0.4);
-        part.vx += latX * lat;
-        part.vy += latY * lat;
-      }
-      part.wetness = Math.min(1, part.wetness + 0.02 * falloff * (0.65 + texDensity * 0.55));
-      part.pressure = Math.max(part.pressure || 0, pressure);
-      part.pool = _clamp((part.pool || 0) + p.fluidPooling * 0.045 * falloff * (0.55 + poolDensity * 0.7), 0, 1.6);
-      part.edge = Math.max(part.edge || 0, p.fluidEdgeBleed * falloff * cohesionBias * (1 + edgeBreakup * 0.45));
-      part.splash = Math.max(part.splash || 0, impact * falloff);
-      part.textureDensity = part.textureDensity == null
-        ? texDensity
-        : part.textureDensity * 0.7 + texDensity * 0.3;
+  _syncMask() {
+    if (!this.sim) return;
+    if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) {
+      this._maskCanvas.width = this.app.W;
+      this._maskCanvas.height = this.app.H;
     }
+    this._maskCtx.clearRect(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    this.sim.setMask(this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height));
+    this._maskSynced = true;
+  }
 
-    const spread = splashRadius;
-    const layer = this.app.getActiveLayer();
-    for (let i = 0; i < emit; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const crown = Math.random() < 0.4 + impact * 0.35;
-      const rim = crown
-        ? 0.55 + Math.random() * 0.45
-        : Math.pow(Math.random(), 0.7);
-      const mag = rim * spread;
-      const radialX = Math.cos(ang);
-      const radialY = Math.sin(ang);
-      const radialVel = burstSpeed * (0.55 + Math.random() * 0.9) * (crown ? 1.15 : 0.8);
-      const tangential = (Math.random() - 0.5) * p.fluidLateralSpread * 0.035;
-      // Lateral velocity for new particles — perpendicular to stroke direction
-      const lat = (Math.random() * 2 - 1) * latScale;
-      const px = x + radialX * mag;
-      const py = y + radialY * mag;
-      const texDensity = _textureDepositDensity(this.app, p, px, py);
-      const poolDensity = this.app.getTexturePoolingDensity(px, py, p);
-      const edgeBreakup = this.app.getTextureEdgeBreakup(px, py, p);
-      const breakup = Math.random() < breakupChance * (1.15 - texDensity * 0.45);
-      const sizeBase = breakup ? 0.28 + Math.random() * 0.34 : 0.62 + Math.random() * 0.82;
-      const wetBase = breakup ? 0.28 + Math.random() * 0.28 : 0.58 + Math.random() * 0.42;
-      const size = sizeBase * (0.72 + texDensity * 0.42);
-      const wetness = Math.min(1, wetBase * (0.76 + texDensity * 0.36));
-      const spray = 0.55 + (1 - texDensity) * 0.65;
-      this._particles.push({
-        x: px,
-        y: py,
-        vx: pushX + radialX * radialVel * (1.1 - texDensity * 0.3) + latX * lat - radialY * tangential * spray + (Math.random() - 0.5) * p.fluidSpread * 0.08 * spray,
-        vy: pushY + radialY * radialVel * (1.1 - texDensity * 0.3) + latY * lat + radialX * tangential * spray + (Math.random() - 0.5) * p.fluidSpread * 0.08 * spray,
-        wetness,
-        size,
-        pressure,
-        color: p.color,
-        layer,
-        pool: _clamp(p.fluidPooling * (breakup ? 0.18 : 0.55 + Math.random() * 0.55) * (0.65 + poolDensity * 0.55), 0, 1.6),
-        edge: (crown ? (0.35 + p.fluidEdgeBleed * 0.65) : p.fluidEdgeBleed * 0.28) * (0.65 + texDensity * 0.35) * (1 + edgeBreakup * 0.4),
-        splash: impact * (crown ? 1 : 0.65),
-        textureDensity: texDensity,
-      });
-    }
-
-    const overflow = this._particles.length - p.fluidParticleLimit;
-    if (overflow > 0) this._particles.splice(0, overflow);
-    if (forceStamp) this._stampFrame(p);
+  _seedAt(x, y, pressure, previousPoint, amount, p) {
+    if (!this._updateSimulator()) return;
+    p = p ?? this.app.getP();
+    const profile = _makeFluidSpawnProfile(x, y, previousPoint);
+    const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * (0.4 + pressure * 0.6)));
+    const particles = _makeFluidSeeds(
+      x,
+      y,
+      scaledCount,
+      p.color,
+      { ...p, lbmBrushRadius: scaledBrushRadius },
+      profile,
+    );
+    this.sim.addParticles(particles);
   }
 
   _step(elapsed) {
-    if (!this._particles.length) {
-      this._lastFrameElapsed = elapsed;
-      return;
-    }
+    if (!this._updateSimulator()) return;
     let dt = this._lastFrameElapsed == null ? 1 / 60 : elapsed - this._lastFrameElapsed;
     this._lastFrameElapsed = elapsed;
     if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
     dt = Math.min(dt, 0.05);
-
-    const p = this.app.getP();
-    const steps = Math.max(1, Math.ceil(dt * 90));
-    const subDt = dt / steps;
-    const cellSize = Math.max(8, p.fluidBrushRadius * 0.45);
-    const damping = Math.pow(Math.max(0.0001, p.fluidVelocityDamping), subDt * 60);
-    const evaporation = Math.max(0, 1 - p.fluidEvaporation * subDt * 60);
-
-    for (let step = 0; step < steps; step++) {
-      const cells = new Map();
-      for (let i = 0; i < this._particles.length; i++) {
-        const part = this._particles[i];
-        const key = `${Math.floor(part.x / cellSize)},${Math.floor(part.y / cellSize)}`;
-        let cell = cells.get(key);
-        if (!cell) {
-          cell = { vx: 0, vy: 0, x: 0, y: 0, wet: 0, count: 0 };
-          cells.set(key, cell);
-        }
-        cell.vx += part.vx;
-        cell.vy += part.vy;
-        cell.x += part.x;
-        cell.y += part.y;
-        cell.wet += part.wetness;
-        cell.count++;
-      }
-
-      for (let i = this._particles.length - 1; i >= 0; i--) {
-        const part = this._particles[i];
-        const cellX = Math.floor(part.x / cellSize);
-        const cellY = Math.floor(part.y / cellSize);
-        const key = `${cellX},${cellY}`;
-        const cell = cells.get(key);
-        const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
-        const poolDensity = this.app.getTexturePoolingDensity(part.x, part.y, p);
-        const edgeBreakup = this.app.getTextureEdgeBreakup(part.x, part.y, p);
-        part.textureDensity = part.textureDensity == null
-          ? texDensity
-          : part.textureDensity * 0.76 + texDensity * 0.24;
-        let flowVX = 0;
-        let flowVY = 0;
-        let flowWeight = 0;
-        for (let oy = -1; oy <= 1; oy++) {
-          for (let ox = -1; ox <= 1; ox++) {
-            const nearby = cells.get(`${cellX + ox},${cellY + oy}`);
-            if (!nearby || nearby.count <= 0) continue;
-            const weight = 1 / (1 + Math.abs(ox) + Math.abs(oy));
-            flowVX += (nearby.vx / nearby.count) * weight;
-            flowVY += (nearby.vy / nearby.count) * weight;
-            flowWeight += weight;
-          }
-        }
-        if (flowWeight > 0) {
-          const avx = flowVX / flowWeight;
-          const avy = flowVY / flowWeight;
-          const blend = 0.05 + p.fluidViscosity * 0.22 + texDensity * 0.04;
-          part.vx += (avx - part.vx) * blend;
-          part.vy += (avy - part.vy) * blend;
-        }
-        if (cell && cell.count > 0) {
-          const centerX = cell.x / cell.count;
-          const centerY = cell.y / cell.count;
-          const toCenterX = centerX - part.x;
-          const toCenterY = centerY - part.y;
-          const centerDist = Math.hypot(toCenterX, toCenterY);
-          const density = Math.min(1.6, cell.count / 7);
-          // Blend viscosity, pooling, and texture density into a mild extra pull so droplets
-          // read more like a connected wet group instead of isolated particles.
-          const groupPull = (0.004 + p.fluidViscosity * 0.006 + p.fluidPooling * 0.008) * (0.65 + poolDensity * 0.35);
-          part.vx += toCenterX * (p.fluidPooling * density * 0.008 + groupPull);
-          part.vy += toCenterY * (p.fluidPooling * density * 0.008 + groupPull);
-          if (centerDist > 1e-4) {
-            const edgeFactor = _clamp(centerDist / (cellSize * 0.85), 0, 1);
-            const edgePush = p.fluidImpact * p.fluidSplashRadius * density * edgeFactor * (0.08 + (part.edge || 0) * 0.08);
-            part.vx -= (toCenterX / centerDist) * edgePush;
-            part.vy -= (toCenterY / centerDist) * edgePush;
-          }
-          const speed = Math.hypot(part.vx, part.vy);
-          part.pool = _clamp((part.pool || 0) + p.fluidPooling * part.wetness * 0.02 * (0.6 + poolDensity * 0.55) - speed * 0.0015, 0, 1.8);
-          part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05 * (0.55 + texDensity * 0.45) * (1 + edgeBreakup * 0.35), 0, 1.4);
-        }
-        if (p.canvasTextureEnabled && p.fluidTextureFollow > 0) {
-          const flow = this.app.sampleTextureFlowVector(part.x, part.y, p);
-          const follow = p.fluidTextureFollow * this.app.getTextureInfluence(p, 'flow') * (0.45 + texDensity * 0.55 + flow.slope * 0.2);
-          part.vx += flow.x * follow * 0.7;
-          part.vy += flow.y * follow * 0.7;
-        }
-        const turbulence = 1 - Math.min(0.72, p.fluidPooling * 0.18 + p.fluidViscosity * 0.14 + texDensity * 0.28);
-        part.vx += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012) * turbulence;
-        part.vy += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012) * turbulence;
-        part.vx *= damping;
-        part.vy *= damping;
-        const poolDrag = Math.max(0.72, 1 - (part.pool || 0) * p.fluidPooling * (0.06 + poolDensity * 0.03));
-        part.vx *= poolDrag;
-        part.vy *= poolDrag;
-        const prevX = part.x;
-        const prevY = part.y;
-        part.x += part.vx * p.fluidFlow * subDt * 60;
-        part.y += part.vy * p.fluidFlow * subDt * 60;
-        if (part.x < 0 || part.x > this.app.W) {
-          part.x = _clamp(part.x, 0, this.app.W);
-          part.vx *= -0.28;
-        }
-        if (part.y < 0 || part.y > this.app.H) {
-          part.y = _clamp(part.y, 0, this.app.H);
-          part.vy *= -0.28;
-        }
-        part.prevX = prevX;
-        part.prevY = prevY;
-        part.splash = Math.max(0, (part.splash || 0) * (0.9 - p.fluidImpact * 0.08));
-        part.wetness *= Math.min(1, evaporation + (part.pool || 0) * p.fluidPooling * 0.016);
-        if (part.wetness < 0.025) this._particles.splice(i, 1);
-      }
-    }
-
-    this._stampFrame(p);
+    this.sim.step(dt);
+    if (this.sim.getParticleCount() > 0) this._depositFrame();
   }
 
-  _stampFrame(p) {
-    if (!this._particles.length) return;
-    const blurEnabled = p.trailBlur > 0;
-    const blurCtx = blurEnabled ? this._prepareBlurFrame() : null;
-    const touched = new Set();
-
-    for (let i = 0; i < this._particles.length; i++) {
-      const part = this._particles[i];
-      if (!part.layer || !this.app.layers.includes(part.layer)) continue;
-      const ctx = part.layer.ctx;
-      touched.add(part.layer);
-      const pressureScale = p.pressureSize ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
-      const opacityScale = p.pressureOpacity ? (0.3 + 0.7 * (part.pressure || 1)) : 1;
-      const texDensity = part.textureDensity == null
-        ? _textureDepositDensity(this.app, p, part.x, part.y)
-        : part.textureDensity;
-      const size = Math.max(1, p.stampSize * pressureScale * part.size * (0.45 + part.wetness * 0.75));
-      const opacity = Math.min(1, p.stampOpacity * p.fluidDeposit * part.wetness * opacityScale);
-      const trailOpacity = opacity * (0.2 + (1 - p.fluidPooling) * 0.35 + (part.splash || 0) * 0.12);
-      const poolRadius = Math.max(size * 0.55, size * (0.66 + p.fluidPooling * 0.55 + (part.pool || 0) * 0.35) * (0.82 + texDensity * 0.28));
-      const poolOpacity = Math.min(1, opacity * (0.22 + p.fluidPooling * 0.28 + (part.pool || 0) * 0.2) * (0.38 + texDensity * 0.92));
-      const edgeOpacity = Math.min(0.55, opacity * p.fluidEdgeBleed * (0.14 + (part.edge || 0) * 0.26) * (0.3 + texDensity * 0.9));
-      const fromX = part.prevX ?? part.x;
-      const fromY = part.prevY ?? part.y;
-      const dx = part.x - fromX;
-      const dy = part.y - fromY;
-      const dist = Math.hypot(dx, dy);
-      const step = Math.max(1, size * 0.28);
-      const n = Math.max(1, Math.ceil(dist / step));
-      for (let j = 1; j <= n; j++) {
-        const t = j / n;
-        const sx = fromX + dx * t;
-        const sy = fromY + dy * t;
-        this.app.symStamp(ctx, sx, sy, size, part.color, trailOpacity);
-        if (blurCtx) _stampToBlurAccum(blurCtx, this.app, sx, sy, size, part.color, trailOpacity);
-      }
-      _fillRadialPool(ctx, this.app, part.x, part.y, poolRadius, part.color, poolOpacity);
-      if (blurCtx) _stampToBlurAccum(blurCtx, this.app, part.x, part.y, poolRadius * 1.05, part.color, Math.min(0.85, poolOpacity * 0.55));
-      _strokePoolRing(
-        ctx,
-        this.app,
-        part.x,
-        part.y,
-        poolRadius * (0.68 + p.fluidEdgeBleed * 0.16),
-        part.color,
-        edgeOpacity,
-        Math.max(0.75, poolRadius * (0.06 + p.fluidEdgeBleed * 0.05))
-      );
-      part.prevX = part.x;
-      part.prevY = part.y;
-      this.app.strokeFrame++;
+  _depositFrame() {
+    if (this._strokeLayer && !this.app.layers.includes(this._strokeLayer)) {
+      this._strokeLayer = null;
+      return;
     }
-
-    if (blurCtx && touched.size) this._applyBlurFrame(touched, p);
-    if (touched.size) {
-      touched.forEach(layer => { layer.dirty = true; });
-      this.app.compositeAllLayers();
-    }
-  }
-
-  _prepareBlurFrame() {
-    const layer = this.app.getActiveLayer();
-    if (!layer) return null;
-    const w = layer.canvas.width;
-    const h = layer.canvas.height;
-    if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== w || this._blurStrokeCanvas.height !== h) {
-      this._blurStrokeCanvas = document.createElement('canvas');
-      this._blurStrokeCanvas.width = w;
-      this._blurStrokeCanvas.height = h;
-      this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
-    }
-    this._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this._blurStrokeCtx.clearRect(0, 0, w, h);
-    this._blurStrokeCtx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
-    return this._blurStrokeCtx;
-  }
-
-  _applyBlurFrame(touched, p) {
-    const layer = this.app.getActiveLayer();
+    const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer) return;
-    const w = layer.canvas.width;
-    const h = layer.canvas.height;
-    if (!this._blurCanvas || this._blurCanvas.width !== w || this._blurCanvas.height !== h) {
-      this._blurCanvas = document.createElement('canvas');
-      this._blurCanvas.width = w;
-      this._blurCanvas.height = h;
-      this._blurCtx = this._blurCanvas.getContext('2d');
-      this._blurTmpCanvas = document.createElement('canvas');
-      this._blurTmpCanvas.width = w;
-      this._blurTmpCanvas.height = h;
-      this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+    const frame = this.sim.readPixels();
+    if (!frame.width || !frame.height) return;
+    if (this._frameCanvas.width !== frame.width || this._frameCanvas.height !== frame.height) {
+      this._frameCanvas.width = frame.width;
+      this._frameCanvas.height = frame.height;
     }
-    this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this._blurCtx.clearRect(0, 0, w, h);
-    this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
-    if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-      _applyTextureFlow(this._blurCtx, this._blurCanvas, this.app, p.trailFlow, p);
-    }
-    this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this._blurTmpCtx.clearRect(0, 0, w, h);
-    this._blurTmpCtx.filter = `blur(${p.trailBlur * this.app.DPR}px)`;
-    this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
-    this._blurTmpCtx.filter = 'none';
-    touched.forEach(layerRef => {
-      if (!layerRef?.ctx) return;
-      layerRef.ctx.save();
-      layerRef.ctx.setTransform(1, 0, 0, 1, 0, 0);
-      layerRef.ctx.globalAlpha = 0.16;
-      layerRef.ctx.drawImage(this._blurTmpCanvas, 0, 0);
-      layerRef.ctx.globalAlpha = 1;
-      layerRef.ctx.restore();
-    });
+    this._frameCtx.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
+    layer.ctx.save();
+    layer.ctx.globalCompositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
+    layer.ctx.drawImage(this._frameCanvas, 0, 0, this.app.W, this.app.H);
+    layer.ctx.restore();
+    layer.dirty = true;
+    this.app.compositeAllLayers();
   }
 
   drawOverlay(ctx, p) {
-    if (!p.fluidShowParticles) return;
+    if (!p.lbmShowFlow || !this.sim) return;
+    const particles = this.sim.getParticles();
     ctx.save();
-    ctx.fillStyle = 'rgba(120,190,255,0.45)';
-    for (let i = 0; i < this._particles.length; i++) {
-      const part = this._particles[i];
-      ctx.globalAlpha = Math.max(0.08, Math.min(0.65, part.wetness * 0.65));
-      ctx.fillRect(part.x - 1, part.y - 1, 2, 2);
+    ctx.fillStyle = 'rgba(120, 190, 255, 0.45)';
+    for (const particle of particles) {
+      ctx.globalAlpha = Math.max(0.08, Math.min(0.55, Math.hypot(particle.vx, particle.vy) * 0.18));
+      ctx.fillRect(particle.x - 1, particle.y - 1, 2, 2);
     }
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = 'rgba(120,190,255,0.28)';
+    ctx.strokeStyle = 'rgba(120, 190, 255, 0.28)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(this.app.leaderX, this.app.leaderY, p.fluidBrushRadius, 0, Math.PI * 2);
+    ctx.arc(this.app.leaderX, this.app.leaderY, p.lbmBrushRadius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
 
   getStatusInfo() {
-    return `Fluid | Drops: ${this._particles.length}`;
+    return `LBM | Cells: ${this.sim?.getParticleCount?.() ?? 0}`;
   }
 
   deactivate() {
     this._active = false;
-    this._lastX = null;
-    this._lastY = null;
+    this._lastPoint = null;
     this._lastFrameElapsed = null;
   }
 }

@@ -152,6 +152,11 @@ const LBM_WEIGHTS: [f32; 9] = [
 ];
 const LBM_OPPOSITE: [usize; 9] = [0, 3, 4, 1, 2, 7, 8, 5, 6];
 const LBM_EPSILON: f32 = 0.0001;
+const LBM_RENDER_ACTIVITY_THRESHOLD: f32 = 0.001;
+const LBM_RENDER_PIGMENT_THRESHOLD: f32 = 0.0001;
+const LBM_PHASE_CLEAR_THRESHOLD: f32 = 0.003;
+const LBM_MASK_EDGE_RETAIN_FACTOR: f32 = 0.96;
+const LBM_RENDER_ALPHA_MAX: f32 = 0.96;
 
 pub struct FluidSimulation {
     width: u32,
@@ -972,7 +977,7 @@ impl FluidSimulation {
     fn apply_phase_to_lbm(&mut self) {
         for index in 0..self.lbm.phase.len() {
             let phase = self.lbm.phase[index];
-            if phase <= 0.003 {
+            if phase <= LBM_PHASE_CLEAR_THRESHOLD {
                 self.lbm.dist[index] = [0.0; 9];
                 self.lbm.pigment[index] = [0.0; 4];
                 continue;
@@ -981,9 +986,6 @@ impl FluidSimulation {
             let keep = (0.86 + phase * 0.14).clamp(0.0, 1.0);
             for dir in 0..9 {
                 self.lbm.dist[index][dir] *= keep;
-            }
-            for channel in 0..4 {
-                self.lbm.pigment[index][channel] *= keep;
             }
         }
     }
@@ -1008,19 +1010,11 @@ impl FluidSimulation {
                 let sample_y = y as f32 - vel[1] * advect_scale;
                 let mut sampled =
                     Self::sample_pigment_field(&pigment, width, height, sample_x, sample_y);
-                let retain = (0.994 - self.params.motion_decay * 0.007).clamp(0.955, 0.999);
-                for channel in 0..4 {
-                    sampled[channel] *= retain;
-                }
-
-                if phase < 0.02 {
-                    let edge_fade = (phase / 0.02).clamp(0.0, 1.0);
-                    for channel in 0..4 {
-                        sampled[channel] *= 0.42 + edge_fade * 0.58;
-                    }
+                if phase <= LBM_PHASE_CLEAR_THRESHOLD {
+                    sampled = [0.0; 4];
                 } else if mask_has_content && mask[index] <= 8 && rho < 0.015 {
                     for channel in 0..4 {
-                        sampled[channel] *= 0.82;
+                        sampled[channel] *= LBM_MASK_EDGE_RETAIN_FACTOR;
                     }
                 }
 
@@ -1307,7 +1301,13 @@ impl FluidSimulation {
             let pigment = self.lbm.pigment[index];
             let alpha_mass = pigment[3];
             let phase = self.lbm.phase[index];
-            if rho < 0.001 && alpha_mass < 0.001 && phase < 0.004 {
+            if rho < LBM_RENDER_ACTIVITY_THRESHOLD
+                && alpha_mass < LBM_RENDER_ACTIVITY_THRESHOLD
+                && phase < 0.004
+            {
+                continue;
+            }
+            if alpha_mass <= LBM_RENDER_PIGMENT_THRESHOLD {
                 continue;
             }
 
@@ -1315,60 +1315,16 @@ impl FluidSimulation {
             let y = (index / self.width as usize) as i32;
             let allow_outside =
                 self.mask_alpha[index] == 0 && (phase > 0.035 || rho > 0.02 || alpha_mass > 0.012);
-            let alpha = (phase * 0.62 + alpha_mass * 0.22 + rho * 0.05).clamp(0.0, 0.96);
+            let alpha = alpha_mass.clamp(0.0, LBM_RENDER_ALPHA_MAX);
             if alpha <= 0.001 {
                 continue;
             }
 
-            let base_r = if alpha_mass > 0.0001 {
-                (pigment[0] / alpha_mass).clamp(0.0, 255.0) as u8
-            } else {
-                71
-            };
-            let base_g = if alpha_mass > 0.0001 {
-                (pigment[1] / alpha_mass).clamp(0.0, 255.0) as u8
-            } else {
-                199
-            };
-            let base_b = if alpha_mass > 0.0001 {
-                (pigment[2] / alpha_mass).clamp(0.0, 255.0) as u8
-            } else {
-                255
-            };
-            let phase_px = Self::sample_phase(&self.lbm.phase, self.width, self.height, x + 1, y);
-            let phase_nx = Self::sample_phase(&self.lbm.phase, self.width, self.height, x - 1, y);
-            let phase_py = Self::sample_phase(&self.lbm.phase, self.width, self.height, x, y + 1);
-            let phase_ny = Self::sample_phase(&self.lbm.phase, self.width, self.height, x, y - 1);
-            let grad_x = (phase_px - phase_nx) * 0.5;
-            let grad_y = (phase_py - phase_ny) * 0.5;
-            let grad_mag = (grad_x * grad_x + grad_y * grad_y).sqrt();
-            let interface_band = (phase * (1.0 - phase) * 4.0).clamp(0.0, 1.0);
-            let highlight = (interface_band * (0.12 + grad_mag * 0.72)).clamp(0.0, 0.42);
-            let shadow = (interface_band * (0.08 + grad_mag * 0.34)).clamp(0.0, 0.22);
+            let base_r = (pigment[0] / alpha_mass).clamp(0.0, 255.0) as u8;
+            let base_g = (pigment[1] / alpha_mass).clamp(0.0, 255.0) as u8;
+            let base_b = (pigment[2] / alpha_mass).clamp(0.0, 255.0) as u8;
 
             self.blend_pixel(x, y, base_r, base_g, base_b, alpha, allow_outside);
-            if shadow > 0.002 {
-                self.blend_pixel(
-                    x,
-                    y,
-                    (base_r as f32 * 0.7).clamp(0.0, 255.0) as u8,
-                    (base_g as f32 * 0.76).clamp(0.0, 255.0) as u8,
-                    (base_b as f32 * 0.82).clamp(0.0, 255.0) as u8,
-                    shadow,
-                    allow_outside,
-                );
-            }
-            if highlight > 0.002 {
-                self.blend_pixel(
-                    x,
-                    y,
-                    ((base_r as f32) * 0.45 + 150.0).clamp(0.0, 255.0) as u8,
-                    ((base_g as f32) * 0.55 + 170.0).clamp(0.0, 255.0) as u8,
-                    ((base_b as f32) * 0.72 + 185.0).clamp(0.0, 255.0) as u8,
-                    highlight,
-                    allow_outside,
-                );
-            }
             if self.params.render_mode == FluidRenderMode::Hybrid {
                 self.blend_pixel(
                     x + 1,
@@ -1653,6 +1609,48 @@ mod tests {
             sim.lbm.phase[outside_index] > 0.01,
             "phase did not advect outside the seeded mask"
         );
+    }
+
+    #[test]
+    fn lbm_does_not_render_colorless_phase_as_blue() {
+        let mut sim = FluidSimulation::new(16, 16);
+        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Hybrid as u32);
+        let index = 8usize * 16 + 8usize;
+        sim.lbm.rho[index] = 0.2;
+        sim.lbm.phase[index] = 0.7;
+        sim.lbm.pigment[index] = [0.0; 4];
+
+        let pixels = sim.read_pixels();
+        let px = index * 4;
+        assert_eq!(&pixels[px..px + 4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn lbm_renders_pigment_color_without_blue_fallback() {
+        let mut sim = FluidSimulation::new(16, 16);
+        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Hybrid as u32);
+        let index = 8usize * 16 + 8usize;
+        sim.lbm.rho[index] = 0.2;
+        sim.lbm.phase[index] = 0.7;
+        sim.lbm.pigment[index] = [180.0, 20.0, 10.0, 0.7];
+
+        let pixels = sim.read_pixels();
+        let px = index * 4;
+        assert!(pixels[px] > pixels[px + 2], "expected rendered pigment to stay closer to the injected color");
+        assert!(pixels[px + 1] > pixels[px + 2], "expected rendered pigment to keep the warmer pigment balance");
+        assert!(pixels[px + 3] > 0, "expected rendered pigment to remain visible");
+    }
+
+    #[test]
+    fn lbm_apply_phase_keeps_pigment_mass_while_fluid_settles() {
+        let mut sim = FluidSimulation::new(8, 8);
+        let index = 4usize * 8 + 4usize;
+        sim.lbm.phase[index] = 0.65;
+        sim.lbm.pigment[index] = [90.0, 30.0, 15.0, 0.6];
+
+        sim.apply_phase_to_lbm();
+
+        assert_eq!(sim.lbm.pigment[index], [90.0, 30.0, 15.0, 0.6]);
     }
 
     #[test]

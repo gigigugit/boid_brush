@@ -225,3 +225,211 @@ export class BoidSim {
     return this._mod;
   }
 }
+
+const FLUID_TYPE_MAP = {
+  sph: 0,
+  eulerian: 1,
+  lbm: 2,
+};
+
+const FLUID_RENDER_MODE_MAP = {
+  particles: 0,
+  grid: 1,
+  hybrid: 2,
+};
+const MIN_FLUID_SCALE = 0.35;
+
+let _fluidModulePromise = null;
+let _fluidModulePath = '';
+
+function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, sourceCtx, targetCanvas, targetCtx) {
+  if (sourceCanvas.width !== imageData.width || sourceCanvas.height !== imageData.height) {
+    sourceCanvas.width = imageData.width;
+    sourceCanvas.height = imageData.height;
+  }
+  sourceCtx.putImageData(imageData, 0, 0);
+  if (targetCanvas.width !== width || targetCanvas.height !== height) {
+    targetCanvas.width = width;
+    targetCanvas.height = height;
+  }
+  targetCtx.imageSmoothingEnabled = true;
+  targetCtx.clearRect(0, 0, width, height);
+  targetCtx.drawImage(sourceCanvas, 0, 0, width, height);
+  return targetCtx.getImageData(0, 0, width, height);
+}
+
+async function _getOrLoadFluidModule(wasmPath) {
+  if (!_fluidModulePromise || _fluidModulePath !== wasmPath) {
+    _fluidModulePath = wasmPath;
+    _fluidModulePromise = (async () => {
+      const mod = await import(wasmPath);
+      if (typeof mod.default === 'function') await mod.default();
+      if (typeof mod.fluid_create_simulator !== 'function') {
+        throw new Error('Fluid exports are unavailable in the WASM module.');
+      }
+      return mod;
+    })();
+  }
+  return _fluidModulePromise;
+}
+
+export class FluidSim {
+  static async create(width, height, params = {}, wasmPath = './wasm-sim/pkg/boid_sim.js') {
+    const mod = await _getOrLoadFluidModule(wasmPath);
+    const instance = new FluidSim(mod, width, height, params);
+    instance.updateParams(params);
+    return instance;
+  }
+
+  constructor(mod, displayWidth, displayHeight, params = {}) {
+    this._mod = mod;
+    this.displayWidth = displayWidth;
+    this.displayHeight = displayHeight;
+    this.internalWidth = 0;
+    this.internalHeight = 0;
+    this.handle = null;
+    this.params = { ...params };
+    this.maskImageData = null;
+    this._sourceCanvas = document.createElement('canvas');
+    this._sourceCtx = this._sourceCanvas.getContext('2d', { willReadFrequently: true });
+    this._targetCanvas = document.createElement('canvas');
+    this._targetCtx = this._targetCanvas.getContext('2d', { willReadFrequently: true });
+  }
+
+  updateParams(params = {}) {
+    this.params = { ...this.params, ...params };
+    const next = this._targetSize(this.params);
+    const needsRebuild = this.handle === null || next.width !== this.internalWidth || next.height !== this.internalHeight;
+    if (needsRebuild) {
+      this.internalWidth = next.width;
+      this.internalHeight = next.height;
+      this._recreateHandle();
+    }
+
+    this._mod.fluid_set_params(
+      this.handle,
+      this._scaleDistance(this.params.particleRadius ?? 4),
+      this.params.viscosity ?? 0.45,
+      this.params.density ?? 0.55,
+      this.params.surfaceTension ?? 0.58,
+      this.params.timeStep ?? 1,
+      this.params.substeps ?? 3,
+      this.params.motionDecay ?? 0.12,
+      this._scaleDistance(this.params.stopSpeed ?? 0.025),
+      FLUID_TYPE_MAP[this.params.simulationType ?? 'lbm'] ?? 2,
+      FLUID_RENDER_MODE_MAP[this.params.renderMode ?? 'hybrid'] ?? 2,
+    );
+  }
+
+  setDisplaySize(displayWidth, displayHeight) {
+    this.displayWidth = displayWidth;
+    this.displayHeight = displayHeight;
+    this.updateParams(this.params);
+  }
+
+  setMask(imageData) {
+    this.maskImageData = imageData;
+    if (this.handle === null) return;
+    const scaled = _scaleImageDataViaCanvas(
+      imageData,
+      this.internalWidth,
+      this.internalHeight,
+      this._sourceCanvas,
+      this._sourceCtx,
+      this._targetCanvas,
+      this._targetCtx,
+    );
+    this._mod.fluid_set_mask_rgba(this.handle, new Uint8Array(scaled.data));
+  }
+
+  addParticles(particlesArray) {
+    if (this.handle === null || !particlesArray?.length) return;
+    const packed = new Float32Array(particlesArray.length * 9);
+    const scaleX = this.internalWidth / this.displayWidth;
+    const scaleY = this.internalHeight / this.displayHeight;
+    const scaleAvg = (scaleX + scaleY) * 0.5;
+    let offset = 0;
+    for (const particle of particlesArray) {
+      packed[offset + 0] = particle.x * scaleX;
+      packed[offset + 1] = particle.y * scaleY;
+      packed[offset + 2] = (particle.vx ?? 0) * scaleX;
+      packed[offset + 3] = (particle.vy ?? 0) * scaleY;
+      packed[offset + 4] = particle.r ?? 0;
+      packed[offset + 5] = particle.g ?? 0;
+      packed[offset + 6] = particle.b ?? 0;
+      packed[offset + 7] = particle.a ?? 0.8;
+      packed[offset + 8] = (particle.radius ?? this.params.particleRadius ?? 4) * scaleAvg;
+      offset += 9;
+    }
+    this._mod.fluid_add_particles(this.handle, packed, 9);
+  }
+
+  clearParticles() {
+    if (this.handle !== null) this._mod.fluid_clear_particles(this.handle);
+  }
+
+  step(dt) {
+    if (this.handle !== null) this._mod.fluid_step(this.handle, dt);
+  }
+
+  readPixels() {
+    return {
+      buffer: new Uint8ClampedArray(this._mod.fluid_read_pixels(this.handle)),
+      width: this.internalWidth,
+      height: this.internalHeight,
+    };
+  }
+
+  getParticleCount() {
+    return this.handle !== null ? this._mod.fluid_get_particle_count(this.handle) : 0;
+  }
+
+  getParticles() {
+    if (this.handle === null) return [];
+    const raw = this._mod.fluid_get_particles(this.handle);
+    const scaleX = this.displayWidth / this.internalWidth;
+    const scaleY = this.displayHeight / this.internalHeight;
+    const particles = [];
+    for (let index = 0; index < raw.length; index += 4) {
+      particles.push({
+        x: raw[index] * scaleX,
+        y: raw[index + 1] * scaleY,
+        vx: raw[index + 2] * scaleX,
+        vy: raw[index + 3] * scaleY,
+      });
+    }
+    return particles;
+  }
+
+  getRenderSize() {
+    return { width: this.internalWidth, height: this.internalHeight };
+  }
+
+  destroy() {
+    if (this.handle !== null) {
+      this._mod.fluid_destroy_simulator(this.handle);
+      this.handle = null;
+    }
+  }
+
+  _targetSize(params) {
+    const scale = Number(params.resolutionScale) || 1;
+    const fluidScale = Math.max(MIN_FLUID_SCALE, Number(params.fluidScale) || 1);
+    return {
+      width: Math.max(96, Math.round((this.displayWidth * scale) / fluidScale)),
+      height: Math.max(72, Math.round((this.displayHeight * scale) / fluidScale)),
+    };
+  }
+
+  _scaleDistance(distance) {
+    const scaleX = this.internalWidth / this.displayWidth;
+    const scaleY = this.internalHeight / this.displayHeight;
+    return distance * ((scaleX + scaleY) * 0.5);
+  }
+
+  _recreateHandle() {
+    if (this.handle !== null) this._mod.fluid_destroy_simulator(this.handle);
+    this.handle = this._mod.fluid_create_simulator(this.internalWidth, this.internalHeight);
+    if (this.maskImageData) this.setMask(this.maskImageData);
+  }
+}

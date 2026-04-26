@@ -265,9 +265,10 @@ export class App {
     this.brushes.eraser = new EraserBrush(this);
     this.brushes.ai = new AIDiffusionBrush(this);
 
-    // Init WASM for boid brush
+    // Init WASM-backed brushes
     await this.brushes.boid.init();
     await this.brushes.ant.init();
+    await this.brushes.fluid.init();
 
     // Sidebar UI
     buildSidebar(this);
@@ -421,6 +422,7 @@ export class App {
     try {
       if (this.brushes.boid) await this.brushes.boid.init();
       if (this.brushes.ant) await this.brushes.ant.init();
+      if (this.brushes.fluid) await this.brushes.fluid.init();
     } catch(e) { console.warn('WASM reinit failed:', e); }
 
     // Zoom to fit
@@ -1220,25 +1222,26 @@ export class App {
       pencilAngle: chk('pencilAngle'),
       pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
-      // Fluid brush
-      fluidParticleLimit: numOr('fluidParticleLimit', 320),
-      fluidEmitRate: numOr('fluidEmitRate', 16),
-      fluidBrushRadius: Math.max(2, Math.round(numOr('fluidBrushRadius', 42) * scale)),
-      fluidBrushForce: numOr('fluidBrushForce', 95) / 100,
-      fluidLateralSpread: numOr('fluidLateralSpread', 70),
-      fluidFlow: numOr('fluidFlow', 120) / 100,
-      fluidViscosity: numOr('fluidViscosity', 28) / 100,
-      fluidVelocityDamping: 1 - numOr('fluidVelocityDamping', 8) / 100,
-      fluidImpact: numOr('fluidImpact', 65) / 100,
-      fluidSplashRadius: numOr('fluidSplashRadius', 55) / 100,
-      fluidBreakup: numOr('fluidBreakup', 35) / 100,
-      fluidSpread: numOr('fluidSpread', 10),
-      fluidEvaporation: numOr('fluidEvaporation', 8) / 1000,
-      fluidTextureFollow: numOr('fluidTextureFollow', 28) / 100,
-      fluidDeposit: numOr('fluidDeposit', 78) / 100,
-      fluidPooling: numOr('fluidPooling', 70) / 100,
-      fluidEdgeBleed: numOr('fluidEdgeBleed', 45) / 100,
-      fluidShowParticles: chk('fluidShowParticles'),
+      // LBM fluid brush
+      lbmBrushRadius: Math.max(2, Math.round(numOr('lbmBrushRadius', 42) * scale)),
+      lbmSpawnCount: numOr('lbmSpawnCount', 36),
+      lbmParticleRadius: numOr('lbmParticleRadius', 4),
+      lbmViscosity: numOr('lbmViscosity', 45) / 100,
+      lbmDensity: numOr('lbmDensity', 70) / 100,
+      lbmSurfaceTension: numOr('lbmSurfaceTension', 58) / 100,
+      lbmTimeStep: numOr('lbmTimeStep', 16) / 16,
+      lbmSubsteps: numOr('lbmSubsteps', 3),
+      lbmMotionDecay: numOr('lbmMotionDecay', 12) / 100,
+      lbmStopSpeed: numOr('lbmStopSpeed', 3) / 100,
+      lbmResolutionScale: numOr('lbmResolutionScale', 100) / 100,
+      lbmFluidScale: numOr('lbmFluidScale', 100) / 100,
+      lbmStrokePull: numOr('lbmStrokePull', 55) / 100,
+      lbmStrokeRake: numOr('lbmStrokeRake', 28) / 100,
+      lbmStrokeJitter: numOr('lbmStrokeJitter', 18) / 100,
+      lbmHueJitter: numOr('lbmHueJitter', 0),
+      lbmLightnessJitter: numOr('lbmLightnessJitter', 0),
+      lbmRenderMode: sel('lbmRenderMode') || 'hybrid',
+      lbmShowFlow: chk('lbmShowFlow'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
       bOpacityVar: val('bOpacityVar') / 100,
@@ -1799,7 +1802,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 Fluid', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
