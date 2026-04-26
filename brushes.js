@@ -130,13 +130,11 @@ export const SpawnShapes = {
  * @param {HTMLCanvasElement} canvas - blur canvas
  * @param {App} app - app instance (for texture data + DPR)
  * @param {number} flow - flow strength 0–1
- * @param {number} texScale - texture tiling scale (CSS-pixel units)
+ * @param {object} p - active brush params
  */
-function _applyTextureFlow(ctx, canvas, app, flow, texScale) {
-  const texW = app._canvasTextureW;
-  const texH = app._canvasTextureH;
-  const tex  = app._canvasTextureData;
-  if (!tex || texW <= 0 || texH <= 0 || texScale <= 0 || flow <= 0) return;
+function _applyTextureFlow(ctx, canvas, app, flow, p) {
+  const textureFlow = app.getTextureInfluence(p, 'flow');
+  if (!app.hasCanvasTexture() || textureFlow <= 0 || flow <= 0) return;
 
   const w   = canvas.width;
   const h   = canvas.height;
@@ -153,9 +151,9 @@ function _applyTextureFlow(ctx, canvas, app, flow, texScale) {
 
   const dpr      = app.DPR;
   const invDpr   = 1 / dpr;
-  const invScale = 1 / texScale;
   // Maximum pixel shift per iteration (1–4 device pixels depending on strength)
-  const shift = Math.max(1, Math.round(flow * 4 * dpr));
+  const flowStrength = flow * textureFlow;
+  const shift = Math.max(1, Math.round(flowStrength * 4 * dpr));
   const margin = shift;
 
   for (let py = margin; py < h - margin; py++) {
@@ -163,44 +161,20 @@ function _applyTextureFlow(ctx, canvas, app, flow, texScale) {
       const idx = (py * w + px) << 2;
       if (src[idx + 3] < 2) continue; // skip transparent
 
-      // Convert device px → CSS px → texture UV
-      const cx = px * invDpr * invScale;
-      const cy = py * invDpr * invScale;
-      const st = invDpr * invScale; // one device-pixel step in texture coords
-
-      // Inline texture lookups for 4-connected neighbours
-      const ixC = ((Math.floor(cx)      % texW) + texW) % texW;
-      const iyC = ((Math.floor(cy)      % texH) + texH) % texH;
-      const ixL = ((Math.floor(cx - st) % texW) + texW) % texW;
-      const ixR = ((Math.floor(cx + st) % texW) + texW) % texW;
-      const iyU = ((Math.floor(cy - st) % texH) + texH) % texH;
-      const iyD = ((Math.floor(cy + st) % texH) + texH) % texH;
-
-      const hL = tex[iyC * texW + ixL];
-      const hR = tex[iyC * texW + ixR];
-      const hU = tex[iyU * texW + ixC];
-      const hD = tex[iyD * texW + ixC];
-
-      // Gradient (positive = toward higher values)
-      const gx = hR - hL;
-      const gy = hD - hU;
-      const lenSq = gx * gx + gy * gy;
-      if (lenSq < 100) continue; // skip near-flat regions
-
-      const invLen = 1 / Math.sqrt(lenSq);
-      // Flow direction = negative gradient (toward lower height)
-      const fx = Math.round(-gx * invLen * shift);
-      const fy = Math.round(-gy * invLen * shift);
+      const field = app.sampleTextureField(px * invDpr, py * invDpr, p);
+      if (field.slope < 0.04) continue;
+      const len = Math.hypot(field.flowX, field.flowY);
+      if (len < 1e-4) continue;
+      const fx = Math.round((field.flowX / len) * shift);
+      const fy = Math.round((field.flowY / len) * shift);
+      if (!fx && !fy) continue;
 
       const tx = px + fx;
       const ty = py + fy;
       // Bounds already guaranteed by margin
       const tidx = (ty * w + tx) << 2;
 
-      // Transfer fraction proportional to gradient steepness × flow strength
-      // tex[] stores 0–255 greyscale values; normalize by 255 to get 0–~1.4 range
-      const steepness = Math.sqrt(lenSq) / 255;
-      const t = Math.min(flow * steepness * 0.3, 0.4); // capped
+      const t = Math.min(flowStrength * (0.12 + field.slope * 0.28), 0.4);
 
       const r = src[idx],     g = src[idx + 1], b = src[idx + 2], a = src[idx + 3];
       const rt = r * t, gt = g * t, bt = b * t, at = a * t;
@@ -254,30 +228,13 @@ function _signedDistanceToLine(px, py, ax, ay, bx, by) {
   return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
 }
 
-function _sampleTextureFlowVector(app, x, y, texScale) {
-  const texW = app._canvasTextureW;
-  const texH = app._canvasTextureH;
-  const tex = app._canvasTextureData;
-  if (!tex || texW <= 0 || texH <= 0 || texScale <= 0) return { x: 0, y: 0 };
-
-  const cx = x / texScale;
-  const cy = y / texScale;
-  const ix = ((Math.floor(cx) % texW) + texW) % texW;
-  const iy = ((Math.floor(cy) % texH) + texH) % texH;
-  const ixL = ((ix - 1) % texW + texW) % texW;
-  const ixR = (ix + 1) % texW;
-  const iyU = ((iy - 1) % texH + texH) % texH;
-  const iyD = (iy + 1) % texH;
-  const gx = tex[iy * texW + ixR] - tex[iy * texW + ixL];
-  const gy = tex[iyD * texW + ix] - tex[iyU * texW + ix];
-  const len = Math.hypot(gx, gy);
-  if (len < 1e-3) return { x: 0, y: 0 };
-  return { x: -gx / len, y: -gy / len };
+function _sampleTextureFlowVector(app, x, y, p) {
+  return app?.sampleTextureFlowVector ? app.sampleTextureFlowVector(x, y, p) : { x: 0, y: 0, slope: 0 };
 }
 
 function _textureDepositDensity(app, p, x, y) {
-  if (!app?._canvasTextureData || !p?.canvasTextureEnabled || p.canvasTextureStrength <= 0) return 1;
-  return _clamp(1 - p.canvasTextureStrength * app._sampleTexture(x, y, p.canvasTextureScale), 0.05, 1);
+  if (!app?.getTextureDepositDensity) return 1;
+  return app.getTextureDepositDensity(x, y, p);
 }
 
 function _applySimulationGuides(brush, p, read) {
@@ -782,7 +739,7 @@ export class BoidBrush {
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
       // Texture flow: shift blur paint toward lower-height texture areas
       if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
       }
       // Apply CSS blur via tmp canvas
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1362,7 +1319,7 @@ export class AntBrush {
       this._blurCtx.clearRect(0, 0, lw, lh);
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
       if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
       }
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
@@ -2275,7 +2232,7 @@ export class BristleBrush {
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
       // Texture flow: shift blur paint toward lower-height texture areas
       if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
       }
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
@@ -2636,7 +2593,7 @@ export class SimpleBrush {
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
       // Texture flow: shift blur paint toward lower-height texture areas
       if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p.canvasTextureScale);
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
       }
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
@@ -2782,6 +2739,8 @@ export class FluidBrush {
       if (d > radius || d < 1e-4) continue;
       const falloff = 1 - d / radius;
       const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
+      const poolDensity = this.app.getTexturePoolingDensity(part.x, part.y, p);
+      const edgeBreakup = this.app.getTextureEdgeBreakup(part.x, part.y, p);
       // Darker texture valleys keep the fluid mass together instead of shedding as much spray.
       const cohesionBias = 0.65 + texDensity * 0.35;
       const swirl = p.fluidSpread * 0.028 * falloff;
@@ -2798,8 +2757,8 @@ export class FluidBrush {
       }
       part.wetness = Math.min(1, part.wetness + 0.02 * falloff * (0.65 + texDensity * 0.55));
       part.pressure = Math.max(part.pressure || 0, pressure);
-      part.pool = _clamp((part.pool || 0) + p.fluidPooling * 0.045 * falloff * (0.55 + texDensity * 0.7), 0, 1.6);
-      part.edge = Math.max(part.edge || 0, p.fluidEdgeBleed * falloff * cohesionBias);
+      part.pool = _clamp((part.pool || 0) + p.fluidPooling * 0.045 * falloff * (0.55 + poolDensity * 0.7), 0, 1.6);
+      part.edge = Math.max(part.edge || 0, p.fluidEdgeBleed * falloff * cohesionBias * (1 + edgeBreakup * 0.45));
       part.splash = Math.max(part.splash || 0, impact * falloff);
       part.textureDensity = part.textureDensity == null
         ? texDensity
@@ -2824,6 +2783,8 @@ export class FluidBrush {
       const px = x + radialX * mag;
       const py = y + radialY * mag;
       const texDensity = _textureDepositDensity(this.app, p, px, py);
+      const poolDensity = this.app.getTexturePoolingDensity(px, py, p);
+      const edgeBreakup = this.app.getTextureEdgeBreakup(px, py, p);
       const breakup = Math.random() < breakupChance * (1.15 - texDensity * 0.45);
       const sizeBase = breakup ? 0.28 + Math.random() * 0.34 : 0.62 + Math.random() * 0.82;
       const wetBase = breakup ? 0.28 + Math.random() * 0.28 : 0.58 + Math.random() * 0.42;
@@ -2840,8 +2801,8 @@ export class FluidBrush {
         pressure,
         color: p.color,
         layer,
-        pool: _clamp(p.fluidPooling * (breakup ? 0.18 : 0.55 + Math.random() * 0.55) * (0.65 + texDensity * 0.55), 0, 1.6),
-        edge: (crown ? (0.35 + p.fluidEdgeBleed * 0.65) : p.fluidEdgeBleed * 0.28) * (0.65 + texDensity * 0.35),
+        pool: _clamp(p.fluidPooling * (breakup ? 0.18 : 0.55 + Math.random() * 0.55) * (0.65 + poolDensity * 0.55), 0, 1.6),
+        edge: (crown ? (0.35 + p.fluidEdgeBleed * 0.65) : p.fluidEdgeBleed * 0.28) * (0.65 + texDensity * 0.35) * (1 + edgeBreakup * 0.4),
         splash: impact * (crown ? 1 : 0.65),
         textureDensity: texDensity,
       });
@@ -2894,6 +2855,8 @@ export class FluidBrush {
         const key = `${cellX},${cellY}`;
         const cell = cells.get(key);
         const texDensity = _textureDepositDensity(this.app, p, part.x, part.y);
+        const poolDensity = this.app.getTexturePoolingDensity(part.x, part.y, p);
+        const edgeBreakup = this.app.getTextureEdgeBreakup(part.x, part.y, p);
         part.textureDensity = part.textureDensity == null
           ? texDensity
           : part.textureDensity * 0.76 + texDensity * 0.24;
@@ -2926,7 +2889,7 @@ export class FluidBrush {
           const density = Math.min(1.6, cell.count / 7);
           // Blend viscosity, pooling, and texture density into a mild extra pull so droplets
           // read more like a connected wet group instead of isolated particles.
-          const groupPull = (0.004 + p.fluidViscosity * 0.006 + p.fluidPooling * 0.008) * (0.65 + texDensity * 0.35);
+          const groupPull = (0.004 + p.fluidViscosity * 0.006 + p.fluidPooling * 0.008) * (0.65 + poolDensity * 0.35);
           part.vx += toCenterX * (p.fluidPooling * density * 0.008 + groupPull);
           part.vy += toCenterY * (p.fluidPooling * density * 0.008 + groupPull);
           if (centerDist > 1e-4) {
@@ -2936,12 +2899,12 @@ export class FluidBrush {
             part.vy -= (toCenterY / centerDist) * edgePush;
           }
           const speed = Math.hypot(part.vx, part.vy);
-          part.pool = _clamp((part.pool || 0) + p.fluidPooling * part.wetness * 0.02 * (0.6 + texDensity * 0.55) - speed * 0.0015, 0, 1.8);
-          part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05 * (0.55 + texDensity * 0.45), 0, 1.4);
+          part.pool = _clamp((part.pool || 0) + p.fluidPooling * part.wetness * 0.02 * (0.6 + poolDensity * 0.55) - speed * 0.0015, 0, 1.8);
+          part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05 * (0.55 + texDensity * 0.45) * (1 + edgeBreakup * 0.35), 0, 1.4);
         }
         if (p.canvasTextureEnabled && p.fluidTextureFollow > 0) {
-          const flow = _sampleTextureFlowVector(this.app, part.x, part.y, p.canvasTextureScale);
-          const follow = p.fluidTextureFollow * (0.45 + texDensity * 0.55);
+          const flow = _sampleTextureFlowVector(this.app, part.x, part.y, p);
+          const follow = p.fluidTextureFollow * this.app.getTextureInfluence(p, 'flow') * (0.45 + texDensity * 0.55 + flow.slope * 0.2);
           part.vx += flow.x * follow * 0.7;
           part.vy += flow.y * follow * 0.7;
         }
@@ -2950,7 +2913,7 @@ export class FluidBrush {
         part.vy += (Math.random() - 0.5) * p.fluidSpread * (0.01 + p.fluidBreakup * 0.012) * turbulence;
         part.vx *= damping;
         part.vy *= damping;
-        const poolDrag = Math.max(0.72, 1 - (part.pool || 0) * p.fluidPooling * (0.06 + texDensity * 0.03));
+        const poolDrag = Math.max(0.72, 1 - (part.pool || 0) * p.fluidPooling * (0.06 + poolDensity * 0.03));
         part.vx *= poolDrag;
         part.vy *= poolDrag;
         const prevX = part.x;
@@ -3072,7 +3035,7 @@ export class FluidBrush {
     this._blurCtx.clearRect(0, 0, w, h);
     this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
     if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-      _applyTextureFlow(this._blurCtx, this._blurCanvas, this.app, p.trailFlow, p.canvasTextureScale);
+      _applyTextureFlow(this._blurCtx, this._blurCanvas, this.app, p.trailFlow, p);
     }
     this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
     this._blurTmpCtx.clearRect(0, 0, w, h);

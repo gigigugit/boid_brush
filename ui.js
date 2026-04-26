@@ -270,14 +270,30 @@ export function buildSidebar(app) {
     <!-- Canvas Texture -->
     <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
-      <label>Enable <input type="checkbox" id="canvasTextureEnabled"></label>
+      <label>Enable <input type="checkbox" id="canvasTextureEnabled" checked></label>
+      <label>Active <select id="canvasTexturePreset"></select></label>
+      <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
+        <canvas id="texturePreview" width="72" height="72" style="width:72px;height:72px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:#0d0d12;image-rendering:auto;"></canvas>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;">
+          <strong id="textureName" style="font-size:12px;">Paper Grain</strong>
+          <span id="textureFileName" class="slider-desc">Built-in texture</span>
+        </div>
+      </div>
       <div style="display:flex;gap:4px;align-items:center;margin:4px 0;">
         <button id="btnUploadTexture" style="flex:1;">📂 Load Texture</button>
         <button id="btnClearTexture" style="flex-shrink:0;">✕</button>
       </div>
-      <span id="textureFileName" class="slider-desc">No texture loaded</span>
-      ${sliderRow('canvasTextureStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2), 'How strongly the texture modulates paint deposit')}
+      ${sliderRow('canvasTextureStrength', 'Master', 0, 100, 60, v => (v/100).toFixed(2), 'Overall intensity applied across all texture responses')}
       ${sliderRow('canvasTextureScale', 'Scale', 10, 500, 100, v => (v/100).toFixed(1) + '×', 'Tile scale of the texture pattern')}
+      ${sliderRow('canvasTextureOffsetX', 'Offset X', -500, 500, 0, v => (v/10).toFixed(1), 'Shift the texture pattern horizontally in canvas-space units')}
+      ${sliderRow('canvasTextureOffsetY', 'Offset Y', -500, 500, 0, v => (v/10).toFixed(1), 'Shift the texture pattern vertically in canvas-space units')}
+      ${sliderRow('canvasTextureRotation', 'Rotation', 0, 360, 0, v => v + '°', 'Rotate the texture field before sampling')}
+      <label>Invert Height <input type="checkbox" id="canvasTextureInvert"></label>
+      ${sliderRow('canvasTextureDeposit', 'Deposit Mask', 0, 100, 100, v => (v/100).toFixed(2), 'How strongly texture peaks reduce paint deposit')}
+      ${sliderRow('canvasTextureFlow', 'Flow Bias', 0, 100, 100, v => (v/100).toFixed(2), 'How much texture slope contributes to flow-driven behavior')}
+      ${sliderRow('canvasTextureEdgeBreakup', 'Edge Breakup', 0, 100, 35, v => (v/100).toFixed(2), 'How much texture roughness frays stamp edges')}
+      ${sliderRow('canvasTextureSmudgeDrag', 'Smudge Drag', 0, 100, 30, v => (v/100).toFixed(2), 'How much smudge sampling slides into texture valleys')}
+      ${sliderRow('canvasTexturePooling', 'Pooling Bias', 0, 100, 55, v => (v/100).toFixed(2), 'How strongly fluid pooling favors texture valleys')}
     </div>
 
     <!-- Symmetry (closed by default) -->
@@ -459,19 +475,21 @@ export function buildSidebar(app) {
   const _texFileInput = document.createElement('input');
   _texFileInput.type = 'file';
   _texFileInput.accept = 'image/*';
-  _texFileInput.addEventListener('change', () => {
+  _texFileInput.addEventListener('change', async () => {
     const file = _texFileInput.files[0];
     if (!file) return;
-    app.loadCanvasTexture(file);
-    const nameEl = document.getElementById('textureFileName');
-    if (nameEl) nameEl.textContent = file.name;
+    await app.loadCanvasTexture(file);
+    syncTextureUI(app);
     _texFileInput.value = '';
   });
   document.getElementById('btnUploadTexture')?.addEventListener('click', () => _texFileInput.click());
+  document.getElementById('canvasTexturePreset')?.addEventListener('change', (e) => {
+    app.setCanvasTextureById(e.target.value);
+    syncTextureUI(app);
+  });
   document.getElementById('btnClearTexture')?.addEventListener('click', () => {
     app.clearCanvasTexture();
-    const nameEl = document.getElementById('textureFileName');
-    if (nameEl) nameEl.textContent = 'No texture loaded';
+    syncTextureUI(app);
   });
 
   // ── Preset buttons ──
@@ -972,7 +990,42 @@ export function syncUI(app) {
     if (vs) vs.textContent = Math.round(l.opacity * 100);
   }
   _renderLayerList(app);
+  syncTextureUI(app);
   syncEdgeSliders();
+}
+
+export function syncTextureUI(app) {
+  const textureSelect = document.getElementById('canvasTexturePreset');
+  const active = app.getActiveCanvasTextureMeta();
+  if (textureSelect) {
+    const textures = app.getAvailableCanvasTextures();
+    textureSelect.innerHTML = textures.map(tex => {
+      const label = tex.sourceType === 'builtin' ? `${tex.name} · Built-in` : `${tex.name} · Custom`;
+      return `<option value="${tex.id}">${label}</option>`;
+    }).join('');
+    if (active?.id) textureSelect.value = active.id;
+  }
+  const nameEl = document.getElementById('textureName');
+  if (nameEl) nameEl.textContent = active?.name || 'No texture';
+  const infoEl = document.getElementById('textureFileName');
+  if (infoEl) {
+    if (!active) infoEl.textContent = 'No texture active';
+    else {
+      const kind = active.sourceType === 'builtin' ? 'Built-in texture' : 'Custom upload';
+      infoEl.textContent = `${kind} · ${active.width}×${active.height}`;
+    }
+  }
+  const clearBtn = document.getElementById('btnClearTexture');
+  if (clearBtn) {
+    clearBtn.disabled = !app.getAvailableCanvasTextures().some(tex => tex.id === 'custom-upload');
+    clearBtn.title = clearBtn.disabled ? 'No custom texture to clear' : 'Remove the custom texture and fall back to the built-in one';
+  }
+  const preview = document.getElementById('texturePreview');
+  if (preview) {
+    const ctx = preview.getContext('2d');
+    ctx.clearRect(0, 0, preview.width, preview.height);
+    if (active?.previewCanvas) ctx.drawImage(active.previewCanvas, 0, 0, preview.width, preview.height);
+  }
 }
 
 // ── Slider display format map ───────────────────────────────
@@ -995,6 +1048,16 @@ const _sliderFormats = {
   damping: v => (v / 100).toFixed(2),
   stampOpacity: v => (v / 100).toFixed(2),
   smudge: v => (v / 100).toFixed(2),
+  canvasTextureStrength: v => (v / 100).toFixed(2),
+  canvasTextureScale: v => (v / 100).toFixed(1) + '×',
+  canvasTextureOffsetX: v => (v / 10).toFixed(1),
+  canvasTextureOffsetY: v => (v / 10).toFixed(1),
+  canvasTextureRotation: v => v + '°',
+  canvasTextureDeposit: v => (v / 100).toFixed(2),
+  canvasTextureFlow: v => (v / 100).toFixed(2),
+  canvasTextureEdgeBreakup: v => (v / 100).toFixed(2),
+  canvasTextureSmudgeDrag: v => (v / 100).toFixed(2),
+  canvasTexturePooling: v => (v / 100).toFixed(2),
   taperCurve: v => (v / 100).toFixed(1),
   sensingStrength: v => (v / 100).toFixed(2),
   sensingThreshold: v => (v / 100).toFixed(2),
