@@ -157,6 +157,13 @@ const LBM_RENDER_PIGMENT_THRESHOLD: f32 = 0.0001;
 const LBM_PHASE_CLEAR_THRESHOLD: f32 = 0.003;
 const LBM_MASK_EDGE_RETAIN_FACTOR: f32 = 0.96;
 const LBM_RENDER_ALPHA_MAX: f32 = 0.96;
+const LBM_STOP_SETTLE_BASE_MIX: f32 = 0.78;
+const LBM_STOP_SETTLE_DECAY_MIX: f32 = 0.18;
+const LBM_STOP_SETTLE_VISCOSITY_MIX: f32 = 0.14;
+const LBM_STOP_SETTLE_MAX_MIX: f32 = 0.98;
+const LBM_STOP_RETENTION_EXPONENT: i32 = 2;
+#[cfg(test)]
+const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
 pub struct FluidSimulation {
     width: u32,
@@ -646,9 +653,11 @@ impl FluidSimulation {
                 if stop_threshold > LBM_EPSILON && speed < stop_threshold {
                     let normalized = (1.0 - speed / stop_threshold).clamp(0.0, 1.0);
                     stop_mix = (normalized
-                        * (0.78 + self.params.motion_decay * 0.18 + self.params.viscosity * 0.14))
-                        .clamp(0.0, 0.98);
-                    let retained = (1.0 - stop_mix).powi(2);
+                        * (LBM_STOP_SETTLE_BASE_MIX
+                            + self.params.motion_decay * LBM_STOP_SETTLE_DECAY_MIX
+                            + self.params.viscosity * LBM_STOP_SETTLE_VISCOSITY_MIX))
+                        .clamp(0.0, LBM_STOP_SETTLE_MAX_MIX);
+                    let retained = (1.0 - stop_mix).powi(LBM_STOP_RETENTION_EXPONENT);
                     ux *= retained;
                     uy *= retained;
                 }
@@ -1480,7 +1489,9 @@ impl FluidSimulation {
 
 #[cfg(test)]
 mod tests {
-    use super::{FluidRenderMode, FluidSimulation};
+    use super::{
+        FluidRenderMode, FluidSimulation, LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD,
+    };
 
     fn full_mask(width: usize, height: usize) -> Vec<u8> {
         let mut mask = vec![0u8; width * height * 4];
@@ -1699,7 +1710,7 @@ mod tests {
         let fast_energy = summed_speed(&fast_stop);
 
         assert!(
-            fast_energy < slow_energy * 0.82,
+            fast_energy < slow_energy * LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD,
             "expected higher stop speed to settle faster (slow={slow_energy:.5}, fast={fast_energy:.5})"
         );
         assert!(
