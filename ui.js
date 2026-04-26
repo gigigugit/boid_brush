@@ -283,7 +283,7 @@ export function buildSidebar(app) {
         <button id="btnUploadTexture" style="flex:1;">📂 Load Texture</button>
         <button id="btnClearTexture" style="flex-shrink:0;">✕</button>
       </div>
-      ${sliderRow('canvasTextureStrength', 'Master', 0, 100, 60, v => (v/100).toFixed(2), 'Overall intensity applied across all texture responses')}
+      ${sliderRow('canvasTextureStrength', 'Master Strength', 0, 100, 60, v => (v/100).toFixed(2), 'Overall intensity applied across all texture responses')}
       ${sliderRow('canvasTextureScale', 'Scale', 10, 500, 100, v => (v/100).toFixed(1) + '×', 'Tile scale of the texture pattern')}
       ${sliderRow('canvasTextureOffsetX', 'Offset X', -500, 500, 0, v => (v/10).toFixed(1), 'Shift the texture pattern horizontally in canvas-space units')}
       ${sliderRow('canvasTextureOffsetY', 'Offset Y', -500, 500, 0, v => (v/10).toFixed(1), 'Shift the texture pattern vertically in canvas-space units')}

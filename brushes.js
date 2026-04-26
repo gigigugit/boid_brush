@@ -16,6 +16,7 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+const MIN_TEXTURE_FLOW_SLOPE = 0.04;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -162,7 +163,7 @@ function _applyTextureFlow(ctx, canvas, app, flow, p) {
       if (src[idx + 3] < 2) continue; // skip transparent
 
       const field = app.sampleTextureField(px * invDpr, py * invDpr, p);
-      if (field.slope < 0.04) continue;
+      if (field.slope < MIN_TEXTURE_FLOW_SLOPE) continue;
       const len = Math.hypot(field.flowX, field.flowY);
       if (len < 1e-4) continue;
       const fx = Math.round((field.flowX / len) * shift);
@@ -226,10 +227,6 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
 
 function _signedDistanceToLine(px, py, ax, ay, bx, by) {
   return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
-}
-
-function _sampleTextureFlowVector(app, x, y, p) {
-  return app?.sampleTextureFlowVector ? app.sampleTextureFlowVector(x, y, p) : { x: 0, y: 0, slope: 0 };
 }
 
 function _textureDepositDensity(app, p, x, y) {
@@ -2903,7 +2900,7 @@ export class FluidBrush {
           part.edge = _clamp((part.edge || 0) * 0.94 + p.fluidEdgeBleed * density * 0.05 * (0.55 + texDensity * 0.45) * (1 + edgeBreakup * 0.35), 0, 1.4);
         }
         if (p.canvasTextureEnabled && p.fluidTextureFollow > 0) {
-          const flow = _sampleTextureFlowVector(this.app, part.x, part.y, p);
+          const flow = this.app.sampleTextureFlowVector(part.x, part.y, p);
           const follow = p.fluidTextureFollow * this.app.getTextureInfluence(p, 'flow') * (0.45 + texDensity * 0.55 + flow.slope * 0.2);
           part.vx += flow.x * follow * 0.7;
           part.vy += flow.y * follow * 0.7;

@@ -22,6 +22,21 @@ const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
+const PAPER_TEXTURE_FLECK_SCALE = 3.2;
+const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
+const PAPER_TEXTURE_FLECK_INTENSITY = 170;
+const TEXTURE_SLOPE_AMPLIFICATION = 1.8;
+const TEXTURE_SMUDGE_MIN_DISTANCE = 0.35;
+const TEXTURE_SMUDGE_SIZE_FACTOR = 0.14;
+const TEXTURE_SMUDGE_BASE_INFLUENCE = 0.4;
+const TEXTURE_SMUDGE_SLOPE_INFLUENCE = 1.4;
+const TEXTURE_CHANNEL_DEFAULTS = {
+  deposit: 1,
+  flow: 1,
+  edgeBreakup: 0,
+  smudgeDrag: 0,
+  pooling: 0,
+};
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -534,14 +549,16 @@ export class App {
         const coarse = _valueNoise2D(x, y, 38, 11);
         const medium = _valueNoise2D(x, y, 16, 29);
         const fine = _valueNoise2D(x, y, 6, 71);
-        const fleck = _valueNoise2D(x, y, 3.2, 97);
+        const fleck = _valueNoise2D(x, y, PAPER_TEXTURE_FLECK_SCALE, 97);
         const fiber = Math.sin((x + y * 0.18) * 0.11 + medium * 4.2) * 0.5 + 0.5;
         let grey = base
           + (coarse - 0.5) * 44
           + (medium - 0.5) * 26
           + (fine - 0.5) * 14
           + (fiber - 0.5) * 12;
-        if (fleck > 0.84) grey -= (fleck - 0.84) * 170;
+        if (fleck > PAPER_TEXTURE_FLECK_THRESHOLD) {
+          grey -= (fleck - PAPER_TEXTURE_FLECK_THRESHOLD) * PAPER_TEXTURE_FLECK_INTENSITY;
+        }
         grey = Math.max(58, Math.min(235, Math.round(grey)));
         const off = (y * c.width + x) * 4;
         d[off] = grey;
@@ -578,7 +595,7 @@ export class App {
         const gx = (grey[y * width + xR] - grey[y * width + xL]) / 255;
         const gy = (grey[yD * width + x] - grey[yU * width + x]) / 255;
         const len = Math.hypot(gx, gy);
-        slope[i] = Math.min(1, len * 1.8);
+        slope[i] = Math.min(1, len * TEXTURE_SLOPE_AMPLIFICATION);
         if (len > 1e-5) {
           flowX[i] = -gx / len;
           flowY[i] = -gy / len;
@@ -771,7 +788,7 @@ export class App {
   getTextureInfluence(p, channel = 'deposit') {
     if (!this.hasCanvasTexture() || !p?.canvasTextureEnabled) return 0;
     const key = `canvasTexture${_capitalizeTextureChannel(channel)}`;
-    const channelValue = typeof p[key] === 'number' ? p[key] : 1;
+    const channelValue = typeof p[key] === 'number' ? p[key] : (TEXTURE_CHANNEL_DEFAULTS[channel] ?? 0);
     return _clamp01((p.canvasTextureStrength || 0) * channelValue);
   }
 
@@ -791,7 +808,9 @@ export class App {
     const influence = this.getTextureInfluence(p, 'smudgeDrag');
     if (influence <= 0) return { x, y };
     const flow = this.sampleTextureFlowVector(x, y, p);
-    const dist = Math.max(0.35, size * 0.14) * influence * (0.4 + flow.slope * 1.4);
+    const dist = Math.max(TEXTURE_SMUDGE_MIN_DISTANCE, size * TEXTURE_SMUDGE_SIZE_FACTOR)
+      * influence
+      * (TEXTURE_SMUDGE_BASE_INFLUENCE + flow.slope * TEXTURE_SMUDGE_SLOPE_INFLUENCE);
     return { x: x + flow.x * dist, y: y + flow.y * dist };
   }
 
