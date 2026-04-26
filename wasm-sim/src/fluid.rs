@@ -322,10 +322,26 @@ impl FluidSimulation {
                 for _ in 0..substeps {
                     match self.params.simulation_type {
                         FluidSimulationType::Sph => {
-                            self.step_sph(sub_dt, interaction_radius_sq, &mask, mask_has_content, width, height);
+                            self.step_sph(
+                                sub_dt,
+                                interaction_radius_sq,
+                                &mask,
+                                mask_has_content,
+                                width,
+                                height,
+                            );
                         }
                         FluidSimulationType::Eulerian => {
-                            self.step_grid_flow(sub_dt, &mask, mask_has_content, width, height, 0.22, 0.16, false);
+                            self.step_grid_flow(
+                                sub_dt,
+                                &mask,
+                                mask_has_content,
+                                width,
+                                height,
+                                0.22,
+                                0.16,
+                                false,
+                            );
                         }
                         FluidSimulationType::Lbm => unreachable!(),
                     }
@@ -416,13 +432,20 @@ impl FluidSimulation {
         let mut density_map = vec![0.0f32; px_count];
 
         for particle in &self.particles {
-            let ix = particle.x.round().clamp(0.0, width.saturating_sub(1) as f32) as u32;
-            let iy = particle.y.round().clamp(0.0, height.saturating_sub(1) as f32) as u32;
+            let ix = particle
+                .x
+                .round()
+                .clamp(0.0, width.saturating_sub(1) as f32) as u32;
+            let iy = particle
+                .y
+                .round()
+                .clamp(0.0, height.saturating_sub(1) as f32) as u32;
             let index = (iy * width + ix) as usize;
             field_x[index] += particle.vx;
             field_y[index] += particle.vy;
             counts[index] += 1.0;
-            density_map[index] += (particle.radius / self.params.particle_radius.max(0.5)).clamp(0.35, 2.2);
+            density_map[index] +=
+                (particle.radius / self.params.particle_radius.max(0.5)).clamp(0.35, 2.2);
         }
 
         let mut smoothed_x = vec![0.0f32; px_count];
@@ -502,8 +525,14 @@ impl FluidSimulation {
         let min_carried_speed = self.params.stop_speed * if lattice_bias { 6.5 } else { 3.5 };
 
         for particle in self.particles.iter_mut() {
-            let ix = particle.x.round().clamp(0.0, width.saturating_sub(1) as f32) as u32;
-            let iy = particle.y.round().clamp(0.0, height.saturating_sub(1) as f32) as u32;
+            let ix = particle
+                .x
+                .round()
+                .clamp(0.0, width.saturating_sub(1) as f32) as u32;
+            let iy = particle
+                .y
+                .round()
+                .clamp(0.0, height.saturating_sub(1) as f32) as u32;
             let index = (iy * width + ix) as usize;
             particle.vx += (smoothed_x[index] - particle.vx) * relax;
             particle.vy += (smoothed_y[index] - particle.vy) * relax;
@@ -545,7 +574,14 @@ impl FluidSimulation {
         }
     }
 
-    fn step_lbm(&mut self, _sub_dt: f32, mask: &[u8], mask_has_content: bool, width: u32, height: u32) {
+    fn step_lbm(
+        &mut self,
+        _sub_dt: f32,
+        mask: &[u8],
+        mask_has_content: bool,
+        width: u32,
+        height: u32,
+    ) {
         let dist = self.lbm.dist.clone();
         let phase = self.lbm.phase.clone();
         self.lbm.next_dist.fill([0.0; 9]);
@@ -591,7 +627,9 @@ impl FluidSimulation {
                 let phase_force = surface_tension * interface_band;
                 ux += -grad_x * phase_force * 0.9 + curvature * grad_x * phase_force * 2.8;
                 uy += -grad_y * phase_force * 0.9 + curvature * grad_y * phase_force * 2.8;
-                let vortex_force = (0.01 + self.params.surface_tension * 0.045 + self.params.density * 0.012) * interface_band;
+                let vortex_force =
+                    (0.01 + self.params.surface_tension * 0.045 + self.params.density * 0.012)
+                        * interface_band;
                 ux += -grad_y * curvature * vortex_force;
                 uy += grad_x * curvature * vortex_force;
                 ux *= 1.0 - interface_band * interface_drag;
@@ -613,8 +651,10 @@ impl FluidSimulation {
                     if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
                         let nindex = (ny as u32 * width + nx as u32) as usize;
                         let neighbor_phase = Self::sample_phase(&phase, width, height, nx, ny);
-                        let anchor_phase = Self::sample_mask(mask, mask_has_content, width, height, nx, ny);
-                        let forward = (neighbor_phase * 0.86 + anchor_phase * 0.1 + 0.06).clamp(0.0, 1.0);
+                        let anchor_phase =
+                            Self::sample_mask(mask, mask_has_content, width, height, nx, ny);
+                        let forward =
+                            (neighbor_phase * 0.86 + anchor_phase * 0.1 + 0.06).clamp(0.0, 1.0);
                         let bounce = (1.0 - forward).clamp(0.0, 1.0);
                         self.lbm.next_dist[nindex][dir] += f_post * forward;
                         if bounce > 0.0 {
@@ -643,7 +683,14 @@ impl FluidSimulation {
         density_map[(y as u32 * width + x as u32) as usize]
     }
 
-    fn sample_mask(mask: &[u8], mask_has_content: bool, width: u32, height: u32, x: i32, y: i32) -> f32 {
+    fn sample_mask(
+        mask: &[u8],
+        mask_has_content: bool,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+    ) -> f32 {
         if !mask_has_content {
             return if x >= 0 && y >= 0 && x < width as i32 && y < height as i32 {
                 1.0
@@ -714,9 +761,12 @@ impl FluidSimulation {
             particle.y = next_y.clamp(0.0, height.saturating_sub(1) as f32);
             particle.outside_slack = 0.0;
         } else {
-            let (snap_x, snap_y) = Self::find_inside_point_slice(mask, width, height, particle.x, particle.y, next_x, next_y);
+            let (snap_x, snap_y) = Self::find_inside_point_slice(
+                mask, width, height, particle.x, particle.y, next_x, next_y,
+            );
             let overshoot = ((next_x - snap_x).powi(2) + (next_y - snap_y).powi(2)).sqrt();
-            let leeway = Self::boundary_leeway(particle, speed, sub_dt, stop_speed, density, viscosity);
+            let leeway =
+                Self::boundary_leeway(particle, speed, sub_dt, stop_speed, density, viscosity);
             if overshoot <= leeway {
                 particle.x = next_x.clamp(0.0, width.saturating_sub(1) as f32);
                 particle.y = next_y.clamp(0.0, height.saturating_sub(1) as f32);
@@ -757,18 +807,29 @@ impl FluidSimulation {
     fn inject_particle_to_lbm(&mut self, chunk: &[f32]) {
         let x = chunk[0];
         let y = chunk[1];
-        if !Self::inside_mask_slice(&self.mask_alpha, self.mask_has_content, self.width, self.height, x, y) {
+        if !Self::inside_mask_slice(
+            &self.mask_alpha,
+            self.mask_has_content,
+            self.width,
+            self.height,
+            x,
+            y,
+        ) {
             return;
         }
 
         let radius = chunk[8].clamp(0.5, 64.0);
-        let spread = radius.max(self.params.particle_radius * 0.9).clamp(1.0, 8.0);
+        let spread = radius
+            .max(self.params.particle_radius * 0.9)
+            .clamp(1.0, 8.0);
         let reach = spread.ceil() as i32;
         let velocity_scale = 0.12 + self.params.density * 0.07 + self.params.surface_tension * 0.03;
         let ux = (chunk[2] * velocity_scale).clamp(-0.42, 0.42);
         let uy = (chunk[3] * velocity_scale).clamp(-0.42, 0.42);
         let alpha = chunk[7].clamp(0.0, 1.0);
-        let mass_base = (radius / self.params.particle_radius.max(0.5)).clamp(0.45, 2.8) * alpha.max(0.2) * 1.08;
+        let mass_base = (radius / self.params.particle_radius.max(0.5)).clamp(0.45, 2.8)
+            * alpha.max(0.2)
+            * 1.08;
 
         let base_x = x.floor() as i32;
         let base_y = y.floor() as i32;
@@ -779,7 +840,14 @@ impl FluidSimulation {
                 if cx < 0 || cy < 0 || cx >= self.width as i32 || cy >= self.height as i32 {
                     continue;
                 }
-                if !Self::inside_mask_slice(&self.mask_alpha, self.mask_has_content, self.width, self.height, cx as f32, cy as f32) {
+                if !Self::inside_mask_slice(
+                    &self.mask_alpha,
+                    self.mask_has_content,
+                    self.width,
+                    self.height,
+                    cx as f32,
+                    cy as f32,
+                ) {
                     continue;
                 }
 
@@ -860,8 +928,13 @@ impl FluidSimulation {
         let phase = self.lbm.phase.clone();
         self.lbm.next_phase.fill(0.0);
         let advect_scale = 2.7 + self.params.density * 3.6 + self.params.surface_tension * 0.6;
-        let tension_mix = (0.04 + self.params.viscosity * 0.06 + self.params.density * 0.04).clamp(0.03, 0.14);
-        let anchor_mix = if mask_has_content { 0.006 + self.params.viscosity * 0.01 } else { 0.0 };
+        let tension_mix =
+            (0.04 + self.params.viscosity * 0.06 + self.params.density * 0.04).clamp(0.03, 0.14);
+        let anchor_mix = if mask_has_content {
+            0.006 + self.params.viscosity * 0.01
+        } else {
+            0.0
+        };
         let retain = (0.994 - self.params.motion_decay * 0.009).clamp(0.95, 0.998);
 
         for y in 0..height as i32 {
@@ -877,11 +950,14 @@ impl FluidSimulation {
                 let phase_ny = Self::sample_phase(&phase, width, height, x, y - 1);
                 let smooth = (phase_px + phase_nx + phase_py + phase_ny) * 0.25;
                 let interface_band = (advected * (1.0 - advected) * 4.0).clamp(0.0, 1.0);
-                let support = (self.lbm.rho[index] * 0.22 + self.lbm.pigment[index][3] * 0.34).clamp(0.0, 1.0);
+                let support = (self.lbm.rho[index] * 0.22 + self.lbm.pigment[index][3] * 0.34)
+                    .clamp(0.0, 1.0);
                 let mask_seed = Self::sample_mask(mask, mask_has_content, width, height, x, y);
-                let mut next_phase = advected * (1.0 - tension_mix) + smooth * tension_mix * (0.45 + interface_band * 0.55);
+                let mut next_phase = advected * (1.0 - tension_mix)
+                    + smooth * tension_mix * (0.45 + interface_band * 0.55);
                 next_phase = next_phase.max(support * 0.5);
-                next_phase = next_phase * (1.0 - anchor_mix) + mask_seed * anchor_mix + support * 0.08;
+                next_phase =
+                    next_phase * (1.0 - anchor_mix) + mask_seed * anchor_mix + support * 0.08;
                 next_phase *= retain;
                 if next_phase < 0.004 {
                     next_phase = 0.0;
@@ -930,7 +1006,8 @@ impl FluidSimulation {
                 let vel = self.lbm.velocity[index];
                 let sample_x = x as f32 - vel[0] * advect_scale;
                 let sample_y = y as f32 - vel[1] * advect_scale;
-                let mut sampled = Self::sample_pigment_field(&pigment, width, height, sample_x, sample_y);
+                let mut sampled =
+                    Self::sample_pigment_field(&pigment, width, height, sample_x, sample_y);
                 let retain = (0.994 - self.params.motion_decay * 0.007).clamp(0.955, 0.999);
                 for channel in 0..4 {
                     sampled[channel] *= retain;
@@ -957,14 +1034,23 @@ impl FluidSimulation {
     fn refresh_lbm_activity(&mut self) {
         let mut active = 0u32;
         for index in 0..self.lbm.rho.len() {
-            if self.lbm.rho[index] > 0.015 || self.lbm.pigment[index][3] > 0.01 || self.lbm.phase[index] > 0.03 {
+            if self.lbm.rho[index] > 0.015
+                || self.lbm.pigment[index][3] > 0.01
+                || self.lbm.phase[index] > 0.03
+            {
                 active += 1;
             }
         }
         self.lbm.active_cells = active;
     }
 
-    fn sample_pigment_field(field: &[[f32; 4]], width: u32, height: u32, x: f32, y: f32) -> [f32; 4] {
+    fn sample_pigment_field(
+        field: &[[f32; 4]],
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> [f32; 4] {
         if x < 0.0 || y < 0.0 || x >= width as f32 || y >= height as f32 {
             return [0.0; 4];
         }
@@ -1042,7 +1128,11 @@ impl FluidSimulation {
                     y: y as f32 + 0.5,
                     vx: self.lbm.velocity[index][0] * 18.0,
                     vy: self.lbm.velocity[index][1] * 18.0,
-                    outside_slack: if self.mask_alpha[index] == 0 && rho > 0.02 { 1.0 } else { 0.0 },
+                    outside_slack: if self.mask_alpha[index] == 0 && rho > 0.02 {
+                        1.0
+                    } else {
+                        0.0
+                    },
                     radius: self.params.particle_radius,
                     r: rgba[0],
                     g: rgba[1],
@@ -1145,7 +1235,9 @@ impl FluidSimulation {
                 if cell.count == 0 {
                     continue;
                 }
-                let alpha = (0.05 + cell.alpha / cell.count as f32 * 0.28 + cell.count as f32 * 0.025).clamp(0.0, 0.78);
+                let alpha =
+                    (0.05 + cell.alpha / cell.count as f32 * 0.28 + cell.count as f32 * 0.025)
+                        .clamp(0.0, 0.78);
                 let r = (cell.r / cell.count) as u8;
                 let g = (cell.g / cell.count) as u8;
                 let b = (cell.b / cell.count) as u8;
@@ -1165,7 +1257,13 @@ impl FluidSimulation {
     fn render_particles(&mut self) {
         for index in 0..self.particles.len() {
             let particle = self.particles[index];
-            let radius = (particle.radius * if self.params.render_mode == FluidRenderMode::Hybrid { 1.55 } else { 1.1 }).max(1.25);
+            let radius = (particle.radius
+                * if self.params.render_mode == FluidRenderMode::Hybrid {
+                    1.55
+                } else {
+                    1.1
+                })
+            .max(1.25);
             let reach = (radius * 2.5).ceil() as i32;
             let allow_outside = particle.outside_slack > 0.0;
             let min_x = particle.x.floor() as i32 - reach;
@@ -1188,7 +1286,15 @@ impl FluidSimulation {
                     let falloff = (1.0 - distance / reach as f32).max(0.0);
                     let alpha = alpha_scale * falloff * falloff * 0.6;
                     if alpha > 0.001 {
-                        self.blend_pixel(px, py, particle.r, particle.g, particle.b, alpha, allow_outside);
+                        self.blend_pixel(
+                            px,
+                            py,
+                            particle.r,
+                            particle.g,
+                            particle.b,
+                            alpha,
+                            allow_outside,
+                        );
                     }
                 }
             }
@@ -1207,15 +1313,28 @@ impl FluidSimulation {
 
             let x = (index % self.width as usize) as i32;
             let y = (index / self.width as usize) as i32;
-            let allow_outside = self.mask_alpha[index] == 0 && (phase > 0.035 || rho > 0.02 || alpha_mass > 0.012);
+            let allow_outside =
+                self.mask_alpha[index] == 0 && (phase > 0.035 || rho > 0.02 || alpha_mass > 0.012);
             let alpha = (phase * 0.62 + alpha_mass * 0.22 + rho * 0.05).clamp(0.0, 0.96);
             if alpha <= 0.001 {
                 continue;
             }
 
-            let base_r = if alpha_mass > 0.0001 { (pigment[0] / alpha_mass).clamp(0.0, 255.0) as u8 } else { 71 };
-            let base_g = if alpha_mass > 0.0001 { (pigment[1] / alpha_mass).clamp(0.0, 255.0) as u8 } else { 199 };
-            let base_b = if alpha_mass > 0.0001 { (pigment[2] / alpha_mass).clamp(0.0, 255.0) as u8 } else { 255 };
+            let base_r = if alpha_mass > 0.0001 {
+                (pigment[0] / alpha_mass).clamp(0.0, 255.0) as u8
+            } else {
+                71
+            };
+            let base_g = if alpha_mass > 0.0001 {
+                (pigment[1] / alpha_mass).clamp(0.0, 255.0) as u8
+            } else {
+                199
+            };
+            let base_b = if alpha_mass > 0.0001 {
+                (pigment[2] / alpha_mass).clamp(0.0, 255.0) as u8
+            } else {
+                255
+            };
             let phase_px = Self::sample_phase(&self.lbm.phase, self.width, self.height, x + 1, y);
             let phase_nx = Self::sample_phase(&self.lbm.phase, self.width, self.height, x - 1, y);
             let phase_py = Self::sample_phase(&self.lbm.phase, self.width, self.height, x, y + 1);
@@ -1251,15 +1370,56 @@ impl FluidSimulation {
                 );
             }
             if self.params.render_mode == FluidRenderMode::Hybrid {
-                self.blend_pixel(x + 1, y, base_r, base_g, base_b, alpha * 0.18, allow_outside);
-                self.blend_pixel(x - 1, y, base_r, base_g, base_b, alpha * 0.18, allow_outside);
-                self.blend_pixel(x, y + 1, base_r, base_g, base_b, alpha * 0.18, allow_outside);
-                self.blend_pixel(x, y - 1, base_r, base_g, base_b, alpha * 0.18, allow_outside);
+                self.blend_pixel(
+                    x + 1,
+                    y,
+                    base_r,
+                    base_g,
+                    base_b,
+                    alpha * 0.18,
+                    allow_outside,
+                );
+                self.blend_pixel(
+                    x - 1,
+                    y,
+                    base_r,
+                    base_g,
+                    base_b,
+                    alpha * 0.18,
+                    allow_outside,
+                );
+                self.blend_pixel(
+                    x,
+                    y + 1,
+                    base_r,
+                    base_g,
+                    base_b,
+                    alpha * 0.18,
+                    allow_outside,
+                );
+                self.blend_pixel(
+                    x,
+                    y - 1,
+                    base_r,
+                    base_g,
+                    base_b,
+                    alpha * 0.18,
+                    allow_outside,
+                );
             }
         }
     }
 
-    fn blend_pixel(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8, alpha: f32, allow_outside: bool) {
+    fn blend_pixel(
+        &mut self,
+        x: i32,
+        y: i32,
+        r: u8,
+        g: u8,
+        b: u8,
+        alpha: f32,
+        allow_outside: bool,
+    ) {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return;
         }
@@ -1291,10 +1451,24 @@ impl FluidSimulation {
     }
 
     fn inside_mask(&self, x: f32, y: f32) -> bool {
-        Self::inside_mask_slice(&self.mask_alpha, self.mask_has_content, self.width, self.height, x, y)
+        Self::inside_mask_slice(
+            &self.mask_alpha,
+            self.mask_has_content,
+            self.width,
+            self.height,
+            x,
+            y,
+        )
     }
 
-    fn inside_mask_slice(mask_alpha: &[u8], mask_has_content: bool, width: u32, height: u32, x: f32, y: f32) -> bool {
+    fn inside_mask_slice(
+        mask_alpha: &[u8],
+        mask_has_content: bool,
+        width: u32,
+        height: u32,
+        x: f32,
+        y: f32,
+    ) -> bool {
         if !mask_has_content {
             return x >= 0.0 && y >= 0.0 && x < width as f32 && y < height as f32;
         }
@@ -1363,12 +1537,22 @@ mod tests {
         let mut sim = FluidSimulation::new(64, 64);
         let mask = full_mask(64, 64);
         sim.set_mask_rgba(&mask);
-        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 1, FluidRenderMode::Hybrid as u32);
+        sim.set_params(
+            4.0,
+            0.45,
+            0.7,
+            0.58,
+            1.0,
+            3,
+            0.12,
+            0.025,
+            1,
+            FluidRenderMode::Hybrid as u32,
+        );
         sim.add_particles_from_slice(
             &[
-                30.0, 32.0, 0.9, 0.15, 71.0, 199.0, 255.0, 0.8, 3.5,
-                34.0, 32.0, -0.5, 0.3, 71.0, 199.0, 255.0, 0.8, 3.5,
-                32.0, 36.0, 0.25, -0.65, 71.0, 199.0, 255.0, 0.8, 3.5,
+                30.0, 32.0, 0.9, 0.15, 71.0, 199.0, 255.0, 0.8, 3.5, 34.0, 32.0, -0.5, 0.3, 71.0,
+                199.0, 255.0, 0.8, 3.5, 32.0, 36.0, 0.25, -0.65, 71.0, 199.0, 255.0, 0.8, 3.5,
             ],
             9,
         );
@@ -1392,26 +1576,48 @@ mod tests {
         let mut sim = FluidSimulation::new(64, 64);
         let mask = full_mask(64, 64);
         sim.set_mask_rgba(&mask);
-        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Hybrid as u32);
+        sim.set_params(
+            4.0,
+            0.45,
+            0.7,
+            0.58,
+            1.0,
+            3,
+            0.12,
+            0.025,
+            2,
+            FluidRenderMode::Hybrid as u32,
+        );
         sim.add_particles_from_slice(
             &[
-                30.0, 32.0, 0.9, 0.15, 71.0, 199.0, 255.0, 0.8, 3.5,
-                34.0, 32.0, -0.5, 0.3, 71.0, 199.0, 255.0, 0.8, 3.5,
-                32.0, 36.0, 0.25, -0.65, 71.0, 199.0, 255.0, 0.8, 3.5,
+                30.0, 32.0, 0.9, 0.15, 71.0, 199.0, 255.0, 0.8, 3.5, 34.0, 32.0, -0.5, 0.3, 71.0,
+                199.0, 255.0, 0.8, 3.5, 32.0, 36.0, 0.25, -0.65, 71.0, 199.0, 255.0, 0.8, 3.5,
             ],
             9,
         );
-        assert!(sim.particles.is_empty(), "LBM should not keep particle state");
+        assert!(
+            sim.particles.is_empty(),
+            "LBM should not keep particle state"
+        );
         let before = sim.read_pixels();
         for _ in 0..6 {
             sim.step(1.0 / 60.0);
         }
         let after = sim.read_pixels();
 
-        assert!(sim.particle_count() > 0, "LBM should report active lattice cells");
-        assert!(!sim.read_particles().is_empty(), "LBM should expose sampled flow vectors");
+        assert!(
+            sim.particle_count() > 0,
+            "LBM should report active lattice cells"
+        );
+        assert!(
+            !sim.read_particles().is_empty(),
+            "LBM should expose sampled flow vectors"
+        );
         assert_ne!(before, after, "LBM pixels should evolve over time");
-        assert!(sim.lbm.phase.iter().any(|value| *value > 0.05), "LBM should maintain a phase interface");
+        assert!(
+            sim.lbm.phase.iter().any(|value| *value > 0.05),
+            "LBM should maintain a phase interface"
+        );
     }
 
     #[test]
@@ -1424,7 +1630,18 @@ mod tests {
             }
         }
         sim.set_mask_rgba(&mask);
-        sim.set_params(4.0, 0.4, 0.78, 0.62, 1.0, 3, 0.08, 0.02, 2, FluidRenderMode::Hybrid as u32);
+        sim.set_params(
+            4.0,
+            0.4,
+            0.78,
+            0.62,
+            1.0,
+            3,
+            0.08,
+            0.02,
+            2,
+            FluidRenderMode::Hybrid as u32,
+        );
         sim.add_particles_from_slice(&[22.0, 24.0, 2.4, 0.0, 71.0, 199.0, 255.0, 0.9, 4.0], 9);
 
         for _ in 0..18 {
@@ -1432,7 +1649,10 @@ mod tests {
         }
 
         let outside_index = 24usize * 48 + 27usize;
-        assert!(sim.lbm.phase[outside_index] > 0.01, "phase did not advect outside the seeded mask");
+        assert!(
+            sim.lbm.phase[outside_index] > 0.01,
+            "phase did not advect outside the seeded mask"
+        );
     }
 
     #[test]
@@ -1450,6 +1670,10 @@ mod tests {
 
         sim.step(1.0 / 60.0);
         let particles = sim.read_particles();
-        assert!(particles[0] > 23.5, "particle did not overshoot boundary: {}", particles[0]);
+        assert!(
+            particles[0] > 23.5,
+            "particle did not overshoot boundary: {}",
+            particles[0]
+        );
     }
 }
