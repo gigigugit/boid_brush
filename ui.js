@@ -225,7 +225,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- LBM Brush (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="fluidMotion">LBM Brush <span class="chevron">▼</span></div>
+    <div class="section-header" data-brushes="fluid" data-section="lbmBrush">LBM Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${sliderRow('lbmBrushRadius', 'Brush Radius', 2, 240, 42, null, 'Footprint of each free-flow injection along the stroke')}
       ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 36, null, 'How much pigment mass is injected at each pointer sample')}
@@ -239,7 +239,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- LBM Solver (fluid only) -->
-    <div class="section-header closed" data-brushes="fluid" data-section="fluidSurface">LBM Solver <span class="chevron">▼</span></div>
+    <div class="section-header closed" data-brushes="fluid" data-section="lbmSolver">LBM Solver <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       <label>Render <select id="lbmRenderMode">
         <option value="hybrid">Hybrid</option>

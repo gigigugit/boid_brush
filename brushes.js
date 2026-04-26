@@ -2852,7 +2852,6 @@ export class FluidBrush {
   }
 
   onUp(x, y) {
-    if (x != null && y != null) this._lastPoint = { x, y };
     this._active = false;
     this._lastPoint = null;
   }
