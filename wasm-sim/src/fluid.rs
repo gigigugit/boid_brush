@@ -154,6 +154,9 @@ const LBM_OPPOSITE: [usize; 9] = [0, 3, 4, 1, 2, 7, 8, 5, 6];
 const LBM_EPSILON: f32 = 0.0001;
 const LBM_RENDER_ACTIVITY_THRESHOLD: f32 = 0.001;
 const LBM_RENDER_PIGMENT_THRESHOLD: f32 = 0.0001;
+const LBM_PHASE_CLEAR_THRESHOLD: f32 = 0.003;
+const LBM_MASK_EDGE_RETAIN_FACTOR: f32 = 0.96;
+const LBM_RENDER_ALPHA_MAX: f32 = 0.96;
 
 pub struct FluidSimulation {
     width: u32,
@@ -974,7 +977,7 @@ impl FluidSimulation {
     fn apply_phase_to_lbm(&mut self) {
         for index in 0..self.lbm.phase.len() {
             let phase = self.lbm.phase[index];
-            if phase <= 0.003 {
+            if phase <= LBM_PHASE_CLEAR_THRESHOLD {
                 self.lbm.dist[index] = [0.0; 9];
                 self.lbm.pigment[index] = [0.0; 4];
                 continue;
@@ -1007,11 +1010,11 @@ impl FluidSimulation {
                 let sample_y = y as f32 - vel[1] * advect_scale;
                 let mut sampled =
                     Self::sample_pigment_field(&pigment, width, height, sample_x, sample_y);
-                if phase <= 0.003 {
+                if phase <= LBM_PHASE_CLEAR_THRESHOLD {
                     sampled = [0.0; 4];
                 } else if mask_has_content && mask[index] <= 8 && rho < 0.015 {
                     for channel in 0..4 {
-                        sampled[channel] *= 0.96;
+                        sampled[channel] *= LBM_MASK_EDGE_RETAIN_FACTOR;
                     }
                 }
 
@@ -1312,7 +1315,7 @@ impl FluidSimulation {
             let y = (index / self.width as usize) as i32;
             let allow_outside =
                 self.mask_alpha[index] == 0 && (phase > 0.035 || rho > 0.02 || alpha_mass > 0.012);
-            let alpha = alpha_mass.clamp(0.0, 0.96);
+            let alpha = alpha_mass.clamp(0.0, LBM_RENDER_ALPHA_MAX);
             if alpha <= 0.001 {
                 continue;
             }
