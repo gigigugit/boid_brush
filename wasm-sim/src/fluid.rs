@@ -597,6 +597,7 @@ impl FluidSimulation {
         let max_speed = 0.14 + self.params.density * 0.22 + self.params.surface_tension * 0.04;
         let surface_tension = 0.01 + self.params.surface_tension * 0.09;
         let interface_drag = 0.02 + self.params.motion_decay * 0.014;
+        let stop_threshold = self.params.stop_speed.max(0.0);
 
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -641,6 +642,14 @@ impl FluidSimulation {
                 uy *= 1.0 - interface_band * interface_drag;
 
                 let speed = (ux * ux + uy * uy).sqrt();
+                let mut stop_mix = 0.0;
+                if stop_threshold > LBM_EPSILON && speed < stop_threshold {
+                    let normalized = (1.0 - speed / stop_threshold).clamp(0.0, 1.0);
+                    stop_mix = normalized * normalized;
+                    let retained = 1.0 - stop_mix;
+                    ux *= retained;
+                    uy *= retained;
+                }
                 if speed > max_speed {
                     let scale = max_speed / speed;
                     ux *= scale;
@@ -649,7 +658,11 @@ impl FluidSimulation {
 
                 for dir in 0..9 {
                     let f_eq = Self::lbm_equilibrium(rho, ux, uy, dir);
-                    let f_post = cell[dir] + omega * (f_eq - cell[dir]);
+                    let mut f_post = cell[dir] + omega * (f_eq - cell[dir]);
+                    if stop_mix > 0.0 {
+                        let rest_eq = Self::lbm_equilibrium(rho, 0.0, 0.0, dir);
+                        f_post = f_post * (1.0 - stop_mix) + rest_eq * stop_mix;
+                    }
                     let nx = x + LBM_DIRS[dir].0;
                     let ny = y + LBM_DIRS[dir].1;
 
@@ -1651,6 +1664,46 @@ mod tests {
         sim.apply_phase_to_lbm();
 
         assert_eq!(sim.lbm.pigment[index], [90.0, 30.0, 15.0, 0.6]);
+    }
+
+    #[test]
+    fn lbm_stop_speed_quickens_settling() {
+        let mut slow_stop = FluidSimulation::new(48, 48);
+        let mut fast_stop = FluidSimulation::new(48, 48);
+
+        slow_stop.set_params(4.0, 0.45, 0.78, 0.58, 1.0, 3, 0.12, 0.01, 2, 2);
+        fast_stop.set_params(4.0, 0.45, 0.78, 0.58, 1.0, 3, 0.12, 0.16, 2, 2);
+
+        let seed = [
+            24.0, 24.0, 1.8, 0.2, 71.0, 199.0, 255.0, 0.88, 4.0, 28.0, 25.0, -1.1, 0.4, 71.0,
+            199.0, 255.0, 0.82, 4.0,
+        ];
+        slow_stop.add_particles_from_slice(&seed, 9);
+        fast_stop.add_particles_from_slice(&seed, 9);
+
+        for _ in 0..12 {
+            slow_stop.step(1.0 / 60.0);
+            fast_stop.step(1.0 / 60.0);
+        }
+
+        let summed_speed = |sim: &FluidSimulation| -> f32 {
+            sim.lbm
+                .velocity
+                .iter()
+                .map(|vel| vel[0].hypot(vel[1]))
+                .sum::<f32>()
+        };
+        let slow_energy = summed_speed(&slow_stop);
+        let fast_energy = summed_speed(&fast_stop);
+
+        assert!(
+            fast_energy < slow_energy * 0.7,
+            "expected higher stop speed to settle faster (slow={slow_energy:.5}, fast={fast_energy:.5})"
+        );
+        assert!(
+            fast_stop.lbm.pigment.iter().any(|px| px[3] > 0.01),
+            "faster settling should not immediately erase pigment mass"
+        );
     }
 
     #[test]
