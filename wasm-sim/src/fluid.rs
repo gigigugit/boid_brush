@@ -152,6 +152,8 @@ const LBM_WEIGHTS: [f32; 9] = [
 ];
 const LBM_OPPOSITE: [usize; 9] = [0, 3, 4, 1, 2, 7, 8, 5, 6];
 const LBM_EPSILON: f32 = 0.0001;
+const LBM_RENDER_ACTIVITY_THRESHOLD: f32 = 0.001;
+const LBM_RENDER_PIGMENT_THRESHOLD: f32 = 0.0001;
 
 pub struct FluidSimulation {
     width: u32,
@@ -1307,10 +1309,13 @@ impl FluidSimulation {
             let pigment = self.lbm.pigment[index];
             let alpha_mass = pigment[3];
             let phase = self.lbm.phase[index];
-            if rho < 0.001 && alpha_mass < 0.001 && phase < 0.004 {
+            if rho < LBM_RENDER_ACTIVITY_THRESHOLD
+                && alpha_mass < LBM_RENDER_ACTIVITY_THRESHOLD
+                && phase < 0.004
+            {
                 continue;
             }
-            if alpha_mass <= 0.0001 {
+            if alpha_mass <= LBM_RENDER_PIGMENT_THRESHOLD {
                 continue;
             }
 
