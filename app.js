@@ -21,6 +21,69 @@ const WHEEL_ZOOM_OUT = 0.95;
 const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
+const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
+const PAPER_TEXTURE_FLECK_SCALE = 3.2;
+const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
+const PAPER_TEXTURE_FLECK_INTENSITY = 170;
+const TEXTURE_SLOPE_AMPLIFICATION = 1.8;
+const TEXTURE_SMUDGE_MIN_DISTANCE = 0.35;
+const TEXTURE_SMUDGE_SIZE_FACTOR = 0.14;
+const TEXTURE_SMUDGE_BASE_INFLUENCE = 0.4;
+const TEXTURE_SMUDGE_SLOPE_INFLUENCE = 1.4;
+const TEXTURE_EDGE_BREAKUP_MIN_SIZE = 0.7;
+const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
+const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
+const TEXTURE_EDGE_FEATHER_MIN_DISTANCE = 0.6;
+const TEXTURE_EDGE_FEATHER_DISTANCE_SCALE = 0.12;
+const TEXTURE_EDGE_FEATHER_OPACITY_SCALE = 0.32;
+const TEXTURE_CHANNEL_DEFAULTS = {
+  deposit: 1,
+  flow: 1,
+  edgeBreakup: 0,
+  smudgeDrag: 0,
+  pooling: 0,
+};
+
+function _clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function _lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function _wrapIndex(v, size) {
+  return ((v % size) + size) % size;
+}
+
+function _capitalizeTextureChannel(name) {
+  return name ? name[0].toUpperCase() + name.slice(1) : '';
+}
+
+function _hashNoise2D(x, y, seed = 0) {
+  const n = Math.sin(x * 127.1 + y * 311.7 + seed * 101.3) * 43758.5453123;
+  return n - Math.floor(n);
+}
+
+function _smoothstep(t) {
+  return t * t * (3 - 2 * t);
+}
+
+function _valueNoise2D(x, y, scale, seed = 0) {
+  const sx = x / scale;
+  const sy = y / scale;
+  const x0 = Math.floor(sx);
+  const y0 = Math.floor(sy);
+  const tx = _smoothstep(sx - x0);
+  const ty = _smoothstep(sy - y0);
+  const n00 = _hashNoise2D(x0, y0, seed);
+  const n10 = _hashNoise2D(x0 + 1, y0, seed);
+  const n01 = _hashNoise2D(x0, y0 + 1, seed);
+  const n11 = _hashNoise2D(x0 + 1, y0 + 1, seed);
+  const nx0 = _lerp(n00, n10, tx);
+  const nx1 = _lerp(n01, n11, tx);
+  return _lerp(nx0, nx1, ty);
+}
 
 export class App {
   constructor() {
@@ -113,10 +176,10 @@ export class App {
     this._cachedP = null;
 
     // Canvas texture
-    this._canvasTextureImg = null;   // greyscale HTMLCanvasElement (source tile)
-    this._canvasTextureW = 0;        // source tile pixel width
-    this._canvasTextureH = 0;        // source tile pixel height
-    this._canvasTextureData = null;   // Uint8ClampedArray of greyscale luminance
+    this._builtinCanvasTextures = new Map();
+    this._canvasTexture = null;
+    this._customCanvasTexture = null;
+    this._activeCanvasTextureId = DEFAULT_CANVAS_TEXTURE_ID;
 
     // Smudge: cached image data for colour sampling (invalidated each composite)
     this._smudgeImageData = null;
@@ -215,7 +278,8 @@ export class App {
     this._bindEvents();
 
     // Restore session
-    this._restoreSession();
+    await this._ensureBuiltinCanvasTexture();
+    await this._restoreSession();
     // Fresh loads start with activeBrush='boid' but had not been run through
     // the normal brush activation path. Re-applying the current brush keeps
     // startup behavior consistent with choosing it from the menu.
@@ -476,71 +540,347 @@ export class App {
   // ── Canvas texture ─────────────────────────────────────────
 
   /**
-   * Load a user-supplied image as a greyscale canvas texture tile.
-   * @param {File} file - Image file (PNG, JPEG, etc.)
+   * Build the default built-in paper texture.
    */
-  loadCanvasTexture(file) {
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const img = new Image();
-      img.onload = () => {
-        // Draw to a temp canvas and convert to greyscale
-        const c = document.createElement('canvas');
-        c.width = img.width;
-        c.height = img.height;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const imgData = ctx.getImageData(0, 0, c.width, c.height);
-        const d = imgData.data;
-        // Greyscale conversion: luminance = 0.299R + 0.587G + 0.114B
-        const grey = new Uint8ClampedArray(c.width * c.height);
-        for (let i = 0; i < grey.length; i++) {
-          const off = i * 4;
-          grey[i] = Math.round(0.299 * d[off] + 0.587 * d[off + 1] + 0.114 * d[off + 2]);
+  _buildBuiltinPaperTextureCanvas() {
+    const c = document.createElement('canvas');
+    c.width = 192;
+    c.height = 192;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(c.width, c.height);
+    const d = img.data;
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const base = 180;
+        const coarse = _valueNoise2D(x, y, 38, 11);
+        const medium = _valueNoise2D(x, y, 16, 29);
+        const fine = _valueNoise2D(x, y, 6, 71);
+        const fleck = _valueNoise2D(x, y, PAPER_TEXTURE_FLECK_SCALE, 97);
+        const fiber = Math.sin((x + y * 0.18) * 0.11 + medium * 4.2) * 0.5 + 0.5;
+        let grey = base
+          + (coarse - 0.5) * 44
+          + (medium - 0.5) * 26
+          + (fine - 0.5) * 14
+          + (fiber - 0.5) * 12;
+        if (fleck > PAPER_TEXTURE_FLECK_THRESHOLD) {
+          grey -= (fleck - PAPER_TEXTURE_FLECK_THRESHOLD) * PAPER_TEXTURE_FLECK_INTENSITY;
         }
-        this._canvasTextureW = c.width;
-        this._canvasTextureH = c.height;
-        this._canvasTextureData = grey;
-        this._canvasTextureImg = c;
-        // Auto-enable texture so the effect is immediately visible
-        const chk = document.getElementById('canvasTextureEnabled');
-        if (chk && !chk.checked) { chk.checked = true; }
-        this._paramsDirty = true;
-        this.showToast('🖼 Texture loaded & enabled');
-      };
-      img.onerror = () => {
-        this.showToast('⚠ Texture load failed — invalid image');
-      };
-      img.src = evt.target.result;
-    };
-    reader.onerror = () => {
-      this.showToast('⚠ Texture load failed — could not read file');
-    };
-    reader.readAsDataURL(file);
+        grey = Math.max(58, Math.min(235, Math.round(grey)));
+        const off = (y * c.width + x) * 4;
+        d[off] = grey;
+        d[off + 1] = grey;
+        d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
   }
 
-  clearCanvasTexture() {
-    this._canvasTextureImg = null;
-    this._canvasTextureW = 0;
-    this._canvasTextureH = 0;
-    this._canvasTextureData = null;
-    this.showToast('Texture cleared');
+  _createCanvasTextureRecord({ id, name, sourceType, canvas, dataUrl = null, persistDataUrl = false }) {
+    const width = canvas.width;
+    const height = canvas.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const d = imgData.data;
+    const grey = new Uint8ClampedArray(width * height);
+    for (let i = 0; i < grey.length; i++) {
+      const off = i * 4;
+      grey[i] = Math.round(0.299 * d[off] + 0.587 * d[off + 1] + 0.114 * d[off + 2]);
+    }
+    const flowX = new Float32Array(grey.length);
+    const flowY = new Float32Array(grey.length);
+    const slope = new Float32Array(grey.length);
+    for (let y = 0; y < height; y++) {
+      const yU = _wrapIndex(y - 1, height);
+      const yD = _wrapIndex(y + 1, height);
+      for (let x = 0; x < width; x++) {
+        const xL = _wrapIndex(x - 1, width);
+        const xR = _wrapIndex(x + 1, width);
+        const i = y * width + x;
+        const gx = (grey[y * width + xR] - grey[y * width + xL]) / 255;
+        const gy = (grey[yD * width + x] - grey[yU * width + x]) / 255;
+        const len = Math.hypot(gx, gy);
+        slope[i] = Math.min(1, len * TEXTURE_SLOPE_AMPLIFICATION);
+        if (len > 1e-5) {
+          flowX[i] = -gx / len;
+          flowY[i] = -gy / len;
+        }
+      }
+    }
+    return {
+      id,
+      name,
+      sourceType,
+      width,
+      height,
+      canvas,
+      previewCanvas: canvas,
+      previewDataUrl: canvas.toDataURL('image/png'),
+      heightData: grey,
+      flowX,
+      flowY,
+      slope,
+      dataUrl: persistDataUrl ? (dataUrl || canvas.toDataURL('image/png')) : null,
+    };
+  }
+
+  _setActiveCanvasTexture(texture, { silent = false } = {}) {
+    this._canvasTexture = texture;
+    this._activeCanvasTextureId = texture?.id || DEFAULT_CANVAS_TEXTURE_ID;
+    const chk = document.getElementById('canvasTextureEnabled');
+    if (chk && !chk.checked) chk.checked = true;
+    this._paramsDirty = true;
+    if (document.getElementById('sidebar')) syncUI(this);
+    if (!silent && texture) this.showToast(`🖼 Texture: ${texture.name}`);
+  }
+
+  async _ensureBuiltinCanvasTexture() {
+    if (!this._builtinCanvasTextures.has(DEFAULT_CANVAS_TEXTURE_ID)) {
+      const canvas = this._buildBuiltinPaperTextureCanvas();
+      const texture = this._createCanvasTextureRecord({
+        id: DEFAULT_CANVAS_TEXTURE_ID,
+        name: 'Paper Grain',
+        sourceType: 'builtin',
+        canvas,
+      });
+      this._builtinCanvasTextures.set(texture.id, texture);
+    }
+    if (!this._canvasTexture) {
+      this._setActiveCanvasTexture(this._builtinCanvasTextures.get(DEFAULT_CANVAS_TEXTURE_ID), { silent: true });
+    }
+  }
+
+  async _canvasFromDataUrl(dataUrl) {
+    const img = new Image();
+    img.decoding = 'async';
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    return c;
+  }
+
+  async _setCustomCanvasTextureFromDataUrl(dataUrl, name = 'Custom Upload', { activate = true, silent = false } = {}) {
+    const canvas = await this._canvasFromDataUrl(dataUrl);
+    const texture = this._createCanvasTextureRecord({
+      id: 'custom-upload',
+      name,
+      sourceType: 'upload',
+      canvas,
+      dataUrl,
+      persistDataUrl: true,
+    });
+    this._customCanvasTexture = texture;
+    if (activate) this._setActiveCanvasTexture(texture, { silent });
+    else if (document.getElementById('sidebar')) syncUI(this);
+    return texture;
+  }
+
+  setCanvasTextureById(id, { silent = false } = {}) {
+    const texture = id === 'custom-upload'
+      ? this._customCanvasTexture
+      : this._builtinCanvasTextures.get(id);
+    if (!texture) return false;
+    this._setActiveCanvasTexture(texture, { silent });
+    return true;
   }
 
   /**
-   * Sample the greyscale texture value at a canvas position.
-   * Returns 0–1 where 0 = black (valley, holds paint) and 1 = white (peak, rejects paint).
-   * The texture is tiled at the specified scale.
+   * Load a user-supplied image as a greyscale canvas texture tile.
+   * @param {File} file - Image file (PNG, JPEG, etc.)
    */
-  _sampleTexture(x, y, scale) {
-    if (!this._canvasTextureData) return 0;
-    const w = this._canvasTextureW;
-    const h = this._canvasTextureH;
-    if (w <= 0 || h <= 0 || scale <= 0) return 0;
-    // Tile position (scale modifies UV coords); double-mod handles negative coords
-    const ix = ((Math.floor(x / scale) % w) + w) % w;
-    const iy = ((Math.floor(y / scale) % h) + h) % h;
-    return this._canvasTextureData[iy * w + ix] / 255;
+  async loadCanvasTexture(file) {
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = evt => resolve(evt.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await this._setCustomCanvasTextureFromDataUrl(dataUrl, file?.name || 'Custom Upload', { silent: true });
+      this.showToast('🖼 Texture loaded & enabled');
+      return true;
+    } catch {
+      this.showToast('⚠ Texture load failed — invalid image');
+      return false;
+    }
+  }
+
+  clearCanvasTexture() {
+    this._customCanvasTexture = null;
+    this._setActiveCanvasTexture(this._builtinCanvasTextures.get(DEFAULT_CANVAS_TEXTURE_ID), { silent: true });
+    this.showToast('Texture reset to built-in paper grain');
+  }
+
+  /**
+   * Sample the active texture at a canvas position.
+   */
+  sampleTextureField(x, y, p = this._cachedP || this.getP()) {
+    const tex = this._canvasTexture;
+    if (!tex?.heightData || !p?.canvasTextureEnabled) {
+      return { height: 0, valley: 1, flowX: 0, flowY: 0, slope: 0 };
+    }
+    const scale = Math.max(0.05, p.canvasTextureScale || 1);
+    const theta = (p.canvasTextureRotation || 0) * Math.PI / 180;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    const tx = (x + (p.canvasTextureOffsetX || 0)) / scale;
+    const ty = (y + (p.canvasTextureOffsetY || 0)) / scale;
+    const u = cos * tx - sin * ty;
+    const v = sin * tx + cos * ty;
+    const x0 = Math.floor(u);
+    const y0 = Math.floor(v);
+    const fx = u - x0;
+    const fy = v - y0;
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+    const w = tex.width;
+    const h = tex.height;
+    const idx00 = _wrapIndex(y0, h) * w + _wrapIndex(x0, w);
+    const idx10 = _wrapIndex(y0, h) * w + _wrapIndex(x1, w);
+    const idx01 = _wrapIndex(y1, h) * w + _wrapIndex(x0, w);
+    const idx11 = _wrapIndex(y1, h) * w + _wrapIndex(x1, w);
+    const wx0 = 1 - fx;
+    const wy0 = 1 - fy;
+    const w00 = wx0 * wy0;
+    const w10 = fx * wy0;
+    const w01 = wx0 * fy;
+    const w11 = fx * fy;
+    let height = (
+      tex.heightData[idx00] * w00 +
+      tex.heightData[idx10] * w10 +
+      tex.heightData[idx01] * w01 +
+      tex.heightData[idx11] * w11
+    ) / 255;
+    if (p.canvasTextureInvert) height = 1 - height;
+    let flowX = tex.flowX[idx00] * w00 + tex.flowX[idx10] * w10 + tex.flowX[idx01] * w01 + tex.flowX[idx11] * w11;
+    let flowY = tex.flowY[idx00] * w00 + tex.flowY[idx10] * w10 + tex.flowY[idx01] * w01 + tex.flowY[idx11] * w11;
+    const slope = tex.slope[idx00] * w00 + tex.slope[idx10] * w10 + tex.slope[idx01] * w01 + tex.slope[idx11] * w11;
+    if (p.canvasTextureInvert) {
+      flowX *= -1;
+      flowY *= -1;
+    }
+    return {
+      height,
+      valley: 1 - height,
+      flowX,
+      flowY,
+      slope,
+    };
+  }
+
+  sampleTextureHeight(x, y, p = this._cachedP || this.getP()) {
+    return this.sampleTextureField(x, y, p).height;
+  }
+
+  sampleTextureFlowVector(x, y, p = this._cachedP || this.getP()) {
+    const field = this.sampleTextureField(x, y, p);
+    const len = Math.hypot(field.flowX, field.flowY);
+    if (len < 1e-5) return { x: 0, y: 0, slope: field.slope };
+    return { x: field.flowX / len, y: field.flowY / len, slope: field.slope };
+  }
+
+  hasCanvasTexture() {
+    return !!this._canvasTexture?.heightData;
+  }
+
+  getTextureInfluence(p, channel = 'deposit') {
+    if (!this.hasCanvasTexture() || !p?.canvasTextureEnabled) return 0;
+    const key = `canvasTexture${_capitalizeTextureChannel(channel)}`;
+    const channelValue = typeof p[key] === 'number' ? p[key] : (TEXTURE_CHANNEL_DEFAULTS[channel] ?? 0);
+    return _clamp01((p.canvasTextureStrength || 0) * channelValue);
+  }
+
+  getTextureDepositDensity(x, y, p = this._cachedP || this.getP()) {
+    const influence = this.getTextureInfluence(p, 'deposit');
+    if (influence <= 0) return 1;
+    return Math.max(0.05, 1 - influence * this.sampleTextureHeight(x, y, p));
+  }
+
+  getTexturePoolingDensity(x, y, p = this._cachedP || this.getP()) {
+    const influence = this.getTextureInfluence(p, 'pooling');
+    if (influence <= 0) return 1;
+    return Math.max(0.15, 1 - influence * this.sampleTextureHeight(x, y, p));
+  }
+
+  getTextureSmudgeOffset(x, y, size, p = this._cachedP || this.getP()) {
+    const influence = this.getTextureInfluence(p, 'smudgeDrag');
+    if (influence <= 0) return { x, y };
+    const flow = this.sampleTextureFlowVector(x, y, p);
+    const dist = Math.max(TEXTURE_SMUDGE_MIN_DISTANCE, size * TEXTURE_SMUDGE_SIZE_FACTOR)
+      * influence
+      * (TEXTURE_SMUDGE_BASE_INFLUENCE + flow.slope * TEXTURE_SMUDGE_SLOPE_INFLUENCE);
+    return { x: x + flow.x * dist, y: y + flow.y * dist };
+  }
+
+  getTextureEdgeBreakup(x, y, p = this._cachedP || this.getP()) {
+    const influence = this.getTextureInfluence(p, 'edgeBreakup');
+    if (influence <= 0) return 0;
+    const field = this.sampleTextureField(x, y, p);
+    return _clamp01(influence * (0.3 + field.slope * 1.15 + field.height * 0.35));
+  }
+
+  getAvailableCanvasTextures() {
+    const items = [...this._builtinCanvasTextures.values()].map(tex => ({
+      id: tex.id,
+      name: tex.name,
+      sourceType: tex.sourceType,
+    }));
+    if (this._customCanvasTexture) {
+      items.push({
+        id: this._customCanvasTexture.id,
+        name: this._customCanvasTexture.name,
+        sourceType: this._customCanvasTexture.sourceType,
+      });
+    }
+    return items;
+  }
+
+  getActiveCanvasTextureMeta() {
+    if (!this._canvasTexture) return null;
+    return {
+      id: this._canvasTexture.id,
+      name: this._canvasTexture.name,
+      sourceType: this._canvasTexture.sourceType,
+      width: this._canvasTexture.width,
+      height: this._canvasTexture.height,
+      previewCanvas: this._canvasTexture.previewCanvas,
+      previewDataUrl: this._canvasTexture.previewDataUrl,
+    };
+  }
+
+  _serializeCanvasTextureState() {
+    return {
+      activeId: this._activeCanvasTextureId || DEFAULT_CANVAS_TEXTURE_ID,
+      custom: this._customCanvasTexture
+        ? {
+            name: this._customCanvasTexture.name,
+            dataUrl: this._customCanvasTexture.dataUrl,
+          }
+        : null,
+    };
+  }
+
+  async _restoreCanvasTextureState(state) {
+    await this._ensureBuiltinCanvasTexture();
+    if (state?.custom?.dataUrl) {
+      try {
+        await this._setCustomCanvasTextureFromDataUrl(state.custom.dataUrl, state.custom.name || 'Custom Upload', { activate: false });
+      } catch {
+        this._customCanvasTexture = null;
+        this.showToast('⚠ Saved custom texture could not be restored');
+      }
+    }
+    if (!this.setCanvasTextureById(state?.activeId || DEFAULT_CANVAS_TEXTURE_ID, { silent: true })) {
+      this._setActiveCanvasTexture(this._builtinCanvasTextures.get(DEFAULT_CANVAS_TEXTURE_ID), { silent: true });
+    }
   }
 
   setActiveLayer(idx) {
@@ -910,6 +1250,15 @@ export class App {
       canvasTextureEnabled: chk('canvasTextureEnabled'),
       canvasTextureStrength: val('canvasTextureStrength') / 100,
       canvasTextureScale: val('canvasTextureScale') / 100 || 1,
+      canvasTextureOffsetX: (val('canvasTextureOffsetX') || 0) / 10,
+      canvasTextureOffsetY: (val('canvasTextureOffsetY') || 0) / 10,
+      canvasTextureRotation: val('canvasTextureRotation') || 0,
+      canvasTextureInvert: chk('canvasTextureInvert'),
+      canvasTextureDeposit: (val('canvasTextureDeposit') || 0) / 100,
+      canvasTextureFlow: (val('canvasTextureFlow') || 0) / 100,
+      canvasTextureEdgeBreakup: (val('canvasTextureEdgeBreakup') || 0) / 100,
+      canvasTextureSmudgeDrag: (val('canvasTextureSmudgeDrag') || 0) / 100,
+      canvasTexturePooling: (val('canvasTexturePooling') || 0) / 100,
       // Color
       color: this.primaryEl.value,
       // AI Diffusion
@@ -2253,13 +2602,18 @@ export class App {
 
   stampCircle(ctx, x, y, size, color, opacity) {
     const p = this._cachedP || this.getP();
+    const textureEnabled = this.hasCanvasTexture() && p.canvasTextureEnabled;
+    let drawSize = size;
     // Modulate opacity by canvas texture if enabled
-    if (this._canvasTextureData) {
-      if (p.canvasTextureEnabled && p.canvasTextureStrength > 0) {
-        const grey = this._sampleTexture(x, y, p.canvasTextureScale);
-        // grey 0=black(valley→more paint), 1=white(peak→less paint)
-        // strength and grey are both 0-1, so product ≤ 1, but clamp for safety
-        opacity *= Math.max(0, 1 - p.canvasTextureStrength * grey);
+    if (textureEnabled) {
+      opacity *= this.getTextureDepositDensity(x, y, p);
+      const edgeBreakup = this.getTextureEdgeBreakup(x, y, p);
+      if (edgeBreakup > 0) {
+        const field = this.sampleTextureField(x, y, p);
+        drawSize = size * Math.max(
+          TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+          1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + (field.valley - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+        );
       }
     }
     // Kubelka-Munk pigment mixing: blend brush colour with existing canvas colour
@@ -2273,13 +2627,14 @@ export class App {
     }
     // Smudge: blend brush colour with existing canvas colour
     if (p.smudge > 0) {
-      const sampled = this._sampleSmudgeColor(x, y);
+      const smudgePoint = textureEnabled ? this.getTextureSmudgeOffset(x, y, drawSize, p) : { x, y };
+      const sampled = this._sampleSmudgeColor(smudgePoint.x, smudgePoint.y);
       if (sampled.a > 0) {
         if (p.smudgeOnly) {
           // Smudge-only: stamp purely with the sampled canvas colour
           // Modulate by area-averaged alpha so stamps fade at edges near transparent pixels
           color = `rgb(${sampled.r},${sampled.g},${sampled.b})`;
-          opacity *= this._sampleSmudgeAreaAlpha(x, y, size);
+          opacity *= this._sampleSmudgeAreaAlpha(smudgePoint.x, smudgePoint.y, drawSize);
         } else {
           const brush = this._parseColorToRGB(color);
           const s = p.smudge * (sampled.a / 255); // scale by sampled alpha
@@ -2297,13 +2652,24 @@ export class App {
       return;
     }
     ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+    ctx.arc(x, y, drawSize / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.globalAlpha = opacity;
     const activeLayer = this.getActiveLayer();
     const useAlphaLock = activeLayer && activeLayer.alphaLock && this.activeBrush !== 'eraser';
     if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
     ctx.fill();
+    if (textureEnabled) {
+      const breakup = this.getTextureEdgeBreakup(x, y, p);
+      if (breakup > 0.12) {
+        const flow = this.sampleTextureFlowVector(x, y, p);
+        const feather = Math.max(TEXTURE_EDGE_FEATHER_MIN_DISTANCE, drawSize * TEXTURE_EDGE_FEATHER_DISTANCE_SCALE * breakup);
+        ctx.globalAlpha = opacity * breakup * TEXTURE_EDGE_FEATHER_OPACITY_SCALE;
+        ctx.beginPath();
+        ctx.arc(x + flow.x * feather, y + flow.y * feather, Math.max(0.5, drawSize * (0.22 + breakup * 0.08)), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     if (useAlphaLock) ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
 
@@ -2311,7 +2677,7 @@ export class App {
     if (p.impasto && p.impastoStrength > 0 && this._heightCtx) {
       const hctx = this._heightCtx;
       hctx.beginPath();
-      hctx.arc(x * this.DPR, y * this.DPR, (size / 2) * this.DPR, 0, Math.PI * 2);
+      hctx.arc(x * this.DPR, y * this.DPR, (drawSize / 2) * this.DPR, 0, Math.PI * 2);
       hctx.fillStyle = '#ffffff';
       hctx.globalAlpha = Math.min(opacity * p.impastoStrength, 1);
       hctx.fill();
@@ -2994,17 +3360,26 @@ export class App {
         brushData: this.simulation.brushData,
         nextId: this.simulation.nextId,
       };
+      controls._canvasTextureState = this._serializeCanvasTextureState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
     } catch { /* quota exceeded — ignore */ }
   }
 
-  _restoreSession() {
+  async _restoreSession() {
     try {
+      await this._ensureBuiltinCanvasTexture();
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
+      if (!raw) {
+        syncUI(this);
+        return;
+      }
       const controls = JSON.parse(raw);
+      if (controls._canvasTextureState) {
+        await this._restoreCanvasTextureState(controls._canvasTextureState);
+      }
       for (const [id, val] of Object.entries(controls)) {
         if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
+        if (id === '_canvasTextureState') continue;
         if (id === 'primaryColor') { this.primaryEl.value = val; continue; }
         if (id === 'secondaryColor') { this.secondaryEl.value = val; continue; }
         if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
