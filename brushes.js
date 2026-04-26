@@ -16,7 +16,12 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+// Skip texture flow on nearly flat regions where the sampled slope is only a tiny fraction
+// of the texture's full gradient range; this avoids unnecessary blur-canvas churn.
 const MIN_TEXTURE_FLOW_SLOPE = 0.04;
+const TEXTURE_FLOW_BASE_TRANSFER = 0.12;
+const TEXTURE_FLOW_SLOPE_TRANSFER = 0.28;
+const TEXTURE_FLOW_MAX_TRANSFER = 0.4;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -175,7 +180,7 @@ function _applyTextureFlow(ctx, canvas, app, flow, p) {
       // Bounds already guaranteed by margin
       const tidx = (ty * w + tx) << 2;
 
-      const t = Math.min(flowStrength * (0.12 + field.slope * 0.28), 0.4);
+      const t = Math.min(flowStrength * (TEXTURE_FLOW_BASE_TRANSFER + field.slope * TEXTURE_FLOW_SLOPE_TRANSFER), TEXTURE_FLOW_MAX_TRANSFER);
 
       const r = src[idx],     g = src[idx + 1], b = src[idx + 2], a = src[idx + 3];
       const rt = r * t, gt = g * t, bt = b * t, at = a * t;

@@ -30,6 +30,12 @@ const TEXTURE_SMUDGE_MIN_DISTANCE = 0.35;
 const TEXTURE_SMUDGE_SIZE_FACTOR = 0.14;
 const TEXTURE_SMUDGE_BASE_INFLUENCE = 0.4;
 const TEXTURE_SMUDGE_SLOPE_INFLUENCE = 1.4;
+const TEXTURE_EDGE_BREAKUP_MIN_SIZE = 0.7;
+const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
+const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
+const TEXTURE_EDGE_FEATHER_MIN_DISTANCE = 0.6;
+const TEXTURE_EDGE_FEATHER_DISTANCE_SCALE = 0.12;
+const TEXTURE_EDGE_FEATHER_OPACITY_SCALE = 0.32;
 const TEXTURE_CHANNEL_DEFAULTS = {
   deposit: 1,
   flow: 1,
@@ -869,6 +875,7 @@ export class App {
         await this._setCustomCanvasTextureFromDataUrl(state.custom.dataUrl, state.custom.name || 'Custom Upload', { activate: false });
       } catch {
         this._customCanvasTexture = null;
+        this.showToast('⚠ Saved custom texture could not be restored');
       }
     }
     if (!this.setCanvasTextureById(state?.activeId || DEFAULT_CANVAS_TEXTURE_ID, { silent: true })) {
@@ -2603,7 +2610,10 @@ export class App {
       const edgeBreakup = this.getTextureEdgeBreakup(x, y, p);
       if (edgeBreakup > 0) {
         const field = this.sampleTextureField(x, y, p);
-        drawSize = size * Math.max(0.7, 1 - edgeBreakup * 0.18 + (field.valley - 0.5) * edgeBreakup * 0.14);
+        drawSize = size * Math.max(
+          TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+          1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + (field.valley - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+        );
       }
     }
     // Kubelka-Munk pigment mixing: blend brush colour with existing canvas colour
@@ -2653,8 +2663,8 @@ export class App {
       const breakup = this.getTextureEdgeBreakup(x, y, p);
       if (breakup > 0.12) {
         const flow = this.sampleTextureFlowVector(x, y, p);
-        const feather = Math.max(0.6, drawSize * 0.12 * breakup);
-        ctx.globalAlpha = opacity * breakup * 0.32;
+        const feather = Math.max(TEXTURE_EDGE_FEATHER_MIN_DISTANCE, drawSize * TEXTURE_EDGE_FEATHER_DISTANCE_SCALE * breakup);
+        ctx.globalAlpha = opacity * breakup * TEXTURE_EDGE_FEATHER_OPACITY_SCALE;
         ctx.beginPath();
         ctx.arc(x + flow.x * feather, y + flow.y * feather, Math.max(0.5, drawSize * (0.22 + breakup * 0.08)), 0, Math.PI * 2);
         ctx.fill();
