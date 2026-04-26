@@ -1310,6 +1310,9 @@ impl FluidSimulation {
             if rho < 0.001 && alpha_mass < 0.001 && phase < 0.004 {
                 continue;
             }
+            if alpha_mass <= 0.0001 {
+                continue;
+            }
 
             let x = (index % self.width as usize) as i32;
             let y = (index / self.width as usize) as i32;
@@ -1320,21 +1323,9 @@ impl FluidSimulation {
                 continue;
             }
 
-            let base_r = if alpha_mass > 0.0001 {
-                (pigment[0] / alpha_mass).clamp(0.0, 255.0) as u8
-            } else {
-                71
-            };
-            let base_g = if alpha_mass > 0.0001 {
-                (pigment[1] / alpha_mass).clamp(0.0, 255.0) as u8
-            } else {
-                199
-            };
-            let base_b = if alpha_mass > 0.0001 {
-                (pigment[2] / alpha_mass).clamp(0.0, 255.0) as u8
-            } else {
-                255
-            };
+            let base_r = (pigment[0] / alpha_mass).clamp(0.0, 255.0) as u8;
+            let base_g = (pigment[1] / alpha_mass).clamp(0.0, 255.0) as u8;
+            let base_b = (pigment[2] / alpha_mass).clamp(0.0, 255.0) as u8;
             let phase_px = Self::sample_phase(&self.lbm.phase, self.width, self.height, x + 1, y);
             let phase_nx = Self::sample_phase(&self.lbm.phase, self.width, self.height, x - 1, y);
             let phase_py = Self::sample_phase(&self.lbm.phase, self.width, self.height, x, y + 1);
@@ -1653,6 +1644,35 @@ mod tests {
             sim.lbm.phase[outside_index] > 0.01,
             "phase did not advect outside the seeded mask"
         );
+    }
+
+    #[test]
+    fn lbm_does_not_render_colorless_phase_as_blue() {
+        let mut sim = FluidSimulation::new(16, 16);
+        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Hybrid as u32);
+        let index = 8usize * 16 + 8usize;
+        sim.lbm.rho[index] = 0.2;
+        sim.lbm.phase[index] = 0.7;
+        sim.lbm.pigment[index] = [0.0; 4];
+
+        let pixels = sim.read_pixels();
+        let px = index * 4;
+        assert_eq!(&pixels[px..px + 4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn lbm_renders_pigment_color_without_blue_fallback() {
+        let mut sim = FluidSimulation::new(16, 16);
+        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Particles as u32);
+        let index = 8usize * 16 + 8usize;
+        sim.lbm.rho[index] = 0.2;
+        sim.lbm.phase[index] = 0.7;
+        sim.lbm.pigment[index] = [180.0, 20.0, 10.0, 0.7];
+
+        let pixels = sim.read_pixels();
+        let px = index * 4;
+        assert!(pixels[px] > pixels[px + 2], "expected rendered pigment to stay closer to the injected color");
+        assert!(pixels[px + 3] > 0, "expected rendered pigment to remain visible");
     }
 
     #[test]
