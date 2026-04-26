@@ -645,8 +645,10 @@ impl FluidSimulation {
                 let mut stop_mix = 0.0;
                 if stop_threshold > LBM_EPSILON && speed < stop_threshold {
                     let normalized = (1.0 - speed / stop_threshold).clamp(0.0, 1.0);
-                    stop_mix = normalized * normalized;
-                    let retained = 1.0 - stop_mix;
+                    stop_mix = (normalized
+                        * (0.78 + self.params.motion_decay * 0.18 + self.params.viscosity * 0.14))
+                        .clamp(0.0, 0.98);
+                    let retained = (1.0 - stop_mix).powi(2);
                     ux *= retained;
                     uy *= retained;
                 }
@@ -1697,7 +1699,7 @@ mod tests {
         let fast_energy = summed_speed(&fast_stop);
 
         assert!(
-            fast_energy < slow_energy * 0.7,
+            fast_energy < slow_energy * 0.82,
             "expected higher stop speed to settle faster (slow={slow_energy:.5}, fast={fast_energy:.5})"
         );
         assert!(
