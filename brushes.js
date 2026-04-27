@@ -2943,7 +2943,8 @@ export class FluidBrush {
 
   _step(elapsed) {
     if (!this._updateSimulator()) return;
-    if (!this._active && this.sim.getParticleCount() <= 0) {
+    const particleCountBeforeStep = this.sim.getParticleCount();
+    if (!this._active && particleCountBeforeStep <= 0) {
       this._lastFrameElapsed = elapsed;
       return;
     }
@@ -2952,7 +2953,9 @@ export class FluidBrush {
     if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
     dt = Math.min(dt, 0.05);
     this.sim.step(dt);
-    if (this.sim.getParticleCount() > 0) this._depositFrame();
+    if (this._active || particleCountBeforeStep > 0 || this.sim.getParticleCount() > 0) {
+      this._depositFrame();
+    }
   }
 
   _depositFrame() {

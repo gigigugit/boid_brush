@@ -157,17 +157,18 @@ const LBM_RENDER_PIGMENT_THRESHOLD: f32 = 0.0001;
 const LBM_PHASE_CLEAR_THRESHOLD: f32 = 0.003;
 const LBM_MASK_EDGE_RETAIN_FACTOR: f32 = 0.96;
 const LBM_RENDER_ALPHA_MAX: f32 = 0.96;
-const LBM_STOP_SETTLE_BASE_MIX: f32 = 0.78;
-const LBM_STOP_SETTLE_DECAY_MIX: f32 = 0.18;
-const LBM_STOP_SETTLE_VISCOSITY_MIX: f32 = 0.14;
-const LBM_STOP_SETTLE_MAX_MIX: f32 = 0.98;
+const LBM_STOP_SETTLE_BASE_MIX: f32 = 0.86;
+const LBM_STOP_SETTLE_DECAY_MIX: f32 = 0.24;
+const LBM_STOP_SETTLE_VISCOSITY_MIX: f32 = 0.18;
+const LBM_STOP_SETTLE_MAX_MIX: f32 = 0.995;
 const LBM_STOP_RETENTION_EXPONENT: i32 = 2;
-const LBM_ACTIVE_STOP_SPEED_RATIO: f32 = 0.45;
+const LBM_ACTIVE_STOP_SPEED_RATIO: f32 = 0.65;
 const LBM_ACTIVE_SPEED_FLOOR: f32 = 0.0025;
-const LBM_ACTIVE_CARRY_RATIO: f32 = 0.35;
+const LBM_ACTIVE_CARRY_RATIO: f32 = 0.22;
 const LBM_ACTIVE_RHO_THRESHOLD: f32 = 0.012;
 const LBM_ACTIVE_PIGMENT_THRESHOLD: f32 = 0.008;
 const LBM_ACTIVE_PHASE_THRESHOLD: f32 = 0.02;
+const LBM_REST_SPEED_RATIO: f32 = 0.72;
 #[cfg(test)]
 const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
@@ -712,6 +713,7 @@ impl FluidSimulation {
         self.apply_phase_to_lbm();
         self.recompute_lbm_macros();
         self.advect_lbm_pigment(mask, mask_has_content, width, height);
+        self.settle_lbm_resting_cells();
         self.refresh_lbm_activity();
     }
 
@@ -1065,6 +1067,33 @@ impl FluidSimulation {
         }
 
         std::mem::swap(&mut self.lbm.pigment, &mut self.lbm.next_pigment);
+    }
+
+    fn settle_lbm_resting_cells(&mut self) {
+        let rest_speed = (self.params.stop_speed * LBM_REST_SPEED_RATIO).max(LBM_ACTIVE_SPEED_FLOOR);
+        for index in 0..self.lbm.rho.len() {
+            let rho = self.lbm.rho[index];
+            let alpha = self.lbm.pigment[index][3];
+            let phase = self.lbm.phase[index];
+            if rho < LBM_ACTIVE_RHO_THRESHOLD
+                && alpha < LBM_ACTIVE_PIGMENT_THRESHOLD
+                && phase < LBM_ACTIVE_PHASE_THRESHOLD
+            {
+                continue;
+            }
+
+            let speed = self.lbm.velocity[index][0].hypot(self.lbm.velocity[index][1]);
+            if speed > rest_speed {
+                continue;
+            }
+
+            self.lbm.velocity[index] = [0.0, 0.0];
+            if rho <= LBM_EPSILON {
+                self.lbm.dist[index] = [0.0; 9];
+            } else {
+                self.lbm.dist[index] = Self::lbm_rest_equilibrium(rho);
+            }
+        }
     }
 
     fn refresh_lbm_activity(&mut self) {
@@ -1744,6 +1773,30 @@ mod tests {
         assert!(
             fast_stop.lbm.pigment.iter().any(|px| px[3] > 0.01),
             "faster settling should not immediately erase pigment mass"
+        );
+    }
+
+    #[test]
+    fn lbm_resting_fluid_deactivates_without_losing_pigment() {
+        let mut sim = FluidSimulation::new(48, 48);
+        sim.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.3, 2, 2);
+        sim.add_particles_from_slice(&[24.0, 24.0, 1.4, 0.0, 71.0, 199.0, 255.0, 0.84, 4.0], 9);
+
+        for _ in 0..180 {
+            sim.step(1.0 / 60.0);
+            if sim.particle_count() == 0 {
+                break;
+            }
+        }
+
+        assert_eq!(
+            sim.particle_count(),
+            0,
+            "expected a single click-sized LBM injection to settle fully within a few seconds"
+        );
+        assert!(
+            sim.lbm.pigment.iter().any(|px| px[3] > 0.01),
+            "settling should preserve pigment for the final blit"
         );
     }
 
