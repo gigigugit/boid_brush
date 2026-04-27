@@ -46,7 +46,15 @@ function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
 }
 
 function fluidMidrangeRow() {
-  return `<div style="display:flex;align-items:center;gap:6px;margin:4px 0 2px;"><span style="flex:1;color:#cbd7e6;font-weight:600;">Midrange Flow</span><button type="button" class="fluid-midrange-btn" data-fluid-bias="-1" aria-label="Nudge midrange flow calmer" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Calmer</button><button type="button" class="fluid-midrange-btn" data-fluid-bias="0" aria-label="Reset midrange flow bias" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Reset</button><button type="button" class="fluid-midrange-btn" data-fluid-bias="1" aria-label="Nudge midrange flow livelier" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Livelier</button></div><span class="slider-desc">Bias Time Step, Motion Slowdown, Stop Threshold, and Viscosity together first, then fine-tune the raw sliders below.</span>`;
+  return `
+    <div style="display:flex;align-items:center;gap:6px;margin:4px 0 2px;">
+      <span style="flex:1;color:#cbd7e6;font-weight:600;">Midrange Flow</span>
+      <button type="button" class="fluid-midrange-btn" data-fluid-bias="-1" aria-label="Nudge midrange flow calmer" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Calmer</button>
+      <button type="button" class="fluid-midrange-btn" data-fluid-bias="0" aria-label="Reset midrange flow bias" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Reset</button>
+      <button type="button" class="fluid-midrange-btn" data-fluid-bias="1" aria-label="Nudge midrange flow livelier" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Livelier</button>
+    </div>
+    <span class="slider-desc">Bias Time Step, Motion Slowdown, Stop Threshold, and Viscosity together first, then fine-tune the raw sliders below.</span>
+  `;
 }
 
 function _setRangeValue(target, next) {
@@ -264,7 +272,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Fluid Flow (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="fluidMidrange">Fluid Midrange <span class="chevron">▼</span></div>
+    <div class="section-header" data-brushes="fluid" data-section="fluidMidrange">Midrange Flow Tuning <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${fluidMidrangeRow()}
     </div>
