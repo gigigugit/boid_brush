@@ -2815,6 +2815,11 @@ export class FluidBrush {
     return this._initPromise;
   }
 
+  _clearCommittedSimulation() {
+    if (!this.sim) return;
+    this.sim.clearParticles();
+  }
+
   onDown(x, y, pressure) {
     if (!this.app.undoPushedThisStroke) {
       this.app.pushUndo();
@@ -2824,6 +2829,7 @@ export class FluidBrush {
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
+    this._clearCommittedSimulation();
     this._captureStrokeBase();
     this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
@@ -2955,8 +2961,12 @@ export class FluidBrush {
     if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
     dt = Math.min(dt, 0.05);
     this.sim.step(dt);
-    if (this._active || particleCountBeforeStep > 0 || this.sim.getParticleCount() > 0) {
+    const nextCount = this.sim.getParticleCount();
+    if (this._active || prevCount > 0 || nextCount > 0) {
       this._depositFrame();
+    }
+    if (!this._active && prevCount > 0 && nextCount <= 0) {
+      this._clearCommittedSimulation();
     }
   }
 
@@ -3019,6 +3029,7 @@ export class FluidBrush {
     this._lastPoint = null;
     this._lastFrameElapsed = null;
     this._strokeLayer = null;
+    this._clearCommittedSimulation();
   }
 }
 
