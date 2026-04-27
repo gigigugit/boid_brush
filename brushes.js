@@ -2927,6 +2927,10 @@ export class FluidBrush {
 
   _step(elapsed) {
     if (!this._updateSimulator()) return;
+    if (!this._active && this.sim.getParticleCount() <= 0) {
+      this._lastFrameElapsed = elapsed;
+      return;
+    }
     let dt = this._lastFrameElapsed == null ? 1 / 60 : elapsed - this._lastFrameElapsed;
     this._lastFrameElapsed = elapsed;
     if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;

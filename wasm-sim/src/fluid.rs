@@ -162,6 +162,12 @@ const LBM_STOP_SETTLE_DECAY_MIX: f32 = 0.18;
 const LBM_STOP_SETTLE_VISCOSITY_MIX: f32 = 0.14;
 const LBM_STOP_SETTLE_MAX_MIX: f32 = 0.98;
 const LBM_STOP_RETENTION_EXPONENT: i32 = 2;
+const LBM_ACTIVE_STOP_SPEED_RATIO: f32 = 0.45;
+const LBM_ACTIVE_SPEED_FLOOR: f32 = 0.0025;
+const LBM_ACTIVE_CARRY_RATIO: f32 = 0.35;
+const LBM_ACTIVE_RHO_THRESHOLD: f32 = 0.012;
+const LBM_ACTIVE_PIGMENT_THRESHOLD: f32 = 0.008;
+const LBM_ACTIVE_PHASE_THRESHOLD: f32 = 0.02;
 #[cfg(test)]
 const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
@@ -1051,11 +1057,15 @@ impl FluidSimulation {
 
     fn refresh_lbm_activity(&mut self) {
         let mut active = 0u32;
+        let motion_threshold = (self.params.stop_speed * LBM_ACTIVE_STOP_SPEED_RATIO)
+            .max(LBM_ACTIVE_SPEED_FLOOR);
+        let carry_threshold = motion_threshold * LBM_ACTIVE_CARRY_RATIO;
         for index in 0..self.lbm.rho.len() {
-            if self.lbm.rho[index] > 0.015
-                || self.lbm.pigment[index][3] > 0.01
-                || self.lbm.phase[index] > 0.03
-            {
+            let speed = self.lbm.velocity[index][0].hypot(self.lbm.velocity[index][1]);
+            let carries_visible_fluid = self.lbm.rho[index] > LBM_ACTIVE_RHO_THRESHOLD
+                || self.lbm.pigment[index][3] > LBM_ACTIVE_PIGMENT_THRESHOLD
+                || self.lbm.phase[index] > LBM_ACTIVE_PHASE_THRESHOLD;
+            if speed > motion_threshold || (carries_visible_fluid && speed > carry_threshold) {
                 active += 1;
             }
         }
@@ -1708,10 +1718,16 @@ mod tests {
         };
         let slow_energy = summed_speed(&slow_stop);
         let fast_energy = summed_speed(&fast_stop);
+        let slow_active = slow_stop.particle_count();
+        let fast_active = fast_stop.particle_count();
 
         assert!(
             fast_energy < slow_energy * LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD,
             "expected higher stop speed to settle faster (slow={slow_energy:.5}, fast={fast_energy:.5})"
+        );
+        assert!(
+            fast_active < slow_active,
+            "expected higher stop speed to deactivate more lattice cells (slow={slow_active}, fast={fast_active})"
         );
         assert!(
             fast_stop.lbm.pigment.iter().any(|px| px[3] > 0.01),
