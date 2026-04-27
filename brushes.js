@@ -2794,6 +2794,8 @@ export class FluidBrush {
     this._maskCtx = this._maskCanvas.getContext('2d', { willReadFrequently: true });
     this._frameCanvas = document.createElement('canvas');
     this._frameCtx = this._frameCanvas.getContext('2d', { willReadFrequently: true });
+    this._strokeBaseCanvas = document.createElement('canvas');
+    this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
     this._maskSynced = false;
   }
 
@@ -2822,6 +2824,7 @@ export class FluidBrush {
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
+    this._captureStrokeBase();
     this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
     this._updateSimulator();
@@ -2829,7 +2832,7 @@ export class FluidBrush {
   }
 
   onMove(x, y, pressure) {
-    if (!this._ready || !this.sim) return;
+    if (!this._active || !this._ready || !this.sim) return;
     const previousPoint = this._lastPoint;
     if (!previousPoint) {
       this._lastPoint = { x, y };
@@ -2908,7 +2911,20 @@ export class FluidBrush {
     this._maskSynced = true;
   }
 
+  _captureStrokeBase() {
+    const layer = this._strokeLayer;
+    if (!layer) return;
+    if (this._strokeBaseCanvas.width !== this.app.W || this._strokeBaseCanvas.height !== this.app.H) {
+      this._strokeBaseCanvas.width = this.app.W;
+      this._strokeBaseCanvas.height = this.app.H;
+    }
+    this._strokeBaseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._strokeBaseCtx.clearRect(0, 0, this._strokeBaseCanvas.width, this._strokeBaseCanvas.height);
+    this._strokeBaseCtx.drawImage(layer.canvas, 0, 0);
+  }
+
   _seedAt(x, y, pressure, previousPoint, amount, p) {
+    if (!this._active) return;
     if (!this._updateSimulator()) return;
     p = p ?? this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
@@ -2946,6 +2962,9 @@ export class FluidBrush {
     }
     const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer) return;
+    if (this._strokeBaseCanvas.width !== this.app.W || this._strokeBaseCanvas.height !== this.app.H) {
+      this._captureStrokeBase();
+    }
     const frame = this.sim.readPixels();
     if (!frame.width || !frame.height) return;
     if (this._frameCanvas.width !== frame.width || this._frameCanvas.height !== frame.height) {
@@ -2954,6 +2973,9 @@ export class FluidBrush {
     }
     this._frameCtx.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
     layer.ctx.save();
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.drawImage(this._strokeBaseCanvas, 0, 0);
     layer.ctx.globalCompositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
     layer.ctx.drawImage(this._frameCanvas, 0, 0, this.app.W, this.app.H);
     layer.ctx.restore();
@@ -2987,6 +3009,7 @@ export class FluidBrush {
     this._active = false;
     this._lastPoint = null;
     this._lastFrameElapsed = null;
+    this._strokeLayer = null;
   }
 }
 
