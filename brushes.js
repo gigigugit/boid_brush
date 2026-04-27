@@ -2914,13 +2914,13 @@ export class FluidBrush {
   _captureStrokeBase() {
     const layer = this._strokeLayer;
     if (!layer) return;
-    if (this._strokeBaseCanvas.width !== this.app.W || this._strokeBaseCanvas.height !== this.app.H) {
-      this._strokeBaseCanvas.width = this.app.W;
-      this._strokeBaseCanvas.height = this.app.H;
+    if (this._strokeBaseCanvas.width !== layer.canvas.width || this._strokeBaseCanvas.height !== layer.canvas.height) {
+      this._strokeBaseCanvas.width = layer.canvas.width;
+      this._strokeBaseCanvas.height = layer.canvas.height;
     }
     this._strokeBaseCtx.setTransform(1, 0, 0, 1, 0, 0);
     this._strokeBaseCtx.clearRect(0, 0, this._strokeBaseCanvas.width, this._strokeBaseCanvas.height);
-    this._strokeBaseCtx.drawImage(layer.canvas, 0, 0);
+    this._strokeBaseCtx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height);
   }
 
   _seedAt(x, y, pressure, previousPoint, amount, p) {
@@ -2962,7 +2962,7 @@ export class FluidBrush {
     }
     const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer) return;
-    if (this._strokeBaseCanvas.width !== this.app.W || this._strokeBaseCanvas.height !== this.app.H) {
+    if (this._strokeBaseCanvas.width !== layer.canvas.width || this._strokeBaseCanvas.height !== layer.canvas.height) {
       this._captureStrokeBase();
     }
     const frame = this.sim.readPixels();
@@ -2977,9 +2977,9 @@ export class FluidBrush {
     // render doesn't accumulate on top of itself and look like fresh seeding.
     layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    layer.ctx.drawImage(this._strokeBaseCanvas, 0, 0);
+    layer.ctx.drawImage(this._strokeBaseCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.globalCompositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
-    layer.ctx.drawImage(this._frameCanvas, 0, 0, this.app.W, this.app.H);
+    layer.ctx.drawImage(this._frameCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.restore();
     layer.dirty = true;
     this.app.compositeAllLayers();
