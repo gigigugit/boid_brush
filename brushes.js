@@ -2962,7 +2962,7 @@ export class FluidBrush {
     }
     const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer) return;
-    if (this._strokeBaseCanvas.width !== layer.canvas.width || this._strokeBaseCanvas.height !== layer.canvas.height) {
+    if (!this._strokeBaseCanvas.width || !this._strokeBaseCanvas.height) {
       this._captureStrokeBase();
     }
     const frame = this.sim.readPixels();
@@ -2974,7 +2974,9 @@ export class FluidBrush {
     this._frameCtx.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
     layer.ctx.save();
     // Rebuild from the captured pre-stroke layer each frame so the full fluid
-    // render doesn't accumulate on top of itself and look like fresh seeding.
+    // render doesn't accumulate and create heavier-looking artifacts that read
+    // like fresh paint injection after touch-up. Use backing-canvas dimensions
+    // here so the redraw stays aligned with DPR-scaled pointer coordinates.
     layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.drawImage(this._strokeBaseCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
