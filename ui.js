@@ -38,6 +38,13 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
   return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
 }
 
+function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
+  const fmtFn = fmt || (v => v);
+  const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
+  const btnStyle = 'width:20px;height:20px;padding:0;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#ddd;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;';
+  return `<label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${btnStyle}">−</button><span id="v_${id}">${fmtFn(value)}</span><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${btnStyle}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
+}
+
 // ── Build sidebar DOM ───────────────────────────────────────
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
@@ -250,8 +257,8 @@ export function buildSidebar(app) {
     <!-- Fluid Settling (fluid only) -->
     <div class="section-header" data-brushes="fluid" data-section="fluidSettling">Fluid Settling <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
-      ${sliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 62, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
-      ${sliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 24, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
+      ${nudgeSliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 62, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
+      ${nudgeSliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 24, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
       ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 44, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
       ${sliderRow('lbmPigmentRetention', 'Pigment Retention', 0, 100, 78, v => (v / 100).toFixed(2), 'How much pigment and phase remain while the fluid settles')}
     </div>
@@ -481,6 +488,21 @@ export function buildSidebar(app) {
       syncEdgeSliders();
     };
     inp.addEventListener('input', update);
+  });
+
+  sb.querySelectorAll('.slider-nudge-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      if (!target) return;
+      const delta = Number(btn.dataset.delta) || 0;
+      const min = Number(target.min);
+      const max = Number(target.max);
+      const next = Math.max(min, Math.min(max, (Number(target.value) || 0) + delta));
+      if (next === Number(target.value)) return;
+      target.value = String(next);
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+    });
   });
 
   // Checkbox & select → invalidate params
