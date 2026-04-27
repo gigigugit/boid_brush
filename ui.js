@@ -45,6 +45,25 @@ function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
   return `<label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${NUDGE_BUTTON_STYLE}">−</button><span id="v_${id}">${fmtFn(value)}</span><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${NUDGE_BUTTON_STYLE}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
 }
 
+function fluidMidrangeRow() {
+  return `<div style="display:flex;align-items:center;gap:6px;margin:4px 0 2px;"><span style="flex:1;color:#cbd7e6;font-weight:600;">Midrange Flow</span><button type="button" class="fluid-midrange-btn" data-fluid-bias="-1" aria-label="Nudge midrange flow calmer" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Calmer</button><button type="button" class="fluid-midrange-btn" data-fluid-bias="0" aria-label="Reset midrange flow bias" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Reset</button><button type="button" class="fluid-midrange-btn" data-fluid-bias="1" aria-label="Nudge midrange flow livelier" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Livelier</button></div><span class="slider-desc">Bias Time Step, Motion Slowdown, Stop Threshold, and Viscosity together first, then fine-tune the raw sliders below.</span>`;
+}
+
+function _setRangeValue(target, next) {
+  if (!target) return;
+  const min = Number(target.min);
+  const max = Number(target.max);
+  const clamped = Math.max(min, Math.min(max, next));
+  if (clamped === Number(target.value)) return;
+  target.value = String(clamped);
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function _nudgeRangeValue(target, delta) {
+  _setRangeValue(target, (Number(target?.value) || 0) + delta);
+}
+
 // ── Build sidebar DOM ───────────────────────────────────────
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
@@ -245,12 +264,18 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Fluid Flow (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="fluidMidrange">Fluid Midrange <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid">
+      ${fluidMidrangeRow()}
+    </div>
+
+    <!-- Fluid Flow (fluid only) -->
     <div class="section-header closed" data-brushes="fluid" data-section="fluidFlow">Fluid Flow <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
-      ${sliderRow('lbmViscosity', 'Viscosity', 0, 100, 76, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
+      ${nudgeSliderRow('lbmViscosity', 'Viscosity', 0, 100, 76, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
       ${sliderRow('lbmDensity', 'Density', 0, 100, 30, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
       ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 34, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
-      ${sliderRow('lbmTimeStep', 'Time Step', 1, 64, 10, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
+      ${nudgeSliderRow('lbmTimeStep', 'Time Step', 1, 64, 10, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
       ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 2, null, 'How many solver iterations run per frame')}
     </div>
 
@@ -493,15 +518,34 @@ export function buildSidebar(app) {
   sb.querySelectorAll('.slider-nudge-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = document.getElementById(btn.dataset.target);
-      if (!target) return;
-      const delta = Number(btn.dataset.delta) || 0;
-      const min = Number(target.min);
-      const max = Number(target.max);
-      const next = Math.max(min, Math.min(max, (Number(target.value) || 0) + delta));
-      if (next === Number(target.value)) return;
-      target.value = String(next);
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      target.dispatchEvent(new Event('change', { bubbles: true }));
+      _nudgeRangeValue(target, Number(btn.dataset.delta) || 0);
+    });
+  });
+
+  sb.querySelectorAll('.fluid-midrange-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bias = Number(btn.dataset.fluidBias);
+      const updates = bias === 0 ? {
+        lbmTimeStep: 10,
+        lbmMotionDecay: 62,
+        lbmStopSpeed: 24,
+        lbmViscosity: 76,
+      } : {
+        lbmTimeStep: (Number(document.getElementById('lbmTimeStep')?.value) || 10) + bias,
+        lbmMotionDecay: (Number(document.getElementById('lbmMotionDecay')?.value) || 62) - bias * 2,
+        lbmStopSpeed: (Number(document.getElementById('lbmStopSpeed')?.value) || 24) - bias,
+        lbmViscosity: (Number(document.getElementById('lbmViscosity')?.value) || 76) - bias,
+      };
+      for (const [id, value] of Object.entries(updates)) {
+        _setRangeValue(document.getElementById(id), value);
+      }
+      app.showToast(
+        bias === 0
+          ? '💧 Midrange flow reset'
+          : bias < 0
+            ? '💧 Midrange flow nudged calmer'
+            : '💧 Midrange flow nudged livelier'
+      );
     });
   });
 
