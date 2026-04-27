@@ -182,6 +182,11 @@ const LBM_PHASE_RETENTION_BASE: f32 = 0.984;
 const LBM_PHASE_RETENTION_RANGE: f32 = 0.013;
 const LBM_PIGMENT_RETENTION_BASE: f32 = 0.986;
 const LBM_PIGMENT_RETENTION_RANGE: f32 = 0.012;
+const LBM_MOTION_DECAY_SCALE: f32 = 0.06;
+const LBM_MOTION_DECAY_MIN: f32 = 0.91;
+const LBM_MOTION_DECAY_MAX: f32 = 0.9993;
+const LBM_INTERFACE_DRAG_BASE: f32 = 0.018;
+const LBM_INTERFACE_DRAG_VISCOSITY_SCALE: f32 = 0.014;
 #[cfg(test)]
 const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
@@ -655,10 +660,12 @@ impl FluidSimulation {
 
         let tau = 0.56 + self.params.viscosity * 1.22;
         let omega = 1.0 / tau.max(0.52);
-        let decay = (1.0 - self.params.motion_decay * 0.06).clamp(0.91, 0.9993);
+        let decay = (1.0 - self.params.motion_decay * LBM_MOTION_DECAY_SCALE)
+            .clamp(LBM_MOTION_DECAY_MIN, LBM_MOTION_DECAY_MAX);
         let max_speed = 0.14 + self.params.density * 0.22 + self.params.surface_tension * 0.04;
         let surface_tension = 0.01 + self.params.surface_tension * 0.09;
-        let interface_drag = 0.018 + self.params.viscosity * 0.014;
+        let interface_drag =
+            LBM_INTERFACE_DRAG_BASE + self.params.viscosity * LBM_INTERFACE_DRAG_VISCOSITY_SCALE;
         let stop_threshold = self.params.stop_speed.max(0.0);
 
         for y in 0..height as i32 {
@@ -1119,6 +1126,10 @@ impl FluidSimulation {
     }
 
     fn settle_lbm_resting_cells(&mut self) {
+        // Snap cells to a true rest state only after both their raw velocity and their
+        // carry-adjusted visible motion drop below the stop threshold. This keeps the
+        // solver from declaring a cell "stopped" while pigment carry would still make
+        // the fluid appear to drift on screen.
         let rest_speed = (self.params.stop_speed * LBM_REST_SPEED_RATIO).max(LBM_ACTIVE_SPEED_FLOOR);
         for index in 0..self.lbm.rho.len() {
             let rho = self.lbm.rho[index];

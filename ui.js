@@ -225,7 +225,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Fluid Brush (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="lbmBrush">Fluid Brush <span class="chevron">▼</span></div>
+    <div class="section-header" data-brushes="fluid" data-section="fluidBrush">Fluid Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${sliderRow('lbmBrushRadius', 'Brush Radius', 2, 240, 36, null, 'Footprint of each free-flow injection along the stroke')}
       ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 16, null, 'How much pigment mass is injected at each pointer sample')}
@@ -238,7 +238,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Fluid Flow (fluid only) -->
-    <div class="section-header closed" data-brushes="fluid" data-section="lbmFlow">Fluid Flow <span class="chevron">▼</span></div>
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidFlow">Fluid Flow <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       ${sliderRow('lbmViscosity', 'Viscosity', 0, 100, 76, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
       ${sliderRow('lbmDensity', 'Density', 0, 100, 30, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
@@ -248,7 +248,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Fluid Settling (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="lbmSettling">Fluid Settling <span class="chevron">▼</span></div>
+    <div class="section-header" data-brushes="fluid" data-section="fluidSettling">Fluid Settling <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${sliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 62, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
       ${sliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 24, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
@@ -257,7 +257,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Fluid Rendering (fluid only) -->
-    <div class="section-header closed" data-brushes="fluid" data-section="lbmRendering">Fluid Rendering <span class="chevron">▼</span></div>
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidRendering">Fluid Rendering <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       <label>Render <select id="lbmRenderMode">
         <option value="hybrid">Hybrid</option>
