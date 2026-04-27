@@ -22,7 +22,7 @@ export function fluid_read_pixels(handle: number): Uint8Array;
 
 export function fluid_set_mask_rgba(handle: number, rgba: Uint8Array): void;
 
-export function fluid_set_params(handle: number, particle_radius: number, viscosity: number, density: number, surface_tension: number, time_step: number, substeps: number, motion_decay: number, stop_speed: number, simulation_type: number, render_mode: number): void;
+export function fluid_set_params(handle: number, particle_radius: number, viscosity: number, density: number, surface_tension: number, time_step: number, substeps: number, motion_decay: number, stop_speed: number, pigment_carry: number, pigment_retention: number, simulation_type: number, render_mode: number): void;
 
 export function fluid_step(handle: number, dt: number): void;
 
@@ -158,7 +158,7 @@ export interface InitOutput {
     readonly fluid_get_particles: (a: number, b: number) => void;
     readonly fluid_read_pixels: (a: number, b: number) => void;
     readonly fluid_set_mask_rgba: (a: number, b: number, c: number) => void;
-    readonly fluid_set_params: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly fluid_set_params: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
     readonly get_agent_buffer_ptr: () => number;
     readonly get_params_buffer_ptr: () => number;
     readonly get_params_len: () => number;
