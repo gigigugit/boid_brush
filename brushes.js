@@ -2815,7 +2815,7 @@ export class FluidBrush {
     return this._initPromise;
   }
 
-  _clearCommittedSimulation() {
+  _resetSimulatorState() {
     if (!this.sim) return;
     this.sim.clearParticles();
   }
@@ -2829,7 +2829,7 @@ export class FluidBrush {
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
-    this._clearCommittedSimulation();
+    this._resetSimulatorState();
     this._captureStrokeBase();
     this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
@@ -2966,7 +2966,7 @@ export class FluidBrush {
       this._depositFrame();
     }
     if (!this._active && prevCount > 0 && nextCount <= 0) {
-      this._clearCommittedSimulation();
+      this._resetSimulatorState();
     }
   }
 
@@ -3029,7 +3029,7 @@ export class FluidBrush {
     this._lastPoint = null;
     this._lastFrameElapsed = null;
     this._strokeLayer = null;
-    this._clearCommittedSimulation();
+    this._resetSimulatorState();
   }
 }
 
