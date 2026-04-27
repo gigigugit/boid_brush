@@ -252,7 +252,7 @@ export function buildSidebar(app) {
       ${sliderRow('lbmTimeStep', 'Time Step', 1, 64, 10, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
       ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 2, null, 'How many solver iterations run per frame')}
       ${sliderRow('lbmMotionDecay', 'Decay', 0, 100, 58, v => (v / 100).toFixed(2), 'How quickly motion energy dissipates')}
-      ${sliderRow('lbmStopSpeed', 'Stop Speed', 0, 100, 30, v => (v / 100).toFixed(2), 'Velocity threshold below which motion settles')}
+      ${sliderRow('lbmStopSpeed', 'Stop Speed', 0, 100, 32, v => (v / 100).toFixed(2), 'Velocity threshold below which motion settles')}
       ${sliderRow('lbmResolutionScale', 'Resolution', 50, 200, 100, v => v + '%', 'Internal lattice resolution relative to the canvas')}
       ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 115, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
     </div>

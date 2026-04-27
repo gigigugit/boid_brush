@@ -1232,7 +1232,7 @@ export class App {
       lbmTimeStep: numOr('lbmTimeStep', 10) / 16,
       lbmSubsteps: numOr('lbmSubsteps', 2),
       lbmMotionDecay: numOr('lbmMotionDecay', 58) / 100,
-      lbmStopSpeed: numOr('lbmStopSpeed', 30) / 100,
+      lbmStopSpeed: numOr('lbmStopSpeed', 32) / 100,
       lbmResolutionScale: numOr('lbmResolutionScale', 100) / 100,
       lbmFluidScale: numOr('lbmFluidScale', 115) / 100,
       lbmStrokePull: numOr('lbmStrokePull', 36) / 100,

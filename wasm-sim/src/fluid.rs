@@ -168,7 +168,9 @@ const LBM_ACTIVE_CARRY_RATIO: f32 = 0.22;
 const LBM_ACTIVE_RHO_THRESHOLD: f32 = 0.012;
 const LBM_ACTIVE_PIGMENT_THRESHOLD: f32 = 0.008;
 const LBM_ACTIVE_PHASE_THRESHOLD: f32 = 0.02;
-const LBM_REST_SPEED_RATIO: f32 = 0.72;
+const LBM_REST_SPEED_RATIO: f32 = 1.0;
+const LBM_FINAL_REST_ACTIVE_LIMIT: u32 = 20;
+const LBM_FINAL_REST_MOTION_MULTIPLIER: f32 = 6.0;
 #[cfg(test)]
 const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
@@ -1098,6 +1100,7 @@ impl FluidSimulation {
 
     fn refresh_lbm_activity(&mut self) {
         let mut active = 0u32;
+        let mut total_motion = 0.0f32;
         let motion_threshold = (self.params.stop_speed * LBM_ACTIVE_STOP_SPEED_RATIO)
             .max(LBM_ACTIVE_SPEED_FLOOR);
         let carry_threshold = motion_threshold * LBM_ACTIVE_CARRY_RATIO;
@@ -1108,7 +1111,13 @@ impl FluidSimulation {
                 || self.lbm.phase[index] > LBM_ACTIVE_PHASE_THRESHOLD;
             if speed > motion_threshold || (carries_visible_fluid && speed > carry_threshold) {
                 active += 1;
+                total_motion += speed;
             }
+        }
+        if active <= LBM_FINAL_REST_ACTIVE_LIMIT
+            && total_motion <= motion_threshold * LBM_FINAL_REST_MOTION_MULTIPLIER
+        {
+            active = 0;
         }
         self.lbm.active_cells = active;
     }
@@ -1779,7 +1788,7 @@ mod tests {
     #[test]
     fn lbm_resting_fluid_deactivates_without_losing_pigment() {
         let mut sim = FluidSimulation::new(48, 48);
-        sim.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.3, 2, 2);
+        sim.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.32, 2, 2);
         sim.add_particles_from_slice(&[24.0, 24.0, 1.4, 0.0, 71.0, 199.0, 255.0, 0.84, 4.0], 9);
 
         for _ in 0..180 {
