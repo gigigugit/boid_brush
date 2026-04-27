@@ -2973,6 +2973,8 @@ export class FluidBrush {
     }
     this._frameCtx.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
     layer.ctx.save();
+    // Rebuild from the captured pre-stroke layer each frame so the full fluid
+    // render doesn't accumulate on top of itself and look like fresh seeding.
     layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.drawImage(this._strokeBaseCanvas, 0, 0);
