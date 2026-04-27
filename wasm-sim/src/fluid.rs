@@ -42,6 +42,8 @@ pub struct FluidParams {
     pub substeps: u32,
     pub motion_decay: f32,
     pub stop_speed: f32,
+    pub pigment_carry: f32,
+    pub pigment_retention: f32,
     pub simulation_type: FluidSimulationType,
     pub render_mode: FluidRenderMode,
 }
@@ -57,6 +59,8 @@ impl Default for FluidParams {
             substeps: 3,
             motion_decay: 0.12,
             stop_speed: 0.025,
+            pigment_carry: 0.44,
+            pigment_retention: 0.78,
             simulation_type: FluidSimulationType::Sph,
             render_mode: FluidRenderMode::Hybrid,
         }
@@ -157,20 +161,27 @@ const LBM_RENDER_PIGMENT_THRESHOLD: f32 = 0.0001;
 const LBM_PHASE_CLEAR_THRESHOLD: f32 = 0.003;
 const LBM_MASK_EDGE_RETAIN_FACTOR: f32 = 0.96;
 const LBM_RENDER_ALPHA_MAX: f32 = 0.96;
-const LBM_STOP_SETTLE_BASE_MIX: f32 = 0.86;
-const LBM_STOP_SETTLE_DECAY_MIX: f32 = 0.24;
-const LBM_STOP_SETTLE_VISCOSITY_MIX: f32 = 0.18;
+const LBM_STOP_SETTLE_BASE_MIX: f32 = 0.9;
 const LBM_STOP_SETTLE_MAX_MIX: f32 = 0.995;
 const LBM_STOP_RETENTION_EXPONENT: i32 = 2;
-const LBM_ACTIVE_STOP_SPEED_RATIO: f32 = 0.65;
+const LBM_ACTIVE_STOP_SPEED_RATIO: f32 = 1.0;
 const LBM_ACTIVE_SPEED_FLOOR: f32 = 0.0025;
-const LBM_ACTIVE_CARRY_RATIO: f32 = 0.22;
 const LBM_ACTIVE_RHO_THRESHOLD: f32 = 0.012;
 const LBM_ACTIVE_PIGMENT_THRESHOLD: f32 = 0.008;
 const LBM_ACTIVE_PHASE_THRESHOLD: f32 = 0.02;
 const LBM_REST_SPEED_RATIO: f32 = 1.0;
 const LBM_FINAL_REST_ACTIVE_LIMIT: u32 = 20;
 const LBM_FINAL_REST_MOTION_MULTIPLIER: f32 = 6.0;
+const LBM_VISIBLE_CARRY_BASE: f32 = 0.35;
+const LBM_VISIBLE_CARRY_RANGE: f32 = 1.55;
+const LBM_PHASE_ADVECT_BASE: f32 = 2.4;
+const LBM_PHASE_ADVECT_RANGE: f32 = 4.6;
+const LBM_PIGMENT_ADVECT_BASE: f32 = 3.1;
+const LBM_PIGMENT_ADVECT_RANGE: f32 = 5.6;
+const LBM_PHASE_RETENTION_BASE: f32 = 0.984;
+const LBM_PHASE_RETENTION_RANGE: f32 = 0.013;
+const LBM_PIGMENT_RETENTION_BASE: f32 = 0.986;
+const LBM_PIGMENT_RETENTION_RANGE: f32 = 0.012;
 #[cfg(test)]
 const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
@@ -212,6 +223,8 @@ impl FluidSimulation {
         substeps: u32,
         motion_decay: f32,
         stop_speed: f32,
+        pigment_carry: f32,
+        pigment_retention: f32,
         simulation_type: u32,
         render_mode: u32,
     ) {
@@ -225,6 +238,8 @@ impl FluidSimulation {
             substeps: substeps.clamp(1, 12),
             motion_decay: motion_decay.clamp(0.0, 2.0),
             stop_speed: stop_speed.clamp(0.0, 3.0),
+            pigment_carry: pigment_carry.clamp(0.0, 1.0),
+            pigment_retention: pigment_retention.clamp(0.0, 1.0),
             simulation_type: FluidSimulationType::from(simulation_type),
             render_mode: FluidRenderMode::from(render_mode),
         };
@@ -309,6 +324,37 @@ impl FluidSimulation {
             self.lbm.active_cells
         } else {
             self.particles.len() as u32
+        }
+    }
+
+    fn lbm_visible_carry_scale(&self) -> f32 {
+        LBM_VISIBLE_CARRY_BASE + self.params.pigment_carry * LBM_VISIBLE_CARRY_RANGE
+    }
+
+    fn lbm_phase_advect_scale(&self) -> f32 {
+        LBM_PHASE_ADVECT_BASE + self.params.pigment_carry * LBM_PHASE_ADVECT_RANGE
+    }
+
+    fn lbm_pigment_advect_scale(&self) -> f32 {
+        LBM_PIGMENT_ADVECT_BASE + self.params.pigment_carry * LBM_PIGMENT_ADVECT_RANGE
+    }
+
+    fn lbm_phase_retention(&self) -> f32 {
+        (LBM_PHASE_RETENTION_BASE + self.params.pigment_retention * LBM_PHASE_RETENTION_RANGE)
+            .clamp(0.0, 0.9997)
+    }
+
+    fn lbm_pigment_retention(&self) -> f32 {
+        (LBM_PIGMENT_RETENTION_BASE
+            + self.params.pigment_retention * LBM_PIGMENT_RETENTION_RANGE)
+            .clamp(0.0, 0.9998)
+    }
+
+    fn lbm_visible_speed(&self, speed: f32, carries_visible_fluid: bool) -> f32 {
+        if carries_visible_fluid {
+            speed * self.lbm_visible_carry_scale()
+        } else {
+            speed
         }
     }
 
@@ -609,10 +655,10 @@ impl FluidSimulation {
 
         let tau = 0.56 + self.params.viscosity * 1.22;
         let omega = 1.0 / tau.max(0.52);
-        let decay = (1.0 - self.params.motion_decay * 0.05).clamp(0.935, 0.9995);
+        let decay = (1.0 - self.params.motion_decay * 0.06).clamp(0.91, 0.9993);
         let max_speed = 0.14 + self.params.density * 0.22 + self.params.surface_tension * 0.04;
         let surface_tension = 0.01 + self.params.surface_tension * 0.09;
-        let interface_drag = 0.02 + self.params.motion_decay * 0.014;
+        let interface_drag = 0.018 + self.params.viscosity * 0.014;
         let stop_threshold = self.params.stop_speed.max(0.0);
 
         for y in 0..height as i32 {
@@ -661,10 +707,7 @@ impl FluidSimulation {
                 let mut stop_mix = 0.0;
                 if stop_threshold > LBM_EPSILON && speed < stop_threshold {
                     let normalized = (1.0 - speed / stop_threshold).clamp(0.0, 1.0);
-                    stop_mix = (normalized
-                        * (LBM_STOP_SETTLE_BASE_MIX
-                            + self.params.motion_decay * LBM_STOP_SETTLE_DECAY_MIX
-                            + self.params.viscosity * LBM_STOP_SETTLE_VISCOSITY_MIX))
+                    stop_mix = (normalized * LBM_STOP_SETTLE_BASE_MIX)
                         .clamp(0.0, LBM_STOP_SETTLE_MAX_MIX);
                     let retained = (1.0 - stop_mix).powi(LBM_STOP_RETENTION_EXPONENT);
                     ux *= retained;
@@ -978,7 +1021,7 @@ impl FluidSimulation {
     fn advect_lbm_phase(&mut self, mask: &[u8], mask_has_content: bool, width: u32, height: u32) {
         let phase = self.lbm.phase.clone();
         self.lbm.next_phase.fill(0.0);
-        let advect_scale = 2.7 + self.params.density * 3.6 + self.params.surface_tension * 0.6;
+        let advect_scale = self.lbm_phase_advect_scale();
         let tension_mix =
             (0.04 + self.params.viscosity * 0.06 + self.params.density * 0.04).clamp(0.03, 0.14);
         let anchor_mix = if mask_has_content {
@@ -986,7 +1029,7 @@ impl FluidSimulation {
         } else {
             0.0
         };
-        let retain = (0.994 - self.params.motion_decay * 0.009).clamp(0.95, 0.998);
+        let retain = self.lbm_phase_retention();
 
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -1039,7 +1082,8 @@ impl FluidSimulation {
     fn advect_lbm_pigment(&mut self, mask: &[u8], mask_has_content: bool, width: u32, height: u32) {
         let pigment = self.lbm.pigment.clone();
         self.lbm.next_pigment.fill([0.0; 4]);
-        let advect_scale = 4.2 + self.params.density * 4.6 + self.params.surface_tension * 0.7;
+        let advect_scale = self.lbm_pigment_advect_scale();
+        let pigment_retain = self.lbm_pigment_retention();
 
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -1063,6 +1107,9 @@ impl FluidSimulation {
                         sampled[channel] *= LBM_MASK_EDGE_RETAIN_FACTOR;
                     }
                 }
+                for channel in 0..4 {
+                    sampled[channel] *= pigment_retain;
+                }
 
                 self.lbm.next_pigment[index] = sampled;
             }
@@ -1085,7 +1132,11 @@ impl FluidSimulation {
             }
 
             let speed = self.lbm.velocity[index][0].hypot(self.lbm.velocity[index][1]);
-            if speed > rest_speed {
+            let carries_visible_fluid = rho > LBM_ACTIVE_RHO_THRESHOLD
+                || alpha > LBM_ACTIVE_PIGMENT_THRESHOLD
+                || phase > LBM_ACTIVE_PHASE_THRESHOLD;
+            let visible_speed = self.lbm_visible_speed(speed, carries_visible_fluid);
+            if speed > rest_speed || visible_speed > rest_speed {
                 continue;
             }
 
@@ -1103,15 +1154,17 @@ impl FluidSimulation {
         let mut total_motion = 0.0f32;
         let motion_threshold = (self.params.stop_speed * LBM_ACTIVE_STOP_SPEED_RATIO)
             .max(LBM_ACTIVE_SPEED_FLOOR);
-        let carry_threshold = motion_threshold * LBM_ACTIVE_CARRY_RATIO;
+        let carry_threshold = motion_threshold.max(LBM_ACTIVE_SPEED_FLOOR);
         for index in 0..self.lbm.rho.len() {
             let speed = self.lbm.velocity[index][0].hypot(self.lbm.velocity[index][1]);
             let carries_visible_fluid = self.lbm.rho[index] > LBM_ACTIVE_RHO_THRESHOLD
                 || self.lbm.pigment[index][3] > LBM_ACTIVE_PIGMENT_THRESHOLD
                 || self.lbm.phase[index] > LBM_ACTIVE_PHASE_THRESHOLD;
-            if speed > motion_threshold || (carries_visible_fluid && speed > carry_threshold) {
+            let visible_speed = self.lbm_visible_speed(speed, carries_visible_fluid);
+            if speed > motion_threshold || (carries_visible_fluid && visible_speed > carry_threshold)
+            {
                 active += 1;
-                total_motion += speed;
+                total_motion += visible_speed.max(speed);
             }
         }
         if active <= LBM_FINAL_REST_ACTIVE_LIMIT
@@ -1588,6 +1641,8 @@ mod tests {
             3,
             0.12,
             0.025,
+            0.44,
+            0.78,
             1,
             FluidRenderMode::Hybrid as u32,
         );
@@ -1627,6 +1682,8 @@ mod tests {
             3,
             0.12,
             0.025,
+            0.44,
+            0.78,
             2,
             FluidRenderMode::Hybrid as u32,
         );
@@ -1681,6 +1738,8 @@ mod tests {
             3,
             0.08,
             0.02,
+            0.44,
+            0.78,
             2,
             FluidRenderMode::Hybrid as u32,
         );
@@ -1700,7 +1759,20 @@ mod tests {
     #[test]
     fn lbm_does_not_render_colorless_phase_as_blue() {
         let mut sim = FluidSimulation::new(16, 16);
-        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Hybrid as u32);
+        sim.set_params(
+            4.0,
+            0.45,
+            0.7,
+            0.58,
+            1.0,
+            3,
+            0.12,
+            0.025,
+            0.44,
+            0.78,
+            2,
+            FluidRenderMode::Hybrid as u32,
+        );
         let index = 8usize * 16 + 8usize;
         sim.lbm.rho[index] = 0.2;
         sim.lbm.phase[index] = 0.7;
@@ -1714,7 +1786,20 @@ mod tests {
     #[test]
     fn lbm_renders_pigment_color_without_blue_fallback() {
         let mut sim = FluidSimulation::new(16, 16);
-        sim.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.025, 2, FluidRenderMode::Hybrid as u32);
+        sim.set_params(
+            4.0,
+            0.45,
+            0.7,
+            0.58,
+            1.0,
+            3,
+            0.12,
+            0.025,
+            0.44,
+            0.78,
+            2,
+            FluidRenderMode::Hybrid as u32,
+        );
         let index = 8usize * 16 + 8usize;
         sim.lbm.rho[index] = 0.2;
         sim.lbm.phase[index] = 0.7;
@@ -1744,8 +1829,8 @@ mod tests {
         let mut slow_stop = FluidSimulation::new(48, 48);
         let mut fast_stop = FluidSimulation::new(48, 48);
 
-        slow_stop.set_params(4.0, 0.45, 0.78, 0.58, 1.0, 3, 0.12, 0.01, 2, 2);
-        fast_stop.set_params(4.0, 0.45, 0.78, 0.58, 1.0, 3, 0.12, 0.16, 2, 2);
+        slow_stop.set_params(4.0, 0.45, 0.78, 0.58, 1.0, 3, 0.12, 0.01, 0.44, 0.78, 2, 2);
+        fast_stop.set_params(4.0, 0.45, 0.78, 0.58, 1.0, 3, 0.12, 0.16, 0.44, 0.78, 2, 2);
 
         let seed = [
             24.0, 24.0, 1.8, 0.2, 71.0, 199.0, 255.0, 0.88, 4.0, 28.0, 25.0, -1.1, 0.4, 71.0,
@@ -1788,7 +1873,7 @@ mod tests {
     #[test]
     fn lbm_resting_fluid_deactivates_without_losing_pigment() {
         let mut sim = FluidSimulation::new(48, 48);
-        sim.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.32, 2, 2);
+        sim.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.32, 0.44, 0.78, 2, 2);
         sim.add_particles_from_slice(&[24.0, 24.0, 1.4, 0.0, 71.0, 199.0, 255.0, 0.84, 4.0], 9);
 
         for _ in 0..180 {
@@ -1810,6 +1895,132 @@ mod tests {
     }
 
     #[test]
+    fn lbm_pigment_carry_extends_visible_drift_without_adding_motion_energy() {
+        let mut short_carry = FluidSimulation::new(32, 32);
+        let mut long_carry = FluidSimulation::new(32, 32);
+        let mask = full_mask(32, 32);
+
+        short_carry.set_mask_rgba(&mask);
+        long_carry.set_mask_rgba(&mask);
+        short_carry.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.05, 0.05, 0.78, 2, 2);
+        long_carry.set_params(4.0, 0.45, 0.7, 0.58, 1.0, 3, 0.12, 0.05, 0.9, 0.78, 2, 2);
+
+        let seed_blob = |sim: &mut FluidSimulation| {
+            for y in 14..18usize {
+                for x in 12..16usize {
+                    let index = y * 32 + x;
+                    sim.lbm.rho[index] = 0.22;
+                    sim.lbm.phase[index] = 0.86;
+                    sim.lbm.pigment[index] = [90.0, 30.0, 15.0, 0.55];
+                    sim.lbm.velocity[index] = [0.09, 0.0];
+                }
+            }
+        };
+        seed_blob(&mut short_carry);
+        seed_blob(&mut long_carry);
+
+        for _ in 0..4 {
+            short_carry.advect_lbm_phase(&mask, true, 32, 32);
+            short_carry.apply_phase_to_lbm();
+            short_carry.advect_lbm_pigment(&mask, true, 32, 32);
+
+            long_carry.advect_lbm_phase(&mask, true, 32, 32);
+            long_carry.apply_phase_to_lbm();
+            long_carry.advect_lbm_pigment(&mask, true, 32, 32);
+        }
+
+        let summed_speed = |sim: &FluidSimulation| -> f32 {
+            sim.lbm
+                .velocity
+                .iter()
+                .map(|vel| vel[0].hypot(vel[1]))
+                .sum::<f32>()
+        };
+        let pigment_mass = |sim: &FluidSimulation| -> f32 {
+            sim.lbm.pigment.iter().map(|pigment| pigment[3]).sum::<f32>()
+        };
+        let pigment_center_x = |sim: &FluidSimulation| -> f32 {
+            let mass = pigment_mass(sim).max(0.0001);
+            sim.lbm
+                .pigment
+                .iter()
+                .enumerate()
+                .map(|(index, pigment)| (index % 32) as f32 * pigment[3])
+                .sum::<f32>()
+                / mass
+        };
+
+        let short_energy = summed_speed(&short_carry);
+        let long_energy = summed_speed(&long_carry);
+        let short_center = pigment_center_x(&short_carry);
+        let long_center = pigment_center_x(&long_carry);
+
+        assert!(
+            long_center > short_center + 0.35,
+            "expected higher pigment carry to keep pigment gliding farther (short={short_center:.5}, long={long_center:.5})"
+        );
+        assert!(
+            (long_energy - short_energy).abs() < short_energy.max(0.001) * 0.35,
+            "pigment carry should not dramatically change motion energy (short={short_energy:.5}, long={long_energy:.5})"
+        );
+    }
+
+    #[test]
+    fn lbm_pigment_retention_preserves_visible_mass_after_settling() {
+        let mut low_retention = FluidSimulation::new(32, 32);
+        let mut high_retention = FluidSimulation::new(32, 32);
+        let mask = full_mask(32, 32);
+
+        low_retention.set_mask_rgba(&mask);
+        high_retention.set_mask_rgba(&mask);
+        low_retention.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.24, 0.44, 0.15, 2, 2);
+        high_retention.set_params(4.0, 0.76, 0.3, 0.34, 0.625, 2, 0.58, 0.24, 0.44, 0.95, 2, 2);
+
+        let seed_blob = |sim: &mut FluidSimulation| {
+            for y in 14..18usize {
+                for x in 14..18usize {
+                    let index = y * 32 + x;
+                    sim.lbm.rho[index] = 0.2;
+                    sim.lbm.phase[index] = 0.82;
+                    sim.lbm.pigment[index] = [80.0, 22.0, 12.0, 0.5];
+                    sim.lbm.velocity[index] = [0.06, 0.01];
+                }
+            }
+        };
+        seed_blob(&mut low_retention);
+        seed_blob(&mut high_retention);
+
+        for _ in 0..6 {
+            low_retention.advect_lbm_phase(&mask, true, 32, 32);
+            low_retention.apply_phase_to_lbm();
+            low_retention.advect_lbm_pigment(&mask, true, 32, 32);
+
+            high_retention.advect_lbm_phase(&mask, true, 32, 32);
+            high_retention.apply_phase_to_lbm();
+            high_retention.advect_lbm_pigment(&mask, true, 32, 32);
+        }
+
+        let pigment_mass = |sim: &FluidSimulation| -> f32 {
+            sim.lbm.pigment.iter().map(|px| px[3]).sum::<f32>()
+        };
+        let phase_mass = |sim: &FluidSimulation| -> f32 { sim.lbm.phase.iter().sum::<f32>() };
+
+        let low_mass = pigment_mass(&low_retention);
+        let high_mass = pigment_mass(&high_retention);
+        let low_phase = phase_mass(&low_retention);
+        let high_phase = phase_mass(&high_retention);
+
+        assert!(
+            high_mass > low_mass * 1.04,
+            "expected higher pigment retention to preserve more visible pigment (low={low_mass:.5}, high={high_mass:.5})"
+        );
+        assert!(
+            high_phase > low_phase * 1.04,
+            "expected higher pigment retention to preserve more phase support (low={low_phase:.5}, high={high_phase:.5})"
+        );
+    }
+
+    #[test]
     fn fast_particles_can_overshoot_mask_slightly() {
         let mut sim = FluidSimulation::new(48, 48);
         let mut mask = vec![0u8; 48 * 48 * 4];
@@ -1819,7 +2030,7 @@ mod tests {
             }
         }
         sim.set_mask_rgba(&mask);
-        sim.set_params(3.5, 0.42, 0.75, 0.58, 1.0, 1, 0.08, 0.01, 0, 2);
+        sim.set_params(3.5, 0.42, 0.75, 0.58, 1.0, 1, 0.08, 0.01, 0.44, 0.78, 0, 2);
         sim.add_particles_from_slice(&[22.0, 24.0, 3.4, 0.0, 71.0, 199.0, 255.0, 0.8, 3.5], 9);
 
         sim.step(1.0 / 60.0);

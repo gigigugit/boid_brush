@@ -2724,7 +2724,7 @@ function _jitterFluidColor(baseColor, p, profile, index) {
 
 function _makeFluidSeeds(x, y, amount, color, p, profile) {
   const particles = [];
-  const speedScale = 0.42 + p.lbmDensity * 0.58 + p.lbmSurfaceTension * 0.18;
+  const speedScale = 0.54 + p.lbmStrokePull * 0.5 + p.lbmStrokeRake * 0.12 + p.lbmStrokeJitter * 0.2;
   const travel = Math.min(1, profile.distance / Math.max(8, p.lbmBrushRadius * 0.75));
   const laneCount = Math.max(2, 2 + Math.round(p.lbmStrokeRake * 5));
   const laneSpacing = p.lbmBrushRadius * (0.08 + p.lbmStrokeRake * 0.2);
@@ -2757,7 +2757,7 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
     const swirlOffset = Math.sin(phase + laneIndex * 1.37 + index * 0.31) * p.lbmBrushRadius * p.lbmStrokeJitter * 0.16;
     const scatterRadius = Math.sqrt(Math.random()) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.24);
     const scatterAngle = phase + index * 0.53;
-    const tangentVelocity = speedScale * (0.62 + p.lbmStrokePull * 2.2 + p.lbmSurfaceTension * 0.24) * (0.66 + travel * 0.96 + Math.random() * 0.5);
+    const tangentVelocity = speedScale * (0.62 + p.lbmStrokePull * 2.2) * (0.66 + travel * 0.96 + Math.random() * 0.5);
     const crossVelocity = speedScale * (lanePosition * (0.36 + p.lbmStrokeRake * 1.45)
       + Math.sin(phase + index * 0.83) * p.lbmStrokeJitter * 0.28
       + (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.45));
@@ -2884,6 +2884,8 @@ export class FluidBrush {
       substeps: p.lbmSubsteps,
       motionDecay: p.lbmMotionDecay,
       stopSpeed: p.lbmStopSpeed,
+      pigmentCarry: p.lbmPigmentCarry,
+      pigmentRetention: p.lbmPigmentRetention,
       resolutionScale: p.lbmResolutionScale,
       fluidScale: p.lbmFluidScale,
       renderMode: p.lbmRenderMode,

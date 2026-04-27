@@ -224,8 +224,8 @@ export function buildSidebar(app) {
       <label>Show Bristles <input type="checkbox" id="showBristles" checked></label>
     </div>
 
-    <!-- LBM Brush (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="lbmBrush">LBM Brush <span class="chevron">▼</span></div>
+    <!-- Fluid Brush (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="lbmBrush">Fluid Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${sliderRow('lbmBrushRadius', 'Brush Radius', 2, 240, 36, null, 'Footprint of each free-flow injection along the stroke')}
       ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 16, null, 'How much pigment mass is injected at each pointer sample')}
@@ -235,26 +235,38 @@ export function buildSidebar(app) {
       ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 8, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
       ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
-      <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>
     </div>
 
-    <!-- LBM Solver (fluid only) -->
-    <div class="section-header closed" data-brushes="fluid" data-section="lbmSolver">LBM Solver <span class="chevron">▼</span></div>
+    <!-- Fluid Flow (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="lbmFlow">Fluid Flow <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="fluid">
+      ${sliderRow('lbmViscosity', 'Viscosity', 0, 100, 76, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
+      ${sliderRow('lbmDensity', 'Density', 0, 100, 30, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
+      ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 34, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
+      ${sliderRow('lbmTimeStep', 'Time Step', 1, 64, 10, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
+      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 2, null, 'How many solver iterations run per frame')}
+    </div>
+
+    <!-- Fluid Settling (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="lbmSettling">Fluid Settling <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid">
+      ${sliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 62, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
+      ${sliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 24, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
+      ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 44, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
+      ${sliderRow('lbmPigmentRetention', 'Pigment Retention', 0, 100, 78, v => (v / 100).toFixed(2), 'How much pigment and phase remain while the fluid settles')}
+    </div>
+
+    <!-- Fluid Rendering (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="lbmRendering">Fluid Rendering <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       <label>Render <select id="lbmRenderMode">
         <option value="hybrid">Hybrid</option>
         <option value="grid">Grid</option>
         <option value="particles">Particles</option>
       </select></label>
-      ${sliderRow('lbmViscosity', 'Viscosity', 0, 100, 76, v => (v / 100).toFixed(2), 'Relaxation strength for the lattice flow')}
-      ${sliderRow('lbmDensity', 'Density', 0, 100, 30, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
-      ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 34, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
-      ${sliderRow('lbmTimeStep', 'Time Step', 1, 64, 10, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
-      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 2, null, 'How many solver iterations run per frame')}
-      ${sliderRow('lbmMotionDecay', 'Decay', 0, 100, 58, v => (v / 100).toFixed(2), 'How quickly motion energy dissipates')}
-      ${sliderRow('lbmStopSpeed', 'Stop Speed', 0, 100, 32, v => (v / 100).toFixed(2), 'Velocity threshold below which motion settles')}
       ${sliderRow('lbmResolutionScale', 'Resolution', 50, 200, 100, v => v + '%', 'Internal lattice resolution relative to the canvas')}
       ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 115, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
+      <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>
     </div>
 
     <!-- Stamp -->
@@ -1062,6 +1074,8 @@ const _sliderFormats = {
   lbmTimeStep: v => (v / 16).toFixed(2) + '×',
   lbmMotionDecay: v => (v / 100).toFixed(2),
   lbmStopSpeed: v => (v / 100).toFixed(2),
+  lbmPigmentCarry: v => (v / 100).toFixed(2),
+  lbmPigmentRetention: v => (v / 100).toFixed(2),
   lbmResolutionScale: v => v + '%',
   lbmFluidScale: v => (v / 100).toFixed(2) + '×',
   stampOpacity: v => (v / 100).toFixed(2),

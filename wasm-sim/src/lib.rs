@@ -259,6 +259,8 @@ pub fn fluid_set_params(
     substeps: u32,
     motion_decay: f32,
     stop_speed: f32,
+    pigment_carry: f32,
+    pigment_retention: f32,
     simulation_type: u32,
     render_mode: u32,
 ) {
@@ -272,6 +274,8 @@ pub fn fluid_set_params(
             substeps,
             motion_decay,
             stop_speed,
+            pigment_carry,
+            pigment_retention,
             simulation_type,
             render_mode,
         )
