@@ -672,13 +672,17 @@ impl FluidSimulation {
                     ux *= scale;
                     uy *= scale;
                 }
+                let rest_eq = if stop_mix > 0.0 {
+                    Some(Self::lbm_rest_equilibrium(rho))
+                } else {
+                    None
+                };
 
                 for dir in 0..9 {
                     let f_eq = Self::lbm_equilibrium(rho, ux, uy, dir);
                     let mut f_post = cell[dir] + omega * (f_eq - cell[dir]);
-                    if stop_mix > 0.0 {
-                        let rest_eq = Self::lbm_equilibrium(rho, 0.0, 0.0, dir);
-                        f_post = f_post * (1.0 - stop_mix) + rest_eq * stop_mix;
+                    if let Some(rest_eq) = rest_eq {
+                        f_post = f_post * (1.0 - stop_mix) + rest_eq[dir] * stop_mix;
                     }
                     let nx = x + LBM_DIRS[dir].0;
                     let ny = y + LBM_DIRS[dir].1;
@@ -837,6 +841,14 @@ impl FluidSimulation {
         let cu = 3.0 * (cx as f32 * ux + cy as f32 * uy);
         let u2 = ux * ux + uy * uy;
         LBM_WEIGHTS[dir] * rho * (1.0 + cu + 0.5 * cu * cu - 1.5 * u2)
+    }
+
+    fn lbm_rest_equilibrium(rho: f32) -> [f32; 9] {
+        let mut equilibrium = [0.0; 9];
+        for dir in 0..9 {
+            equilibrium[dir] = LBM_WEIGHTS[dir] * rho;
+        }
+        equilibrium
     }
 
     fn inject_particle_to_lbm(&mut self, chunk: &[f32]) {
