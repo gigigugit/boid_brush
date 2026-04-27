@@ -2945,8 +2945,8 @@ export class FluidBrush {
 
   _step(elapsed) {
     if (!this._updateSimulator()) return;
-    const particleCountBeforeStep = this.sim.getParticleCount();
-    if (!this._active && particleCountBeforeStep <= 0) {
+    const prevCount = this.sim.getParticleCount();
+    if (!this._active && prevCount <= 0) {
       this._lastFrameElapsed = elapsed;
       return;
     }

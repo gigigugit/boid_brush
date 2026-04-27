@@ -1127,9 +1127,9 @@ impl FluidSimulation {
 
     fn settle_lbm_resting_cells(&mut self) {
         // Snap cells to a true rest state only after both their raw velocity and their
-        // carry-adjusted visible motion drop below the stop threshold. This keeps the
-        // solver from declaring a cell "stopped" while pigment carry would still make
-        // the fluid appear to drift on screen.
+        // carry-adjusted visible motion drop below the stop threshold. For settled cells
+        // this zeroes velocity and, when mass remains, rewrites the lattice distributions
+        // to the equilibrium rest state so the solver stops reporting invisible tail motion.
         let rest_speed = (self.params.stop_speed * LBM_REST_SPEED_RATIO).max(LBM_ACTIVE_SPEED_FLOOR);
         for index in 0..self.lbm.rho.len() {
             let rho = self.lbm.rho[index];
