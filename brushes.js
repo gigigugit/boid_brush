@@ -24,6 +24,7 @@ const MIN_TEXTURE_FLOW_SLOPE = 0.04;
 const TEXTURE_FLOW_BASE_TRANSFER = 0.12;
 const TEXTURE_FLOW_SLOPE_TRANSFER = 0.28;
 const TEXTURE_FLOW_MAX_TRANSFER = 0.4;
+const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -2826,6 +2827,11 @@ export class FluidBrush {
     sim.clearParticles();
   }
 
+  _resetAllSimulatorStates() {
+    this._resetSimulatorState(this.sim);
+    this._resetSimulatorState(this._finalSim);
+  }
+
   onDown(x, y, pressure) {
     if (!this.app.undoPushedThisStroke) {
       this.app.pushUndo();
@@ -2835,8 +2841,7 @@ export class FluidBrush {
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
-    this._resetSimulatorState();
-    this._resetSimulatorState(this._finalSim);
+    this._resetAllSimulatorStates();
     this._resetReplayCapture();
     this._captureStrokeBase();
     this._lastPoint = { x, y };
@@ -3031,7 +3036,7 @@ export class FluidBrush {
       flushSeeds();
     }
     let guard = 0;
-    while (this._finalSim.getParticleCount() > 0 && guard < 480) {
+    while (this._finalSim.getParticleCount() > 0 && guard < FLUID_FINAL_PASS_MAX_SETTLING_STEPS) {
       this._finalSim.step(1 / 60);
       guard += 1;
     }
@@ -3097,8 +3102,7 @@ export class FluidBrush {
     this._lastPoint = null;
     this._lastFrameElapsed = null;
     this._strokeLayer = null;
-    this._resetSimulatorState();
-    this._resetSimulatorState(this._finalSim);
+    this._resetAllSimulatorStates();
     this._resetReplayCapture();
   }
 }
