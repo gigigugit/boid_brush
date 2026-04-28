@@ -48,6 +48,11 @@ const SIM_SPAWN_SHAPES = [
   'sunburst', 'spiral', 'poisson', 'random_cluster', 'burst', 'lemniscate',
   'phyllotaxis', 'noise_scatter', 'bullseye', 'cross', 'wave', 'voronoi',
 ];
+const DUPLICATE_OFFSET = 14;
+const ANGLE_PRECISION = 10;
+const SIM_POINT_HIT_RADIUS = 14;
+const SIM_LINE_HIT_RADIUS = 12;
+const SIM_DELETE_HIT_RADIUS = 10;
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -1382,7 +1387,7 @@ export class App {
         y: Number.isFinite(spawn?.y) ? spawn.y : this.H * 0.5,
         enabled: spawn?.enabled !== false,
         count: Number.isFinite(spawn?.count) ? Math.max(1, Math.round(spawn.count)) : undefined,
-        shape: typeof spawn?.shape === 'string' ? spawn.shape : undefined,
+        shape: SIM_SPAWN_SHAPES.includes(spawn?.shape) ? spawn.shape : undefined,
         radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : undefined,
         angle: Number.isFinite(spawn?.angle) ? spawn.angle : undefined,
         jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : undefined,
@@ -1494,8 +1499,9 @@ export class App {
   }
 
   _getSimulationSpawnCenter(brush = this.activeBrush) {
-    const spawns = this._ensureSimulationSpawns(brush).filter(spawn => spawn.enabled !== false);
-    const activeSpawns = spawns.length ? spawns : this._ensureSimulationSpawns(brush);
+    const allSpawns = this._ensureSimulationSpawns(brush);
+    const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
+    const activeSpawns = spawns.length ? spawns : allSpawns;
     if (!activeSpawns.length) return { x: this.W * 0.5, y: this.H * 0.5 };
     let sx = 0;
     let sy = 0;
@@ -1553,10 +1559,10 @@ export class App {
     const clone = _deepClone(entry.target);
     clone.id = this.simulation.nextId++;
     if (Array.isArray(clone.points)) {
-      clone.points = clone.points.map(pt => ({ x: pt.x + 14, y: pt.y + 14 }));
+      clone.points = clone.points.map(pt => ({ x: pt.x + DUPLICATE_OFFSET, y: pt.y + DUPLICATE_OFFSET }));
     } else {
-      clone.x += 14;
-      clone.y += 14;
+      clone.x += DUPLICATE_OFFSET;
+      clone.y += DUPLICATE_OFFSET;
     }
     items.push(clone);
     this._setSimulationSelection({ collection: entry.collection, kind: entry.kind, target: clone });
@@ -1641,7 +1647,7 @@ export class App {
       const target = selected.target;
       const checked = target.enabled !== false ? 'checked' : '';
       const numberValue = value => Number.isFinite(value) ? String(value) : '';
-      const degrees = value => Number.isFinite(value) ? String(Math.round(_radiansToDegrees(value) * 10) / 10) : '';
+      const degrees = value => Number.isFinite(value) ? String(Math.round(_radiansToDegrees(value) * ANGLE_PRECISION) / ANGLE_PRECISION) : '';
       let rows = `
         <div class="sim-inspector-group">
           <h3>Selected ${selected.kind === 'point' ? target.type : selected.kind}</h3>
@@ -2014,33 +2020,30 @@ export class App {
   _findSimulationHit(x, y) {
     const data = this._getSimulationBrushData();
     if (!data) return null;
-    const hitRadius = 14;
-    const lineHit = 12;
-    const delRadius = 10;
     const checkDelete = (target, collection, kind) => {
       const anchor = this._getSimulationAnchor(target);
       const dx = x - (anchor.x + 12);
       const dy = y - (anchor.y - 12);
-      return dx * dx + dy * dy <= delRadius * delRadius ? { kind: 'delete', target, collection, anchorType: kind } : null;
+      return dx * dx + dy * dy <= SIM_DELETE_HIT_RADIUS * SIM_DELETE_HIT_RADIUS ? { kind: 'delete', target, collection, anchorType: kind } : null;
     };
 
     for (const spawn of this._ensureSimulationSpawns()) {
       const del = checkDelete(spawn, 'spawns', 'spawn');
       if (del) return del;
-      if (Math.hypot(x - spawn.x, y - spawn.y) <= hitRadius) return { kind: 'spawn', target: spawn, collection: 'spawns' };
+      if (Math.hypot(x - spawn.x, y - spawn.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'spawn', target: spawn, collection: 'spawns' };
     }
 
     for (const point of data.points) {
       const del = checkDelete(point, 'points', 'point');
       if (del) return del;
-      if (Math.hypot(x - point.x, y - point.y) <= hitRadius) return { kind: 'point', target: point, collection: 'points' };
+      if (Math.hypot(x - point.x, y - point.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'point', target: point, collection: 'points' };
     }
 
     if (this.activeBrush === 'boid') {
       for (const pathItem of data.paths || []) {
         const del = checkDelete(pathItem, 'paths', 'path');
         if (del) return del;
-        if (this._findPolylineHit(pathItem.points || [], x, y, lineHit)) {
+        if (this._findPolylineHit(pathItem.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
           return { kind: 'path', target: pathItem, collection: 'paths' };
         }
       }
@@ -2050,14 +2053,14 @@ export class App {
       for (const pathItem of data.pheromonePaths || []) {
         const del = checkDelete(pathItem, 'pheromonePaths', 'pheromonePath');
         if (del) return del;
-        if (this._findPolylineHit(pathItem.points || [], x, y, lineHit)) {
+        if (this._findPolylineHit(pathItem.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
           return { kind: 'pheromonePath', target: pathItem, collection: 'pheromonePaths' };
         }
       }
       for (const edge of data.edges || []) {
         const del = checkDelete(edge, 'edges', 'edge');
         if (del) return del;
-        if (this._findPolylineHit(edge.points || [], x, y, lineHit)) {
+        if (this._findPolylineHit(edge.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
           return { kind: 'edge', target: edge, collection: 'edges' };
         }
       }
