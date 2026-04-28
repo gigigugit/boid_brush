@@ -205,6 +205,44 @@ html,body{overflow:hidden;width:100%;height:100%;
 .am-section{margin:6px 0 2px;color:#8ab4f8;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;padding:5px 0 3px;border-bottom:1px solid rgba(255,255,255,0.06);}
 .am-math{display:block;font-size:8px;color:#666;margin:-2px 0 2px 0;line-height:1.2;white-space:normal;font-style:italic;}
 
+/* Simulation inspector overlay */
+#simOverlaySidebar{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:min(320px,92vw);background:rgba(12,15,22,0.96);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:22;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;font-size:11px;transform:translateX(100%);transition:transform 220ms ease;box-shadow:var(--shadow-lg);}
+#simOverlaySidebar.open{transform:translateX(0);}
+#simOverlaySidebar::-webkit-scrollbar{width:5px;}
+#simOverlaySidebar::-webkit-scrollbar-track{background:transparent;}
+#simOverlaySidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+.sim-inspector-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.sim-inspector-title{font-size:13px;font-weight:700;color:#f2f5ff;}
+.sim-inspector-subtitle{font-size:10px;color:#8e98aa;margin-top:2px;}
+.sim-inspector-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+.sim-inspector-actions button,.sim-inspector-list button,#simOverlaySidebar button{padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#e7ebf5;font-size:11px;cursor:pointer;transition:all 140ms ease;}
+.sim-inspector-actions button:hover,.sim-inspector-list button:hover,#simOverlaySidebar button:hover{background:rgba(255,255,255,0.12);color:#fff;}
+.sim-inspector-actions .danger,.sim-inspector-list .danger{background:rgba(138,52,52,0.72);border-color:rgba(225,99,99,0.28);color:#ffd6d6;}
+.sim-inspector-actions .danger:hover,.sim-inspector-list .danger:hover{background:rgba(255,59,48,0.38);color:#fff;}
+.sim-inspector-actions .active,.sim-inspector-list .active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.28);}
+.sim-inspector-group{border:1px solid rgba(255,255,255,0.08);border-radius:12px;background:rgba(255,255,255,0.03);padding:10px;margin-bottom:10px;}
+.sim-inspector-group h3{margin:0 0 8px;font-size:10px;color:#8ab4f8;text-transform:uppercase;letter-spacing:1px;}
+.sim-inspector-note{font-size:10px;line-height:1.45;color:#a9b3c5;}
+.sim-inspector-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.sim-inspector-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0;}
+.sim-inspector-row label{display:flex;flex-direction:column;gap:4px;color:#d9e0ee;font-weight:600;flex:1;min-width:0;}
+.sim-inspector-row input[type="range"]{width:100%;}
+.sim-inspector-row input[type="number"],.sim-inspector-row select{width:100%;background:rgba(20,25,36,0.98);color:#eef3ff;border:1px solid var(--line-1);border-radius:8px;padding:6px 8px;font-size:11px;min-height:34px;}
+.sim-inspector-row input[type="checkbox"]{margin-left:auto;}
+.sim-inspector-value{font-size:10px;color:#8e98aa;white-space:nowrap;}
+.sim-inspector-list{display:flex;flex-wrap:wrap;gap:6px;}
+.sim-inspector-divider{height:1px;background:rgba(255,255,255,0.08);margin:10px 0;}
+.sim-help-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:120;}
+.sim-help-modal.open{display:flex;}
+.sim-help-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);}
+.sim-help-panel{position:relative;width:min(620px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;}
+.sim-help-panel h2{margin:0 0 6px;font-size:18px;color:#fff;}
+.sim-help-panel h3{margin:14px 0 6px;font-size:12px;color:#8ab4f8;text-transform:uppercase;letter-spacing:1px;}
+.sim-help-panel p,.sim-help-panel li{line-height:1.5;color:#c6cfdf;}
+.sim-help-panel ul{margin:6px 0 0 16px;padding:0;}
+.sim-help-close{position:absolute;top:10px;right:12px;border:none;background:none;color:#93a0b7;font-size:20px;cursor:pointer;}
+.sim-help-close:hover{color:#fff;}
+
 /* Edge sliders - left side quick controls */
 #edgeSliders,#edgeSliders *{touch-action:none;}
 #edgeSliders{position:fixed;left:0;top:var(--topbar-h);bottom:var(--status-h);z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:20px;pointer-events:none;padding-left:8px;}
@@ -395,8 +433,49 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <!-- ══════════ Sidebar ══════════ -->
 <div id="sidebar"></div>
 
+<!-- ══════════ Simulation Overlay Sidebar ══════════ -->
+<div id="simOverlaySidebar"></div>
+
 <!-- ══════════ Ant Math Overlay Panel ══════════ -->
 <div id="antMathPanel"></div>
+
+<!-- ══════════ Simulation Help Pop-up ══════════ -->
+<div id="simHelpModal" class="sim-help-modal">
+  <div class="sim-help-backdrop" id="simHelpBackdrop"></div>
+  <div class="sim-help-panel" role="dialog" aria-modal="true" aria-labelledby="simHelpTitle">
+    <button class="sim-help-close" id="simHelpClose" aria-label="Close help pop-up">✕</button>
+    <h2 id="simHelpTitle">Simulation Help Pop-up</h2>
+    <p>Simulation items can carry their own overrides without changing your normal brush controls.</p>
+    <h3>Override precedence</h3>
+    <ul>
+      <li>Selected simulation item overrides win whenever that override is set.</li>
+      <li>If an item has no override, the usual brush sidebar setting is used.</li>
+      <li>Changing brush controls never rewrites existing simulation-item overrides.</li>
+    </ul>
+    <h3>Boid guides</h3>
+    <ul>
+      <li>Every boid path contributes an attractive field at the same time.</li>
+      <li>Boids steer by vector-summing all enabled path and point attractions.</li>
+      <li>Per-path strength and radius let you bias one guide more than another.</li>
+    </ul>
+    <h3>Repulsion hardness</h3>
+    <ul>
+      <li>Repel points now include hardness, which changes how sharply repulsion ramps up near the source.</li>
+      <li>Lower hardness feels softer and wider; higher hardness feels tighter and stronger near the center.</li>
+    </ul>
+    <h3>Inspector workflow</h3>
+    <ul>
+      <li>Use the floating Simulation HUD to place spawn, attract, repel, path, edge, or pheromone items.</li>
+      <li>Select an item on the canvas or from the inspector list to edit it in the right-side overlay.</li>
+      <li>Disable an item to keep it in the scene without deleting it.</li>
+    </ul>
+    <h3>Brush behavior</h3>
+    <ul>
+      <li>Outside Simulation mode, boid and ant brushes keep using the normal sidebar settings.</li>
+      <li>Simulation mode layers per-item overrides on top of those brush defaults.</li>
+    </ul>
+  </div>
+</div>
 
 <!-- ══════════ Status Bar ══════════ -->
 <div id="status">Ready</div>

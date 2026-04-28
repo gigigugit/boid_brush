@@ -273,10 +273,6 @@ function _applySimulationGuides(brush, p, read) {
   const data = sim.brushData[app.activeBrush];
   if (!data) return;
   const { buffer, count, stride } = read;
-  const pointForce = p.simPointStrength * p.simSpeed;
-  const pointRadius = Math.max(1, p.simPointRadius);
-  const edgeForce = p.simEdgeForce * p.simSpeed;
-  const edgeRadius = Math.max(0, p.simEdgeRadius);
 
   for (let i = 0; i < count; i++) {
     const base = i * stride;
@@ -286,21 +282,58 @@ function _applySimulationGuides(brush, p, read) {
     let vy = buffer[base + AGENT_VY];
 
     for (const point of data.points) {
+      if (point.enabled === false) continue;
+      const config = app._resolveSimulationPointConfig(point, p);
       const dx = point.x - x;
       const dy = point.y - y;
       const d = Math.hypot(dx, dy);
-      if (d <= 0.0001 || d > pointRadius) continue;
+      if (d <= 0.0001 || d > config.radius) continue;
       const sign = point.type === 'repel' ? -1 : 1;
-      const falloff = 1 - d / pointRadius;
-      const push = pointForce * falloff * 0.85 * sign;
+      const falloff = 1 - d / config.radius;
+      const shaped = point.type === 'repel'
+        ? Math.pow(falloff, Math.max(0.1, config.hardness))
+        : falloff;
+      const push = config.strength * p.simSpeed * shaped * 0.85 * sign;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
+    }
+
+    if (app.activeBrush === 'boid' && data.paths?.length) {
+      let sumX = 0;
+      let sumY = 0;
+      for (const pathItem of data.paths) {
+        if (pathItem.enabled === false || !pathItem.points?.length) continue;
+        const config = app._resolveSimulationPathConfig(pathItem, p);
+        let closest = null;
+        const pts = pathItem.points;
+        for (let j = 1; j < pts.length; j++) {
+          const candidate = _closestPointOnSegment(x, y, pts[j - 1].x, pts[j - 1].y, pts[j].x, pts[j].y);
+          if (!closest || Math.hypot(candidate.x - x, candidate.y - y) < Math.hypot(closest.x - x, closest.y - y)) closest = candidate;
+        }
+        if (config.closed && pts.length > 2) {
+          const candidate = _closestPointOnSegment(x, y, pts[pts.length - 1].x, pts[pts.length - 1].y, pts[0].x, pts[0].y);
+          if (!closest || Math.hypot(candidate.x - x, candidate.y - y) < Math.hypot(closest.x - x, closest.y - y)) closest = candidate;
+        }
+        if (!closest) continue;
+        const dx = closest.x - x;
+        const dy = closest.y - y;
+        const d = Math.hypot(dx, dy);
+        if (d <= 0.0001 || d > config.radius) continue;
+        const falloff = 1 - d / config.radius;
+        const push = config.strength * p.simSpeed * falloff;
+        sumX += (dx / d) * push;
+        sumY += (dy / d) * push;
+      }
+      vx += sumX;
+      vy += sumY;
     }
 
     if (app.activeBrush === 'ant' && data.edges?.length) {
       const prevX = x - vx;
       const prevY = y - vy;
       for (const edge of data.edges) {
+        if (edge.enabled === false) continue;
+        const config = app._resolveSimulationEdgeConfig(edge, p);
         const pts = edge.points || [];
         for (let j = 1; j < pts.length; j++) {
           const a = pts[j - 1];
@@ -309,8 +342,8 @@ function _applySimulationGuides(brush, p, read) {
           const dx = x - closest.x;
           const dy = y - closest.y;
           const dist = Math.hypot(dx, dy);
-          if (edgeRadius > 0 && dist < edgeRadius && dist > 0.0001) {
-            const away = (1 - dist / edgeRadius) * edgeForce;
+          if (config.radius > 0 && dist < config.radius && dist > 0.0001) {
+            const away = (1 - dist / config.radius) * config.strength * p.simSpeed;
             vx += (dx / dist) * away;
             vy += (dy / dist) * away;
           }
@@ -319,8 +352,8 @@ function _applySimulationGuides(brush, p, read) {
           if ((prevSide < 0 && curSide > 0) || (prevSide > 0 && curSide < 0)) {
             const nx = dy === 0 && dx === 0 ? 0 : dx / Math.max(dist, 1);
             const ny = dy === 0 && dx === 0 ? 0 : dy / Math.max(dist, 1);
-            x = closest.x + nx * Math.max(edgeRadius, 2);
-            y = closest.y + ny * Math.max(edgeRadius, 2);
+            x = closest.x + nx * Math.max(config.radius, 2);
+            y = closest.y + ny * Math.max(config.radius, 2);
             const dot = vx * nx + vy * ny;
             if (dot < 0) {
               vx -= 1.8 * dot * nx;
@@ -501,8 +534,15 @@ export class BoidBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
+      ? (this.app._ensureSimulationSpawns('boid').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('boid')[0])
+      : null;
+    const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
+    const strokeP = spawnConfig
+      ? { ...p, count: spawnConfig.count, spawnShape: spawnConfig.shape, spawnAngle: spawnConfig.angle, spawnJitter: spawnConfig.jitter, spawnRadius: spawnConfig.radius }
+      : p;
 
-    this._applyLifecycleAction(p.boidTouchAction, p, x, y, pressure, false);
+    this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
     // Touch-down ends any prior hover preview; the stroke now owns agent motion.
     this._hoverSpawned = false;
     this._lastStampX = [];
@@ -618,9 +658,11 @@ export class BoidBrush {
 
   configureSimulation(data, p) {
     if (!this._ready || !data?.spawns?.length) return;
-    for (let i = 1; i < data.spawns.length; i++) {
-      const spawn = data.spawns[i];
-      this.sim.spawnBatch(spawn.x, spawn.y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, p.spawnRadius);
+    const primary = data.spawns.find(spawn => spawn.enabled !== false) || data.spawns[0];
+    for (const spawn of data.spawns) {
+      if (spawn === primary || spawn.enabled === false) continue;
+      const config = this.app._resolveSimulationSpawnConfig(spawn, p);
+      this.sim.spawnBatch(spawn.x, spawn.y, config.count, config.shape, config.angle, config.jitter, config.radius);
     }
   }
 
@@ -910,15 +952,16 @@ export class BoidBrush {
 
     // Draw spawn area indicator
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
-      ? this.app._getSimulationSpawnCenter('boid')
+      ? (this.app._ensureSimulationSpawns('boid').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('boid')[0])
       : null;
     if (p.showSpawn && (this.app.isDrawing || simSpawn)) {
+      const config = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
       const sx = simSpawn?.x ?? this.app.leaderX;
       const sy = simSpawn?.y ?? this.app.leaderY;
       ctx.strokeStyle = 'rgba(100,180,255,0.3)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(sx, sy, p.spawnRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, config?.radius ?? p.spawnRadius, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -1062,14 +1105,18 @@ export class AntBrush {
 
   configureSimulation(data, p) {
     if (!this._ready || !data?.spawns?.length) return;
-    for (let i = 1; i < data.spawns.length; i++) {
-      const spawn = data.spawns[i];
-      this.sim.spawnBatch(spawn.x, spawn.y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, p.spawnRadius);
+    const primary = data.spawns.find(spawn => spawn.enabled !== false) || data.spawns[0];
+    for (const spawn of data.spawns) {
+      if (spawn === primary || spawn.enabled === false) continue;
+      const config = this.app._resolveSimulationSpawnConfig(spawn, p);
+      this.sim.spawnBatch(spawn.x, spawn.y, config.count, config.shape, config.angle, config.jitter, config.radius);
     }
     this._initPheroGrid();
     if (this._pheroData) this._pheroData.fill(0);
     for (const trail of data.pheromonePaths || []) {
-      this.paintSimulationPheromone(trail.points, trail.radius || p.simPheroPaintRadius, trail.intensity || p.simPheroPaintStrength);
+      if (trail.enabled === false) continue;
+      const config = this.app._resolveSimulationPheromoneConfig(trail, p);
+      this.paintSimulationPheromone(trail.points, config.radius, config.intensity);
     }
     if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing();
   }
@@ -1079,10 +1126,22 @@ export class AntBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
-    let r = p.spawnRadius;
-    if (p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+    const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'ant'
+      ? (this.app._ensureSimulationSpawns('ant').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('ant')[0])
+      : null;
+    const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
+    let r = spawnConfig ? spawnConfig.radius : p.spawnRadius;
+    if (!spawnConfig && p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
     this.sim.clearAgents();
-    this.sim.spawnBatch(x, y, p.count, p.spawnShape, p.spawnAngle, p.spawnJitter, r);
+    this.sim.spawnBatch(
+      x,
+      y,
+      spawnConfig ? spawnConfig.count : p.count,
+      spawnConfig ? spawnConfig.shape : p.spawnShape,
+      spawnConfig ? spawnConfig.angle : p.spawnAngle,
+      spawnConfig ? spawnConfig.jitter : p.spawnJitter,
+      r,
+    );
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
@@ -1464,15 +1523,16 @@ export class AntBrush {
 
     // Draw spawn area indicator
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'ant'
-      ? this.app._getSimulationSpawnCenter('ant')
+      ? (this.app._ensureSimulationSpawns('ant').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('ant')[0])
       : null;
     if (p.showSpawn && (this.app.isDrawing || simSpawn)) {
+      const config = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
       const sx = simSpawn?.x ?? this.app.leaderX;
       const sy = simSpawn?.y ?? this.app.leaderY;
       ctx.strokeStyle = 'rgba(180,100,50,0.3)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(sx, sy, p.spawnRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, config?.radius ?? p.spawnRadius, 0, Math.PI * 2);
       ctx.stroke();
     }
 
