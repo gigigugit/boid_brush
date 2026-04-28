@@ -2726,7 +2726,8 @@ function _jitterFluidColor(baseColor, p, profile, index) {
 
 function _makeFluidSeeds(x, y, amount, color, p, profile) {
   const particles = [];
-  const speedScale = 0.54 + p.lbmStrokePull * 0.5 + p.lbmStrokeRake * 0.12 + p.lbmStrokeJitter * 0.2;
+  const speedScale = (0.54 + p.lbmStrokePull * 0.5 + p.lbmStrokeRake * 0.12 + p.lbmStrokeJitter * 0.2)
+    * (p.lbmInjectForce ?? 1);
   const travel = Math.min(1, profile.distance / Math.max(8, p.lbmBrushRadius * 0.75));
   const laneCount = Math.max(3, 3 + Math.round(p.lbmStrokeRake * 7));
   const laneSpacing = p.lbmBrushRadius * (0.11 + p.lbmStrokeRake * 0.24 + p.lbmStrokeJitter * 0.06);
@@ -2772,13 +2773,62 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
     const backfill = speedScale * (Math.random() - 0.5) * (0.08 + p.lbmStrokePull * 0.22);
     const dragNoiseX = speedScale * (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.16);
     const dragNoiseY = speedScale * (Math.random() - 0.5) * (0.14 + p.lbmStrokeJitter * 0.2);
+
+    // ── Extra injection force modes ──────────────────────────────────────────
+    // Each mode adds deltas in stroke-relative coords (along = tangent, cross = normal).
+
+    // Vortex: counter-rotating ring vortices — tight spirals and eddies
+    let extraAlongPos = 0, extraCrossPos = 0, extraAlongVel = 0, extraCrossVel = 0;
+    if (p.lbmVortexStrength > 0) {
+      const vortexAngle = laneIndex / laneCount * Math.PI * 2 + phase * 3.1 + index * 0.19;
+      const vortexR = p.lbmBrushRadius * 0.45 * p.lbmVortexStrength;
+      const vortexSpeed = speedScale * p.lbmVortexStrength * 2.8;
+      const vortexSign = laneIndex % 2 === 0 ? 1 : -1;
+      extraAlongPos += Math.cos(vortexAngle) * vortexR;
+      extraCrossPos += Math.sin(vortexAngle) * vortexR;
+      extraAlongVel += -Math.sin(vortexAngle) * vortexSpeed * vortexSign;
+      extraCrossVel += Math.cos(vortexAngle) * vortexSpeed * vortexSign;
+    }
+
+    // Burst: radial explosion bursts along the stroke — sunburst splatters
+    if (p.lbmBurstStrength > 0) {
+      const burstAngle = (index / amount) * Math.PI * 2 + phase * 0.8 + laneIndex * 0.7;
+      const burstR = p.lbmBrushRadius * 0.12 * p.lbmBurstStrength;
+      const burstSpeed = speedScale * p.lbmBurstStrength * 3.8;
+      extraAlongPos += Math.cos(burstAngle) * burstR;
+      extraCrossPos += Math.sin(burstAngle) * burstR;
+      extraAlongVel += Math.cos(burstAngle) * burstSpeed;
+      extraCrossVel += Math.sin(burstAngle) * burstSpeed;
+    }
+
+    // Chevron: herringbone V-pattern — feather and fishbone textures
+    if (p.lbmChevronStrength > 0) {
+      const chevronDir = laneIndex % 2 === 0 ? 1 : -1;
+      const chevronDivergence = 0.42 + p.lbmChevronStrength * 0.92;
+      const chevronSpeed = speedScale * p.lbmChevronStrength * 2.2;
+      extraAlongVel += Math.cos(chevronDivergence) * chevronSpeed;
+      extraCrossVel += Math.sin(chevronDivergence) * chevronSpeed * chevronDir;
+    }
+
+    // Undulate: sinusoidal snake-wave cross-stroke offset — meander patterns
+    if (p.lbmUndulateStrength > 0) {
+      const undulateFreq = 0.0028;
+      const undulateT = profile.spawnTime * undulateFreq + index * 0.14;
+      const undulateWave = Math.sin(undulateT);
+      const undulateDerivative = Math.cos(undulateT);
+      const undulateAmp = p.lbmBrushRadius * 1.3 * p.lbmUndulateStrength;
+      const undulateVelScale = speedScale * p.lbmUndulateStrength * 1.6;
+      extraCrossPos += undulateWave * undulateAmp;
+      extraCrossVel += undulateDerivative * undulateVelScale;
+    }
+
     const seed = _fluidHexToRgba(_jitterFluidColor(color, p, profile, index), 0.66 + travel * 0.12 + Math.random() * 0.05);
 
     particles.push({
-      x: x + profile.tangentX * alongOffset + profile.normalX * (laneOffset + swirlOffset) + Math.cos(scatterAngle) * scatterRadius * 0.35,
-      y: y + profile.tangentY * alongOffset + profile.normalY * (laneOffset + swirlOffset) + Math.sin(scatterAngle) * scatterRadius * 0.35,
-      vx: profile.tangentX * (tangentVelocity + backfill) + profile.normalX * (crossVelocity + curlVelocity) + dragNoiseX,
-      vy: profile.tangentY * (tangentVelocity + backfill) + profile.normalY * (crossVelocity + curlVelocity) + dragNoiseY,
+      x: x + profile.tangentX * (alongOffset + extraAlongPos) + profile.normalX * (laneOffset + swirlOffset + extraCrossPos) + Math.cos(scatterAngle) * scatterRadius * 0.35,
+      y: y + profile.tangentY * (alongOffset + extraAlongPos) + profile.normalY * (laneOffset + swirlOffset + extraCrossPos) + Math.sin(scatterAngle) * scatterRadius * 0.35,
+      vx: profile.tangentX * (tangentVelocity + backfill + extraAlongVel) + profile.normalX * (crossVelocity + curlVelocity + extraCrossVel) + dragNoiseX,
+      vy: profile.tangentY * (tangentVelocity + backfill + extraAlongVel) + profile.normalY * (crossVelocity + curlVelocity + extraCrossVel) + dragNoiseY,
       radius: p.lbmParticleRadius * (1 + (Math.random() - 0.5) * (0.08 + p.lbmStrokeJitter * 0.22)),
       ...seed,
     });

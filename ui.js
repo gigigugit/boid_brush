@@ -271,6 +271,16 @@ export function buildSidebar(app) {
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
     </div>
 
+    <!-- Stroke Forces (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidForces">Stroke Forces <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="fluid">
+      ${sliderRow('lbmInjectForce', 'Inject Force', 50, 300, 100, v => v + '%', 'Master velocity scale applied to all injection forces')}
+      ${sliderRow('lbmVortexStrength', 'Vortex', 0, 100, 0, v => (v / 100).toFixed(2), 'Counter-rotating ring vortices across the stroke — tight spirals and eddies')}
+      ${sliderRow('lbmBurstStrength', 'Burst', 0, 100, 0, v => (v / 100).toFixed(2), 'Radial explosion bursts along the stroke — sunburst splatters')}
+      ${sliderRow('lbmChevronStrength', 'Chevron', 0, 100, 0, v => (v / 100).toFixed(2), 'Herringbone V-pattern injection — feather and fishbone textures')}
+      ${sliderRow('lbmUndulateStrength', 'Undulate', 0, 100, 0, v => (v / 100).toFixed(2), 'Sinusoidal snake-wave offset along the stroke — meander patterns')}
+    </div>
+
     <!-- Fluid Flow (fluid only) -->
     <div class="section-header" data-brushes="fluid" data-section="fluidMidrange">Midrange Flow Tuning <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
