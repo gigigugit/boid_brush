@@ -2727,9 +2727,10 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
   const particles = [];
   const speedScale = 0.54 + p.lbmStrokePull * 0.5 + p.lbmStrokeRake * 0.12 + p.lbmStrokeJitter * 0.2;
   const travel = Math.min(1, profile.distance / Math.max(8, p.lbmBrushRadius * 0.75));
-  const laneCount = Math.max(2, 2 + Math.round(p.lbmStrokeRake * 5));
-  const laneSpacing = p.lbmBrushRadius * (0.08 + p.lbmStrokeRake * 0.2);
+  const laneCount = Math.max(3, 3 + Math.round(p.lbmStrokeRake * 7));
+  const laneSpacing = p.lbmBrushRadius * (0.11 + p.lbmStrokeRake * 0.24 + p.lbmStrokeJitter * 0.06);
   const phase = profile.spawnTime * 0.018;
+  const patternBoost = 0.35 + travel * 0.65;
 
   for (let index = 0; index < amount; index += 1) {
     if (profile.distance <= 1e-3) {
@@ -2751,28 +2752,32 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
 
     const laneIndex = index % laneCount;
     const lanePosition = laneCount > 1 ? laneIndex / (laneCount - 1) - 0.5 : 0;
-    const alongOffset = ((Math.random() - 0.42) * p.lbmBrushRadius * (0.32 + p.lbmStrokePull * 0.9))
-      + travel * p.lbmBrushRadius * (0.12 + p.lbmStrokePull * 0.42);
+    const laneSpin = laneIndex % 2 === 0 ? 1 : -1;
+    const alongOffset = ((Math.random() - 0.42) * p.lbmBrushRadius * (0.28 + p.lbmStrokePull * 0.82))
+      + travel * p.lbmBrushRadius * (0.18 + p.lbmStrokePull * 0.55);
     const laneOffset = lanePosition * laneSpacing * (1 + travel * 1.4)
-      + (Math.random() - 0.5) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.22);
-    const swirlOffset = Math.sin(phase + laneIndex * 1.37 + index * 0.31) * p.lbmBrushRadius * p.lbmStrokeJitter * 0.16;
-    const scatterRadius = Math.sqrt(Math.random()) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.24);
-    const scatterAngle = phase + index * 0.53;
-    const tangentVelocity = speedScale * (0.62 + p.lbmStrokePull * 2.2) * (0.66 + travel * 0.96 + Math.random() * 0.5);
-    const crossVelocity = speedScale * (lanePosition * (0.36 + p.lbmStrokeRake * 1.45)
-      + Math.sin(phase + index * 0.83) * p.lbmStrokeJitter * 0.28
-      + (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.45));
-    const curlVelocity = speedScale * Math.sin(phase * 0.74 + lanePosition * 5.6 + index * 0.21)
-      * (0.16 + p.lbmStrokeJitter * 0.72 + p.lbmStrokeRake * 0.24);
+      + (Math.random() - 0.5) * p.lbmBrushRadius * (0.06 + p.lbmStrokeJitter * 0.18);
+    const ribbonWave = Math.sin(phase * 1.18 + laneIndex * 1.37 + index * 0.31);
+    const swirlOffset = ribbonWave * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.18 + patternBoost * 0.16);
+    const scatterRadius = Math.sqrt(Math.random()) * p.lbmBrushRadius * (0.06 + p.lbmStrokeJitter * 0.18);
+    const scatterAngle = phase * 1.4 + index * 0.53 + laneSpin * lanePosition * 1.8;
+    const tangentVelocity = speedScale * (0.7 + p.lbmStrokePull * 2.5) * (0.72 + travel * 1.15 + Math.random() * 0.42);
+    const crossVelocity = speedScale * (lanePosition * (0.5 + p.lbmStrokeRake * 1.8)
+      + ribbonWave * (0.08 + p.lbmStrokeJitter * 0.44 + p.lbmStrokeRake * 0.18)
+      + laneSpin * patternBoost * (0.04 + p.lbmStrokeRake * 0.22)
+      + (Math.random() - 0.5) * (0.1 + p.lbmStrokeJitter * 0.34));
+    const curlVelocity = speedScale * Math.sin(phase * 0.92 + lanePosition * 6.4 + index * 0.27)
+      * laneSpin * (0.2 + p.lbmStrokeJitter * 0.92 + p.lbmStrokeRake * 0.34 + patternBoost * 0.18);
     const backfill = speedScale * (Math.random() - 0.5) * (0.08 + p.lbmStrokePull * 0.22);
-    const dragNoise = speedScale * (Math.random() - 0.5) * 0.2;
+    const dragNoiseX = speedScale * (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.16);
+    const dragNoiseY = speedScale * (Math.random() - 0.5) * (0.14 + p.lbmStrokeJitter * 0.2);
     const seed = _fluidHexToRgba(_jitterFluidColor(color, p, profile, index), 0.66 + travel * 0.12 + Math.random() * 0.05);
 
     particles.push({
       x: x + profile.tangentX * alongOffset + profile.normalX * (laneOffset + swirlOffset) + Math.cos(scatterAngle) * scatterRadius * 0.35,
       y: y + profile.tangentY * alongOffset + profile.normalY * (laneOffset + swirlOffset) + Math.sin(scatterAngle) * scatterRadius * 0.35,
-      vx: profile.tangentX * (tangentVelocity + backfill) + profile.normalX * (crossVelocity + curlVelocity) + dragNoise,
-      vy: profile.tangentY * (tangentVelocity + backfill) + profile.normalY * (crossVelocity + curlVelocity) + dragNoise,
+      vx: profile.tangentX * (tangentVelocity + backfill) + profile.normalX * (crossVelocity + curlVelocity) + dragNoiseX,
+      vy: profile.tangentY * (tangentVelocity + backfill) + profile.normalY * (crossVelocity + curlVelocity) + dragNoiseY,
       radius: p.lbmParticleRadius * (1 + (Math.random() - 0.5) * (0.08 + p.lbmStrokeJitter * 0.22)),
       ...seed,
     });

@@ -265,8 +265,8 @@ export function buildSidebar(app) {
       ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 16, null, 'How much pigment mass is injected at each pointer sample')}
       ${sliderRow('lbmParticleRadius', 'Seed Radius', 1, 24, 3, null, 'Radius of the seed packets used to feed the lattice')}
       ${sliderRow('lbmStrokePull', 'Stroke Pull', 0, 100, 36, v => (v / 100).toFixed(2), 'How strongly new fluid follows the stroke tangent')}
-      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 10, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
-      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 8, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
+      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 18, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
+      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 14, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
       ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
     </div>
@@ -292,7 +292,7 @@ export function buildSidebar(app) {
     <div class="section-body" data-brushes="fluid">
       ${nudgeSliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 62, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
       ${nudgeSliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 24, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
-      ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 44, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
+      ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 52, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
       ${sliderRow('lbmPigmentRetention', 'Pigment Retention', 0, 100, 78, v => (v / 100).toFixed(2), 'How much pigment and phase remain while the fluid settles')}
     </div>
 

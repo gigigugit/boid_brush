@@ -187,6 +187,10 @@ const LBM_MOTION_DECAY_MIN: f32 = 0.91;
 const LBM_MOTION_DECAY_MAX: f32 = 0.9993;
 const LBM_INTERFACE_DRAG_BASE: f32 = 0.018;
 const LBM_INTERFACE_DRAG_VISCOSITY_SCALE: f32 = 0.014;
+const LBM_PATTERN_CURVATURE_PUSH: f32 = 3.35;
+const LBM_PATTERN_VORTEX_BASE: f32 = 0.016;
+const LBM_PATTERN_VORTEX_TENSION_SCALE: f32 = 0.055;
+const LBM_PATTERN_VORTEX_DENSITY_SCALE: f32 = 0.016;
 #[cfg(test)]
 const LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD: f32 = 0.82;
 
@@ -663,9 +667,10 @@ impl FluidSimulation {
         let decay = (1.0 - self.params.motion_decay * LBM_MOTION_DECAY_SCALE)
             .clamp(LBM_MOTION_DECAY_MIN, LBM_MOTION_DECAY_MAX);
         let max_speed = 0.14 + self.params.density * 0.22 + self.params.surface_tension * 0.04;
-        let surface_tension = 0.01 + self.params.surface_tension * 0.09;
+        let surface_tension = 0.012 + self.params.surface_tension * 0.098;
         let interface_drag =
-            LBM_INTERFACE_DRAG_BASE + self.params.viscosity * LBM_INTERFACE_DRAG_VISCOSITY_SCALE;
+            (LBM_INTERFACE_DRAG_BASE + self.params.viscosity * LBM_INTERFACE_DRAG_VISCOSITY_SCALE)
+                * 0.88;
         let stop_threshold = self.params.stop_speed.max(0.0);
 
         for y in 0..height as i32 {
@@ -700,11 +705,14 @@ impl FluidSimulation {
                 let interface_band = (phase_here * (1.0 - phase_here) * 4.0).clamp(0.0, 1.0);
                 let curvature = phase_px + phase_nx + phase_py + phase_ny - phase_here * 4.0;
                 let phase_force = surface_tension * interface_band;
-                ux += -grad_x * phase_force * 0.9 + curvature * grad_x * phase_force * 2.8;
-                uy += -grad_y * phase_force * 0.9 + curvature * grad_y * phase_force * 2.8;
-                let vortex_force =
-                    (0.01 + self.params.surface_tension * 0.045 + self.params.density * 0.012)
-                        * interface_band;
+                ux += -grad_x * phase_force * 0.86
+                    + curvature * grad_x * phase_force * LBM_PATTERN_CURVATURE_PUSH;
+                uy += -grad_y * phase_force * 0.86
+                    + curvature * grad_y * phase_force * LBM_PATTERN_CURVATURE_PUSH;
+                let vortex_force = (LBM_PATTERN_VORTEX_BASE
+                    + self.params.surface_tension * LBM_PATTERN_VORTEX_TENSION_SCALE
+                    + self.params.density * LBM_PATTERN_VORTEX_DENSITY_SCALE)
+                    * interface_band;
                 ux += -grad_y * curvature * vortex_force;
                 uy += grad_x * curvature * vortex_force;
                 ux *= 1.0 - interface_band * interface_drag;
@@ -924,9 +932,10 @@ impl FluidSimulation {
             .max(self.params.particle_radius * 0.9)
             .clamp(1.0, 8.0);
         let reach = spread.ceil() as i32;
-        let velocity_scale = 0.12 + self.params.density * 0.07 + self.params.surface_tension * 0.03;
-        let ux = (chunk[2] * velocity_scale).clamp(-0.42, 0.42);
-        let uy = (chunk[3] * velocity_scale).clamp(-0.42, 0.42);
+        let velocity_scale =
+            0.14 + self.params.density * 0.085 + self.params.surface_tension * 0.045;
+        let ux = (chunk[2] * velocity_scale).clamp(-0.48, 0.48);
+        let uy = (chunk[3] * velocity_scale).clamp(-0.48, 0.48);
         let alpha = chunk[7].clamp(0.0, 1.0);
         let mass_base = (radius / self.params.particle_radius.max(0.5)).clamp(0.45, 2.8)
             * alpha.max(0.2)
