@@ -90,6 +90,10 @@ function _deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function _escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function _closestPointOnSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
   const dy = by - ay;
@@ -257,6 +261,11 @@ export class App {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
       },
+      // Scene-level variable overrides (applied during simulation playback).
+      // seek defaults to 0 so boids follow guides instead of the cursor.
+      vars: { seek: 0 },
+      // Named saved simulation sessions.
+      sessions: [],
       drawingPath: null,
       dragTarget: null,
       selected: null,
@@ -1594,6 +1603,60 @@ export class App {
     if (document.getElementById('autoSaveSession')?.checked) this.saveSession();
   }
 
+  _newSimulationSession() {
+    this.simulation.vars = { seek: 0 };
+    this.simulation.brushData = {
+      boid: { spawns: [], points: [], paths: [] },
+      ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+    };
+    this.simulation.nextId = 1;
+    this.simulation.selected = null;
+    this._ensureSimulationSpawns();
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast('New simulation session started');
+  }
+
+  _saveSimulationSession() {
+    const rawName = window.prompt('Name for this simulation session:', `Session ${this.simulation.sessions.length + 1}`);
+    if (!rawName) return;
+    const name = rawName.trim().slice(0, 64) || `Session ${this.simulation.sessions.length + 1}`;
+    this.simulation.sessions.push({
+      name,
+      savedAt: Date.now(),
+      vars: _deepClone(this.simulation.vars),
+      brushData: _deepClone(this.simulation.brushData),
+      nextId: this.simulation.nextId,
+    });
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast(`Saved "${name}"`);
+  }
+
+  _loadSimulationSession(index) {
+    const session = this.simulation.sessions[index];
+    if (!session) return;
+    this.simulation.vars = Object.assign({ seek: 0 }, session.vars);
+    this.simulation.brushData = _deepClone(session.brushData);
+    this.simulation.nextId = session.nextId || this.simulation.nextId;
+    this.simulation.selected = null;
+    this._normalizeSimulationData();
+    this._ensureSimulationSpawns();
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast(`Loaded "${session.name}"`);
+  }
+
+  _deleteSimulationSavedSession(index) {
+    const session = this.simulation.sessions[index];
+    if (!session) return;
+    this.simulation.sessions.splice(index, 1);
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast(`Deleted "${session.name}"`);
+  }
+
+
   _renderSimulationInspector() {
     const panel = document.getElementById('simOverlaySidebar');
     if (!panel) return;
@@ -1630,6 +1693,15 @@ export class App {
 
     const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Scene</button>' : '';
 
+    const seekPct = Math.round((this.simulation.vars.seek ?? 0) * 100);
+    const savedSessionsList = this.simulation.sessions.length
+      ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
+         <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
+           `<button data-sim-load-session="${i}" title="Load ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
+            <button class="danger" data-sim-del-session="${i}" title="Delete ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
+         ).join('')}</div>`
+      : '';
+
     let inspector = `
       <div class="sim-inspector-header">
         <div>
@@ -1644,6 +1716,21 @@ export class App {
       <div class="sim-inspector-group">
         <h3>Scene</h3>
         <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong>${p.simSpeed.toFixed(2)}×</strong>. Brush sidebar values stay untouched; item values only override when explicitly set here.</div>
+      </div>
+      <div class="sim-inspector-group">
+        <h3>Scene Variables</h3>
+        <div class="sim-inspector-note">Override brush parameters for simulation playback. <strong>Seek</strong> defaults to 0 so agents follow guides instead of the cursor. Values persist when reopening simulation.</div>
+        <div class="sim-inspector-row" style="flex-direction:column;align-items:stretch">
+          <label style="display:flex;justify-content:space-between">
+            <span>Seek (cursor pull)</span><span class="sim-inspector-value" id="simVarSeekVal">${seekPct}%</span>
+          </label>
+          <input type="range" min="0" max="100" step="0.5" value="${seekPct}" data-sim-var="seek" style="margin-top:4px">
+        </div>
+        <div class="sim-inspector-actions" style="margin-top:10px">
+          <button data-sim-new-session="1">New Session</button>
+          <button data-sim-save-session="1">Save Session</button>
+        </div>
+        ${savedSessionsList}
       </div>
       ${summaryButtons}
     `;
@@ -1767,6 +1854,29 @@ export class App {
       };
       el.addEventListener('change', applyField);
       if (el.type === 'checkbox') el.addEventListener('input', applyField);
+    });
+
+    // Scene-variable sliders (seek, etc.)
+    panel.querySelectorAll('[data-sim-var]').forEach(el => {
+      const varName = el.dataset.simVar;
+      const updateVar = () => {
+        const raw = +el.value;
+        this.simulation.vars[varName] = raw / 100;
+        const label = panel.querySelector(`#simVar${varName.charAt(0).toUpperCase() + varName.slice(1)}Val`);
+        if (label) label.textContent = `${Math.round(raw)}%`;
+        this._maybeAutoSaveSession();
+      };
+      el.addEventListener('input', updateVar);
+      el.addEventListener('change', updateVar);
+    });
+
+    panel.querySelector('[data-sim-new-session]')?.addEventListener('click', () => this._newSimulationSession());
+    panel.querySelector('[data-sim-save-session]')?.addEventListener('click', () => this._saveSimulationSession());
+    panel.querySelectorAll('[data-sim-load-session]').forEach(btn => {
+      btn.addEventListener('click', () => this._loadSimulationSession(+btn.dataset.simLoadSession));
+    });
+    panel.querySelectorAll('[data-sim-del-session]').forEach(btn => {
+      btn.addEventListener('click', () => this._deleteSimulationSavedSession(+btn.dataset.simDelSession));
     });
   }
 
@@ -3817,6 +3927,8 @@ export class App {
         editorTool: this.simulation.editorTool,
         brushData: this.simulation.brushData,
         nextId: this.simulation.nextId,
+        vars: this.simulation.vars,
+        sessions: this.simulation.sessions,
       };
       controls._canvasTextureState = this._serializeCanvasTextureState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
@@ -3871,6 +3983,12 @@ export class App {
           if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
           if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
           this.simulation.enabled = !!val?.enabled;
+          // Restore scene-level variable overrides (seek etc.) persisted from last use.
+          // keep default seek=0 if no value was saved (first ever session).
+          if (val?.vars && typeof val.vars === 'object') {
+            this.simulation.vars = Object.assign({ seek: 0 }, val.vars);
+          }
+          if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
           continue;
         }
         const el = document.getElementById(id);

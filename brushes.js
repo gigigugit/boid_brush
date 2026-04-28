@@ -476,6 +476,21 @@ export class BoidBrush {
     this._boidsSpawned = false;
   }
 
+  /**
+   * When simulation mode is active, override brush-level params with any
+   * scene-variable values stored in `simulation.vars`.  Currently this
+   * overrides `seek` so boids follow guides rather than chasing the cursor.
+   * Returns `p` unchanged when simulation is not enabled.
+   */
+  _applySimVars(p) {
+    if (!this.app.simulation?.enabled) return p;
+    const vars = this.app.simulation.vars;
+    if (!vars) return p;
+    return Object.assign({}, p, {
+      seek: Number.isFinite(vars.seek) ? vars.seek : 0,
+    });
+  }
+
   _spawnAgents(x, y, p, pressure = 1, useHoverAngle = false) {
     if (!this.sim) return false;
     let spawnAngle = p.spawnAngle;
@@ -539,7 +554,7 @@ export class BoidBrush {
     if (!this._ready || !this._hoverSpawned) return;
     const p = this.app.getP();
     // Write params with the current hover leader position so boids follow
-    this.sim.writeParams(p, this.app.leaderX, this.app.leaderY, elapsed);
+    this.sim.writeParams(this._applySimVars(p), this.app.leaderX, this.app.leaderY, elapsed);
     this.sim.step(1 / 60);
   }
 
@@ -616,7 +631,7 @@ export class BoidBrush {
     // paint is ever deposited. In flat-stroke mode the composite path in onFrame
     // is required, so this initial stamp is omitted there.
     if (!this._flatActive) {
-      this.sim.writeParams(p, x, y, 0);
+      this.sim.writeParams(this._applySimVars(p), x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
       if (count > 0) {
@@ -693,7 +708,7 @@ export class BoidBrush {
     }
 
     // Write sim params and step
-    this.sim.writeParams(p, app.leaderX, app.leaderY, elapsed);
+    this.sim.writeParams(this._applySimVars(p), app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
     // Read agents
