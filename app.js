@@ -54,6 +54,7 @@ const SIM_POINT_HIT_RADIUS = 14;
 const SIM_LINE_HIT_RADIUS = 12;
 const SIM_DELETE_HIT_RADIUS = 10;
 const DEFAULT_SIM_HARDNESS = 0.1;
+const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
 
@@ -1413,7 +1414,7 @@ export class App {
         enabled: point?.enabled !== false,
         strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : undefined,
         radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : undefined,
-        hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, point.hardness) : undefined,
+        hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : undefined,
       }));
 
       if (brush === 'boid') {
@@ -1483,14 +1484,14 @@ export class App {
     return {
       strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : p.simPointStrength,
       radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : p.simPointRadius,
-      hardness: Number.isFinite(point?.hardness) ? Math.max(0.1, point.hardness) : 1,
+      hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : 1,
     };
   }
 
   _resolveSimulationPathConfig(pathItem, p = this.getP()) {
-      return {
-      strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : Math.max(p.simPointStrength, DEFAULT_PATH_STRENGTH),
-      radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : Math.max(DEFAULT_PATH_RADIUS, p.simPointRadius),
+    return {
+      strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : DEFAULT_PATH_STRENGTH,
+      radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : DEFAULT_PATH_RADIUS,
       closed: !!pathItem?.closed,
     };
   }
@@ -1693,15 +1694,15 @@ export class App {
             <div class="sim-inspector-note">Blank values inherit the current brush simulation settings.</div>
             <div class="sim-inspector-row"><label>Strength<input type="number" min="0" step="0.05" placeholder="Brush default" value="${numberValue(target.strength)}" data-sim-field="strength" data-sim-type="number"></label></div>
             <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
-            ${target.type === 'repel' ? `<div class="sim-inspector-row"><label>Hardness<input type="number" min="${DEFAULT_SIM_HARDNESS}" step="0.1" placeholder="1.0" value="${numberValue(target.hardness)}" data-sim-field="hardness" data-sim-type="number"></label></div>` : ''}
+            ${target.type === 'repel' ? `<div class="sim-inspector-row"><label>Hardness<input type="number" min="${DEFAULT_SIM_HARDNESS}" max="${MAX_SIM_HARDNESS}" step="0.1" placeholder="1.0" value="${numberValue(target.hardness)}" data-sim-field="hardness" data-sim-type="number"></label></div>` : ''}
           </div>`;
       } else if (selected.kind === 'path') {
         rows += `
           <div class="sim-inspector-group">
             <h3>Path Attraction</h3>
             <div class="sim-inspector-note">All enabled boid paths attract simultaneously and are vector-summed together.</div>
-            <div class="sim-inspector-row"><label>Strength<input type="number" min="0" step="0.05" placeholder="${Math.max(p.simPointStrength, DEFAULT_PATH_STRENGTH).toFixed(2)}" value="${numberValue(target.strength)}" data-sim-field="strength" data-sim-type="number"></label></div>
-            <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="${Math.max(DEFAULT_PATH_RADIUS, p.simPointRadius)}" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
+            <div class="sim-inspector-row"><label>Strength<input type="number" min="0" step="0.05" placeholder="${DEFAULT_PATH_STRENGTH.toFixed(2)}" value="${numberValue(target.strength)}" data-sim-field="strength" data-sim-type="number"></label></div>
+            <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="${DEFAULT_PATH_RADIUS}" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
             <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
           </div>`;
       } else if (selected.kind === 'edge') {
