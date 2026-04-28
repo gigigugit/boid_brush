@@ -24,7 +24,7 @@ const MIN_TEXTURE_FLOW_SLOPE = 0.04;
 const TEXTURE_FLOW_BASE_TRANSFER = 0.12;
 const TEXTURE_FLOW_SLOPE_TRANSFER = 0.28;
 const TEXTURE_FLOW_MAX_TRANSFER = 0.4;
-const MIN_SIM_HARDNESS = 0.1;
+const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -291,8 +291,10 @@ function _applySimulationGuides(brush, p, read) {
       if (d <= 0.0001 || d > config.radius) continue;
       const sign = point.type === 'repel' ? -1 : 1;
       const falloff = 1 - d / config.radius;
+      // Repel points use a hardness-shaped falloff so users can make repulsion
+      // either soft/wide or tight/punchy; attract points stay linear.
       const shaped = point.type === 'repel'
-        ? Math.pow(falloff, Math.max(MIN_SIM_HARDNESS, config.hardness))
+        ? Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, config.hardness))
         : falloff;
       const push = config.strength * p.simSpeed * shaped * 0.85 * sign;
       vx += (dx / d) * push;
