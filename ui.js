@@ -262,11 +262,11 @@ export function buildSidebar(app) {
     <div class="section-header" data-brushes="fluid" data-section="fluidBrush">Fluid Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${sliderRow('lbmBrushRadius', 'Brush Radius', 2, 240, 36, null, 'Footprint of each free-flow injection along the stroke')}
-      ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 16, null, 'How much pigment mass is injected at each pointer sample')}
+      ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 30, null, 'How much pigment mass is injected at each pointer sample')}
       ${sliderRow('lbmParticleRadius', 'Seed Radius', 1, 24, 3, null, 'Radius of the seed packets used to feed the lattice')}
       ${sliderRow('lbmStrokePull', 'Stroke Pull', 0, 100, 36, v => (v / 100).toFixed(2), 'How strongly new fluid follows the stroke tangent')}
-      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 18, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
-      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 14, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
+      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 55, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
+      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 65, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
       ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
     </div>
@@ -280,19 +280,19 @@ export function buildSidebar(app) {
     <!-- Fluid Flow (fluid only) -->
     <div class="section-header closed" data-brushes="fluid" data-section="fluidFlow">Fluid Flow <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
-      ${nudgeSliderRow('lbmViscosity', 'Viscosity', 0, 100, 76, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
+      ${nudgeSliderRow('lbmViscosity', 'Viscosity', 0, 100, 28, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
       ${sliderRow('lbmDensity', 'Density', 0, 100, 30, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
       ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 34, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
-      ${nudgeSliderRow('lbmTimeStep', 'Time Step', 1, 64, 10, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
-      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 2, null, 'How many solver iterations run per frame')}
+      ${nudgeSliderRow('lbmTimeStep', 'Time Step', 1, 64, 16, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
+      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 4, null, 'How many solver iterations run per frame')}
     </div>
 
     <!-- Fluid Settling (fluid only) -->
     <div class="section-header" data-brushes="fluid" data-section="fluidSettling">Fluid Settling <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
-      ${nudgeSliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 62, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
-      ${nudgeSliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 24, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
-      ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 52, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
+      ${nudgeSliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 34, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
+      ${nudgeSliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 14, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
+      ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 65, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
       ${sliderRow('lbmPigmentRetention', 'Pigment Retention', 0, 100, 78, v => (v / 100).toFixed(2), 'How much pigment and phase remain while the fluid settles')}
     </div>
 
@@ -536,10 +536,10 @@ export function buildSidebar(app) {
     btn.addEventListener('click', () => {
       const bias = Number(btn.dataset.fluidBias);
       const updates = bias === 0 ? {
-        lbmTimeStep: 10,
-        lbmMotionDecay: 62,
-        lbmStopSpeed: 24,
-        lbmViscosity: 76,
+        lbmTimeStep: 16,
+        lbmMotionDecay: 34,
+        lbmStopSpeed: 14,
+        lbmViscosity: 28,
       } : {
         lbmTimeStep: (Number(document.getElementById('lbmTimeStep')?.value) || 10) + bias,
         lbmMotionDecay: (Number(document.getElementById('lbmMotionDecay')?.value) || 62) - bias * 2,
