@@ -2784,6 +2784,7 @@ export class FluidBrush {
   constructor(app) {
     this.app = app;
     this.sim = null;
+    this._finalSim = null;
     this._ready = false;
     this._initPromise = null;
     this._active = false;
@@ -2797,6 +2798,9 @@ export class FluidBrush {
     this._strokeBaseCanvas = document.createElement('canvas');
     this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
     this._maskSynced = false;
+    this._replaySeedEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
   }
 
   async init() {
@@ -2804,6 +2808,8 @@ export class FluidBrush {
     this._initPromise = (async () => {
       try {
         this.sim = await FluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams());
+        this._finalSim = new FluidSim(this.sim._mod, this.app.W || 800, this.app.H || 600, this._solverParams('final'));
+        this._finalSim.updateParams(this._solverParams('final'));
         this._ready = true;
         this._syncMask();
       } catch (error) {
@@ -2815,9 +2821,9 @@ export class FluidBrush {
     return this._initPromise;
   }
 
-  _resetSimulatorState() {
-    if (!this.sim) return;
-    this.sim.clearParticles();
+  _resetSimulatorState(sim = this.sim) {
+    if (!sim) return;
+    sim.clearParticles();
   }
 
   onDown(x, y, pressure) {
@@ -2830,6 +2836,8 @@ export class FluidBrush {
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
     this._resetSimulatorState();
+    this._resetSimulatorState(this._finalSim);
+    this._resetReplayCapture();
     this._captureStrokeBase();
     this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
@@ -2879,8 +2887,18 @@ export class FluidBrush {
 
   taperFrame() {}
 
-  _solverParams() {
-    const p = this.app.getP();
+  _previewResolutionScale(p) {
+    const finalScale = Number(p?.lbmResolutionScale) || 1;
+    if (!p?.lbmFirstPassPreview || finalScale <= 0.75) return finalScale;
+    return Math.max(0.5, Math.min(finalScale, finalScale * 0.55));
+  }
+
+  _usesFastFirstPass(p = this.app.getP()) {
+    return !!(p?.lbmFirstPassPreview && this._previewResolutionScale(p) < ((Number(p?.lbmResolutionScale) || 1) - 0.05));
+  }
+
+  _solverParams(pass = 'preview', sourceParams = this.app.getP()) {
+    const p = sourceParams;
     return {
       particleRadius: p.lbmParticleRadius,
       viscosity: p.lbmViscosity,
@@ -2892,31 +2910,47 @@ export class FluidBrush {
       stopSpeed: p.lbmStopSpeed,
       pigmentCarry: p.lbmPigmentCarry,
       pigmentRetention: p.lbmPigmentRetention,
-      resolutionScale: p.lbmResolutionScale,
+      resolutionScale: pass === 'final' ? p.lbmResolutionScale : this._previewResolutionScale(p),
       fluidScale: p.lbmFluidScale,
       renderMode: p.lbmRenderMode,
       simulationType: 'lbm',
     };
   }
 
-  _updateSimulator() {
-    if (!this._ready || !this.sim) return false;
+  _updateSimulator(pass = 'preview', sourceParams = this.app.getP()) {
+    const sim = pass === 'final' ? this._finalSim : this.sim;
+    if (!this._ready || !sim) return false;
     const needsMaskSync = this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H || !this._maskSynced;
-    this.sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
-    this.sim.updateParams(this._solverParams());
+    sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
+    sim.updateParams(this._solverParams(pass, sourceParams));
     if (needsMaskSync) this._syncMask();
     return true;
   }
 
   _syncMask() {
-    if (!this.sim) return;
+    if (!this.sim && !this._finalSim) return;
     if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) {
       this._maskCanvas.width = this.app.W;
       this._maskCanvas.height = this.app.H;
     }
     this._maskCtx.clearRect(0, 0, this._maskCanvas.width, this._maskCanvas.height);
-    this.sim.setMask(this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height));
+    const mask = this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    this.sim?.setMask(mask);
+    this._finalSim?.setMask(mask);
     this._maskSynced = true;
+  }
+
+  _resetReplayCapture() {
+    this._replaySeedEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
+  }
+
+  _recordSeedParticles(particles) {
+    this._replaySeedEvents.push({
+      time: this._replayTime,
+      particles: particles.map(particle => ({ ...particle })),
+    });
   }
 
   _captureStrokeBase() {
@@ -2933,7 +2967,7 @@ export class FluidBrush {
 
   _seedAt(x, y, pressure, previousPoint, amount, p) {
     if (!this._active) return;
-    if (!this._updateSimulator()) return;
+    if (!this._updateSimulator('preview', p)) return;
     p = p ?? this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
@@ -2947,10 +2981,12 @@ export class FluidBrush {
       profile,
     );
     this.sim.addParticles(particles);
+    if (this._usesFastFirstPass(p)) this._recordSeedParticles(particles);
   }
 
   _step(elapsed) {
-    if (!this._updateSimulator()) return;
+    const currentParams = this.app.getP();
+    if (!this._updateSimulator('preview', currentParams)) return;
     const prevCount = this.sim.getParticleCount();
     if (!this._active && prevCount <= 0) {
       this._lastFrameElapsed = elapsed;
@@ -2962,15 +2998,47 @@ export class FluidBrush {
     dt = Math.min(dt, 0.05);
     this.sim.step(dt);
     const nextCount = this.sim.getParticleCount();
+    if (this._usesFastFirstPass(currentParams) && (this._active || prevCount > 0 || nextCount > 0)) {
+      this._replayStepHistory.push(dt);
+      this._replayTime += dt;
+    }
     if (this._active || prevCount > 0 || nextCount > 0) {
-      this._depositFrame();
+      this._depositFrameFromSim(this.sim);
     }
     if (!this._active && prevCount > 0 && nextCount <= 0) {
+      if (this._usesFastFirstPass(currentParams)) this._renderFinalPass(currentParams);
       this._resetSimulatorState();
+      this._resetReplayCapture();
     }
   }
 
-  _depositFrame() {
+  _renderFinalPass(sourceParams) {
+    if (!this._finalSim || !this._replaySeedEvents.length || !this._replayStepHistory.length) return;
+    if (!this._updateSimulator('final', sourceParams)) return;
+    this._finalSim.clearParticles();
+    let replayTime = 0;
+    let seedIndex = 0;
+    const flushSeeds = () => {
+      while (seedIndex < this._replaySeedEvents.length && this._replaySeedEvents[seedIndex].time <= replayTime + 1e-6) {
+        this._finalSim.addParticles(this._replaySeedEvents[seedIndex].particles);
+        seedIndex += 1;
+      }
+    };
+    flushSeeds();
+    for (const dt of this._replayStepHistory) {
+      this._finalSim.step(dt);
+      replayTime += dt;
+      flushSeeds();
+    }
+    let guard = 0;
+    while (this._finalSim.getParticleCount() > 0 && guard < 480) {
+      this._finalSim.step(1 / 60);
+      guard += 1;
+    }
+    this._depositFrameFromSim(this._finalSim);
+  }
+
+  _depositFrameFromSim(sim) {
     if (this._strokeLayer && !this.app.layers.includes(this._strokeLayer)) {
       this._strokeLayer = null;
       return;
@@ -2980,7 +3048,7 @@ export class FluidBrush {
     if (!this._strokeBaseCanvas.width || !this._strokeBaseCanvas.height) {
       this._captureStrokeBase();
     }
-    const frame = this.sim.readPixels();
+    const frame = sim.readPixels();
     if (!frame.width || !frame.height) return;
     if (this._frameCanvas.width !== frame.width || this._frameCanvas.height !== frame.height) {
       this._frameCanvas.width = frame.width;
@@ -3030,6 +3098,8 @@ export class FluidBrush {
     this._lastFrameElapsed = null;
     this._strokeLayer = null;
     this._resetSimulatorState();
+    this._resetSimulatorState(this._finalSim);
+    this._resetReplayCapture();
   }
 }
 

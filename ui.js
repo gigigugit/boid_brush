@@ -304,6 +304,8 @@ export function buildSidebar(app) {
         <option value="grid">Grid</option>
         <option value="particles">Particles</option>
       </select></label>
+      <label>Fast First Pass <input type="checkbox" id="lbmFirstPassPreview" checked></label>
+      <span class="slider-desc">Preview the stroke at a lower internal resolution, then replay a full-resolution final render when the fluid settles.</span>
       ${sliderRow('lbmResolutionScale', 'Resolution', 50, 200, 100, v => v + '%', 'Internal lattice resolution relative to the canvas')}
       ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 115, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
       <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>

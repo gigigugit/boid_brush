@@ -1243,6 +1243,7 @@ export class App {
       lbmHueJitter: numOr('lbmHueJitter', 0),
       lbmLightnessJitter: numOr('lbmLightnessJitter', 0),
       lbmRenderMode: sel('lbmRenderMode') || 'hybrid',
+      lbmFirstPassPreview: has('lbmFirstPassPreview') ? chk('lbmFirstPassPreview') : true,
       lbmShowFlow: chk('lbmShowFlow'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
