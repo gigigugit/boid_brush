@@ -305,14 +305,23 @@ function _applySimulationGuides(brush, p, read) {
         if (pathItem.enabled === false || !pathItem.points?.length) continue;
         const config = app._resolveSimulationPathConfig(pathItem, p);
         let closest = null;
+        let closestDistance = Infinity;
         const pts = pathItem.points;
         for (let j = 1; j < pts.length; j++) {
           const candidate = _closestPointOnSegment(x, y, pts[j - 1].x, pts[j - 1].y, pts[j].x, pts[j].y);
-          if (!closest || Math.hypot(candidate.x - x, candidate.y - y) < Math.hypot(closest.x - x, closest.y - y)) closest = candidate;
+          const candidateDistance = Math.hypot(candidate.x - x, candidate.y - y);
+          if (candidateDistance < closestDistance) {
+            closest = candidate;
+            closestDistance = candidateDistance;
+          }
         }
         if (config.closed && pts.length > 2) {
           const candidate = _closestPointOnSegment(x, y, pts[pts.length - 1].x, pts[pts.length - 1].y, pts[0].x, pts[0].y);
-          if (!closest || Math.hypot(candidate.x - x, candidate.y - y) < Math.hypot(closest.x - x, closest.y - y)) closest = candidate;
+          const candidateDistance = Math.hypot(candidate.x - x, candidate.y - y);
+          if (candidateDistance < closestDistance) {
+            closest = candidate;
+            closestDistance = candidateDistance;
+          }
         }
         if (!closest) continue;
         const dx = closest.x - x;

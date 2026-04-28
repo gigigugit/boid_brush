@@ -43,6 +43,11 @@ const TEXTURE_CHANNEL_DEFAULTS = {
   smudgeDrag: 0,
   pooling: 0,
 };
+const SIM_SPAWN_SHAPES = [
+  'circle', 'ring', 'gaussian', 'line', 'ellipse', 'diamond', 'grid',
+  'sunburst', 'spiral', 'poisson', 'random_cluster', 'burst', 'lemniscate',
+  'phyllotaxis', 'noise_scatter', 'bullseye', 'cross', 'wave', 'voronoi',
+];
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -54,6 +59,14 @@ function _lerp(a, b, t) {
 
 function _wrapIndex(v, size) {
   return ((v % size) + size) % size;
+}
+
+function _radiansToDegrees(value) {
+  return value * 180 / Math.PI;
+}
+
+function _degreesToRadians(value) {
+  return value * Math.PI / 180;
 }
 
 function _deepClone(value) {
@@ -1592,7 +1605,7 @@ export class App {
     const summaryButtons = groups.map(group => {
       if (!group.items.length) return '';
       return `<div class="sim-inspector-group"><h3>${group.label}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
-        <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
+        <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}" aria-label="${group.label} ${idx + 1}${item.enabled === false ? ', disabled' : ''}${item.type ? `, ${item.type}` : ''}">
           ${group.label} ${idx + 1}${item.enabled === false ? ' · Off' : ''}${item.type ? ` · ${item.type}` : ''}
         </button>`).join('')}</div></div>`;
     }).join('');
@@ -1628,7 +1641,7 @@ export class App {
       const target = selected.target;
       const checked = target.enabled !== false ? 'checked' : '';
       const numberValue = value => Number.isFinite(value) ? String(value) : '';
-      const degrees = value => Number.isFinite(value) ? String(Math.round((value * 180 / Math.PI) * 10) / 10) : '';
+      const degrees = value => Number.isFinite(value) ? String(Math.round(_radiansToDegrees(value) * 10) / 10) : '';
       let rows = `
         <div class="sim-inspector-group">
           <h3>Selected ${selected.kind === 'point' ? target.type : selected.kind}</h3>
@@ -1650,7 +1663,7 @@ export class App {
             <div class="sim-inspector-row"><label>Count<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.count)}" data-sim-field="count" data-sim-type="integer"></label></div>
             <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
               <option value="">Brush default</option>
-              ${['circle','ring','gaussian','line','ellipse','diamond','grid','sunburst','spiral','poisson','random_cluster','burst','lemniscate','phyllotaxis','noise_scatter','bullseye','cross','wave','voronoi'].map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
+              ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
             </select></label></div>
             <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
             <div class="sim-inspector-row"><label>Angle<input type="number" step="0.1" placeholder="Brush default" value="${degrees(target.angle)}" data-sim-field="angle" data-sim-type="angle"></label></div>
@@ -1727,7 +1740,7 @@ export class App {
         } else if (type === 'integer') {
           target[field] = Math.max(1, Math.round(+el.value));
         } else if (type === 'angle') {
-          target[field] = (+el.value) * Math.PI / 180;
+          target[field] = _degreesToRadians(+el.value);
         } else {
           target[field] = +el.value;
         }
@@ -1960,7 +1973,7 @@ export class App {
     if (!data) return;
     const collection = hit.collection;
     if (!collection || !Array.isArray(data[collection])) return;
-    data[collection] = data[collection].filter(item => item !== hit.target && item.id !== hit.target?.id);
+    data[collection] = data[collection].filter(item => item.id !== hit.target?.id);
     if (collection === 'spawns') this._ensureSimulationSpawns();
     const selected = this._getSelectedSimulationEntry();
     if (selected && selected.collection === collection && selected.id === hit.target?.id) {

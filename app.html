@@ -442,10 +442,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <!-- ══════════ Simulation Help Pop-up ══════════ -->
 <div id="simHelpModal" class="sim-help-modal">
   <div class="sim-help-backdrop" id="simHelpBackdrop"></div>
-  <div class="sim-help-panel" role="dialog" aria-modal="true" aria-labelledby="simHelpTitle">
+  <div class="sim-help-panel" role="dialog" aria-modal="true" aria-labelledby="simHelpTitle" aria-describedby="simHelpIntro">
     <button class="sim-help-close" id="simHelpClose" aria-label="Close help pop-up">✕</button>
     <h2 id="simHelpTitle">Simulation Help Pop-up</h2>
-    <p>Simulation items can carry their own overrides without changing your normal brush controls.</p>
+    <p id="simHelpIntro">Simulation items can carry their own overrides without changing your normal brush controls.</p>
     <h3>Override precedence</h3>
     <ul>
       <li>Selected simulation item overrides win whenever that override is set.</li>
