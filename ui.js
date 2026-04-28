@@ -57,11 +57,11 @@ function fluidMidrangeRow() {
   `;
 }
 
-function _setRangeValue(target, next) {
+function _updateSliderValue(target, newValue) {
   if (!target) return;
   const min = Number(target.min);
   const max = Number(target.max);
-  const clamped = Math.max(min, Math.min(max, next));
+  const clamped = Math.max(min, Math.min(max, newValue));
   if (clamped === Number(target.value)) return;
   target.value = String(clamped);
   target.dispatchEvent(new Event('input', { bubbles: true }));
@@ -69,7 +69,7 @@ function _setRangeValue(target, next) {
 }
 
 function _nudgeRangeValue(target, delta) {
-  _setRangeValue(target, (Number(target?.value) || 0) + delta);
+  _updateSliderValue(target, (Number(target?.value) || 0) + delta);
 }
 
 // ── Build sidebar DOM ───────────────────────────────────────
@@ -547,7 +547,7 @@ export function buildSidebar(app) {
         lbmViscosity: (Number(document.getElementById('lbmViscosity')?.value) || 76) - bias,
       };
       for (const [id, value] of Object.entries(updates)) {
-        _setRangeValue(document.getElementById(id), value);
+        _updateSliderValue(document.getElementById(id), value);
       }
       app.showToast(
         bias === 0

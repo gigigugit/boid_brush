@@ -16,6 +16,7 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Move samples inject less mass than pointer-down so a continuous stroke does not over-pack the lattice.
 const FLUID_MOVE_SEED_RATIO = 0.45;
+const FLUID_TIMESTEP_60FPS = 1 / 60;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
 // Skip texture flow on nearly flat regions where the sampled slope is only a tiny fraction
@@ -3002,9 +3003,9 @@ export class FluidBrush {
       this._lastFrameElapsed = elapsed;
       return;
     }
-    let dt = this._lastFrameElapsed == null ? 1 / 60 : elapsed - this._lastFrameElapsed;
+    let dt = this._lastFrameElapsed == null ? FLUID_TIMESTEP_60FPS : elapsed - this._lastFrameElapsed;
     this._lastFrameElapsed = elapsed;
-    if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
+    if (!Number.isFinite(dt) || dt <= 0) dt = FLUID_TIMESTEP_60FPS;
     dt = Math.min(dt, 0.05);
     this.sim.step(dt);
     const nextCount = this.sim.getParticleCount();
@@ -3042,7 +3043,7 @@ export class FluidBrush {
     }
     let guard = 0;
     while (this._finalSim.getParticleCount() > 0 && guard < FLUID_FINAL_PASS_MAX_SETTLING_STEPS) {
-      this._finalSim.step(1 / 60);
+      this._finalSim.step(FLUID_TIMESTEP_60FPS);
       guard += 1;
     }
     this._depositFrameFromSim(this._finalSim);
