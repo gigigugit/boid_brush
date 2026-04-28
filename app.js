@@ -1131,6 +1131,12 @@ export class App {
     };
     const chk = id => { const e = el(id); return e ? e.checked : false; };
     const sel = id => { const e = el(id); return e ? e.value : ''; };
+    const _MULT_STEPS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
+    const mult = id => {
+      const e = el(id + '_multIdx');
+      const idx = e ? Math.round(+e.value) : 5;
+      return _MULT_STEPS[Math.max(0, Math.min(_MULT_STEPS.length - 1, idx))];
+    };
 
     const scale = val('brushScale') / 100;
 
@@ -1238,16 +1244,16 @@ export class App {
       lbmPigmentRetention: numOr('lbmPigmentRetention', 78) / 100,
       lbmResolutionScale: numOr('lbmResolutionScale', 100) / 100,
       lbmFluidScale: numOr('lbmFluidScale', 115) / 100,
-      lbmStrokePull: numOr('lbmStrokePull', 36) / 100,
-      lbmStrokeRake: numOr('lbmStrokeRake', 55) / 100,
-      lbmStrokeJitter: numOr('lbmStrokeJitter', 65) / 100,
+      lbmStrokePull: numOr('lbmStrokePull', 36) / 100 * mult('lbmStrokePull'),
+      lbmStrokeRake: numOr('lbmStrokeRake', 55) / 100 * mult('lbmStrokeRake'),
+      lbmStrokeJitter: numOr('lbmStrokeJitter', 65) / 100 * mult('lbmStrokeJitter'),
       lbmHueJitter: numOr('lbmHueJitter', 0),
       lbmLightnessJitter: numOr('lbmLightnessJitter', 0),
-      lbmInjectForce: numOr('lbmInjectForce', 100) / 100,
-      lbmVortexStrength: numOr('lbmVortexStrength', 0) / 100,
-      lbmBurstStrength: numOr('lbmBurstStrength', 0) / 100,
-      lbmChevronStrength: numOr('lbmChevronStrength', 0) / 100,
-      lbmUndulateStrength: numOr('lbmUndulateStrength', 0) / 100,
+      lbmInjectForce: numOr('lbmInjectForce', 100) / 100 * mult('lbmInjectForce'),
+      lbmVortexStrength: numOr('lbmVortexStrength', 0) / 100 * mult('lbmVortexStrength'),
+      lbmBurstStrength: numOr('lbmBurstStrength', 0) / 100 * mult('lbmBurstStrength'),
+      lbmChevronStrength: numOr('lbmChevronStrength', 0) / 100 * mult('lbmChevronStrength'),
+      lbmUndulateStrength: numOr('lbmUndulateStrength', 0) / 100 * mult('lbmUndulateStrength'),
       lbmRenderMode: sel('lbmRenderMode') || 'hybrid',
       lbmFirstPassPreview: has('lbmFirstPassPreview') ? chk('lbmFirstPassPreview') : true,
       lbmShowFlow: chk('lbmShowFlow'),

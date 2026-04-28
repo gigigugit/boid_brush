@@ -6,6 +6,25 @@ const PRESETS_KEY = 'bb_presets_v1';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 const NUDGE_BUTTON_STYLE = 'width:20px;height:20px;padding:0;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#ddd;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;';
 
+// ── Multiplier selector constants ───────────────────────────
+const MULT_STEPS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
+const MULT_DEFAULT_IDX = 5; // 1×
+
+function _fmtMult(idx) {
+  const v = MULT_STEPS[Math.max(0, Math.min(MULT_STEPS.length - 1, idx))];
+  return '×' + v;
+}
+
+function multRow(id) {
+  return `<div style="display:flex;align-items:center;gap:4px;margin:-2px 0 4px 0;padding-left:2px;">
+    <span style="font-size:10px;color:#8899aa;flex:1;">multiplier</span>
+    <button type="button" class="mult-step-btn" data-target="${id}" data-dir="-1" aria-label="Decrease ${id} multiplier" style="${NUDGE_BUTTON_STYLE}">↓</button>
+    <span id="${id}_multDisp" style="font-size:10px;color:#cbd7e6;min-width:38px;text-align:center;">×1</span>
+    <button type="button" class="mult-step-btn" data-target="${id}" data-dir="1" aria-label="Increase ${id} multiplier" style="${NUDGE_BUTTON_STYLE}">↑</button>
+    <input type="range" id="${id}_multIdx" min="0" max="11" value="${MULT_DEFAULT_IDX}" style="display:none;">
+  </div>`;
+}
+
 // ── Built-in presets ────────────────────────────────────────
 const BUILTIN_PRESETS = {
   'Ink Wash': { count:25,seek:40,cohesion:15,separation:50,alignment:20,jitter:0,wander:0,wanderSpeed:30,maxSpeed:8,damping:95,stampSize:6,stampOpacity:15,stampSeparation:0,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:0,spawnRadius:50,brushScale:100 },
@@ -266,8 +285,11 @@ export function buildSidebar(app) {
       ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 30, null, 'How much pigment mass is injected at each pointer sample')}
       ${sliderRow('lbmParticleRadius', 'Seed Radius', 1, 24, 3, null, 'Radius of the seed packets used to feed the lattice')}
       ${sliderRow('lbmStrokePull', 'Stroke Pull', 0, 100, 36, v => (v / 100).toFixed(2), 'How strongly new fluid follows the stroke tangent')}
+      ${multRow('lbmStrokePull')}
       ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 55, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
+      ${multRow('lbmStrokeRake')}
       ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 65, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
+      ${multRow('lbmStrokeJitter')}
       ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
     </div>
@@ -276,10 +298,15 @@ export function buildSidebar(app) {
     <div class="section-header closed" data-brushes="fluid" data-section="fluidForces">Stroke Forces <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       ${sliderRow('lbmInjectForce', 'Inject Force', 50, 300, 100, v => v + '%', 'Master velocity scale applied to all injection forces')}
+      ${multRow('lbmInjectForce')}
       ${sliderRow('lbmVortexStrength', 'Vortex', 0, 100, 0, v => (v / 100).toFixed(2), 'Counter-rotating ring vortices across the stroke — tight spirals and eddies')}
+      ${multRow('lbmVortexStrength')}
       ${sliderRow('lbmBurstStrength', 'Burst', 0, 100, 0, v => (v / 100).toFixed(2), 'Radial explosion bursts along the stroke — sunburst splatters')}
+      ${multRow('lbmBurstStrength')}
       ${sliderRow('lbmChevronStrength', 'Chevron', 0, 100, 0, v => (v / 100).toFixed(2), 'Herringbone V-pattern injection — feather and fishbone textures')}
+      ${multRow('lbmChevronStrength')}
       ${sliderRow('lbmUndulateStrength', 'Undulate', 0, 100, 0, v => (v / 100).toFixed(2), 'Sinusoidal snake-wave offset along the stroke — meander patterns')}
+      ${multRow('lbmUndulateStrength')}
     </div>
 
     <!-- Fluid Flow (fluid only) -->
@@ -540,6 +567,20 @@ export function buildSidebar(app) {
     btn.addEventListener('click', () => {
       const target = document.getElementById(btn.dataset.target);
       _nudgeRangeValue(target, Number(btn.dataset.delta) || 0);
+    });
+  });
+
+  sb.querySelectorAll('.mult-step-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const dir = Number(btn.dataset.dir);
+      const idxEl = document.getElementById(targetId + '_multIdx');
+      const dispEl = document.getElementById(targetId + '_multDisp');
+      if (!idxEl || !dispEl) return;
+      const newIdx = Math.max(0, Math.min(MULT_STEPS.length - 1, Number(idxEl.value) + dir));
+      idxEl.value = String(newIdx);
+      dispEl.textContent = _fmtMult(newIdx);
+      app.invalidateParams();
     });
   });
 
@@ -1075,6 +1116,14 @@ function _initAIPromptPopout(app) {
 }
 
 // ── Sync UI from app state (e.g. after session restore) ─────
+function _syncMultDisplays() {
+  document.querySelectorAll('[id$="_multIdx"]').forEach(el => {
+    const baseId = el.id.slice(0, -8); // strip "_multIdx"
+    const dispEl = document.getElementById(baseId + '_multDisp');
+    if (dispEl) dispEl.textContent = _fmtMult(Number(el.value));
+  });
+}
+
 export function syncUI(app) {
   // Update slider readouts
   document.querySelectorAll('#sidebar input[type="range"]').forEach(inp => {
@@ -1083,6 +1132,8 @@ export function syncUI(app) {
     const fmt = _sliderFormats[inp.id];
     span.textContent = fmt ? fmt(+inp.value) : inp.value;
   });
+  // Update multiplier displays
+  _syncMultDisplays();
   // Layer controls
   const l = app.getActiveLayer();
   if (l) {
