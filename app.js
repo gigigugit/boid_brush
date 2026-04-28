@@ -1123,6 +1123,7 @@ export class App {
     this._paramsDirty = false;
 
     const el = id => document.getElementById(id);
+    const has = id => !!el(id);
     const val = id => { const e = el(id); return e ? +e.value : 0; };
     const numOr = (id, fallback) => {
       const e = el(id);
