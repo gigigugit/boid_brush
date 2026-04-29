@@ -34,6 +34,11 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 
 Open `app.html` in a modern browser (or `index.html` for the landing page with links to forks). Works on desktop and tablet (iPad) — no server or build step required.
 
+### Notebook prototyping
+
+- `notebooks/lbm_fluid_iteration.ipynb` ports the JS fallback LBM fluid model into Python for Jupyter-based iteration.
+- `notebooks/lbm_fluid_model.py` contains the reusable notebook-friendly model class that mirrors the fallback logic from `playground/fluid_playground.js`.
+
 ### Keyboard Shortcuts
 
 | Key | Action |
