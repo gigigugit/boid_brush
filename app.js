@@ -2888,7 +2888,8 @@ export class App {
     const target = e.target;
     if (target instanceof HTMLElement) {
       const tag = target.tagName;
-      if (target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const isEditableField = !target.disabled && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+      if (target.isContentEditable || isEditableField) return;
     }
     // Ctrl+N = new canvas / canvas size
     if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
