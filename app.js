@@ -57,6 +57,7 @@ const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
+const DEFAULT_SIM_SEEK = 0;
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -263,7 +264,7 @@ export class App {
       },
       // Scene-level variable overrides (applied during simulation playback).
       // seek defaults to 0 so boids follow guides instead of the cursor.
-      vars: { seek: 0 },
+      vars: { seek: DEFAULT_SIM_SEEK },
       // Named saved simulation sessions.
       sessions: [],
       drawingPath: null,
@@ -1604,7 +1605,7 @@ export class App {
   }
 
   _newSimulationSession() {
-    this.simulation.vars = { seek: 0 };
+    this.simulation.vars = { seek: DEFAULT_SIM_SEEK };
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -1618,9 +1619,10 @@ export class App {
   }
 
   _saveSimulationSession() {
-    const rawName = window.prompt('Name for this simulation session:', `Session ${this.simulation.sessions.length + 1}`);
+    const defaultName = `Session ${this.simulation.sessions.length + 1}`;
+    const rawName = window.prompt('Name for this simulation session:', defaultName);
     if (!rawName) return;
-    const name = rawName.trim().slice(0, 64) || `Session ${this.simulation.sessions.length + 1}`;
+    const name = rawName.trim().slice(0, 64) || defaultName;
     this.simulation.sessions.push({
       name,
       savedAt: Date.now(),
@@ -1636,7 +1638,7 @@ export class App {
   _loadSimulationSession(index) {
     const session = this.simulation.sessions[index];
     if (!session) return;
-    this.simulation.vars = Object.assign({ seek: 0 }, session.vars);
+    this.simulation.vars = Object.assign({ seek: DEFAULT_SIM_SEEK }, session.vars);
     this.simulation.brushData = _deepClone(session.brushData);
     this.simulation.nextId = session.nextId || this.simulation.nextId;
     this.simulation.selected = null;
@@ -1686,7 +1688,7 @@ export class App {
     const summaryButtons = groups.map(group => {
       if (!group.items.length) return '';
       return `<div class="sim-inspector-group"><h3>${group.label}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
-        <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}" aria-label="${group.label} ${idx + 1}${item.enabled === false ? ', disabled' : ''}${item.type ? `, ${item.type}` : ''}">
+        <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
           ${group.label} ${idx + 1}${item.enabled === false ? ' · Off' : ''}${item.type ? ` · ${item.type}` : ''}
         </button>`).join('')}</div></div>`;
     }).join('');
@@ -1697,8 +1699,8 @@ export class App {
     const savedSessionsList = this.simulation.sessions.length
       ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
          <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
-           `<button data-sim-load-session="${i}" title="Load ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
-            <button class="danger" data-sim-del-session="${i}" title="Delete ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
+            `<button data-sim-load-session="${i}" title="Load ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
+             <button class="danger" data-sim-del-session="${i}" title="Delete ${_escapeHtml(s.name)}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
          ).join('')}</div>`
       : '';
 
@@ -3984,9 +3986,9 @@ export class App {
           if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
           this.simulation.enabled = !!val?.enabled;
           // Restore scene-level variable overrides (seek etc.) persisted from last use.
-          // keep default seek=0 if no value was saved (first ever session).
+          // keep the default seek value if no value was saved (first ever session).
           if (val?.vars && typeof val.vars === 'object') {
-            this.simulation.vars = Object.assign({ seek: 0 }, val.vars);
+            this.simulation.vars = Object.assign({ seek: DEFAULT_SIM_SEEK }, val.vars);
           }
           if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
           continue;
