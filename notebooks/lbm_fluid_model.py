@@ -6,13 +6,22 @@ import random
 from typing import Iterable, Mapping, Sequence
 
 
-DEFAULT_RGBA = (52, 122, 214, 0.72)
+RgbaColor = tuple[int, int, int, float]
+
+DEFAULT_RGBA: RgbaColor = (52, 122, 214, 0.72)
+# Mask alpha values are treated like 0-255 image-data alpha; >8 matches the JS cutoff
+# used to decide whether a cell counts as present fluid/mask coverage.
 ALPHA_THRESHOLD = 8
 CENTER_WEIGHT = 1.8
 FRAME_RATE_SCALE = 60.0
 SPH_DECAY_MULTIPLIER = 60.0
 EULERIAN_DECAY_MULTIPLIER = 42.0
 LBM_DECAY_MULTIPLIER = 36.0
+NEIGHBOR_OFFSETS = (
+    (-1, -1), (-1, 0), (-1, 1),
+    (0, -1), (0, 0), (0, 1),
+    (1, -1), (1, 0), (1, 1),
+)
 
 
 @dataclass
@@ -37,7 +46,7 @@ class FluidParticle:
     vx: float = 0.0
     vy: float = 0.0
     radius: float = 4.0
-    rgba: tuple[float, float, float, float] = DEFAULT_RGBA
+    rgba: RgbaColor = DEFAULT_RGBA
     outside_slack: float = 0.0
 
     def copy(self) -> 'FluidParticle':
@@ -55,11 +64,11 @@ class FluidParticle:
 class NotebookLBMFluidModel:
     """Python notebook port of the JS fallback fluid model.
 
-    This mirrors the fallback simulator in playground/fluid_playground.js so the
-    LBM-style fluid math can be iterated inside Jupyter without the brush/UI.
-    The main methods to tweak are build_velocity_field(), step_lbm(), and
-    advance_particle().
-    """
+        This mirrors the repo-root fallback simulator in playground/fluid_playground.js
+        so the LBM-style fluid math can be iterated inside Jupyter without the brush/UI.
+        The main methods to tweak are build_velocity_field(), step_lbm(), and
+        advance_particle().
+        """
 
     def __init__(self, display_width: int, display_height: int, params: FluidParams | Mapping[str, float] | None = None, random_seed: int = 0):
         self.display_width = max(1, int(display_width))
@@ -149,7 +158,7 @@ class NotebookLBMFluidModel:
             if self.inside_mask_internal(x, y):
                 self._particles.append(FluidParticle(x=x, y=y, vx=vx, vy=vy, radius=radius, rgba=rgba))
 
-    def seed_disc(self, cx: float, cy: float, count: int, radius: float | None = None, initial_speed: float = 0.0, rgba: tuple[float, float, float, float] = DEFAULT_RGBA) -> None:
+    def seed_disc(self, cx: float, cy: float, count: int, radius: float | None = None, initial_speed: float = 0.0, rgba: RgbaColor = DEFAULT_RGBA) -> None:
         radius = self.params.particle_radius * 5 if radius is None else radius
         particles: list[FluidParticle] = []
         for _ in range(max(0, int(count))):
@@ -183,6 +192,7 @@ class NotebookLBMFluidModel:
                 self.step_lbm(step_dt)
 
     def step_sph(self, step_dt: float) -> None:
+        """JS-port SPH prototype; kept simple for notebook experiments, not large particle counts."""
         interaction_radius = max(4.0, self.params.particle_radius * 2.8)
         interaction_radius_sq = interaction_radius * interaction_radius
         delta = [(0.0, 0.0) for _ in self._particles]
@@ -267,8 +277,7 @@ class NotebookLBMFluidModel:
                 sum_x = 0.0
                 sum_y = 0.0
                 sum_w = 0.0
-                for oy in (-1, 0, 1):
-                    for ox in (-1, 0, 1):
+                for ox, oy in NEIGHBOR_OFFSETS:
                         nx = ix + ox
                         ny = iy + oy
                         if nx < 0 or ny < 0 or nx >= width or ny >= height:
