@@ -1897,6 +1897,11 @@ export class App {
       this.stopSimulation(false);
       this.simulation.selected = null;
       this._closeSimulationHelp();
+    } else {
+      const brush = this.getCurrentBrush();
+      if (brush?.deactivate) brush.deactivate();
+      this.isDrawing = false;
+      this.isTapering = false;
     }
     this.simulation.enabled = next;
     this.simulation.paused = false;
@@ -2795,7 +2800,7 @@ export class App {
       this.leaderY = y;
       // Notify brush of hover for Apple Pencil hover preview/spawn
       // Skip during taper — hover would clear the tapering boids
-      if (!this.isTapering) {
+      if (!this.isTapering && !(this.simulation.enabled && this._isMotionBrush())) {
         const brush = this.getCurrentBrush();
         if (brush && brush.onHover) brush.onHover(x, y);
       }
@@ -2880,6 +2885,11 @@ export class App {
   }
 
   _onKeyDown(e) {
+    const target = e.target;
+    if (target instanceof HTMLElement) {
+      const tag = target.tagName;
+      if (target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    }
     // Ctrl+N = new canvas / canvas size
     if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
     // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
