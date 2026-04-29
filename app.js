@@ -58,6 +58,7 @@ const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
 const DEFAULT_SIM_SEEK = 0;
+const MAX_SIM_SESSION_NAME_LENGTH = 64;
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -93,6 +94,12 @@ function _deepClone(value) {
 
 function _escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _normalizeSimulationVars(value) {
+  return {
+    seek: Number.isFinite(value?.seek) ? value.seek : DEFAULT_SIM_SEEK,
+  };
 }
 
 function _closestPointOnSegment(px, py, ax, ay, bx, by) {
@@ -1605,7 +1612,7 @@ export class App {
   }
 
   _newSimulationSession() {
-    this.simulation.vars = { seek: DEFAULT_SIM_SEEK };
+    this.simulation.vars = _normalizeSimulationVars();
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -1622,11 +1629,11 @@ export class App {
     const defaultName = `Session ${this.simulation.sessions.length + 1}`;
     const rawName = window.prompt('Name for this simulation session:', defaultName);
     if (!rawName) return;
-    const name = rawName.trim().slice(0, 64) || defaultName;
+    const name = rawName.trim().slice(0, MAX_SIM_SESSION_NAME_LENGTH) || defaultName;
     this.simulation.sessions.push({
       name,
       savedAt: Date.now(),
-      vars: _deepClone(this.simulation.vars),
+      vars: _normalizeSimulationVars(this.simulation.vars),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
     });
@@ -1638,7 +1645,7 @@ export class App {
   _loadSimulationSession(index) {
     const session = this.simulation.sessions[index];
     if (!session) return;
-    this.simulation.vars = Object.assign({ seek: DEFAULT_SIM_SEEK }, session.vars);
+    this.simulation.vars = _normalizeSimulationVars(session.vars);
     this.simulation.brushData = _deepClone(session.brushData);
     this.simulation.nextId = session.nextId || this.simulation.nextId;
     this.simulation.selected = null;
@@ -1687,9 +1694,9 @@ export class App {
     ];
     const summaryButtons = groups.map(group => {
       if (!group.items.length) return '';
-      return `<div class="sim-inspector-group"><h3>${group.label}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
+      return `<div class="sim-inspector-group"><h3>${_escapeHtml(group.label)}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
         <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
-          ${group.label} ${idx + 1}${item.enabled === false ? ' · Off' : ''}${item.type ? ` · ${item.type}` : ''}
+          ${_escapeHtml(group.label)} ${idx + 1}${item.enabled === false ? ' · Off' : ''}${item.type ? ` · ${item.type}` : ''}
         </button>`).join('')}</div></div>`;
     }).join('');
 
@@ -1699,7 +1706,7 @@ export class App {
     const savedSessionsList = this.simulation.sessions.length
       ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
          <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
-            `<button data-sim-load-session="${i}" title="Load ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
+            `<button data-sim-load-session="${i}" title="Load ${_escapeHtml(s.name)}" aria-label="Load saved session ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
              <button class="danger" data-sim-del-session="${i}" title="Delete ${_escapeHtml(s.name)}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
          ).join('')}</div>`
       : '';
@@ -1724,7 +1731,7 @@ export class App {
         <div class="sim-inspector-note">Override brush parameters for simulation playback. <strong>Seek</strong> defaults to 0 so agents follow guides instead of the cursor. Values persist when reopening simulation.</div>
         <div class="sim-inspector-row" style="flex-direction:column;align-items:stretch">
           <label style="display:flex;justify-content:space-between">
-            <span>Seek (cursor pull)</span><span class="sim-inspector-value" id="simVarSeekVal">${seekPct}%</span>
+            <span>Seek (cursor pull)</span><span class="sim-inspector-value" data-sim-var-label="seek">${seekPct}%</span>
           </label>
           <input type="range" min="0" max="100" step="0.5" value="${seekPct}" data-sim-var="seek" style="margin-top:4px">
         </div>
@@ -1864,7 +1871,7 @@ export class App {
       const updateVar = () => {
         const raw = +el.value;
         this.simulation.vars[varName] = raw / 100;
-        const label = panel.querySelector(`#simVar${varName.charAt(0).toUpperCase() + varName.slice(1)}Val`);
+        const label = panel.querySelector(`[data-sim-var-label="${varName}"]`);
         if (label) label.textContent = `${Math.round(raw)}%`;
         this._maybeAutoSaveSession();
       };
@@ -3988,7 +3995,7 @@ export class App {
           // Restore scene-level variable overrides (seek etc.) persisted from last use.
           // keep the default seek value if no value was saved (first ever session).
           if (val?.vars && typeof val.vars === 'object') {
-            this.simulation.vars = Object.assign({ seek: DEFAULT_SIM_SEEK }, val.vars);
+            this.simulation.vars = _normalizeSimulationVars(val.vars);
           }
           if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
           continue;
