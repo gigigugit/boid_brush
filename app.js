@@ -7,6 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
+import { BlobAdvectBrush } from './fluid_advect.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
@@ -261,6 +262,7 @@ export class App {
     this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
     this.brushes.fluid = new FluidBrush(this);
+    this.brushes.advect = new BlobAdvectBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
     this.brushes.ai = new AIDiffusionBrush(this);
@@ -1307,6 +1309,16 @@ export class App {
       simEdgeRadius: val('simEdgeRadius') || 28,
       simPheroPaintRadius: val('simPheroPaintRadius') || 18,
       simPheroPaintStrength: (val('simPheroPaintStrength') || 55) / 100,
+      // Blob Advect brush
+      advectBlobRadius: numOr('advectBlobRadius', 40),
+      advectSimScale: numOr('advectSimScale', 50),
+      advectDiffusion: numOr('advectDiffusion', 50),
+      advectViscosity: numOr('advectViscosity', 0),
+      advectCurlStrength: numOr('advectCurlStrength', 50),
+      advectCurlScale: numOr('advectCurlScale', 30),
+      advectCurlSpeed: numOr('advectCurlSpeed', 20),
+      advectProjIter: Math.round(numOr('advectProjIter', 4)),
+      advectRunTime: numOr('advectRunTime', 5),
     };
     return this._cachedP;
   }
@@ -1802,7 +1814,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', advect: '💧 Blob Advect', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;

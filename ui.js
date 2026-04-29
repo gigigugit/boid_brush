@@ -257,6 +257,20 @@ export function buildSidebar(app) {
       ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 100, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
     </div>
 
+    <!-- Blob Advect (advect only) -->
+    <div class="section-header" data-brushes="advect" data-section="advectBrush">Blob Advect <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="advect">
+      ${sliderRow('advectBlobRadius', 'Blob Radius', 5, 200, 40, null, 'Radius of the painted blob mask (CSS px, before brush scale)')}
+      ${sliderRow('advectSimScale', 'Sim Resolution', 10, 100, 50, v => v + '%', 'Simulation grid resolution relative to the blob bounding box. Lower = faster')}
+      ${sliderRow('advectDiffusion', 'Diffusion', 0, 1000, 50, v => (v / 10).toFixed(1), 'Dye diffusion amount (wide range — square-law feel for subtle to strong blurring)')}
+      ${sliderRow('advectViscosity', 'Viscosity', 0, 100, 0, v => (v / 100).toFixed(2), 'Velocity smoothing. 0 = inviscid, 100 = very thick fluid')}
+      ${sliderRow('advectCurlStrength', 'Curl Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'Strength of curl noise (divergence-free swirling force)')}
+      ${sliderRow('advectCurlScale', 'Curl Scale', 1, 100, 30, null, 'Spatial scale of the curl noise pattern in sim-grid cells')}
+      ${sliderRow('advectCurlSpeed', 'Curl Speed', 0, 100, 20, v => (v / 100).toFixed(2), 'How quickly the curl noise pattern evolves over time')}
+      ${sliderRow('advectProjIter', 'Incompressibility', 0, 16, 4, null, 'Jacobi pressure projection iterations. 0 = off, higher = more incompressible flow')}
+      ${sliderRow('advectRunTime', 'Max Run Time', 1, 30, 5, v => v + 's', 'Maximum simulation time after pointer release; the sim auto-commits when this duration is reached')}
+    </div>
+
     <!-- Stamp -->
     <div class="section-header" data-section="stamp">Stamp <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -1112,6 +1126,13 @@ const _sliderFormats = {
   simPathSpeed: v => (v / 20).toFixed(1) + '×',
   simEdgeForce: v => (v / 100).toFixed(2),
   simPheroPaintStrength: v => (v / 100).toFixed(2),
+  // Blob Advect brush
+  advectSimScale: v => v + '%',
+  advectDiffusion: v => (v / 10).toFixed(1),
+  advectViscosity: v => (v / 100).toFixed(2),
+  advectCurlStrength: v => (v / 100).toFixed(2),
+  advectCurlSpeed: v => (v / 100).toFixed(2),
+  advectRunTime: v => v + 's',
 };
 
 // ── Layer list renderer ─────────────────────────────────────
