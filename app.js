@@ -1695,7 +1695,7 @@ export class App {
 
     const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Scene</button>' : '';
 
-    const seekPct = Math.round((this.simulation.vars.seek ?? 0) * 100);
+    const seekPct = Math.round((Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK) * 100);
     const savedSessionsList = this.simulation.sessions.length
       ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
          <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
