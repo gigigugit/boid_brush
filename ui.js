@@ -268,7 +268,7 @@ export function buildSidebar(app) {
       ${sliderRow('advectCurlScale', 'Curl Scale', 1, 100, 30, null, 'Spatial scale of the curl noise pattern in sim-grid cells')}
       ${sliderRow('advectCurlSpeed', 'Curl Speed', 0, 100, 20, v => (v / 100).toFixed(2), 'How quickly the curl noise pattern evolves over time')}
       ${sliderRow('advectProjIter', 'Incompressibility', 0, 16, 4, null, 'Jacobi pressure projection iterations. 0 = off, higher = more incompressible flow')}
-      ${sliderRow('advectRunTime', 'Run Time', 1, 30, 5, v => v + 's', 'How long the simulation runs after pointer release before auto-committing')}
+      ${sliderRow('advectRunTime', 'Max Run Time', 1, 30, 5, v => v + 's', 'Maximum simulation time after pointer release; the sim auto-commits when this duration is reached')}
     </div>
 
     <!-- Stamp -->

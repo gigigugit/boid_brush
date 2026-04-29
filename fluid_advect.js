@@ -353,6 +353,8 @@ export class BlobAdvectBrush {
   _initSim(p) {
     const { x: bx, y: by, w: bw, h: bh } = this._bbox;
     const scale  = Math.max(0.1, Math.min(1.0, (p.advectSimScale ?? 50) / 100));
+    // Cap simulation grid to MAX_DIM cells on each side to prevent performance
+    // degradation when the user paints a very large blob at high resolution.
     const MAX_DIM = 300;
 
     let sw = Math.max(4, Math.round(bw * scale));
@@ -740,7 +742,7 @@ export class BlobAdvectBrush {
    * then convert to straight RGBA for putImageData.
    */
   _commit() {
-    if (!this._simRunning) { this._simRunning = false; return; }
+    if (!this._simRunning) return; // nothing to commit
     this._simRunning = false;
 
     if (!this._bbox || !this._strokeLayer) return;
