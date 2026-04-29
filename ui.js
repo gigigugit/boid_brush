@@ -4,6 +4,26 @@
 
 const PRESETS_KEY = 'bb_presets_v1';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
+const NUDGE_BUTTON_STYLE = 'width:20px;height:20px;padding:0;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#ddd;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;';
+
+// ── Multiplier selector constants ───────────────────────────
+const MULT_STEPS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
+const MULT_DEFAULT_IDX = 5; // 1×
+
+function _fmtMult(idx) {
+  const v = MULT_STEPS[Math.max(0, Math.min(MULT_STEPS.length - 1, idx))];
+  return '×' + v;
+}
+
+function multRow(id) {
+  return `<div style="display:flex;align-items:center;gap:4px;margin:-2px 0 4px 0;padding-left:2px;">
+    <span style="font-size:10px;color:#8899aa;flex:1;">multiplier</span>
+    <button type="button" class="mult-step-btn" data-target="${id}" data-dir="-1" aria-label="Decrease ${id} multiplier" style="${NUDGE_BUTTON_STYLE}">↓</button>
+    <span id="${id}_multDisp" style="font-size:10px;color:#cbd7e6;min-width:38px;text-align:center;">×1</span>
+    <button type="button" class="mult-step-btn" data-target="${id}" data-dir="1" aria-label="Increase ${id} multiplier" style="${NUDGE_BUTTON_STYLE}">↑</button>
+    <input type="range" id="${id}_multIdx" min="0" max="11" value="${MULT_DEFAULT_IDX}" style="display:none;">
+  </div>`;
+}
 
 // ── Built-in presets ────────────────────────────────────────
 const BUILTIN_PRESETS = {
@@ -13,6 +33,7 @@ const BUILTIN_PRESETS = {
   'Galaxy': { count:80,seek:20,cohesion:40,separation:20,alignment:15,jitter:10,wander:30,wanderSpeed:50,maxSpeed:5,damping:92,stampSize:3,stampOpacity:10,stampSeparation:0,fov:360,flowField:20,flowScale:5,fleeRadius:0,individuality:50,spawnRadius:80,brushScale:100 },
   'Mist': { count:60,seek:15,cohesion:5,separation:10,alignment:5,jitter:15,wander:40,wanderSpeed:60,maxSpeed:3,damping:85,stampSize:12,stampOpacity:4,stampSeparation:0,fov:360,flowField:10,flowScale:20,fleeRadius:0,individuality:40,spawnRadius:100,brushScale:100 },
   'Edge Seeker': { count:30,seek:50,cohesion:20,separation:40,alignment:25,jitter:5,wander:10,wanderSpeed:30,maxSpeed:8,damping:93,stampSize:5,stampOpacity:18,stampSeparation:2,fov:180,flowField:0,flowScale:10,fleeRadius:0,individuality:20,spawnRadius:40,brushScale:100 },
+  'Diffuse Burst': { _activeBrush:'fluid', lbmBrushRadius:55, lbmSpawnCount:8, lbmParticleRadius:6, lbmStrokePull:55, lbmStrokeRake:28, lbmStrokeJitter:87, lbmInjectForce:300, lbmVortexStrength:38, lbmBurstStrength:100, lbmChevronStrength:100, lbmUndulateStrength:0 },
 };
 
 function loadUserPresets() {
@@ -36,6 +57,39 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
   const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
   return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
+}
+
+function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
+  const fmtFn = fmt || (v => v);
+  const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
+  return `<label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${NUDGE_BUTTON_STYLE}">−</button><span id="v_${id}">${fmtFn(value)}</span><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${NUDGE_BUTTON_STYLE}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
+}
+
+function fluidMidrangeRow() {
+  return `
+    <div style="display:flex;align-items:center;gap:6px;margin:4px 0 2px;">
+      <span style="flex:1;color:#cbd7e6;font-weight:600;">Midrange Flow</span>
+      <button type="button" class="fluid-midrange-btn" data-fluid-bias="-1" aria-label="Nudge midrange flow calmer" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Calmer</button>
+      <button type="button" class="fluid-midrange-btn" data-fluid-bias="0" aria-label="Reset midrange flow bias" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Reset</button>
+      <button type="button" class="fluid-midrange-btn" data-fluid-bias="1" aria-label="Nudge midrange flow livelier" style="${NUDGE_BUTTON_STYLE};width:auto;padding:0 8px;">Livelier</button>
+    </div>
+    <span class="slider-desc">Bias Time Step, Motion Slowdown, Stop Threshold, and Viscosity together first, then fine-tune the raw sliders below.</span>
+  `;
+}
+
+function _updateSliderValue(target, newValue) {
+  if (!target) return;
+  const min = Number(target.min);
+  const max = Number(target.max);
+  const clamped = Math.max(min, Math.min(max, newValue));
+  if (clamped === Number(target.value)) return;
+  target.value = String(clamped);
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function _nudgeRangeValue(target, delta) {
+  _updateSliderValue(target, (Number(target?.value) || 0) + delta);
 }
 
 // ── Build sidebar DOM ───────────────────────────────────────
@@ -224,37 +278,75 @@ export function buildSidebar(app) {
       <label>Show Bristles <input type="checkbox" id="showBristles" checked></label>
     </div>
 
-    <!-- LBM Brush (fluid only) -->
-    <div class="section-header" data-brushes="fluid" data-section="lbmBrush">LBM Brush <span class="chevron">▼</span></div>
+    <!-- Fluid Brush (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="fluidBrush">Fluid Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid">
       ${sliderRow('lbmBrushRadius', 'Brush Radius', 2, 240, 36, null, 'Footprint of each free-flow injection along the stroke')}
-      ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 24, null, 'How much pigment mass is injected at each pointer sample')}
+      ${sliderRow('lbmSpawnCount', 'Inject', 1, 120, 30, null, 'How much pigment mass is injected at each pointer sample')}
       ${sliderRow('lbmParticleRadius', 'Seed Radius', 1, 24, 3, null, 'Radius of the seed packets used to feed the lattice')}
-      ${sliderRow('lbmStrokePull', 'Stroke Pull', 0, 100, 42, v => (v / 100).toFixed(2), 'How strongly new fluid follows the stroke tangent')}
-      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 14, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
-      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 10, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
+      ${sliderRow('lbmStrokePull', 'Stroke Pull', 0, 100, 36, v => (v / 100).toFixed(2), 'How strongly new fluid follows the stroke tangent')}
+      ${multRow('lbmStrokePull')}
+      ${sliderRow('lbmStrokeRake', 'Stroke Rake', 0, 100, 55, v => (v / 100).toFixed(2), 'How much the injected flow fans into distinct lanes')}
+      ${multRow('lbmStrokeRake')}
+      ${sliderRow('lbmStrokeJitter', 'Stroke Jitter', 0, 100, 65, v => (v / 100).toFixed(2), 'How much turbulence and curl are mixed into each injection')}
+      ${multRow('lbmStrokeJitter')}
       ${sliderRow('lbmHueJitter', 'Hue Jitter', 0, 180, 0, v => v + '°', 'Per-injection hue drift for painterly color variation')}
       ${sliderRow('lbmLightnessJitter', 'Light Jitter', 0, 100, 0, v => v + '%', 'Per-injection lightness drift for pigment variation')}
-      <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>
     </div>
 
-    <!-- LBM Solver (fluid only) -->
-    <div class="section-header closed" data-brushes="fluid" data-section="lbmSolver">LBM Solver <span class="chevron">▼</span></div>
+    <!-- Stroke Forces (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidForces">Stroke Forces <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="fluid">
+      ${sliderRow('lbmInjectForce', 'Inject Force', 50, 300, 100, v => v + '%', 'Master velocity scale applied to all injection forces')}
+      ${multRow('lbmInjectForce')}
+      ${sliderRow('lbmVortexStrength', 'Vortex', 0, 100, 0, v => (v / 100).toFixed(2), 'Counter-rotating ring vortices across the stroke — tight spirals and eddies')}
+      ${multRow('lbmVortexStrength')}
+      ${sliderRow('lbmBurstStrength', 'Burst', 0, 100, 0, v => (v / 100).toFixed(2), 'Radial explosion bursts along the stroke — sunburst splatters')}
+      ${multRow('lbmBurstStrength')}
+      ${sliderRow('lbmChevronStrength', 'Chevron', 0, 100, 0, v => (v / 100).toFixed(2), 'Herringbone V-pattern injection — feather and fishbone textures')}
+      ${multRow('lbmChevronStrength')}
+      ${sliderRow('lbmUndulateStrength', 'Undulate', 0, 100, 0, v => (v / 100).toFixed(2), 'Sinusoidal snake-wave offset along the stroke — meander patterns')}
+      ${multRow('lbmUndulateStrength')}
+    </div>
+
+    <!-- Fluid Flow (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="fluidMidrange">Midrange Flow Tuning <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid">
+      ${fluidMidrangeRow()}
+    </div>
+
+    <!-- Fluid Flow (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidFlow">Fluid Flow <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="fluid">
+      ${nudgeSliderRow('lbmViscosity', 'Viscosity', 0, 100, 28, v => (v / 100).toFixed(2), 'How resistant the lattice flow is to shearing and smearing')}
+      ${sliderRow('lbmDensity', 'Density', 0, 100, 30, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
+      ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 34, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
+      ${nudgeSliderRow('lbmTimeStep', 'Time Step', 1, 64, 16, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
+      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 4, null, 'How many solver iterations run per frame')}
+    </div>
+
+    <!-- Fluid Settling (fluid only) -->
+    <div class="section-header" data-brushes="fluid" data-section="fluidSettling">Fluid Settling <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid">
+      ${nudgeSliderRow('lbmMotionDecay', 'Motion Slowdown', 0, 100, 34, v => (v / 100).toFixed(2), 'How quickly motion energy drains from the flow itself')}
+      ${nudgeSliderRow('lbmStopSpeed', 'Stop Threshold', 0, 100, 14, v => (v / 100).toFixed(2), 'Velocity below which motion is treated as stopped')}
+      ${sliderRow('lbmPigmentCarry', 'Pigment Carry', 0, 100, 65, v => (v / 100).toFixed(2), 'How long visible pigment keeps gliding once the flow slows down')}
+      ${sliderRow('lbmPigmentRetention', 'Pigment Retention', 0, 100, 78, v => (v / 100).toFixed(2), 'How much pigment and phase remain while the fluid settles')}
+    </div>
+
+    <!-- Fluid Rendering (fluid only) -->
+    <div class="section-header closed" data-brushes="fluid" data-section="fluidRendering">Fluid Rendering <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="fluid">
       <label>Render <select id="lbmRenderMode">
         <option value="hybrid">Hybrid</option>
         <option value="grid">Grid</option>
         <option value="particles">Particles</option>
       </select></label>
-      ${sliderRow('lbmViscosity', 'Viscosity', 0, 100, 68, v => (v / 100).toFixed(2), 'Relaxation strength for the lattice flow')}
-      ${sliderRow('lbmDensity', 'Density', 0, 100, 42, v => (v / 100).toFixed(2), 'How much mass each injection contributes to the fluid')}
-      ${sliderRow('lbmSurfaceTension', 'Surface Tension', 0, 100, 38, v => (v / 100).toFixed(2), 'How strongly the interface holds together while it flows')}
-      ${sliderRow('lbmTimeStep', 'Time Step', 1, 64, 12, v => (v / 16).toFixed(2) + '×', 'Simulation time scale per animation frame')}
-      ${sliderRow('lbmSubsteps', 'Substeps', 1, 8, 2, null, 'How many solver iterations run per frame')}
-      ${sliderRow('lbmMotionDecay', 'Decay', 0, 100, 42, v => (v / 100).toFixed(2), 'How quickly motion energy dissipates')}
-      ${sliderRow('lbmStopSpeed', 'Stop Speed', 0, 100, 18, v => (v / 100).toFixed(2), 'Velocity threshold below which motion settles')}
+      <label>Fast First Pass <input type="checkbox" id="lbmFirstPassPreview" checked></label>
+      <span class="slider-desc">Preview the stroke at a lower internal resolution, then replay a full-resolution final render when the fluid settles.</span>
       ${sliderRow('lbmResolutionScale', 'Resolution', 50, 200, 100, v => v + '%', 'Internal lattice resolution relative to the canvas')}
-      ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 100, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
+      ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 115, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
+      <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>
     </div>
 
     <!-- Stamp -->
@@ -469,6 +561,54 @@ export function buildSidebar(app) {
       syncEdgeSliders();
     };
     inp.addEventListener('input', update);
+  });
+
+  sb.querySelectorAll('.slider-nudge-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      _nudgeRangeValue(target, Number(btn.dataset.delta) || 0);
+    });
+  });
+
+  sb.querySelectorAll('.mult-step-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const dir = Number(btn.dataset.dir);
+      const idxEl = document.getElementById(targetId + '_multIdx');
+      const dispEl = document.getElementById(targetId + '_multDisp');
+      if (!idxEl || !dispEl) return;
+      const newIdx = Math.max(0, Math.min(MULT_STEPS.length - 1, Number(idxEl.value) + dir));
+      idxEl.value = String(newIdx);
+      dispEl.textContent = _fmtMult(newIdx);
+      app.invalidateParams();
+    });
+  });
+
+  sb.querySelectorAll('.fluid-midrange-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bias = Number(btn.dataset.fluidBias);
+      const updates = bias === 0 ? {
+        lbmTimeStep: 16,
+        lbmMotionDecay: 34,
+        lbmStopSpeed: 14,
+        lbmViscosity: 28,
+      } : {
+        lbmTimeStep: (Number(document.getElementById('lbmTimeStep')?.value) || 10) + bias,
+        lbmMotionDecay: (Number(document.getElementById('lbmMotionDecay')?.value) || 62) - bias * 2,
+        lbmStopSpeed: (Number(document.getElementById('lbmStopSpeed')?.value) || 24) - bias,
+        lbmViscosity: (Number(document.getElementById('lbmViscosity')?.value) || 76) - bias,
+      };
+      for (const [id, value] of Object.entries(updates)) {
+        _updateSliderValue(document.getElementById(id), value);
+      }
+      app.showToast(
+        bias === 0
+          ? '💧 Midrange flow reset'
+          : bias < 0
+            ? '💧 Midrange flow nudged calmer'
+            : '💧 Midrange flow nudged livelier'
+      );
+    });
   });
 
   // Checkbox & select → invalidate params
@@ -976,6 +1116,14 @@ function _initAIPromptPopout(app) {
 }
 
 // ── Sync UI from app state (e.g. after session restore) ─────
+function _syncMultDisplays() {
+  document.querySelectorAll('[id$="_multIdx"]').forEach(el => {
+    const baseId = el.id.slice(0, -8); // strip "_multIdx"
+    const dispEl = document.getElementById(baseId + '_multDisp');
+    if (dispEl) dispEl.textContent = _fmtMult(Number(el.value));
+  });
+}
+
 export function syncUI(app) {
   // Update slider readouts
   document.querySelectorAll('#sidebar input[type="range"]').forEach(inp => {
@@ -984,6 +1132,8 @@ export function syncUI(app) {
     const fmt = _sliderFormats[inp.id];
     span.textContent = fmt ? fmt(+inp.value) : inp.value;
   });
+  // Update multiplier displays
+  _syncMultDisplays();
   // Layer controls
   const l = app.getActiveLayer();
   if (l) {
@@ -1062,6 +1212,8 @@ const _sliderFormats = {
   lbmTimeStep: v => (v / 16).toFixed(2) + '×',
   lbmMotionDecay: v => (v / 100).toFixed(2),
   lbmStopSpeed: v => (v / 100).toFixed(2),
+  lbmPigmentCarry: v => (v / 100).toFixed(2),
+  lbmPigmentRetention: v => (v / 100).toFixed(2),
   lbmResolutionScale: v => v + '%',
   lbmFluidScale: v => (v / 100).toFixed(2) + '×',
   stampOpacity: v => (v / 100).toFixed(2),

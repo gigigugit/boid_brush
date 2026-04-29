@@ -316,6 +316,8 @@ export class FluidSim {
       this.params.substeps ?? 3,
       this.params.motionDecay ?? 0.12,
       this._scaleDistance(this.params.stopSpeed ?? 0.025),
+      this.params.pigmentCarry ?? 0.44,
+      this.params.pigmentRetention ?? 0.78,
       FLUID_TYPE_MAP[this.params.simulationType ?? 'lbm'] ?? 2,
       FLUID_RENDER_MODE_MAP[this.params.renderMode ?? 'hybrid'] ?? 2,
     );
