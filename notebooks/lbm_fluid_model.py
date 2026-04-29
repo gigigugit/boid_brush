@@ -7,6 +7,12 @@ from typing import Iterable, Mapping, Sequence
 
 
 DEFAULT_RGBA = (52, 122, 214, 0.72)
+ALPHA_THRESHOLD = 8
+CENTER_WEIGHT = 1.8
+FRAME_RATE_SCALE = 60.0
+SPH_DECAY_MULTIPLIER = 60.0
+EULERIAN_DECAY_MULTIPLIER = 42.0
+LBM_DECAY_MULTIPLIER = 36.0
 
 
 @dataclass
@@ -55,10 +61,10 @@ class NotebookLBMFluidModel:
     advance_particle().
     """
 
-    def __init__(self, display_width: int, display_height: int, params: FluidParams | Mapping[str, float] | None = None, seed: int = 0):
+    def __init__(self, display_width: int, display_height: int, params: FluidParams | Mapping[str, float] | None = None, random_seed: int = 0):
         self.display_width = max(1, int(display_width))
         self.display_height = max(1, int(display_height))
-        self._rng = random.Random(seed)
+        self._rng = random.Random(random_seed)
         self.params = FluidParams()
         self.internal_width = 0
         self.internal_height = 0
@@ -113,7 +119,7 @@ class NotebookLBMFluidModel:
                 if isinstance(value, (int, float)):
                     alpha = max(0, min(255, int(value)))
                 scaled[y * self.internal_width + x] = alpha
-                has_content = has_content or alpha > 8
+                has_content = has_content or alpha > ALPHA_THRESHOLD
         self.mask_alpha = scaled
         self.mask_has_content = has_content
 
@@ -205,10 +211,10 @@ class NotebookLBMFluidModel:
                     ri_dx + nx * repel + (left.vx - right.vx) * viscosity,
                     ri_dy + ny * repel + (left.vy - right.vy) * viscosity,
                 )
-        decay = max(0.0, min(1.0, 1 - self.params.motion_decay * step_dt * 60))
+        decay = max(0.0, min(1.0, 1 - self.params.motion_decay * step_dt * SPH_DECAY_MULTIPLIER))
         for particle, (delta_x, delta_y) in zip(self._particles, delta):
-            particle.vx += delta_x * step_dt * 60
-            particle.vy += delta_y * step_dt * 60
+            particle.vx += delta_x * step_dt * FRAME_RATE_SCALE
+            particle.vy += delta_y * step_dt * FRAME_RATE_SCALE
             particle.vx *= decay
             particle.vy *= decay
             self.advance_particle(particle, step_dt)
@@ -217,7 +223,7 @@ class NotebookLBMFluidModel:
         self.build_velocity_field(flow_scale=0.22, swirl_scale=0.16)
         flow_strength = 0.38 + self.params.density * 0.44
         diffusion = 0.08 + self.params.viscosity * 0.24
-        decay = max(0.0, min(1.0, 1 - self.params.motion_decay * step_dt * 42))
+        decay = max(0.0, min(1.0, 1 - self.params.motion_decay * step_dt * EULERIAN_DECAY_MULTIPLIER))
         for particle in self._particles:
             field_x, field_y = self.sample_velocity_field_internal(particle.x, particle.y)
             particle.vx += (field_x * flow_strength - particle.vx) * diffusion
@@ -230,7 +236,7 @@ class NotebookLBMFluidModel:
         self.build_velocity_field(flow_scale=0.34, swirl_scale=0.30)
         relaxation = 0.18 + self.params.viscosity * 0.34
         pressure = 0.2 + self.params.density * 0.5
-        decay = max(0.0, min(1.0, 1 - self.params.motion_decay * step_dt * 36))
+        decay = max(0.0, min(1.0, 1 - self.params.motion_decay * step_dt * LBM_DECAY_MULTIPLIER))
         for particle in self._particles:
             field_x, field_y = self.sample_velocity_field_internal(particle.x, particle.y)
             swirl_x = -field_y * pressure
@@ -270,7 +276,7 @@ class NotebookLBMFluidModel:
                         n_index = ny * width + nx
                         if not self.mask_alpha[n_index]:
                             continue
-                        weight = 1.8 if ox == 0 and oy == 0 else 1.0
+                        weight = CENTER_WEIGHT if ox == 0 and oy == 0 else 1.0
                         count = max(1.0, counts[n_index])
                         base = n_index * 2
                         sum_x += (self.velocity_field[base] / count) * weight
@@ -299,7 +305,7 @@ class NotebookLBMFluidModel:
             return 1 if 0 <= x < self.internal_width and 0 <= y < self.internal_height else 0
         ix = clamp(x, 0, self.internal_width - 1)
         iy = clamp(y, 0, self.internal_height - 1)
-        return 1 if self.mask_alpha[iy * self.internal_width + ix] > 8 else 0
+        return 1 if self.mask_alpha[iy * self.internal_width + ix] > ALPHA_THRESHOLD else 0
 
     def inside_mask_internal(self, x: float, y: float) -> bool:
         ix = round(x)
@@ -308,15 +314,15 @@ class NotebookLBMFluidModel:
             return False
         if not self.mask_has_content:
             return True
-        return self.mask_alpha[iy * self.internal_width + ix] > 8
+        return self.mask_alpha[iy * self.internal_width + ix] > ALPHA_THRESHOLD
 
     def advance_particle(self, particle: FluidParticle, step_dt: float) -> None:
         speed = math.hypot(particle.vx, particle.vy)
         if speed < self.params.stop_speed:
             particle.vx = 0.0
             particle.vy = 0.0
-        next_x = particle.x + particle.vx * step_dt * 60
-        next_y = particle.y + particle.vy * step_dt * 60
+        next_x = particle.x + particle.vx * step_dt * FRAME_RATE_SCALE
+        next_y = particle.y + particle.vy * step_dt * FRAME_RATE_SCALE
         if self.inside_mask_internal(next_x, next_y):
             particle.x = clamp(next_x, 0, self.internal_width - 1)
             particle.y = clamp(next_y, 0, self.internal_height - 1)
@@ -339,7 +345,7 @@ class NotebookLBMFluidModel:
             particle.outside_slack = 0.0
 
     def boundary_leeway(self, particle: FluidParticle, speed: float, step_dt: float) -> float:
-        travel = max(0.0, speed - self.params.stop_speed) * step_dt * 60
+        travel = max(0.0, speed - self.params.stop_speed) * step_dt * FRAME_RATE_SCALE
         force_bias = 1 + self.params.density * 0.9 + self.params.viscosity * 0.35
         base = particle.radius * (0.18 + self.params.density * 0.22)
         return clamp(base + travel * 0.9 * force_bias, 0.0, particle.radius * 1.9 + 10)
