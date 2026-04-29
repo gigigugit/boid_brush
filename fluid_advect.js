@@ -396,16 +396,37 @@ export class BlobAdvectBrush {
     const maskPx = tmpMaskCtx.getImageData(0, 0, sw, sh).data;
     for (let i = 0; i < n; i++) this._mask[i] = maskPx[i * 4 + 3] / 255;
 
-    // ── Sample layer pixels (downsampled to sim resolution) ──
-    const layer = this._strokeLayer || this.app.getActiveLayer();
-    if (!layer) return;
+    // ── Sample composited pixels (downsampled to sim resolution) ──
+    // We read from a flat composite of ALL visible layers so the sim has actual
+    // visible content to advect.  Reading from the active layer alone would give
+    // transparent pixels whenever the user paints on a fresh / empty layer,
+    // producing no visible result.
+    const dpr   = this.app.DPR;
+    const flatW = Math.max(1, Math.round(bw * dpr));
+    const flatH = Math.max(1, Math.round(bh * dpr));
+    const flatCanvas = document.createElement('canvas');
+    flatCanvas.width  = flatW;
+    flatCanvas.height = flatH;
+    const flatCtx = flatCanvas.getContext('2d', { willReadFrequently: true });
+    // Composite visible layers from bottom to top over the bbox crop
+    for (let li = this.app.layers.length - 1; li >= 0; li--) {
+      const l = this.app.layers[li];
+      if (!l.visible) continue;
+      flatCtx.globalAlpha = l.opacity ?? 1;
+      flatCtx.globalCompositeOperation = l.blend || 'source-over';
+      flatCtx.drawImage(
+        l.canvas,
+        Math.round(bx * dpr), Math.round(by * dpr), flatW, flatH,
+        0, 0, flatW, flatH
+      );
+    }
+    flatCtx.globalAlpha = 1;
+    flatCtx.globalCompositeOperation = 'source-over';
 
-    const dpr    = this.app.DPR;
-    const tmpPx  = document.createElement('canvas');
-    tmpPx.width  = sw; tmpPx.height = sh;
+    const tmpPx    = document.createElement('canvas');
+    tmpPx.width    = sw; tmpPx.height = sh;
     const tmpPxCtx = tmpPx.getContext('2d', { willReadFrequently: true });
-    // layer.canvas is the physical (DPR-scaled) canvas
-    tmpPxCtx.drawImage(layer.canvas, bx * dpr, by * dpr, bw * dpr, bh * dpr, 0, 0, sw, sh);
+    tmpPxCtx.drawImage(flatCanvas, 0, 0, sw, sh);
     const pxData = tmpPxCtx.getImageData(0, 0, sw, sh).data;
 
     // Convert straight RGBA → premultiplied floats and apply mask
