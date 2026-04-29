@@ -1639,7 +1639,7 @@ export class App {
     });
     this._renderSimulationInspector();
     this.saveSession();
-    this.showToast(`Saved "${name}"`);
+    this.showToast(rawName.trim().length > MAX_SIM_SESSION_NAME_LENGTH ? `Saved "${name}" (trimmed)` : `Saved "${name}"`);
   }
 
   _loadSimulationSession(index) {
@@ -1659,6 +1659,7 @@ export class App {
   _deleteSimulationSavedSession(index) {
     const session = this.simulation.sessions[index];
     if (!session) return;
+    if (!window.confirm(`Delete saved simulation session "${session.name}"?`)) return;
     this.simulation.sessions.splice(index, 1);
     this._renderSimulationInspector();
     this.saveSession();
@@ -1706,8 +1707,8 @@ export class App {
     const savedSessionsList = this.simulation.sessions.length
       ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
          <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
-            `<button data-sim-load-session="${i}" title="Load ${_escapeHtml(s.name)}" aria-label="Load saved session ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
-             <button class="danger" data-sim-del-session="${i}" title="Delete ${_escapeHtml(s.name)}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
+            `<button data-sim-load-session="${i}" aria-label="Load saved session ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
+             <button class="danger" data-sim-del-session="${i}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
          ).join('')}</div>`
       : '';
 
@@ -1724,7 +1725,7 @@ export class App {
       </div>
       <div class="sim-inspector-group">
         <h3>Scene</h3>
-        <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong>${p.simSpeed.toFixed(2)}×</strong>. Brush sidebar values stay untouched; item values only override when explicitly set here.</div>
+        <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong>${p.simSpeed.toFixed(2)}×</strong> (shown for reference from the brush sidebar). Brush sidebar values stay untouched; item values only override when explicitly set here.</div>
       </div>
       <div class="sim-inspector-group">
         <h3>Scene Variables</h3>
@@ -3993,7 +3994,7 @@ export class App {
           if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
           this.simulation.enabled = !!val?.enabled;
           // Restore scene-level variable overrides (seek etc.) persisted from last use.
-          // keep the default seek value if no value was saved (first ever session).
+          // Keep the default seek value if no value was saved (first ever session).
           if (val?.vars && typeof val.vars === 'object') {
             this.simulation.vars = _normalizeSimulationVars(val.vars);
           }
