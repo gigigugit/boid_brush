@@ -1123,6 +1123,7 @@ export class App {
     this._paramsDirty = false;
 
     const el = id => document.getElementById(id);
+    const has = id => !!el(id);
     const val = id => { const e = el(id); return e ? +e.value : 0; };
     const numOr = (id, fallback) => {
       const e = el(id);
@@ -1130,6 +1131,12 @@ export class App {
     };
     const chk = id => { const e = el(id); return e ? e.checked : false; };
     const sel = id => { const e = el(id); return e ? e.value : ''; };
+    const _MULT_STEPS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
+    const mult = id => {
+      const e = el(id + '_multIdx');
+      const idx = e ? Math.round(+e.value) : 5;
+      return _MULT_STEPS[Math.max(0, Math.min(_MULT_STEPS.length - 1, idx))];
+    };
 
     const scale = val('brushScale') / 100;
 
@@ -1223,24 +1230,32 @@ export class App {
       pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
       // LBM fluid brush
-      lbmBrushRadius: Math.max(2, Math.round(numOr('lbmBrushRadius', 42) * scale)),
-      lbmSpawnCount: numOr('lbmSpawnCount', 36),
-      lbmParticleRadius: numOr('lbmParticleRadius', 4),
-      lbmViscosity: numOr('lbmViscosity', 45) / 100,
-      lbmDensity: numOr('lbmDensity', 70) / 100,
-      lbmSurfaceTension: numOr('lbmSurfaceTension', 58) / 100,
+      lbmBrushRadius: Math.max(2, Math.round(numOr('lbmBrushRadius', 36) * scale)),
+      lbmSpawnCount: numOr('lbmSpawnCount', 30),
+      lbmParticleRadius: numOr('lbmParticleRadius', 3),
+      lbmViscosity: numOr('lbmViscosity', 28) / 100,
+      lbmDensity: numOr('lbmDensity', 30) / 100,
+      lbmSurfaceTension: numOr('lbmSurfaceTension', 34) / 100,
       lbmTimeStep: numOr('lbmTimeStep', 16) / 16,
-      lbmSubsteps: numOr('lbmSubsteps', 3),
-      lbmMotionDecay: numOr('lbmMotionDecay', 12) / 100,
-      lbmStopSpeed: numOr('lbmStopSpeed', 3) / 100,
+      lbmSubsteps: numOr('lbmSubsteps', 4),
+      lbmMotionDecay: numOr('lbmMotionDecay', 34) / 100,
+      lbmStopSpeed: numOr('lbmStopSpeed', 14) / 100,
+      lbmPigmentCarry: numOr('lbmPigmentCarry', 65) / 100,
+      lbmPigmentRetention: numOr('lbmPigmentRetention', 78) / 100,
       lbmResolutionScale: numOr('lbmResolutionScale', 100) / 100,
-      lbmFluidScale: numOr('lbmFluidScale', 100) / 100,
-      lbmStrokePull: numOr('lbmStrokePull', 55) / 100,
-      lbmStrokeRake: numOr('lbmStrokeRake', 28) / 100,
-      lbmStrokeJitter: numOr('lbmStrokeJitter', 18) / 100,
+      lbmFluidScale: numOr('lbmFluidScale', 115) / 100,
+      lbmStrokePull: numOr('lbmStrokePull', 36) / 100 * mult('lbmStrokePull'),
+      lbmStrokeRake: numOr('lbmStrokeRake', 55) / 100 * mult('lbmStrokeRake'),
+      lbmStrokeJitter: numOr('lbmStrokeJitter', 65) / 100 * mult('lbmStrokeJitter'),
       lbmHueJitter: numOr('lbmHueJitter', 0),
       lbmLightnessJitter: numOr('lbmLightnessJitter', 0),
+      lbmInjectForce: numOr('lbmInjectForce', 100) / 100 * mult('lbmInjectForce'),
+      lbmVortexStrength: numOr('lbmVortexStrength', 0) / 100 * mult('lbmVortexStrength'),
+      lbmBurstStrength: numOr('lbmBurstStrength', 0) / 100 * mult('lbmBurstStrength'),
+      lbmChevronStrength: numOr('lbmChevronStrength', 0) / 100 * mult('lbmChevronStrength'),
+      lbmUndulateStrength: numOr('lbmUndulateStrength', 0) / 100 * mult('lbmUndulateStrength'),
       lbmRenderMode: sel('lbmRenderMode') || 'hybrid',
+      lbmFirstPassPreview: has('lbmFirstPassPreview') ? chk('lbmFirstPassPreview') : true,
       lbmShowFlow: chk('lbmShowFlow'),
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,

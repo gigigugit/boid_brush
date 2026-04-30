@@ -16,6 +16,7 @@ const MAX_SMOOTH_DAMP = 0.92;
 const BRISTLE_ANGLE_ALPHA = 0.16;
 // Move samples inject less mass than pointer-down so a continuous stroke does not over-pack the lattice.
 const FLUID_MOVE_SEED_RATIO = 0.45;
+const FLUID_TIMESTEP_60FPS = 1 / 60;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
 // Skip texture flow on nearly flat regions where the sampled slope is only a tiny fraction
@@ -24,6 +25,7 @@ const MIN_TEXTURE_FLOW_SLOPE = 0.04;
 const TEXTURE_FLOW_BASE_TRANSFER = 0.12;
 const TEXTURE_FLOW_SLOPE_TRANSFER = 0.28;
 const TEXTURE_FLOW_MAX_TRANSFER = 0.4;
+const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -2724,11 +2726,13 @@ function _jitterFluidColor(baseColor, p, profile, index) {
 
 function _makeFluidSeeds(x, y, amount, color, p, profile) {
   const particles = [];
-  const speedScale = 0.42 + p.lbmDensity * 0.58 + p.lbmSurfaceTension * 0.18;
+  const speedScale = (0.54 + p.lbmStrokePull * 0.5 + p.lbmStrokeRake * 0.12 + p.lbmStrokeJitter * 0.2)
+    * (p.lbmInjectForce ?? 1);
   const travel = Math.min(1, profile.distance / Math.max(8, p.lbmBrushRadius * 0.75));
-  const laneCount = Math.max(2, 2 + Math.round(p.lbmStrokeRake * 5));
-  const laneSpacing = p.lbmBrushRadius * (0.08 + p.lbmStrokeRake * 0.2);
+  const laneCount = Math.max(3, 3 + Math.round(p.lbmStrokeRake * 7));
+  const laneSpacing = p.lbmBrushRadius * (0.11 + p.lbmStrokeRake * 0.24 + p.lbmStrokeJitter * 0.06);
   const phase = profile.spawnTime * 0.018;
+  const patternBoost = 0.35 + travel * 0.65;
 
   for (let index = 0; index < amount; index += 1) {
     if (profile.distance <= 1e-3) {
@@ -2750,28 +2754,81 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
 
     const laneIndex = index % laneCount;
     const lanePosition = laneCount > 1 ? laneIndex / (laneCount - 1) - 0.5 : 0;
-    const alongOffset = ((Math.random() - 0.42) * p.lbmBrushRadius * (0.32 + p.lbmStrokePull * 0.9))
-      + travel * p.lbmBrushRadius * (0.12 + p.lbmStrokePull * 0.42);
+    const laneSpin = laneIndex % 2 === 0 ? 1 : -1;
+    const alongOffset = ((Math.random() - 0.42) * p.lbmBrushRadius * (0.28 + p.lbmStrokePull * 0.82))
+      + travel * p.lbmBrushRadius * (0.18 + p.lbmStrokePull * 0.55);
     const laneOffset = lanePosition * laneSpacing * (1 + travel * 1.4)
-      + (Math.random() - 0.5) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.22);
-    const swirlOffset = Math.sin(phase + laneIndex * 1.37 + index * 0.31) * p.lbmBrushRadius * p.lbmStrokeJitter * 0.16;
-    const scatterRadius = Math.sqrt(Math.random()) * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.24);
-    const scatterAngle = phase + index * 0.53;
-    const tangentVelocity = speedScale * (0.62 + p.lbmStrokePull * 2.2 + p.lbmSurfaceTension * 0.24) * (0.66 + travel * 0.96 + Math.random() * 0.5);
-    const crossVelocity = speedScale * (lanePosition * (0.36 + p.lbmStrokeRake * 1.45)
-      + Math.sin(phase + index * 0.83) * p.lbmStrokeJitter * 0.28
-      + (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.45));
-    const curlVelocity = speedScale * Math.sin(phase * 0.74 + lanePosition * 5.6 + index * 0.21)
-      * (0.16 + p.lbmStrokeJitter * 0.72 + p.lbmStrokeRake * 0.24);
+      + (Math.random() - 0.5) * p.lbmBrushRadius * (0.06 + p.lbmStrokeJitter * 0.18);
+    const ribbonWave = Math.sin(phase * 1.18 + laneIndex * 1.37 + index * 0.31);
+    const swirlOffset = ribbonWave * p.lbmBrushRadius * (0.08 + p.lbmStrokeJitter * 0.18 + patternBoost * 0.16);
+    const scatterRadius = Math.sqrt(Math.random()) * p.lbmBrushRadius * (0.06 + p.lbmStrokeJitter * 0.18);
+    const scatterAngle = phase * 1.4 + index * 0.53 + laneSpin * lanePosition * 1.8;
+    const tangentVelocity = speedScale * (0.7 + p.lbmStrokePull * 2.5) * (0.72 + travel * 1.15 + Math.random() * 0.42);
+    const crossVelocity = speedScale * (lanePosition * (0.5 + p.lbmStrokeRake * 1.8)
+      + ribbonWave * (0.08 + p.lbmStrokeJitter * 0.44 + p.lbmStrokeRake * 0.18)
+      + laneSpin * patternBoost * (0.04 + p.lbmStrokeRake * 0.22)
+      + (Math.random() - 0.5) * (0.1 + p.lbmStrokeJitter * 0.34));
+    const curlVelocity = speedScale * Math.sin(phase * 0.92 + lanePosition * 6.4 + index * 0.27)
+      * laneSpin * (0.2 + p.lbmStrokeJitter * 0.92 + p.lbmStrokeRake * 0.34 + patternBoost * 0.18);
     const backfill = speedScale * (Math.random() - 0.5) * (0.08 + p.lbmStrokePull * 0.22);
-    const dragNoise = speedScale * (Math.random() - 0.5) * 0.2;
+    const dragNoiseX = speedScale * (Math.random() - 0.5) * (0.12 + p.lbmStrokeJitter * 0.16);
+    const dragNoiseY = speedScale * (Math.random() - 0.5) * (0.14 + p.lbmStrokeJitter * 0.2);
+
+    // ── Extra injection force modes ──────────────────────────────────────────
+    // Each mode adds deltas in stroke-relative coords (along = tangent, cross = normal).
+
+    // Vortex: counter-rotating ring vortices — tight spirals and eddies
+    let extraAlongPos = 0, extraCrossPos = 0, extraAlongVel = 0, extraCrossVel = 0;
+    if (p.lbmVortexStrength > 0) {
+      const vortexAngle = laneIndex / laneCount * Math.PI * 2 + phase * 3.1 + index * 0.19;
+      const vortexR = p.lbmBrushRadius * 0.45 * p.lbmVortexStrength;
+      const vortexSpeed = speedScale * p.lbmVortexStrength * 2.8;
+      const vortexSign = laneIndex % 2 === 0 ? 1 : -1;
+      extraAlongPos += Math.cos(vortexAngle) * vortexR;
+      extraCrossPos += Math.sin(vortexAngle) * vortexR;
+      extraAlongVel += -Math.sin(vortexAngle) * vortexSpeed * vortexSign;
+      extraCrossVel += Math.cos(vortexAngle) * vortexSpeed * vortexSign;
+    }
+
+    // Burst: radial explosion bursts along the stroke — sunburst splatters
+    if (p.lbmBurstStrength > 0) {
+      const burstAngle = (index / amount) * Math.PI * 2 + phase * 0.8 + laneIndex * 0.7;
+      const burstR = p.lbmBrushRadius * 0.12 * p.lbmBurstStrength;
+      const burstSpeed = speedScale * p.lbmBurstStrength * 3.8;
+      extraAlongPos += Math.cos(burstAngle) * burstR;
+      extraCrossPos += Math.sin(burstAngle) * burstR;
+      extraAlongVel += Math.cos(burstAngle) * burstSpeed;
+      extraCrossVel += Math.sin(burstAngle) * burstSpeed;
+    }
+
+    // Chevron: herringbone V-pattern — feather and fishbone textures
+    if (p.lbmChevronStrength > 0) {
+      const chevronDir = laneIndex % 2 === 0 ? 1 : -1;
+      const chevronDivergence = 0.42 + p.lbmChevronStrength * 0.92;
+      const chevronSpeed = speedScale * p.lbmChevronStrength * 2.2;
+      extraAlongVel += Math.cos(chevronDivergence) * chevronSpeed;
+      extraCrossVel += Math.sin(chevronDivergence) * chevronSpeed * chevronDir;
+    }
+
+    // Undulate: sinusoidal snake-wave cross-stroke offset — meander patterns
+    if (p.lbmUndulateStrength > 0) {
+      const undulateFreq = 0.0028;
+      const undulateT = profile.spawnTime * undulateFreq + index * 0.14;
+      const undulateWave = Math.sin(undulateT);
+      const undulateDerivative = Math.cos(undulateT);
+      const undulateAmp = p.lbmBrushRadius * 1.3 * p.lbmUndulateStrength;
+      const undulateVelScale = speedScale * p.lbmUndulateStrength * 1.6;
+      extraCrossPos += undulateWave * undulateAmp;
+      extraCrossVel += undulateDerivative * undulateVelScale;
+    }
+
     const seed = _fluidHexToRgba(_jitterFluidColor(color, p, profile, index), 0.66 + travel * 0.12 + Math.random() * 0.05);
 
     particles.push({
-      x: x + profile.tangentX * alongOffset + profile.normalX * (laneOffset + swirlOffset) + Math.cos(scatterAngle) * scatterRadius * 0.35,
-      y: y + profile.tangentY * alongOffset + profile.normalY * (laneOffset + swirlOffset) + Math.sin(scatterAngle) * scatterRadius * 0.35,
-      vx: profile.tangentX * (tangentVelocity + backfill) + profile.normalX * (crossVelocity + curlVelocity) + dragNoise,
-      vy: profile.tangentY * (tangentVelocity + backfill) + profile.normalY * (crossVelocity + curlVelocity) + dragNoise,
+      x: x + profile.tangentX * (alongOffset + extraAlongPos) + profile.normalX * (laneOffset + swirlOffset + extraCrossPos) + Math.cos(scatterAngle) * scatterRadius * 0.35,
+      y: y + profile.tangentY * (alongOffset + extraAlongPos) + profile.normalY * (laneOffset + swirlOffset + extraCrossPos) + Math.sin(scatterAngle) * scatterRadius * 0.35,
+      vx: profile.tangentX * (tangentVelocity + backfill + extraAlongVel) + profile.normalX * (crossVelocity + curlVelocity + extraCrossVel) + dragNoiseX,
+      vy: profile.tangentY * (tangentVelocity + backfill + extraAlongVel) + profile.normalY * (crossVelocity + curlVelocity + extraCrossVel) + dragNoiseY,
       radius: p.lbmParticleRadius * (1 + (Math.random() - 0.5) * (0.08 + p.lbmStrokeJitter * 0.22)),
       ...seed,
     });
@@ -2784,6 +2841,7 @@ export class FluidBrush {
   constructor(app) {
     this.app = app;
     this.sim = null;
+    this._finalSim = null;
     this._ready = false;
     this._initPromise = null;
     this._active = false;
@@ -2794,7 +2852,12 @@ export class FluidBrush {
     this._maskCtx = this._maskCanvas.getContext('2d', { willReadFrequently: true });
     this._frameCanvas = document.createElement('canvas');
     this._frameCtx = this._frameCanvas.getContext('2d', { willReadFrequently: true });
+    this._strokeBaseCanvas = document.createElement('canvas');
+    this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
     this._maskSynced = false;
+    this._replaySeedEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
   }
 
   async init() {
@@ -2802,6 +2865,8 @@ export class FluidBrush {
     this._initPromise = (async () => {
       try {
         this.sim = await FluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams());
+        this._finalSim = new FluidSim(this.sim._mod, this.app.W || 800, this.app.H || 600, this._solverParams('final'));
+        this._finalSim.updateParams(this._solverParams('final'));
         this._ready = true;
         this._syncMask();
       } catch (error) {
@@ -2813,6 +2878,16 @@ export class FluidBrush {
     return this._initPromise;
   }
 
+  _resetSimulatorState(sim = this.sim) {
+    if (!sim) return;
+    sim.clearParticles();
+  }
+
+  _resetAllSimulatorStates() {
+    this._resetSimulatorState(this.sim);
+    this._resetSimulatorState(this._finalSim);
+  }
+
   onDown(x, y, pressure) {
     if (!this.app.undoPushedThisStroke) {
       this.app.pushUndo();
@@ -2822,6 +2897,9 @@ export class FluidBrush {
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
+    this._resetAllSimulatorStates();
+    this._resetReplayCapture();
+    this._captureStrokeBase();
     this._lastPoint = { x, y };
     this._lastFrameElapsed = null;
     this._updateSimulator();
@@ -2829,7 +2907,7 @@ export class FluidBrush {
   }
 
   onMove(x, y, pressure) {
-    if (!this._ready || !this.sim) return;
+    if (!this._active || !this._ready || !this.sim) return;
     const previousPoint = this._lastPoint;
     if (!previousPoint) {
       this._lastPoint = { x, y };
@@ -2870,8 +2948,18 @@ export class FluidBrush {
 
   taperFrame() {}
 
-  _solverParams() {
-    const p = this.app.getP();
+  _previewResolutionScale(p) {
+    const finalScale = Number(p?.lbmResolutionScale) || 1;
+    if (!p?.lbmFirstPassPreview || finalScale <= 0.75) return finalScale;
+    return Math.max(0.5, Math.min(finalScale, finalScale * 0.55));
+  }
+
+  _usesFastFirstPass(p = this.app.getP()) {
+    return !!(p?.lbmFirstPassPreview && this._previewResolutionScale(p) < ((Number(p?.lbmResolutionScale) || 1) - 0.05));
+  }
+
+  _solverParams(pass = 'preview', sourceParams = this.app.getP()) {
+    const p = sourceParams;
     return {
       particleRadius: p.lbmParticleRadius,
       viscosity: p.lbmViscosity,
@@ -2881,35 +2969,66 @@ export class FluidBrush {
       substeps: p.lbmSubsteps,
       motionDecay: p.lbmMotionDecay,
       stopSpeed: p.lbmStopSpeed,
-      resolutionScale: p.lbmResolutionScale,
+      pigmentCarry: p.lbmPigmentCarry,
+      pigmentRetention: p.lbmPigmentRetention,
+      resolutionScale: pass === 'final' ? p.lbmResolutionScale : this._previewResolutionScale(p),
       fluidScale: p.lbmFluidScale,
       renderMode: p.lbmRenderMode,
       simulationType: 'lbm',
     };
   }
 
-  _updateSimulator() {
-    if (!this._ready || !this.sim) return false;
+  _updateSimulator(pass = 'preview', sourceParams = this.app.getP()) {
+    const sim = pass === 'final' ? this._finalSim : this.sim;
+    if (!this._ready || !sim) return false;
     const needsMaskSync = this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H || !this._maskSynced;
-    this.sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
-    this.sim.updateParams(this._solverParams());
+    sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
+    sim.updateParams(this._solverParams(pass, sourceParams));
     if (needsMaskSync) this._syncMask();
     return true;
   }
 
   _syncMask() {
-    if (!this.sim) return;
+    if (!this.sim && !this._finalSim) return;
     if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) {
       this._maskCanvas.width = this.app.W;
       this._maskCanvas.height = this.app.H;
     }
     this._maskCtx.clearRect(0, 0, this._maskCanvas.width, this._maskCanvas.height);
-    this.sim.setMask(this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height));
+    const mask = this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    this.sim?.setMask(mask);
+    this._finalSim?.setMask(mask);
     this._maskSynced = true;
   }
 
+  _resetReplayCapture() {
+    this._replaySeedEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
+  }
+
+  _recordSeedParticles(particles) {
+    this._replaySeedEvents.push({
+      time: this._replayTime,
+      particles: particles.map(particle => ({ ...particle })),
+    });
+  }
+
+  _captureStrokeBase() {
+    const layer = this._strokeLayer;
+    if (!layer) return;
+    if (this._strokeBaseCanvas.width !== layer.canvas.width || this._strokeBaseCanvas.height !== layer.canvas.height) {
+      this._strokeBaseCanvas.width = layer.canvas.width;
+      this._strokeBaseCanvas.height = layer.canvas.height;
+    }
+    this._strokeBaseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._strokeBaseCtx.clearRect(0, 0, this._strokeBaseCanvas.width, this._strokeBaseCanvas.height);
+    this._strokeBaseCtx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height);
+  }
+
   _seedAt(x, y, pressure, previousPoint, amount, p) {
-    if (!this._updateSimulator()) return;
+    if (!this._active) return;
+    if (!this._updateSimulator('preview', p)) return;
     p = p ?? this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
@@ -2923,26 +3042,74 @@ export class FluidBrush {
       profile,
     );
     this.sim.addParticles(particles);
+    if (this._usesFastFirstPass(p)) this._recordSeedParticles(particles);
   }
 
   _step(elapsed) {
-    if (!this._updateSimulator()) return;
-    let dt = this._lastFrameElapsed == null ? 1 / 60 : elapsed - this._lastFrameElapsed;
+    const currentParams = this.app.getP();
+    if (!this._updateSimulator('preview', currentParams)) return;
+    const prevCount = this.sim.getParticleCount();
+    if (!this._active && prevCount <= 0) {
+      this._lastFrameElapsed = elapsed;
+      return;
+    }
+    let dt = this._lastFrameElapsed == null ? FLUID_TIMESTEP_60FPS : elapsed - this._lastFrameElapsed;
     this._lastFrameElapsed = elapsed;
-    if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
+    if (!Number.isFinite(dt) || dt <= 0) dt = FLUID_TIMESTEP_60FPS;
     dt = Math.min(dt, 0.05);
     this.sim.step(dt);
-    if (this.sim.getParticleCount() > 0) this._depositFrame();
+    const nextCount = this.sim.getParticleCount();
+    if (this._usesFastFirstPass(currentParams) && (this._active || prevCount > 0 || nextCount > 0)) {
+      this._replayStepHistory.push(dt);
+      this._replayTime += dt;
+    }
+    if (this._active || prevCount > 0 || nextCount > 0) {
+      this._depositFrameFromSim(this.sim);
+    }
+    if (!this._active && prevCount > 0 && nextCount <= 0) {
+      if (this._usesFastFirstPass(currentParams)) this._renderFinalPass(currentParams);
+      this._resetSimulatorState();
+      this._resetReplayCapture();
+    }
   }
 
-  _depositFrame() {
+  _renderFinalPass(sourceParams) {
+    if (!this._finalSim || !this._replaySeedEvents.length || !this._replayStepHistory.length) return;
+    if (!this._updateSimulator('final', sourceParams)) return;
+    this._finalSim.clearParticles();
+    let replayTime = 0;
+    let seedIndex = 0;
+    const flushSeeds = () => {
+      while (seedIndex < this._replaySeedEvents.length && this._replaySeedEvents[seedIndex].time <= replayTime + 1e-6) {
+        this._finalSim.addParticles(this._replaySeedEvents[seedIndex].particles);
+        seedIndex += 1;
+      }
+    };
+    flushSeeds();
+    for (const dt of this._replayStepHistory) {
+      this._finalSim.step(dt);
+      replayTime += dt;
+      flushSeeds();
+    }
+    let guard = 0;
+    while (this._finalSim.getParticleCount() > 0 && guard < FLUID_FINAL_PASS_MAX_SETTLING_STEPS) {
+      this._finalSim.step(FLUID_TIMESTEP_60FPS);
+      guard += 1;
+    }
+    this._depositFrameFromSim(this._finalSim);
+  }
+
+  _depositFrameFromSim(sim) {
     if (this._strokeLayer && !this.app.layers.includes(this._strokeLayer)) {
       this._strokeLayer = null;
       return;
     }
     const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer) return;
-    const frame = this.sim.readPixels();
+    if (!this._strokeBaseCanvas.width || !this._strokeBaseCanvas.height) {
+      this._captureStrokeBase();
+    }
+    const frame = sim.readPixels();
     if (!frame.width || !frame.height) return;
     if (this._frameCanvas.width !== frame.width || this._frameCanvas.height !== frame.height) {
       this._frameCanvas.width = frame.width;
@@ -2950,8 +3117,15 @@ export class FluidBrush {
     }
     this._frameCtx.putImageData(new ImageData(frame.buffer, frame.width, frame.height), 0, 0);
     layer.ctx.save();
+    // Rebuild from the captured pre-stroke layer each frame so the full fluid
+    // render doesn't accumulate and create heavier-looking artifacts that read
+    // like fresh paint injection after touch-up. Use backing-canvas dimensions
+    // here so the redraw stays aligned with DPR-scaled pointer coordinates.
+    layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.drawImage(this._strokeBaseCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.globalCompositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
-    layer.ctx.drawImage(this._frameCanvas, 0, 0, this.app.W, this.app.H);
+    layer.ctx.drawImage(this._frameCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.restore();
     layer.dirty = true;
     this.app.compositeAllLayers();
@@ -2983,6 +3157,9 @@ export class FluidBrush {
     this._active = false;
     this._lastPoint = null;
     this._lastFrameElapsed = null;
+    this._strokeLayer = null;
+    this._resetAllSimulatorStates();
+    this._resetReplayCapture();
   }
 }
 
