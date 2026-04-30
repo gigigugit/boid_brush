@@ -1755,8 +1755,44 @@ export class App {
     } else {
       const target = selected.target;
       const checked = target.enabled !== false ? 'checked' : '';
-      const numberValue = value => Number.isFinite(value) ? String(value) : '';
-      const degrees = value => Number.isFinite(value) ? String(_formatAngleDegrees(value)) : '';
+
+      // Helper: render a slider row for a numeric override field.
+      // Slider value = stored value / scale  (e.g. scale=0.01 → slider 0-200 maps to stored 0-2.0).
+      // When the field is not set on target, shows "Brush def." and places thumb at midpoint.
+      const simSlider = (field, type, label, min, max, step, scale) => {
+        const raw = target[field];
+        const isSet = Number.isFinite(raw);
+        let sliderVal;
+        if (isSet) {
+          sliderVal = type === 'angle'
+            ? Math.round(_formatAngleDegrees(raw))
+            : Math.round(raw / scale);
+        } else {
+          sliderVal = Math.round((+min + +max) / 2);
+        }
+        const fmtStored = v => {
+          if (type === 'angle') return v + '°';
+          if (type === 'integer') return String(Math.round(v));
+          return scale < 1 ? v.toFixed(2) : v.toFixed(1);
+        };
+        const displayVal = isSet
+          ? fmtStored(type === 'angle' ? sliderVal : sliderVal * scale)
+          : 'Brush def.';
+        const unset = isSet ? '' : ' data-sim-unset="1"';
+        const resetOpacity = isSet ? '' : ' style="opacity:0.35"';
+        return `<div class="sim-slider-row">
+          <div class="sim-slider-header">
+            <span class="sim-slider-label">${label}</span>
+            <div class="sim-slider-meta">
+              <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
+              <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
+            </div>
+          </div>
+          <input type="range" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
+                 data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>
+        </div>`;
+      };
+
       let rows = `
         <div class="sim-inspector-group">
           <h3>Selected ${selected.kind === 'point' ? target.type : selected.kind}</h3>
@@ -1774,47 +1810,49 @@ export class App {
         rows += `
           <div class="sim-inspector-group">
             <h3>Spawn Overrides</h3>
-            <div class="sim-inspector-note">Leave a field blank to keep using the normal brush setting.</div>
-            <div class="sim-inspector-row"><label>Count<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.count)}" data-sim-field="count" data-sim-type="integer"></label></div>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('count', 'integer', 'Count', 1, 200, 1, 1)}
             <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
               <option value="">Brush default</option>
               ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
             </select></label></div>
-            <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
-            <div class="sim-inspector-row"><label>Angle<input type="number" step="0.1" placeholder="Brush default" value="${degrees(target.angle)}" data-sim-field="angle" data-sim-type="angle"></label></div>
-            <div class="sim-inspector-row"><label>Jitter<input type="number" min="0" max="1" step="0.01" placeholder="Brush default" value="${numberValue(target.jitter)}" data-sim-field="jitter" data-sim-type="number"></label></div>
+            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+            ${simSlider('angle', 'angle', 'Angle', -180, 180, 1, 1)}
+            ${simSlider('jitter', 'number', 'Jitter', 0, 100, 1, 0.01)}
           </div>`;
       } else if (selected.kind === 'point') {
         rows += `
           <div class="sim-inspector-group">
             <h3>${target.type === 'repel' ? 'Repulsion' : 'Attraction'} Overrides</h3>
-            <div class="sim-inspector-note">Blank values inherit the current brush simulation settings.</div>
-            <div class="sim-inspector-row"><label>Strength<input type="number" min="0" step="0.05" placeholder="Brush default" value="${numberValue(target.strength)}" data-sim-field="strength" data-sim-type="number"></label></div>
-            <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
-            ${target.type === 'repel' ? `<div class="sim-inspector-row"><label>Hardness<input type="number" min="${DEFAULT_SIM_HARDNESS}" max="${MAX_SIM_HARDNESS}" step="0.1" placeholder="1.0" value="${numberValue(target.hardness)}" data-sim-field="hardness" data-sim-type="number"></label></div>` : ''}
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
+            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+            ${target.type === 'repel' ? simSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1) : ''}
           </div>`;
       } else if (selected.kind === 'path') {
         rows += `
           <div class="sim-inspector-group">
             <h3>Path Attraction</h3>
             <div class="sim-inspector-note">All enabled boid paths attract simultaneously and are vector-summed together.</div>
-            <div class="sim-inspector-row"><label>Strength<input type="number" min="0" step="0.05" placeholder="${DEFAULT_PATH_STRENGTH.toFixed(2)}" value="${numberValue(target.strength)}" data-sim-field="strength" data-sim-type="number"></label></div>
-            <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="${DEFAULT_PATH_RADIUS}" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
+            ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
+            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
             <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
           </div>`;
       } else if (selected.kind === 'edge') {
         rows += `
           <div class="sim-inspector-group">
             <h3>Edge Barrier</h3>
-            <div class="sim-inspector-row"><label>Force<input type="number" min="0" step="0.05" placeholder="Brush default" value="${numberValue(target.strength)}" data-sim-field="strength" data-sim-type="number"></label></div>
-            <div class="sim-inspector-row"><label>Radius<input type="number" min="0" step="1" placeholder="Brush default" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('strength', 'number', 'Force', 0, 200, 5, 0.01)}
+            ${simSlider('radius', 'integer', 'Radius', 0, 300, 1, 1)}
           </div>`;
       } else if (selected.kind === 'pheromonePath') {
         rows += `
           <div class="sim-inspector-group">
             <h3>Pheromone Trail</h3>
-            <div class="sim-inspector-row"><label>Radius<input type="number" min="1" step="1" placeholder="Brush default" value="${numberValue(target.radius)}" data-sim-field="radius" data-sim-type="number"></label></div>
-            <div class="sim-inspector-row"><label>Intensity<input type="number" min="0" max="1" step="0.05" placeholder="Brush default" value="${numberValue(target.intensity)}" data-sim-field="intensity" data-sim-type="number"></label></div>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('radius', 'integer', 'Radius', 1, 80, 1, 1)}
+            ${simSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01)}
           </div>`;
       }
       inspector += rows;
@@ -1839,17 +1877,29 @@ export class App {
       if (entry) this._deleteSimulationItem(entry);
     });
     panel.querySelectorAll('[data-sim-field]').forEach(el => {
-      const applyField = () => {
+      const field = el.dataset.simField;
+      const type = el.dataset.simType || 'number';
+      const scale = parseFloat(el.dataset.simScale || '1');
+
+      // Write the current control value into target (no re-render).
+      const writeField = () => {
         const entry = this._getSelectedSimulationEntry();
-        if (!entry) return;
+        if (!entry) return false;
         const { target } = entry;
-        const field = el.dataset.simField;
-        const type = el.dataset.simType || 'number';
         if (type === 'bool') {
           target[field] = el.checked;
         } else if (type === 'select') {
           if (el.value === '') delete target[field];
           else target[field] = el.value;
+        } else if (el.type === 'range') {
+          const minVal = el.min !== '' ? +el.min : 1;
+          if (type === 'integer') {
+            target[field] = Math.max(minVal, Math.round(+el.value * scale));
+          } else if (type === 'angle') {
+            target[field] = _parseAngleDegrees(el.value);
+          } else {
+            target[field] = +el.value * scale;
+          }
         } else if (el.value === '') {
           delete target[field];
         } else if (type === 'integer') {
@@ -1859,11 +1909,46 @@ export class App {
         } else {
           target[field] = +el.value;
         }
+        return true;
+      };
+
+      // Live label update for range sliders (no re-render while dragging).
+      if (el.type === 'range') {
+        el.addEventListener('input', () => {
+          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+          if (!lbl) return;
+          if (type === 'angle') {
+            lbl.textContent = Math.round(+el.value) + '°';
+          } else if (type === 'integer') {
+            lbl.textContent = String(Math.max(+el.min || 0, Math.round(+el.value * scale)));
+          } else {
+            lbl.textContent = (+el.value * scale).toFixed(scale < 1 ? 2 : 1);
+          }
+          // Restore reset-button opacity once the user moves the slider.
+          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          if (resetBtn) resetBtn.style.opacity = '1';
+        });
+      }
+
+      // Commit on change + trigger re-render.
+      const applyField = () => {
+        if (!writeField()) return;
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       };
       el.addEventListener('change', applyField);
       if (el.type === 'checkbox') el.addEventListener('input', applyField);
+    });
+
+    // Reset buttons — clear an override field and re-render.
+    panel.querySelectorAll('[data-sim-reset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry) return;
+        delete entry.target[btn.dataset.simReset];
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
     });
 
     // Scene-variable sliders (seek, etc.)
@@ -2913,13 +2998,6 @@ export class App {
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
-    // 1-6 = brush switch
-    if (e.key === '1') this.setBrush('boid');
-    if (e.key === '2') this.setBrush('bristle');
-    if (e.key === '3') this.setBrush('simple');
-    if (e.key === '4') this.setBrush('eraser');
-    if (e.key === '5') this.setBrush('fluid');
-    if (e.key === '6') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // [ / ] = decrease / increase brush size
