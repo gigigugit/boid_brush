@@ -3470,6 +3470,12 @@ export class AIDiffusionBrush {
     const points = app.getSymmetryPoints(cx, cy);
     for (const pt of points) {
       ctx.drawImage(rc, pt.x - half, pt.y - half, targetSize, targetSize);
+      app._markLayerDirty(layer, {
+        x: pt.x - half - 2,
+        y: pt.y - half - 2,
+        w: targetSize + 4,
+        h: targetSize + 4,
+      });
     }
 
     layer.dirty = true;

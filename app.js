@@ -65,6 +65,8 @@ const PERF_UI_REFRESH_MS = 500;
 const PERF_SLOW_FRAME_MS = 20;
 const PERF_THROTTLE_GAP_MS = 250;
 const PERF_RECENT_EVENT_LIMIT = 10;
+const DIRTY_TILE_SIZE = 256;
+const DIRTY_TILE_MAX_COVERAGE = 0.45;
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -558,16 +560,68 @@ export class App {
     return { canvas, ctx };
   }
 
+  _createLayerRecord(canvas, ctx, props = {}) {
+    const layer = {
+      canvas,
+      ctx,
+      visible: true,
+      opacity: 1,
+      blend: 'source-over',
+      dirty: true,
+      dirtyTiles: null,
+      glTex: null,
+      alphaLock: false,
+      ...props,
+    };
+    canvas._bbLayer = layer;
+    return layer;
+  }
+
+  _markLayerDirty(layer, rect = null) {
+    if (!layer) return;
+    if (!rect) {
+      layer.dirty = true;
+      layer.dirtyTiles = null;
+      return;
+    }
+    const x0 = Math.max(0, Math.min(this.W, rect.x));
+    const y0 = Math.max(0, Math.min(this.H, rect.y));
+    const x1 = Math.max(0, Math.min(this.W, rect.x + rect.w));
+    const y1 = Math.max(0, Math.min(this.H, rect.y + rect.h));
+    if (x1 <= x0 || y1 <= y0) return;
+    if (layer.dirty && !layer.dirtyTiles) return;
+    layer.dirty = true;
+    const tiles = layer.dirtyTiles ||= new Set();
+    const minTX = Math.floor(x0 / DIRTY_TILE_SIZE);
+    const maxTX = Math.floor((x1 - 1) / DIRTY_TILE_SIZE);
+    const minTY = Math.floor(y0 / DIRTY_TILE_SIZE);
+    const maxTY = Math.floor((y1 - 1) / DIRTY_TILE_SIZE);
+    for (let ty = minTY; ty <= maxTY; ty++) {
+      for (let tx = minTX; tx <= maxTX; tx++) {
+        tiles.add(`${tx},${ty}`);
+      }
+    }
+    const totalTilesX = Math.max(1, Math.ceil(this.W / DIRTY_TILE_SIZE));
+    const totalTilesY = Math.max(1, Math.ceil(this.H / DIRTY_TILE_SIZE));
+    const maxTiles = Math.max(1, Math.floor(totalTilesX * totalTilesY * DIRTY_TILE_MAX_COVERAGE));
+    if (tiles.size > maxTiles) {
+      layer.dirtyTiles = null;
+    }
+  }
+
+  _markContextDirty(ctx, rect = null) {
+    this._markLayerDirty(ctx?.canvas?._bbLayer || null, rect);
+  }
+
   // ========================================================
   // LAYERS
   // ========================================================
 
   addLayer(name) {
     const { canvas, ctx } = this.makeLayerCanvas();
-    this.layers.splice(this.activeLayerIdx, 0, {
-      canvas, ctx, name: name || `Layer ${this.layers.length + 1}`,
-      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null, alphaLock: false
-    });
+    this.layers.splice(this.activeLayerIdx, 0, this._createLayerRecord(canvas, ctx, {
+      name: name || `Layer ${this.layers.length + 1}`,
+    }));
     this._syncLayerSwitcher();
     this.compositeAllLayers();
   }
@@ -595,10 +649,9 @@ export class App {
 
   _addBackgroundLayer() {
     const { canvas, ctx } = this.makeLayerCanvas();
-    const bgLayer = {
-      canvas, ctx, name: 'Background', isBackground: true,
-      visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null, alphaLock: false
-    };
+     const bgLayer = this._createLayerRecord(canvas, ctx, {
+      name: 'Background', isBackground: true,
+    });
     this.layers.push(bgLayer); // always last = bottom
     this._fillBackgroundLayer();
   }
@@ -997,10 +1050,11 @@ export class App {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(src.canvas, 0, 0);
     ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
-    this.layers.splice(this.activeLayerIdx, 0, {
-      canvas, ctx, name: src.name + ' copy',
-      visible: true, opacity: src.opacity, blend: src.blend, dirty: true, glTex: null
-    });
+    this.layers.splice(this.activeLayerIdx, 0, this._createLayerRecord(canvas, ctx, {
+      name: src.name + ' copy',
+      opacity: src.opacity,
+      blend: src.blend,
+    }));
     this._syncLayerSwitcher();
     this.compositeAllLayers();
   }
@@ -1071,7 +1125,7 @@ export class App {
     }
     ctx.restore(); ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     for (const l of paintLayers) this.compositor?.deleteLayerTex(l);
-    this.layers = [{ canvas, ctx, name: 'Flattened', visible: true, opacity: 1, blend: 'source-over', dirty: true, glTex: null }];
+    this.layers = [this._createLayerRecord(canvas, ctx, { name: 'Flattened' })];
     if (bgLayer) this.layers.push(bgLayer);
     this.activeLayerIdx = 0;
     this._syncLayerSwitcher();
@@ -1087,7 +1141,7 @@ export class App {
     l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
     l.ctx.restore();
     l.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
-    l.dirty = true;
+    this._markLayerDirty(l);
     // Also clear height map when there's only one paint layer
     if (this.layers.filter(layer => !layer.isBackground).length === 1) {
       this._heightCtx?.clearRect(0, 0, this._heightCanvas.width, this._heightCanvas.height);
@@ -1099,10 +1153,11 @@ export class App {
 
   compositeAllLayers() {
     this._smudgeImageData = null; // invalidate smudge cache
-    this.compositor?.composite(this.layers, this.W, this.H);
+    const p = this._cachedP || this.getP();
+    const forceFullComposite = !!(p.impasto && p.impastoStrength > 0);
+    this.compositor?.composite(this.layers, this.W, this.H, { forceFull: forceFullComposite });
 
     // Impasto: recompute lighting overlay from height map when dirty, then draw
-    const p = this._cachedP || this.getP();
     if (p.impasto && p.impastoStrength > 0) {
       if (this._heightDirty) {
         this._impastoOverlayCanvas = this._computeImpastoOverlay(p);
@@ -1159,8 +1214,13 @@ export class App {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.putImageData(s.data, 0, 0);
       ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
-      return { canvas, ctx, name: s.name, visible: s.visible, opacity: s.opacity, blend: s.blend,
-               isBackground: !!s.isBackground, dirty: true, glTex: null };
+      return this._createLayerRecord(canvas, ctx, {
+        name: s.name,
+        visible: s.visible,
+        opacity: s.opacity,
+        blend: s.blend,
+        isBackground: !!s.isBackground,
+      });
     });
     if (this.activeLayerIdx >= this.layers.length) this.activeLayerIdx = this.layers.length - 1;
     // Ensure active layer is not the background
@@ -3859,10 +3919,21 @@ export class App {
   // STAMP HELPERS
   // ========================================================
 
+  _markStampDirty(ctx, x, y, size, extraPad = 0) {
+    const half = size / 2 + Math.max(2, extraPad);
+    this._markContextDirty(ctx, {
+      x: x - half,
+      y: y - half,
+      w: half * 2,
+      h: half * 2,
+    });
+  }
+
   stampCircle(ctx, x, y, size, color, opacity) {
     const p = this._cachedP || this.getP();
     const textureEnabled = this.hasCanvasTexture() && p.canvasTextureEnabled;
     let drawSize = size;
+    let dirtyExtraPad = 0;
     // Modulate opacity by canvas texture if enabled
     if (textureEnabled) {
       opacity *= this.getTextureDepositDensity(x, y, p);
@@ -3923,6 +3994,10 @@ export class App {
       if (breakup > 0.12) {
         const flow = this.sampleTextureFlowVector(x, y, p);
         const feather = Math.max(TEXTURE_EDGE_FEATHER_MIN_DISTANCE, drawSize * TEXTURE_EDGE_FEATHER_DISTANCE_SCALE * breakup);
+        dirtyExtraPad = Math.max(
+          dirtyExtraPad,
+          Math.hypot(flow.x * feather, flow.y * feather) + Math.max(1, drawSize * (0.12 + breakup * 0.04)),
+        );
         ctx.globalAlpha = opacity * breakup * TEXTURE_EDGE_FEATHER_OPACITY_SCALE;
         ctx.beginPath();
         ctx.arc(x + flow.x * feather, y + flow.y * feather, Math.max(0.5, drawSize * (0.22 + breakup * 0.08)), 0, Math.PI * 2);
@@ -3943,6 +4018,8 @@ export class App {
       hctx.globalAlpha = 1;
       this._heightDirty = true;
     }
+
+    this._markStampDirty(ctx, x, y, drawSize, dirtyExtraPad);
 
     // Tiling: wrap stamp at canvas edges
     if (this.tilingMode) {
@@ -3981,6 +4058,7 @@ export class App {
           hctx.globalAlpha = 1;
           this._heightDirty = true;
         }
+        this._markStampDirty(ctx, wx, wy, size, dirtyExtraPad);
       }
     }
   }
