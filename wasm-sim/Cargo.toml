@@ -14,7 +14,7 @@ wasm-bindgen = "0.2"
 wasm-bindgen-test = "0.3"
 
 [features]
-default = []
+default = ["spatial-hash"]
 spatial-hash = []
 
 [profile.release]

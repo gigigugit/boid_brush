@@ -16,6 +16,9 @@ use crate::params::{SimParams, PARAMS_LEN};
 use crate::sensing::{self, SensingMap};
 use crate::spawn::{self, SpawnShape};
 
+#[cfg(feature = "spatial-hash")]
+use crate::spatial::SpatialGrid;
+
 pub struct Simulation {
     /// Flat agent buffer: agent i occupies buf[i*STRIDE .. (i+1)*STRIDE].
     pub buf: Vec<f32>,
@@ -38,6 +41,10 @@ pub struct Simulation {
     pub sensing: SensingMap,
     /// Scratch buffer for spawn shape positions.
     spawn_scratch: Vec<(f32, f32)>,
+    /// Spatial grid for O(n·k) neighbor queries (built each frame when
+    /// the `spatial-hash` feature is enabled).
+    #[cfg(feature = "spatial-hash")]
+    spatial_grid: SpatialGrid,
 }
 
 impl Simulation {
@@ -56,6 +63,8 @@ impl Simulation {
             noise: SimplexNoise::new(seed as f32),
             sensing: SensingMap::new(),
             spawn_scratch: Vec::with_capacity(256),
+            #[cfg(feature = "spatial-hash")]
+            spatial_grid: SpatialGrid::new(max),
         }
     }
 
@@ -241,6 +250,28 @@ impl Simulation {
 
         // Phase 2: Neighbor forces (cohesion, separation, alignment)
         // Uses per-agent COH_M and SEP_M multipliers.
+        //
+        // When `spatial-hash` is enabled (default), a uniform grid limits
+        // neighbor search to the 3×3 cell neighborhood — O(n·k) instead of
+        // O(n²). The grid is rebuilt each frame from live agent positions.
+        #[cfg(feature = "spatial-hash")]
+        {
+            self.spatial_grid.build(
+                &self.buf,
+                self.agent_count,
+                self.params.neighbor_radius,
+                self.params.separation_radius,
+                self.width,
+                self.height,
+            );
+            forces::apply_neighbor_forces_grid(
+                &mut self.buf,
+                self.agent_count,
+                &self.params,
+                &self.spatial_grid,
+            );
+        }
+        #[cfg(not(feature = "spatial-hash"))]
         forces::apply_neighbor_forces(&mut self.buf, self.agent_count, &self.params);
 
         // Phase 3: Integrate (uses per-agent speed multiplier)
