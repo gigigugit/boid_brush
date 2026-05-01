@@ -727,6 +727,8 @@ export class BoidBrush {
         this._uploadSensing(p);
         this._sensingFrame = 0;
       } else if (!sensingSourceIsBelow) {
+        // "Below" excludes the active stroke layer, so it stays unchanged during
+        // the stroke and doesn't need the periodic refresh used by active/all.
         this._sensingFrame++;
         if (this._sensingFrame >= 30) {
           this._uploadSensing(p);

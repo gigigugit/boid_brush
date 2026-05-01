@@ -3878,6 +3878,8 @@ export class App {
     const src = p.sensingSource;
     const w = this.W * this.DPR, h = this.H * this.DPR;
     if (src === 'active') {
+      // Read directly from the active layer bitmap; the reusable offscreen
+      // surface only helps when multiple layers must be composited first.
       const l = this.getActiveLayer();
       return l.ctx.getImageData(0, 0, w, h);
     }
