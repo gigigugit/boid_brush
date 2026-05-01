@@ -170,6 +170,7 @@ export class App {
 
     // Brush engines
     this.brushes = {};
+    this.sharedMotionSim = null;
     this.activeBrush = 'boid';
 
     // Drawing state
@@ -365,8 +366,14 @@ export class App {
   _resizeAll() {
     if (this._docSized) {
       // Document has explicit size — don't resize to viewport
+      const transformEl = document.getElementById('canvasTransform');
+      if (transformEl) {
+        transformEl.style.width = this.W + 'px';
+        transformEl.style.height = this.H + 'px';
+      }
       this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
       this.lctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+      this._applyViewTransform();
       return;
     }
     this.DPR = window.devicePixelRatio || 1;
@@ -425,6 +432,7 @@ export class App {
         this._heightCanvas.height = targetH;
       }
     }
+    this._applyViewTransform();
   }
 
   async resizeDocument(newW, newH, bgColor) {
@@ -484,9 +492,9 @@ export class App {
 
     // Reinit WASM sims
     try {
-      if (this.brushes.boid) await this.brushes.boid.init();
-      if (this.brushes.ant) await this.brushes.ant.init();
-      if (this.brushes.fluid) await this.brushes.fluid.init();
+      if (this.brushes.boid) await this.brushes.boid.init({ force: true });
+      if (this.brushes.ant) await this.brushes.ant.init({ force: true });
+      if (this.brushes.fluid) await this.brushes.fluid.init({ force: true });
     } catch(e) { console.warn('WASM reinit failed:', e); }
 
     // Zoom to fit
@@ -2703,11 +2711,11 @@ export class App {
       const h = document.getElementById('canvasSizeH');
       if (w && h) { const t = w.value; w.value = h.value; h.value = t; }
     });
-    document.getElementById('canvasSizeApply')?.addEventListener('click', () => {
+    document.getElementById('canvasSizeApply')?.addEventListener('click', async () => {
       const w = +document.getElementById('canvasSizeW')?.value || 1920;
       const h = +document.getElementById('canvasSizeH')?.value || 1080;
       const bg = document.getElementById('canvasSizeBg')?.value || '#ffffff';
-      this.resizeDocument(w, h, bg);
+      await this.resizeDocument(w, h, bg);
       this._hideCanvasSizeModal();
     });
   }
@@ -2850,31 +2858,49 @@ export class App {
     return this._screenToCanvas(sx, sy);
   }
 
-  _screenToCanvas(sx, sy) {
-    // Undo view transform: the CSS transform is:
-    // translate(panX, panY) translate(cx,cy) rotate(rot) scale(zoom) scaleX(flip) translate(-cx,-cy)
+  _getCanvasViewMetrics() {
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
-    const cx = areaRect.width / 2;
-    const cy = areaRect.height / 2;
+    return {
+      areaRect,
+      baseX: (areaRect.width - this.W) / 2,
+      baseY: (areaRect.height - this.H) / 2,
+      centerX: this.W / 2,
+      centerY: this.H / 2,
+    };
+  }
 
-    // Step 1: undo translate(panX, panY)
-    let dx = sx - this.viewPanX;
-    let dy = sy - this.viewPanY;
-    // Step 2: undo translate(cx, cy)
-    dx -= cx;
-    dy -= cy;
-    // Step 3: undo rotate(rot)
+  _screenToCanvas(sx, sy) {
+    const { baseX, baseY, centerX, centerY } = this._getCanvasViewMetrics();
+
+    // Undo translate(base + pan) and the canvas-center pivot translation.
+    let dx = sx - baseX - this.viewPanX - centerX;
+    let dy = sy - baseY - this.viewPanY - centerY;
+    // Undo rotate(rot)
     const cos = Math.cos(-this.viewRotation);
     const sin = Math.sin(-this.viewRotation);
     const rx = dx * cos - dy * sin;
     const ry = dx * sin + dy * cos;
-    // Step 4: undo scale(zoom)
+    // Undo scale(zoom)
     let ux = rx / this.viewZoom;
     let uy = ry / this.viewZoom;
-    // Step 5: undo scaleX(flip)
+    // Undo scaleX(flip)
     if (this.viewFlipped) ux = -ux;
-    // Step 6: undo translate(-cx, -cy)
-    return { x: ux + cx, y: uy + cy };
+    return { x: ux + centerX, y: uy + centerY };
+  }
+
+  _setViewPanForScreenAnchor(canvasX, canvasY, screenX, screenY) {
+    const { baseX, baseY, centerX, centerY } = this._getCanvasViewMetrics();
+    let offsetX = canvasX - centerX;
+    const offsetY = canvasY - centerY;
+    if (this.viewFlipped) offsetX = -offsetX;
+    offsetX *= this.viewZoom;
+    const scaledOffsetY = offsetY * this.viewZoom;
+    const cos = Math.cos(this.viewRotation);
+    const sin = Math.sin(this.viewRotation);
+    const rx = offsetX * cos - scaledOffsetY * sin;
+    const ry = offsetX * sin + scaledOffsetY * cos;
+    this.viewPanX = screenX - baseX - centerX - rx;
+    this.viewPanY = screenY - baseY - centerY - ry;
   }
 
   /** Extract stylus tilt/azimuth from a PointerEvent and store on this App */
@@ -3238,14 +3264,7 @@ export class App {
       const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
       const curSX = midX - areaRect.left;
       const curSY = midY - areaRect.top;
-      const cx = areaRect.width / 2;
-      const cy = areaRect.height / 2;
-      const r = this.viewRotation;
-      const z = this.viewZoom;
-      const ax = this._pinchAnchor.x - cx;
-      const ay = this._pinchAnchor.y - cy;
-      this.viewPanX = curSX - cx - z * (ax * Math.cos(r) - ay * Math.sin(r));
-      this.viewPanY = curSY - cy - z * (ax * Math.sin(r) + ay * Math.cos(r));
+      this._setViewPanForScreenAnchor(this._pinchAnchor.x, this._pinchAnchor.y, curSX, curSY);
 
       this._applyViewTransform();
     }
@@ -3261,39 +3280,37 @@ export class App {
     e.preventDefault();
     // Shift+scroll = rotate view
     if (e.shiftKey) {
+      const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+      const mx = e.clientX - areaRect.left;
+      const my = e.clientY - areaRect.top;
+      const anchor = this._screenToCanvas(mx, my);
       const rotDelta = (e.deltaY > 0 ? 1 : -1) * WHEEL_ROTATION_DEG * Math.PI / 180;
       this.viewRotation += rotDelta;
+      this._setViewPanForScreenAnchor(anchor.x, anchor.y, mx, my);
       this._applyViewTransform();
       return;
     }
     const zoomFactor = e.deltaY > 0 ? WHEEL_ZOOM_OUT : WHEEL_ZOOM_IN;
     const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.viewZoom * zoomFactor));
 
-    // Zoom toward pointer position
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
     const mx = e.clientX - areaRect.left;
     const my = e.clientY - areaRect.top;
-
-    // Adjust pan so the point under the cursor stays fixed
-    const cx = areaRect.width / 2;
-    const cy = areaRect.height / 2;
-    const s = newZoom / this.viewZoom;
-    this.viewPanX = (mx - cx) - s * (mx - cx - this.viewPanX);
-    this.viewPanY = (my - cy) - s * (my - cy - this.viewPanY);
-
+    const anchor = this._screenToCanvas(mx, my);
     this.viewZoom = newZoom;
+    this._setViewPanForScreenAnchor(anchor.x, anchor.y, mx, my);
     this._applyViewTransform();
   }
 
   _applyViewTransform() {
     const el = document.getElementById('canvasTransform');
     if (!el) return;
-    const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
-    const cx = areaRect.width / 2;
-    const cy = areaRect.height / 2;
+    const { baseX, baseY, centerX, centerY } = this._getCanvasViewMetrics();
     const deg = this.viewRotation * 180 / Math.PI;
     const flipScale = this.viewFlipped ? -1 : 1;
-    el.style.transform = `translate(${this.viewPanX}px, ${this.viewPanY}px) translate(${cx}px, ${cy}px) rotate(${deg}deg) scale(${this.viewZoom}) scaleX(${flipScale}) translate(${-cx}px, ${-cy}px)`;
+    el.style.width = this.W + 'px';
+    el.style.height = this.H + 'px';
+    el.style.transform = `translate(${baseX + this.viewPanX}px, ${baseY + this.viewPanY}px) translate(${centerX}px, ${centerY}px) rotate(${deg}deg) scale(${this.viewZoom}) scaleX(${flipScale}) translate(${-centerX}px, ${-centerY}px)`;
   }
 
   resetView() {
@@ -4245,11 +4262,8 @@ export class App {
       this._normalizeSimulationData();
       this._ensureSimulationSpawns();
       this._syncSimulationUI();
-      // Restore document size (state only; actual resize happens via _resizeAll or resizeDocument)
       if (controls._docSized && controls._docW && controls._docH) {
-        this._docSized = true;
-        this._docW = controls._docW;
-        this._docH = controls._docH;
+        await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
     } catch { /* corrupt — ignore */ }
   }
