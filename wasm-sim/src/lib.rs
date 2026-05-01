@@ -513,6 +513,11 @@ mod spatial_integration_tests {
 
         // Ensure both sims have identical buffer contents (same velocities/multipliers)
         sim_grid.buf[..n * STRIDE].copy_from_slice(&sim_naive.buf[..n * STRIDE]);
+        debug_assert_eq!(
+            &sim_naive.buf[..n * STRIDE],
+            &sim_grid.buf[..n * STRIDE],
+            "Buffer copy must produce identical contents before force comparison"
+        );
 
         let p = crate::params::SimParams::default();
         sim_naive.params = p.clone();

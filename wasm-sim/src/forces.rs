@@ -253,9 +253,9 @@ pub fn apply_neighbor_forces_grid(
         let mut ac = 0u32;
 
         // Retrieve pre-computed grid cell for this agent (avoids redundant division).
+        // `i` is always within 0..agent_count == grid.cell_of.len(), so the call is
+        // in-bounds. Returns (-1,-1) only for dead agents, already filtered above.
         let (cell_xi, cell_yi) = grid.agent_cell(i);
-        // cell_xi / cell_yi are -1 only for dead agents, which are already
-        // filtered above by the FLAG_ALIVE check.
 
         // Inspect the 3×3 cell neighborhood (±1 in each axis).
         for ndy in -1i32..=1 {

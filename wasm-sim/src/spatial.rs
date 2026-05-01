@@ -125,7 +125,8 @@ impl SpatialGrid {
                 self.cell_of[i] = u32::MAX; // sentinel: excluded from grid
                 continue;
             }
-            // Saturating cast: negative positions → 0; NaN → 0 (Rust 1.45+ saturating f32→u32).
+            // Saturating f32→u32 cast (Rust 1.45+): negative values → 0, NaN → 0,
+            // +infinity → u32::MAX which is then clamped by .min(dim-1).
             let cx = ((buf[base + X] / cs) as u32).min(gw - 1);
             let cy = ((buf[base + Y] / cs) as u32).min(gh - 1);
             let cid = cy * gw + cx;
@@ -156,11 +157,15 @@ impl SpatialGrid {
     /// Return the grid cell coordinates `(cx, cy)` for a given agent index,
     /// using the cached `cell_of` assignment from the last `build()` call.
     ///
-    /// Returns `(-1, -1)` for dead agents (cell_of == u32::MAX).
+    /// Returns `(-1, -1)` for dead agents (`cell_of == u32::MAX`) or if
+    /// `agent_index` is out of bounds (caller's responsibility to stay within
+    /// the `max_agents` capacity passed to `new()`).
     /// Using this in the force loop avoids recomputing `pos / cell_size`.
     #[inline]
     pub fn agent_cell(&self, agent_index: usize) -> (i32, i32) {
-        let cid = self.cell_of[agent_index];
+        let Some(&cid) = self.cell_of.get(agent_index) else {
+            return (-1, -1); // out-of-bounds index
+        };
         if cid == u32::MAX {
             return (-1, -1); // dead agent
         }
