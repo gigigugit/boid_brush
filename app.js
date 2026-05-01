@@ -43,6 +43,22 @@ const TEXTURE_CHANNEL_DEFAULTS = {
   smudgeDrag: 0,
   pooling: 0,
 };
+const SIM_SPAWN_SHAPES = [
+  'circle', 'ring', 'gaussian', 'line', 'ellipse', 'diamond', 'grid',
+  'sunburst', 'spiral', 'poisson', 'random_cluster', 'burst', 'lemniscate',
+  'phyllotaxis', 'noise_scatter', 'bullseye', 'cross', 'wave', 'voronoi',
+];
+const DUPLICATE_OFFSET = 14;
+const ANGLE_PRECISION = 10;
+const SIM_POINT_HIT_RADIUS = 14;
+const SIM_LINE_HIT_RADIUS = 12;
+const SIM_DELETE_HIT_RADIUS = 10;
+const DEFAULT_SIM_HARDNESS = 0.1;
+const MAX_SIM_HARDNESS = 10;
+const DEFAULT_PATH_STRENGTH = 0.9;
+const DEFAULT_PATH_RADIUS = 40;
+const DEFAULT_SIM_SEEK = 0;
+const MAX_SIM_SESSION_NAME_LENGTH = 64;
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -54,6 +70,47 @@ function _lerp(a, b, t) {
 
 function _wrapIndex(v, size) {
   return ((v % size) + size) % size;
+}
+
+function _radiansToDegrees(value) {
+  return value * 180 / Math.PI;
+}
+
+function _degreesToRadians(value) {
+  return value * Math.PI / 180;
+}
+
+function _formatAngleDegrees(value) {
+  return Math.round(_radiansToDegrees(value) * ANGLE_PRECISION) / ANGLE_PRECISION;
+}
+
+function _parseAngleDegrees(value) {
+  return _degreesToRadians(+value);
+}
+
+function _deepClone(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function _escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _normalizeSimulationVars(value) {
+  return {
+    seek: Number.isFinite(value?.seek) ? value.seek : DEFAULT_SIM_SEEK,
+  };
+}
+
+function _closestPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 1e-6) return { x: ax, y: ay, distance: Math.hypot(px - ax, py - ay) };
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  const x = ax + dx * t;
+  const y = ay + dy * t;
+  return { x, y, distance: Math.hypot(px - x, py - y) };
 }
 
 function _capitalizeTextureChannel(name) {
@@ -209,11 +266,17 @@ export class App {
       paused: false,
       editorTool: 'spawn',
       brushData: {
-        boid: { spawns: [], points: [], path: [] },
+        boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
       },
+      // Scene-level variable overrides (applied during simulation playback).
+      // seek defaults to 0 so boids follow guides instead of the cursor.
+      vars: { seek: DEFAULT_SIM_SEEK },
+      // Named saved simulation sessions.
+      sessions: [],
       drawingPath: null,
       dragTarget: null,
+      selected: null,
       pathDistance: 0,
       pathProgress: 0,
       nextId: 1,
@@ -1338,14 +1401,18 @@ export class App {
     return this.simulation.brushData[brush] || null;
   }
 
+  _getSimulationCollection(collection, brush = this.activeBrush) {
+    const data = this._getSimulationBrushData(brush);
+    return data && Array.isArray(data[collection]) ? data[collection] : [];
+  }
+
   _ensureSimulationSpawns(brush = this.activeBrush) {
     const data = this._getSimulationBrushData(brush);
     if (!data) return [];
-    if (!Array.isArray(data.spawns)) {
-      data.spawns = data.spawn ? [data.spawn] : [];
-      delete data.spawn;
+    if (!Array.isArray(data.spawns)) data.spawns = [];
+    if (!data.spawns.length) {
+      data.spawns.push({ id: this.simulation.nextId++, x: this.W * 0.5, y: this.H * 0.5, enabled: true });
     }
-    if (!data.spawns.length) data.spawns.push({ id: this.simulation.nextId++, x: this.W * 0.5, y: this.H * 0.5 });
     return data.spawns;
   }
 
@@ -1353,40 +1420,594 @@ export class App {
     for (const brush of ['boid', 'ant']) {
       const data = this._getSimulationBrushData(brush);
       if (!data) continue;
+
       if (!Array.isArray(data.spawns)) {
         data.spawns = data.spawn ? [data.spawn] : [];
         delete data.spawn;
       }
-      data.spawns = data.spawns.map(spawn => ({ id: spawn.id || this.simulation.nextId++, x: spawn.x, y: spawn.y }));
+      data.spawns = data.spawns.map(spawn => ({
+        id: spawn?.id || this.simulation.nextId++,
+        x: Number.isFinite(spawn?.x) ? spawn.x : this.W * 0.5,
+        y: Number.isFinite(spawn?.y) ? spawn.y : this.H * 0.5,
+        enabled: spawn?.enabled !== false,
+        count: Number.isFinite(spawn?.count) ? Math.max(1, Math.round(spawn.count)) : undefined,
+        shape: SIM_SPAWN_SHAPES.includes(spawn?.shape) ? spawn.shape : undefined,
+        radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : undefined,
+        angle: Number.isFinite(spawn?.angle) ? spawn.angle : undefined,
+        jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : undefined,
+      }));
+
       if (!Array.isArray(data.points)) data.points = [];
-      if (brush === 'boid' && !Array.isArray(data.path)) data.path = [];
+      data.points = data.points.map(point => ({
+        id: point?.id || this.simulation.nextId++,
+        x: Number.isFinite(point?.x) ? point.x : this.W * 0.5,
+        y: Number.isFinite(point?.y) ? point.y : this.H * 0.5,
+        type: point?.type === 'repel' ? 'repel' : 'attract',
+        enabled: point?.enabled !== false,
+        strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : undefined,
+        radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : undefined,
+        hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : undefined,
+      }));
+
+      if (brush === 'boid') {
+        const legacyPaths = [];
+        if (Array.isArray(data.path) && data.path.length >= 2) legacyPaths.push({ points: data.path });
+        if (Array.isArray(data.paths)) legacyPaths.push(...data.paths);
+        data.paths = legacyPaths.map(pathItem => ({
+          id: pathItem?.id || this.simulation.nextId++,
+          enabled: pathItem?.enabled !== false,
+          points: Array.isArray(pathItem?.points)
+            ? pathItem.points
+                .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+                .map(pt => ({ x: pt.x, y: pt.y }))
+            : [],
+          strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : undefined,
+          radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
+          closed: !!pathItem?.closed,
+        })).filter(pathItem => pathItem.points.length >= 2);
+        delete data.path;
+      }
+
       if (brush === 'ant') {
         if (!Array.isArray(data.edges)) data.edges = [];
+        data.edges = data.edges.map(edge => ({
+          id: edge?.id || this.simulation.nextId++,
+          enabled: edge?.enabled !== false,
+          points: Array.isArray(edge?.points)
+            ? edge.points
+                .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+                .map(pt => ({ x: pt.x, y: pt.y }))
+            : [],
+          strength: Number.isFinite(edge?.strength) ? Math.max(0, edge.strength) : undefined,
+          radius: Number.isFinite(edge?.radius) ? Math.max(0, edge.radius) : undefined,
+        })).filter(edge => edge.points.length >= 2);
+
         if (!Array.isArray(data.pheromonePaths)) data.pheromonePaths = [];
+        data.pheromonePaths = data.pheromonePaths.map(pathItem => ({
+          id: pathItem?.id || this.simulation.nextId++,
+          enabled: pathItem?.enabled !== false,
+          points: Array.isArray(pathItem?.points)
+            ? pathItem.points
+                .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+                .map(pt => ({ x: pt.x, y: pt.y }))
+            : [],
+          radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
+          intensity: Number.isFinite(pathItem?.intensity) ? Math.max(0, Math.min(1, pathItem.intensity)) : undefined,
+        })).filter(pathItem => pathItem.points.length >= 2);
       }
+    }
+
+    if (this.simulation.selected && !this._getSelectedSimulationEntry()) {
+      this.simulation.selected = null;
     }
   }
 
+  _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
+    return {
+      count: Number.isFinite(spawn?.count) ? Math.max(1, Math.round(spawn.count)) : p.count,
+      shape: spawn?.shape || p.spawnShape,
+      radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : p.spawnRadius,
+      angle: Number.isFinite(spawn?.angle) ? spawn.angle : p.spawnAngle,
+      jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : p.spawnJitter,
+    };
+  }
+
+  _resolveSimulationPointConfig(point, p = this.getP()) {
+    return {
+      strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : p.simPointStrength,
+      radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : p.simPointRadius,
+      hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : 1,
+    };
+  }
+
+  _resolveSimulationPathConfig(pathItem, p = this.getP()) {
+    return {
+      strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : DEFAULT_PATH_STRENGTH,
+      radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : DEFAULT_PATH_RADIUS,
+      closed: !!pathItem?.closed,
+    };
+  }
+
+  _resolveSimulationEdgeConfig(edge, p = this.getP()) {
+    return {
+      strength: Number.isFinite(edge?.strength) ? Math.max(0, edge.strength) : p.simEdgeForce,
+      radius: Number.isFinite(edge?.radius) ? Math.max(0, edge.radius) : p.simEdgeRadius,
+    };
+  }
+
+  _resolveSimulationPheromoneConfig(pathItem, p = this.getP()) {
+    return {
+      radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : p.simPheroPaintRadius,
+      intensity: Number.isFinite(pathItem?.intensity) ? Math.max(0, Math.min(1, pathItem.intensity)) : p.simPheroPaintStrength,
+    };
+  }
+
   _getSimulationSpawnCenter(brush = this.activeBrush) {
-    const spawns = this._ensureSimulationSpawns(brush);
-    if (!spawns.length) return { x: this.W * 0.5, y: this.H * 0.5 };
+    const allSpawns = this._ensureSimulationSpawns(brush);
+    const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
+    const activeSpawns = spawns.length ? spawns : allSpawns;
+    if (!activeSpawns.length) return { x: this.W * 0.5, y: this.H * 0.5 };
     let sx = 0;
     let sy = 0;
-    for (const spawn of spawns) {
+    for (const spawn of activeSpawns) {
       sx += spawn.x;
       sy += spawn.y;
     }
-    return { x: sx / spawns.length, y: sy / spawns.length };
+    return { x: sx / activeSpawns.length, y: sy / activeSpawns.length };
+  }
+
+  _setSimulationSelection(selection) {
+    this.simulation.selected = selection
+      ? {
+          brush: this.activeBrush,
+          collection: selection.collection,
+          kind: selection.kind,
+          id: selection.target?.id ?? selection.id,
+        }
+      : null;
+    this._renderSimulationInspector();
+  }
+
+  _getSelectedSimulationEntry() {
+    const sel = this.simulation.selected;
+    if (!sel || sel.brush !== this.activeBrush) return null;
+    const items = this._getSimulationCollection(sel.collection);
+    const target = items.find(item => item.id === sel.id);
+    return target ? { ...sel, target } : null;
+  }
+
+  _getSimulationAnchor(item) {
+    if (Array.isArray(item?.points) && item.points.length) {
+      return item.points[Math.floor(item.points.length / 2)];
+    }
+    return item ? { x: item.x, y: item.y } : { x: this.W * 0.5, y: this.H * 0.5 };
+  }
+
+  _translateSimulationTarget(target, dx, dy) {
+    if (!target) return;
+    if (Array.isArray(target.points)) {
+      for (const pt of target.points) {
+        pt.x += dx;
+        pt.y += dy;
+      }
+      return;
+    }
+    target.x += dx;
+    target.y += dy;
+  }
+
+  _duplicateSelectedSimulationItem() {
+    const entry = this._getSelectedSimulationEntry();
+    if (!entry) return;
+    const items = this._getSimulationCollection(entry.collection);
+    const clone = _deepClone(entry.target);
+    clone.id = this.simulation.nextId++;
+    if (Array.isArray(clone.points)) {
+      clone.points = clone.points.map(pt => ({ x: pt.x + DUPLICATE_OFFSET, y: pt.y + DUPLICATE_OFFSET }));
+    } else {
+      clone.x += DUPLICATE_OFFSET;
+      clone.y += DUPLICATE_OFFSET;
+    }
+    items.push(clone);
+    this._setSimulationSelection({ collection: entry.collection, kind: entry.kind, target: clone });
+    this._maybeAutoSaveSession();
+    this.showToast('Simulation item duplicated');
+  }
+
+  _openSimulationHelp() {
+    document.getElementById('simHelpModal')?.classList.add('open');
+  }
+
+  _closeSimulationHelp() {
+    document.getElementById('simHelpModal')?.classList.remove('open');
+  }
+
+  _maybeAutoSaveSession() {
+    if (document.getElementById('autoSaveSession')?.checked) this.saveSession();
+  }
+
+  _newSimulationSession() {
+    this.simulation.vars = _normalizeSimulationVars();
+    this.simulation.brushData = {
+      boid: { spawns: [], points: [], paths: [] },
+      ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+    };
+    this.simulation.nextId = 1;
+    this.simulation.selected = null;
+    this._ensureSimulationSpawns();
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast('New simulation session started');
+  }
+
+  _saveSimulationSession() {
+    const defaultName = `Session ${this.simulation.sessions.length + 1}`;
+    const rawName = window.prompt('Name for this simulation session:', defaultName);
+    if (!rawName) return;
+    const name = rawName.trim().slice(0, MAX_SIM_SESSION_NAME_LENGTH) || defaultName;
+    this.simulation.sessions.push({
+      name,
+      savedAt: Date.now(),
+      vars: _normalizeSimulationVars(this.simulation.vars),
+      brushData: _deepClone(this.simulation.brushData),
+      nextId: this.simulation.nextId,
+    });
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast(rawName.trim().length > MAX_SIM_SESSION_NAME_LENGTH ? `Saved "${name}" (trimmed)` : `Saved "${name}"`);
+  }
+
+  _loadSimulationSession(index) {
+    const session = this.simulation.sessions[index];
+    if (!session) return;
+    this.simulation.vars = _normalizeSimulationVars(session.vars);
+    this.simulation.brushData = _deepClone(session.brushData);
+    this.simulation.nextId = session.nextId || this.simulation.nextId;
+    this.simulation.selected = null;
+    this._normalizeSimulationData();
+    this._ensureSimulationSpawns();
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast(`Loaded "${session.name}"`);
+  }
+
+  _deleteSimulationSavedSession(index) {
+    const session = this.simulation.sessions[index];
+    if (!session) return;
+    if (!window.confirm(`Delete saved simulation session "${session.name}"?`)) return;
+    this.simulation.sessions.splice(index, 1);
+    this._renderSimulationInspector();
+    this.saveSession();
+    this.showToast(`Deleted "${session.name}"`);
+  }
+
+
+  _renderSimulationInspector() {
+    const panel = document.getElementById('simOverlaySidebar');
+    if (!panel) return;
+    const open = this.simulation.enabled && this._isMotionBrush();
+    panel.classList.toggle('open', open);
+    if (!open) {
+      panel.innerHTML = '';
+      return;
+    }
+
+    const data = this._getSimulationBrushData();
+    if (!data) {
+      panel.innerHTML = '';
+      return;
+    }
+    const selected = this._getSelectedSimulationEntry();
+    if (this.simulation.selected && !selected) this.simulation.selected = null;
+    const p = this.getP();
+    const isBoid = this.activeBrush === 'boid';
+    const groups = [
+      { collection: 'spawns', kind: 'spawn', label: 'Spawn', items: data.spawns || [] },
+      { collection: 'points', kind: 'point', label: 'Force', items: data.points || [] },
+      ...(isBoid ? [{ collection: 'paths', kind: 'path', label: 'Path', items: data.paths || [] }] : []),
+      ...(!isBoid ? [{ collection: 'edges', kind: 'edge', label: 'Edge', items: data.edges || [] }] : []),
+      ...(!isBoid ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone', items: data.pheromonePaths || [] }] : []),
+    ];
+    const summaryButtons = groups.map(group => {
+      if (!group.items.length) return '';
+      return `<div class="sim-inspector-group"><h3>${_escapeHtml(group.label)}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
+        <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
+          ${_escapeHtml(group.label)} ${idx + 1}${item.enabled === false ? ' · Off' : ''}${item.type ? ` · ${item.type}` : ''}
+        </button>`).join('')}</div></div>`;
+    }).join('');
+
+    const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Scene</button>' : '';
+
+    const seekPct = Math.round((Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK) * 100);
+    const savedSessionsList = this.simulation.sessions.length
+      ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
+         <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
+            `<button data-sim-load-session="${i}" aria-label="Load saved session ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
+             <button class="danger" data-sim-del-session="${i}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
+         ).join('')}</div>`
+      : '';
+
+    let inspector = `
+      <div class="sim-inspector-header">
+        <div>
+          <div class="sim-inspector-title">Simulation Inspector</div>
+          <div class="sim-inspector-subtitle">${isBoid ? 'Boid' : 'Ant'} simulation overrides live here.</div>
+        </div>
+        <div class="sim-inspector-actions">
+          ${clearSelectionBtn}
+          <button data-sim-help="1">Help Pop-up</button>
+        </div>
+      </div>
+      <div class="sim-inspector-group">
+        <h3>Scene</h3>
+        <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong>${p.simSpeed.toFixed(2)}×</strong> (shown for reference from the brush sidebar). Brush sidebar values stay untouched; item values only override when explicitly set here.</div>
+      </div>
+      <div class="sim-inspector-group">
+        <h3>Scene Variables</h3>
+        <div class="sim-inspector-note">Override brush parameters for simulation playback. <strong>Seek</strong> defaults to 0 so agents follow guides instead of the cursor. Values persist when reopening simulation.</div>
+        <div class="sim-inspector-row" style="flex-direction:column;align-items:stretch">
+          <label style="display:flex;justify-content:space-between">
+            <span>Seek (cursor pull)</span><span class="sim-inspector-value" data-sim-var-label="seek">${seekPct}%</span>
+          </label>
+          <input type="range" min="0" max="100" step="0.5" value="${seekPct}" data-sim-var="seek" style="margin-top:4px">
+        </div>
+        <div class="sim-inspector-actions" style="margin-top:10px">
+          <button data-sim-new-session="1">New Session</button>
+          <button data-sim-save-session="1">Save Session</button>
+        </div>
+        ${savedSessionsList}
+      </div>
+      ${summaryButtons}
+    `;
+
+    if (!selected) {
+      inspector += `
+        <div class="sim-inspector-group">
+          <h3>No Selection</h3>
+          <div class="sim-inspector-note">Select a spawn, attract point, repel point, ${isBoid ? 'path' : 'edge, or pheromone path'} on the canvas or from the lists above to edit its per-item overrides.</div>
+        </div>
+      `;
+    } else {
+      const target = selected.target;
+      const checked = target.enabled !== false ? 'checked' : '';
+
+      // Helper: render a slider row for a numeric override field.
+      // Slider value = stored value / scale  (e.g. scale=0.01 → slider 0-200 maps to stored 0-2.0).
+      // When the field is not set on target, shows "Brush def." and places thumb at midpoint.
+      const simSlider = (field, type, label, min, max, step, scale) => {
+        const raw = target[field];
+        const isSet = Number.isFinite(raw);
+        let sliderVal;
+        if (isSet) {
+          sliderVal = type === 'angle'
+            ? Math.round(_formatAngleDegrees(raw))
+            : Math.round(raw / scale);
+        } else {
+          sliderVal = Math.round((+min + +max) / 2);
+        }
+        const fmtStored = v => {
+          if (type === 'angle') return v + '°';
+          if (type === 'integer') return String(Math.round(v));
+          return scale < 1 ? v.toFixed(2) : v.toFixed(1);
+        };
+        const displayVal = isSet
+          ? fmtStored(type === 'angle' ? sliderVal : sliderVal * scale)
+          : 'Brush def.';
+        const unset = isSet ? '' : ' data-sim-unset="1"';
+        const resetOpacity = isSet ? '' : ' style="opacity:0.35"';
+        return `<div class="sim-slider-row">
+          <div class="sim-slider-header">
+            <span class="sim-slider-label">${label}</span>
+            <div class="sim-slider-meta">
+              <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
+              <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
+            </div>
+          </div>
+          <input type="range" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
+                 data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>
+        </div>`;
+      };
+
+      let rows = `
+        <div class="sim-inspector-group">
+          <h3>Selected ${selected.kind === 'point' ? target.type : selected.kind}</h3>
+          <div class="sim-inspector-row">
+            <label>Enabled</label>
+            <input type="checkbox" data-sim-field="enabled" data-sim-type="bool" ${checked}>
+          </div>
+          <div class="sim-inspector-actions">
+            <button data-sim-duplicate="1">Duplicate</button>
+            <button class="danger" data-sim-delete="1">Delete</button>
+          </div>
+        </div>
+      `;
+      if (selected.kind === 'spawn') {
+        rows += `
+          <div class="sim-inspector-group">
+            <h3>Spawn Overrides</h3>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('count', 'integer', 'Count', 1, 200, 1, 1)}
+            <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
+              <option value="">Brush default</option>
+              ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
+            </select></label></div>
+            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+            ${simSlider('angle', 'angle', 'Angle', -180, 180, 1, 1)}
+            ${simSlider('jitter', 'number', 'Jitter', 0, 100, 1, 0.01)}
+          </div>`;
+      } else if (selected.kind === 'point') {
+        rows += `
+          <div class="sim-inspector-group">
+            <h3>${target.type === 'repel' ? 'Repulsion' : 'Attraction'} Overrides</h3>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
+            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+            ${target.type === 'repel' ? simSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1) : ''}
+          </div>`;
+      } else if (selected.kind === 'path') {
+        rows += `
+          <div class="sim-inspector-group">
+            <h3>Path Attraction</h3>
+            <div class="sim-inspector-note">All enabled boid paths attract simultaneously and are vector-summed together.</div>
+            ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
+            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+            <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
+          </div>`;
+      } else if (selected.kind === 'edge') {
+        rows += `
+          <div class="sim-inspector-group">
+            <h3>Edge Barrier</h3>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('strength', 'number', 'Force', 0, 200, 5, 0.01)}
+            ${simSlider('radius', 'integer', 'Radius', 0, 300, 1, 1)}
+          </div>`;
+      } else if (selected.kind === 'pheromonePath') {
+        rows += `
+          <div class="sim-inspector-group">
+            <h3>Pheromone Trail</h3>
+            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+            ${simSlider('radius', 'integer', 'Radius', 1, 80, 1, 1)}
+            ${simSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01)}
+          </div>`;
+      }
+      inspector += rows;
+    }
+
+    panel.innerHTML = inspector;
+
+    panel.querySelectorAll('[data-sim-select]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this._setSimulationSelection({
+          collection: btn.dataset.simCollection,
+          kind: btn.dataset.simKind,
+          id: +btn.dataset.simId,
+        });
+      });
+    });
+    panel.querySelector('[data-sim-help]')?.addEventListener('click', () => this._openSimulationHelp());
+    panel.querySelector('[data-sim-clear-selection]')?.addEventListener('click', () => this._setSimulationSelection(null));
+    panel.querySelector('[data-sim-duplicate]')?.addEventListener('click', () => this._duplicateSelectedSimulationItem());
+    panel.querySelector('[data-sim-delete]')?.addEventListener('click', () => {
+      const entry = this._getSelectedSimulationEntry();
+      if (entry) this._deleteSimulationItem(entry);
+    });
+    panel.querySelectorAll('[data-sim-field]').forEach(el => {
+      const field = el.dataset.simField;
+      const type = el.dataset.simType || 'number';
+      const scale = parseFloat(el.dataset.simScale || '1');
+
+      // Write the current control value into target (no re-render).
+      const writeField = () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry) return false;
+        const { target } = entry;
+        if (type === 'bool') {
+          target[field] = el.checked;
+        } else if (type === 'select') {
+          if (el.value === '') delete target[field];
+          else target[field] = el.value;
+        } else if (el.type === 'range') {
+          const minVal = el.min !== '' ? +el.min : 1;
+          if (type === 'integer') {
+            target[field] = Math.max(minVal, Math.round(+el.value * scale));
+          } else if (type === 'angle') {
+            target[field] = _parseAngleDegrees(el.value);
+          } else {
+            target[field] = +el.value * scale;
+          }
+        } else if (el.value === '') {
+          delete target[field];
+        } else if (type === 'integer') {
+          target[field] = Math.max(1, Math.round(+el.value));
+        } else if (type === 'angle') {
+          target[field] = _parseAngleDegrees(el.value);
+        } else {
+          target[field] = +el.value;
+        }
+        return true;
+      };
+
+      // Live label update for range sliders (no re-render while dragging).
+      if (el.type === 'range') {
+        el.addEventListener('input', () => {
+          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+          if (!lbl) return;
+          if (type === 'angle') {
+            lbl.textContent = Math.round(+el.value) + '°';
+          } else if (type === 'integer') {
+            lbl.textContent = String(Math.max(+el.min || 0, Math.round(+el.value * scale)));
+          } else {
+            lbl.textContent = (+el.value * scale).toFixed(scale < 1 ? 2 : 1);
+          }
+          // Restore reset-button opacity once the user moves the slider.
+          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          if (resetBtn) resetBtn.style.opacity = '1';
+        });
+      }
+
+      // Commit on change + trigger re-render.
+      const applyField = () => {
+        if (!writeField()) return;
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      };
+      el.addEventListener('change', applyField);
+      if (el.type === 'checkbox') el.addEventListener('input', applyField);
+    });
+
+    // Reset buttons — clear an override field and re-render.
+    panel.querySelectorAll('[data-sim-reset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry) return;
+        delete entry.target[btn.dataset.simReset];
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
+    });
+
+    // Scene-variable sliders (seek, etc.)
+    panel.querySelectorAll('[data-sim-var]').forEach(el => {
+      const varName = el.dataset.simVar;
+      const updateVar = () => {
+        const raw = +el.value;
+        this.simulation.vars[varName] = raw / 100;
+        const label = panel.querySelector(`[data-sim-var-label="${varName}"]`);
+        if (label) label.textContent = `${Math.round(raw)}%`;
+        this._maybeAutoSaveSession();
+      };
+      el.addEventListener('input', updateVar);
+      el.addEventListener('change', updateVar);
+    });
+
+    panel.querySelector('[data-sim-new-session]')?.addEventListener('click', () => this._newSimulationSession());
+    panel.querySelector('[data-sim-save-session]')?.addEventListener('click', () => this._saveSimulationSession());
+    panel.querySelectorAll('[data-sim-load-session]').forEach(btn => {
+      btn.addEventListener('click', () => this._loadSimulationSession(+btn.dataset.simLoadSession));
+    });
+    panel.querySelectorAll('[data-sim-del-session]').forEach(btn => {
+      btn.addEventListener('click', () => this._deleteSimulationSavedSession(+btn.dataset.simDelSession));
+    });
   }
 
   _toggleSimulationMode(force) {
     if (!this._isMotionBrush()) return;
     const next = typeof force === 'boolean' ? force : !this.simulation.enabled;
-    if (!next) this.stopSimulation(false);
+    if (!next) {
+      this.stopSimulation(false);
+      this.simulation.selected = null;
+      this._closeSimulationHelp();
+    } else {
+      const brush = this.getCurrentBrush();
+      if (brush?.deactivate) brush.deactivate();
+      this.isDrawing = false;
+      this.isTapering = false;
+    }
     this.simulation.enabled = next;
     this.simulation.paused = false;
     this.simulation.drawingPath = null;
     this.simulation.dragTarget = null;
+    this._normalizeSimulationData();
     this._ensureSimulationSpawns();
     this._syncSimulationUI();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
@@ -1430,6 +2051,7 @@ export class App {
     if (status) {
       status.textContent = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
     }
+    this._renderSimulationInspector();
   }
 
   startSimulation() {
@@ -1437,8 +2059,8 @@ export class App {
     const brush = this.getCurrentBrush();
     if (!brush) return;
     if (this.simulation.running) return;
-    const spawns = this._ensureSimulationSpawns();
-    const spawn = spawns[0];
+    const spawns = this._ensureSimulationSpawns().filter(spawn => spawn.enabled !== false);
+    const spawn = spawns[0] || this._ensureSimulationSpawns()[0];
     this.stopSimulation(false);
     this.simulation.running = true;
     this.simulation.paused = false;
@@ -1497,27 +2119,30 @@ export class App {
       this._deleteSimulationItem(hit);
       return true;
     }
-    if (hit?.kind === 'point') {
-      this.simulation.dragTarget = hit;
+    if (hit?.kind) {
+      this._setSimulationSelection(hit);
+      this.simulation.dragTarget = { ...hit, lastX: x, lastY: y };
       return true;
     }
-    if (hit?.kind === 'spawn') {
-      this.simulation.dragTarget = hit;
-      return true;
-    }
+
     const tool = this.simulation.editorTool;
     const data = this._getSimulationBrushData();
     if (!data) return true;
+    this._setSimulationSelection(null);
 
     if (tool === 'spawn') {
-      data.spawns.push({ id: this.simulation.nextId++, x, y });
+      const spawn = { id: this.simulation.nextId++, x, y, enabled: true };
+      data.spawns.push(spawn);
+      this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
+      this._maybeAutoSaveSession();
     } else if (tool === 'attract' || tool === 'repel') {
-      data.points.push({ id: this.simulation.nextId++, x, y, type: tool });
+      const point = { id: this.simulation.nextId++, x, y, type: tool, enabled: true };
+      data.points.push(point);
+      this._setSimulationSelection({ collection: 'points', kind: 'point', target: point });
+      this._maybeAutoSaveSession();
     } else if (tool === 'pheromone' && this.activeBrush === 'ant') {
       this.simulation.drawingPath = {
         kind: tool,
-        radius: this.getP().simPheroPaintRadius,
-        intensity: this.getP().simPheroPaintStrength,
         points: [{ x, y }],
       };
     } else if ((tool === 'path' && this.activeBrush === 'boid') || (tool === 'edge' && this.activeBrush === 'ant')) {
@@ -1526,6 +2151,7 @@ export class App {
         points: [{ x, y }],
       };
     }
+    this._renderSimulationInspector();
     return true;
   }
 
@@ -1533,10 +2159,12 @@ export class App {
     if (!this.simulation.enabled || !this._isMotionBrush()) return false;
     if (this.simulation.dragTarget) {
       const hit = this.simulation.dragTarget;
-      if (hit.kind === 'spawn' || hit.kind === 'point') {
-        hit.target.x = x;
-        hit.target.y = y;
-      }
+      const dx = x - hit.lastX;
+      const dy = y - hit.lastY;
+      hit.lastX = x;
+      hit.lastY = y;
+      hit.moved = true;
+      this._translateSimulationTarget(hit.target, dx, dy);
       return true;
     }
     if (this.simulation.drawingPath) {
@@ -1552,43 +2180,50 @@ export class App {
 
   _handleSimulationPointerUp() {
     if (!this.simulation.enabled || !this._isMotionBrush()) return false;
+    const hadMoved = !!this.simulation.dragTarget?.moved;
     this.simulation.dragTarget = null;
     if (this.simulation.drawingPath) {
       const path = this.simulation.drawingPath.points.filter((pt, i, arr) => i === 0 || Math.hypot(pt.x - arr[i - 1].x, pt.y - arr[i - 1].y) > 1);
       const data = this._getSimulationBrushData();
       if (data && path.length >= 2) {
-        if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') data.path = path;
-        else if (this.simulation.drawingPath.kind === 'edge' && this.activeBrush === 'ant') data.edges.push({ id: this.simulation.nextId++, points: path });
-        else if (this.simulation.drawingPath.kind === 'pheromone' && this.activeBrush === 'ant') {
-          data.pheromonePaths.push({
-            id: this.simulation.nextId++,
-            points: path,
-            radius: this.simulation.drawingPath.radius,
-            intensity: this.simulation.drawingPath.intensity,
-          });
+        if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') {
+          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          data.paths.push(entry);
+          this._setSimulationSelection({ collection: 'paths', kind: 'path', target: entry });
+          this._maybeAutoSaveSession();
+        } else if (this.simulation.drawingPath.kind === 'edge' && this.activeBrush === 'ant') {
+          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          data.edges.push(entry);
+          this._setSimulationSelection({ collection: 'edges', kind: 'edge', target: entry });
+          this._maybeAutoSaveSession();
+        } else if (this.simulation.drawingPath.kind === 'pheromone' && this.activeBrush === 'ant') {
+          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          data.pheromonePaths.push(entry);
+          this._setSimulationSelection({ collection: 'pheromonePaths', kind: 'pheromonePath', target: entry });
+          this._maybeAutoSaveSession();
         }
       }
       this.simulation.drawingPath = null;
+      this._renderSimulationInspector();
       return true;
     }
+    if (hadMoved) this._maybeAutoSaveSession();
     return this.simulation.running || this.simulation.paused || this.simulation.enabled;
   }
 
   _deleteSimulationItem(hit) {
     const data = this._getSimulationBrushData();
     if (!data) return;
-    if (hit.collection === 'spawns') {
-      data.spawns = data.spawns.filter(p => p !== hit.target);
-      this._ensureSimulationSpawns();
-    } else if (hit.collection === 'points') {
-      data.points = data.points.filter(p => p !== hit.target);
-    } else if (hit.collection === 'edges') {
-      data.edges = data.edges.filter(p => p !== hit.target);
-    } else if (hit.collection === 'pheromonePaths') {
-      data.pheromonePaths = data.pheromonePaths.filter(p => p !== hit.target);
-    } else if (hit.collection === 'path') {
-      data.path = [];
+    const collection = hit.collection;
+    if (!collection || !Array.isArray(data[collection])) return;
+    data[collection] = data[collection].filter(item => item.id !== hit.target?.id);
+    if (collection === 'spawns') this._ensureSimulationSpawns();
+    const selected = this._getSelectedSimulationEntry();
+    if (selected && selected.collection === collection && selected.id === hit.target?.id) {
+      this.simulation.selected = null;
     }
+    this._renderSimulationInspector();
+    this._maybeAutoSaveSession();
   }
 
   clearSimulationGuides() {
@@ -1596,44 +2231,75 @@ export class App {
     if (!data) return;
     data.spawns = [];
     data.points = [];
-    if (this.activeBrush === 'boid') data.path = [];
+    if (this.activeBrush === 'boid') data.paths = [];
     if (this.activeBrush === 'ant') {
       data.edges = [];
       data.pheromonePaths = [];
     }
+    this.simulation.selected = null;
     this._ensureSimulationSpawns();
+    this._renderSimulationInspector();
+    this._maybeAutoSaveSession();
     this.showToast('Simulation guides cleared');
+  }
+
+  _findPolylineHit(points, x, y, maxDistance) {
+    let best = null;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const candidate = _closestPointOnSegment(x, y, a.x, a.y, b.x, b.y);
+      if (!best || candidate.distance < best.distance) best = candidate;
+    }
+    return best && best.distance <= maxDistance ? best : null;
   }
 
   _findSimulationHit(x, y) {
     const data = this._getSimulationBrushData();
     if (!data) return null;
-    const hitRadius = 14;
-    const delRadius = 10;
-    const checkDelete = (target, collection) => {
-      const dx = x - (target.x + 12);
-      const dy = y - (target.y - 12);
-      return dx * dx + dy * dy <= delRadius * delRadius ? { kind: 'delete', target, collection } : null;
+    const checkDelete = (target, collection, kind) => {
+      const anchor = this._getSimulationAnchor(target);
+      const dx = x - (anchor.x + 12);
+      const dy = y - (anchor.y - 12);
+      return dx * dx + dy * dy <= SIM_DELETE_HIT_RADIUS * SIM_DELETE_HIT_RADIUS ? { kind: 'delete', target, collection, anchorType: kind } : null;
     };
 
     for (const spawn of this._ensureSimulationSpawns()) {
-      const del = checkDelete(spawn, 'spawns');
+      const del = checkDelete(spawn, 'spawns', 'spawn');
       if (del) return del;
-      if (Math.hypot(x - spawn.x, y - spawn.y) <= hitRadius) return { kind: 'spawn', target: spawn, collection: 'spawns' };
+      if (Math.hypot(x - spawn.x, y - spawn.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'spawn', target: spawn, collection: 'spawns' };
     }
 
     for (const point of data.points) {
-      const del = checkDelete(point, 'points');
+      const del = checkDelete(point, 'points', 'point');
       if (del) return del;
-      if (Math.hypot(x - point.x, y - point.y) <= hitRadius) return { kind: 'point', target: point, collection: 'points' };
+      if (Math.hypot(x - point.x, y - point.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'point', target: point, collection: 'points' };
+    }
+
+    if (this.activeBrush === 'boid') {
+      for (const pathItem of data.paths || []) {
+        const del = checkDelete(pathItem, 'paths', 'path');
+        if (del) return del;
+        if (this._findPolylineHit(pathItem.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
+          return { kind: 'path', target: pathItem, collection: 'paths' };
+        }
+      }
     }
 
     if (this.activeBrush === 'ant') {
-      for (const path of data.pheromonePaths || []) {
-        if (!path.points?.length) continue;
-        const anchor = path.points[Math.floor(path.points.length / 2)];
-        const del = checkDelete(anchor, 'pheromonePaths');
-        if (del) return { ...del, target: path };
+      for (const pathItem of data.pheromonePaths || []) {
+        const del = checkDelete(pathItem, 'pheromonePaths', 'pheromonePath');
+        if (del) return del;
+        if (this._findPolylineHit(pathItem.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
+          return { kind: 'pheromonePath', target: pathItem, collection: 'pheromonePaths' };
+        }
+      }
+      for (const edge of data.edges || []) {
+        const del = checkDelete(edge, 'edges', 'edge');
+        if (del) return del;
+        if (this._findPolylineHit(edge.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
+          return { kind: 'edge', target: edge, collection: 'edges' };
+        }
       }
     }
 
@@ -1641,45 +2307,9 @@ export class App {
   }
 
   _updateSimulationLeader(elapsed, p) {
-    const data = this._getSimulationBrushData();
-    if (!data) return;
     const center = this._getSimulationSpawnCenter();
     this.leaderX = center.x;
     this.leaderY = center.y;
-    if (this.activeBrush !== 'boid' || !data.path || data.path.length < 2) return;
-
-    const total = this._polylineLength(data.path);
-    if (total <= 0) return;
-    const dt = 1 / 60;
-    this.simulation.pathDistance += Math.max(0.5, p.maxSpeed * 14 * p.simSpeed * p.simPathSpeed) * dt;
-    const dist = this.simulation.pathDistance % total;
-    const pt = this._samplePolyline(data.path, dist);
-    if (pt) {
-      this.leaderX = pt.x;
-      this.leaderY = pt.y;
-    }
-  }
-
-  _polylineLength(points) {
-    let len = 0;
-    for (let i = 1; i < points.length; i++) len += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-    return len;
-  }
-
-  _samplePolyline(points, distance) {
-    let remaining = distance;
-    for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1];
-      const b = points[i];
-      const seg = Math.hypot(b.x - a.x, b.y - a.y);
-      if (seg <= 0) continue;
-      if (remaining <= seg) {
-        const t = remaining / seg;
-        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-      }
-      remaining -= seg;
-    }
-    return points[points.length - 1] || null;
   }
 
   drawSimulationOverlay(ctx) {
@@ -1687,8 +2317,8 @@ export class App {
     const data = this._getSimulationBrushData();
     if (!data) return;
     const p = this.getP();
-    const pointRadius = p.simPointRadius;
-    const edgeRadius = p.simEdgeRadius;
+    const selected = this._getSelectedSimulationEntry();
+    const isSelected = (collection, item) => selected?.collection === collection && selected?.id === item.id;
 
     const drawDelete = (x, y) => {
       ctx.fillStyle = 'rgba(18,18,22,0.55)';
@@ -1706,11 +2336,15 @@ export class App {
     };
 
     for (const spawn of this._ensureSimulationSpawns()) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      const config = this._resolveSimulationSpawnConfig(spawn, p);
+      const active = spawn.enabled !== false;
+      ctx.save();
+      ctx.globalAlpha = active ? 1 : 0.35;
+      ctx.strokeStyle = isSelected('spawns', spawn) ? 'rgba(140,196,255,0.98)' : 'rgba(255,255,255,0.6)';
       ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = isSelected('spawns', spawn) ? 2.4 : 1.5;
       ctx.beginPath();
-      ctx.arc(spawn.x, spawn.y, Math.max(8, p.spawnRadius), 0, Math.PI * 2);
+      ctx.arc(spawn.x, spawn.y, Math.max(8, config.radius), 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.beginPath();
@@ -1718,17 +2352,23 @@ export class App {
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.fill();
       drawDelete(spawn.x, spawn.y);
+      ctx.restore();
     }
 
     for (const point of data.points) {
+      const config = this._resolveSimulationPointConfig(point, p);
       const attract = point.type === 'attract';
-      const color = attract ? 'rgba(94,149,255,0.88)' : 'rgba(255,188,118,0.9)';
+      const color = isSelected('points', point)
+        ? 'rgba(150,214,255,0.95)'
+        : attract ? 'rgba(94,149,255,0.88)' : 'rgba(255,188,118,0.9)';
       const fill = attract ? 'rgba(54,98,185,0.18)' : 'rgba(217,147,66,0.18)';
+      ctx.save();
+      ctx.globalAlpha = point.enabled !== false ? 1 : 0.35;
       ctx.strokeStyle = color;
       ctx.fillStyle = fill;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = isSelected('points', point) ? 2.4 : 1.5;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, config.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.beginPath();
@@ -1736,51 +2376,74 @@ export class App {
       ctx.fillStyle = color;
       ctx.fill();
       drawDelete(point.x, point.y);
+      ctx.restore();
     }
 
-    if (this.activeBrush === 'boid' && data.path?.length >= 2) {
-      ctx.strokeStyle = 'rgba(116,166,255,0.85)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 6]);
-      ctx.beginPath();
-      ctx.moveTo(data.path[0].x, data.path[0].y);
-      for (let i = 1; i < data.path.length; i++) ctx.lineTo(data.path[i].x, data.path[i].y);
-      ctx.stroke();
-      ctx.setLineDash([]);
+    if (this.activeBrush === 'boid') {
+      for (const pathItem of data.paths || []) {
+        if (!pathItem.points?.length) continue;
+        const config = this._resolveSimulationPathConfig(pathItem, p);
+        ctx.save();
+        ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
+        ctx.strokeStyle = isSelected('paths', pathItem) ? 'rgba(168,218,255,0.98)' : 'rgba(116,166,255,0.85)';
+        ctx.lineWidth = isSelected('paths', pathItem) ? 3 : 2;
+        ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(pathItem.points[0].x, pathItem.points[0].y);
+        for (let i = 1; i < pathItem.points.length; i++) ctx.lineTo(pathItem.points[i].x, pathItem.points[i].y);
+        if (config.closed) ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha *= 0.16;
+        ctx.lineWidth = config.radius * 2;
+        ctx.stroke();
+        const anchor = this._getSimulationAnchor(pathItem);
+        drawDelete(anchor.x, anchor.y);
+        ctx.restore();
+      }
     }
 
     if (this.activeBrush === 'ant') {
       for (const trail of data.pheromonePaths || []) {
         if (!trail.points?.length) continue;
-        ctx.strokeStyle = 'rgba(120,200,80,0.8)';
-        ctx.lineWidth = Math.max(2, trail.radius * 2);
+        const config = this._resolveSimulationPheromoneConfig(trail, p);
+        ctx.save();
+        ctx.globalAlpha = trail.enabled !== false ? 1 : 0.35;
+        ctx.strokeStyle = isSelected('pheromonePaths', trail) ? 'rgba(194,255,150,0.95)' : 'rgba(120,200,80,0.8)';
+        ctx.lineWidth = Math.max(2, config.radius * 2);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.globalAlpha = Math.max(0.12, trail.intensity * 0.4);
+        ctx.globalAlpha *= Math.max(0.12, config.intensity * 0.4);
         ctx.beginPath();
         ctx.moveTo(trail.points[0].x, trail.points[0].y);
         for (let i = 1; i < trail.points.length; i++) ctx.lineTo(trail.points[i].x, trail.points[i].y);
         ctx.stroke();
-        ctx.globalAlpha = 1;
-        const anchor = trail.points[Math.floor(trail.points.length / 2)];
+        ctx.restore();
+        const anchor = this._getSimulationAnchor(trail);
         drawDelete(anchor.x, anchor.y);
       }
-      ctx.strokeStyle = 'rgba(255,210,120,0.92)';
-      ctx.fillStyle = 'rgba(255,210,120,0.08)';
-      ctx.lineWidth = 2;
       for (const edge of data.edges) {
         if (!edge.points?.length) continue;
+        const config = this._resolveSimulationEdgeConfig(edge, p);
+        ctx.save();
+        ctx.globalAlpha = edge.enabled !== false ? 1 : 0.35;
+        ctx.strokeStyle = isSelected('edges', edge) ? 'rgba(255,238,160,0.98)' : 'rgba(255,210,120,0.92)';
+        ctx.fillStyle = 'rgba(255,210,120,0.08)';
+        ctx.lineWidth = isSelected('edges', edge) ? 3 : 2;
         ctx.beginPath();
         ctx.moveTo(edge.points[0].x, edge.points[0].y);
         for (let i = 1; i < edge.points.length; i++) ctx.lineTo(edge.points[i].x, edge.points[i].y);
         ctx.stroke();
-        if (edgeRadius > 0) {
+        if (config.radius > 0) {
           ctx.save();
           ctx.globalAlpha = 0.25;
-          ctx.lineWidth = edgeRadius * 2;
+          ctx.lineWidth = config.radius * 2;
           ctx.stroke();
           ctx.restore();
         }
+        const anchor = this._getSimulationAnchor(edge);
+        drawDelete(anchor.x, anchor.y);
+        ctx.restore();
       }
     }
 
@@ -1791,7 +2454,7 @@ export class App {
         : this.simulation.drawingPath.kind === 'pheromone' ? 'rgba(120,200,80,0.85)'
         : 'rgba(116,166,255,0.85)';
       ctx.lineWidth = this.simulation.drawingPath.kind === 'pheromone'
-        ? Math.max(2, this.simulation.drawingPath.radius * 2)
+        ? Math.max(2, p.simPheroPaintRadius * 2)
         : 2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -2015,6 +2678,8 @@ export class App {
     document.querySelectorAll('[data-sim-tool]').forEach(el => {
       el.addEventListener('click', () => this._setSimulationTool(el.dataset.simTool));
     });
+    document.getElementById('simHelpClose')?.addEventListener('click', () => this._closeSimulationHelp());
+    document.getElementById('simHelpBackdrop')?.addEventListener('click', () => this._closeSimulationHelp());
     // Copy/cut/paste
     document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
     document.getElementById('cutBtn')?.addEventListener('click', () => this.cutToClipboard());
@@ -2235,7 +2900,7 @@ export class App {
       this.leaderY = y;
       // Notify brush of hover for Apple Pencil hover preview/spawn
       // Skip during taper — hover would clear the tapering boids
-      if (!this.isTapering) {
+      if (!this.isTapering && !(this.simulation.enabled && this._isMotionBrush())) {
         const brush = this.getCurrentBrush();
         if (brush && brush.onHover) brush.onHover(x, y);
       }
@@ -2320,6 +2985,12 @@ export class App {
   }
 
   _onKeyDown(e) {
+    const target = e.target;
+    if (target instanceof HTMLElement) {
+      const tag = target.tagName;
+      const isEditableField = !target.disabled && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+      if (target.isContentEditable || isEditableField) return;
+    }
     // Ctrl+N = new canvas / canvas size
     if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
     // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
@@ -2342,13 +3013,6 @@ export class App {
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
-    // 1-6 = brush switch
-    if (e.key === '1') this.setBrush('boid');
-    if (e.key === '2') this.setBrush('bristle');
-    if (e.key === '3') this.setBrush('simple');
-    if (e.key === '4') this.setBrush('eraser');
-    if (e.key === '5') this.setBrush('fluid');
-    if (e.key === '6') this.setBrush('ai');
     // 0 = reset view
     if (e.key === '0' && !e.ctrlKey && !e.metaKey) this.resetView();
     // [ / ] = decrease / increase brush size
@@ -3377,6 +4041,8 @@ export class App {
         editorTool: this.simulation.editorTool,
         brushData: this.simulation.brushData,
         nextId: this.simulation.nextId,
+        vars: this.simulation.vars,
+        sessions: this.simulation.sessions,
       };
       controls._canvasTextureState = this._serializeCanvasTextureState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
@@ -3431,6 +4097,12 @@ export class App {
           if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
           if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
           this.simulation.enabled = !!val?.enabled;
+          // Restore scene-level variable overrides (seek etc.) persisted from last use.
+          // Keep the default seek value if no value was saved (first ever session).
+          if (val?.vars && typeof val.vars === 'object') {
+            this.simulation.vars = _normalizeSimulationVars(val.vars);
+          }
+          if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
           continue;
         }
         const el = document.getElementById(id);
