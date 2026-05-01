@@ -2726,10 +2726,20 @@ export class App {
       return { node, placeholder };
     });
 
+    // Use let so that closeMenu and the dismiss handlers can mutually reference
+    // each other without temporal-dead-zone issues.
+    let onDocClick, onDocKeydown;
+
     const closeMenu = () => {
       menu.classList.remove('open');
       toggle.setAttribute('aria-expanded', 'false');
+      // Remove dismiss listeners unconditionally — safe even if not currently added.
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onDocKeydown);
     };
+
+    onDocClick = () => closeMenu();
+    onDocKeydown = e => { if (e.key === 'Escape') closeMenu(); };
 
     let layoutPending = false;
     const layout = () => {
@@ -2783,7 +2793,7 @@ export class App {
       });
     };
 
-    // Caret click — open/close the menu and position it under the toggle.
+    // Caret click — open/close the menu and position it under the toggle button.
     toggle.addEventListener('click', e => {
       e.stopPropagation();
       const r = toggle.getBoundingClientRect();
@@ -2791,21 +2801,18 @@ export class App {
       menu.style.right = (window.innerWidth - r.right) + 'px';
       const isOpen = menu.classList.toggle('open');
       toggle.setAttribute('aria-expanded', String(isOpen));
-    });
-
-    // Clicks inside the overflow menu should not propagate to the document
-    // listener below (which would close the menu immediately).
-    menu.addEventListener('click', e => e.stopPropagation());
-
-    // Clicking anywhere outside the menu closes it.
-    document.addEventListener('click', closeMenu);
-
-    // Escape key closes the menu.
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && menu.classList.contains('open')) {
+      // Add dismiss listeners only while the menu is open, so they don't fire
+      // on every click/keydown throughout the rest of the application lifetime.
+      if (isOpen) {
+        document.addEventListener('click', onDocClick);
+        document.addEventListener('keydown', onDocKeydown);
+      } else {
         closeMenu();
       }
     });
+
+    // Clicks inside the overflow menu should not close it.
+    menu.addEventListener('click', e => e.stopPropagation());
 
     // Re-run layout on window resize, orientation change, and whenever
     // #topbar itself changes size (e.g. after show/hide of conditional buttons).
