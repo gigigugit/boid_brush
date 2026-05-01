@@ -491,9 +491,11 @@ export class App {
 
     // Reinit WASM sims
     try {
-      if (this.brushes.boid) await this.brushes.boid.init();
-      if (this.brushes.ant) await this.brushes.ant.init();
-      if (this.brushes.fluid) await this.brushes.fluid.init();
+      await Promise.all([
+        this.brushes.boid?.init({ force: true }),
+        this.brushes.ant?.init({ force: true }),
+        this.brushes.fluid?.init({ force: true }),
+      ]);
     } catch(e) { console.warn('WASM reinit failed:', e); }
 
     // Zoom to fit
@@ -2710,11 +2712,11 @@ export class App {
       const h = document.getElementById('canvasSizeH');
       if (w && h) { const t = w.value; w.value = h.value; h.value = t; }
     });
-    document.getElementById('canvasSizeApply')?.addEventListener('click', () => {
+    document.getElementById('canvasSizeApply')?.addEventListener('click', async () => {
       const w = +document.getElementById('canvasSizeW')?.value || 1920;
       const h = +document.getElementById('canvasSizeH')?.value || 1080;
       const bg = document.getElementById('canvasSizeBg')?.value || '#ffffff';
-      this.resizeDocument(w, h, bg);
+      await this.resizeDocument(w, h, bg);
       this._hideCanvasSizeModal();
     });
   }

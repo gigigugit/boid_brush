@@ -417,7 +417,15 @@ export class BoidBrush {
     this._blurStrokeCtx = null;
   }
 
-  async init() {
+  async init({ force = false } = {}) {
+    if (force) {
+      this._ready = false;
+      this.sim = null;
+      this._lastStampX = [];
+      this._lastStampY = [];
+      this._boidsSpawned = false;
+      this._hoverSpawned = false;
+    }
     try {
       this.sim = await BoidSim.create(
         this.app.W || 800,
@@ -663,6 +671,7 @@ export class BoidBrush {
           this._lastStampY[i] = ay;
         }
         layer.dirty = true;
+        this.app.compositeAllLayers();
       }
     }
   }
@@ -1048,7 +1057,13 @@ export class AntBrush {
     this._flatActive = false;
   }
 
-  async init() {
+  async init({ force = false } = {}) {
+    if (force) {
+      this._ready = false;
+      this.sim = null;
+      this._lastStampX = [];
+      this._lastStampY = [];
+    }
     try {
       this.sim = await BoidSim.create(
         this.app.W || 800,
@@ -2947,7 +2962,21 @@ export class FluidBrush {
     this._replayTime = 0;
   }
 
-  async init() {
+  async init({ force = false } = {}) {
+    if (force) {
+      this.sim?.destroy?.();
+      this._finalSim?.destroy?.();
+      this.sim = null;
+      this._finalSim = null;
+      this._ready = false;
+      this._initPromise = null;
+      this._active = false;
+      this._lastPoint = null;
+      this._lastFrameElapsed = null;
+      this._strokeLayer = null;
+      this._maskSynced = false;
+      this._resetReplayCapture();
+    }
     if (this._initPromise) return this._initPromise;
     this._initPromise = (async () => {
       try {
@@ -2991,6 +3020,7 @@ export class FluidBrush {
     this._lastFrameElapsed = null;
     this._updateSimulator();
     this._seedAt(x, y, pressure, null, p.lbmSpawnCount, p);
+    this._step(0);
   }
 
   onMove(x, y, pressure) {
