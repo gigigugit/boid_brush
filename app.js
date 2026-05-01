@@ -340,6 +340,7 @@ export class App {
 
     // Events
     this._bindEvents();
+    this._initTopbarOverflow();
 
     // Restore session
     await this._ensureBuiltinCanvasTexture();
@@ -2709,6 +2710,135 @@ export class App {
       this.resizeDocument(w, h, bg);
       this._hideCanvasSizeModal();
     });
+  }
+
+  _initTopbarOverflow() {
+    const topbar = document.getElementById('topbar');
+    const menu = document.getElementById('topbarOverflowMenu');
+    const toggle = document.getElementById('topbarOverflowToggle');
+    if (!topbar || !menu || !toggle) return;
+
+    // Capture the initial ordered children and insert comment placeholders to
+    // track original positions so items can be returned in the right order.
+    const items = Array.from(topbar.children).map(node => {
+      const placeholder = document.createComment('tbof');
+      node.before(placeholder);
+      return { node, placeholder };
+    });
+
+    // Use let so that closeMenu and the dismiss handlers can mutually reference
+    // each other without temporal-dead-zone issues.
+    let onDocClick, onDocKeydown;
+    // Track whether dismiss listeners are currently attached to avoid
+    // unconditional removeEventListener calls before the menu has ever opened.
+    let dismissBound = false;
+
+    const closeMenu = (returnFocus = false) => {
+      const wasOpen = menu.classList.contains('open');
+      menu.classList.remove('open');
+      toggle.setAttribute('aria-expanded', 'false');
+      if (dismissBound) {
+        document.removeEventListener('click', onDocClick);
+        document.removeEventListener('keydown', onDocKeydown);
+        dismissBound = false;
+      }
+      // Return focus to the caret toggle when the menu was closed by user action
+      // and focus was inside the menu (e.g. Escape key or outside click).
+      if (returnFocus && wasOpen && menu.contains(document.activeElement)) {
+        toggle.focus();
+      }
+    };
+
+    // Check the click target instead of stopping propagation on the menu so
+    // that events inside the menu can still bubble normally to their ancestors.
+    onDocClick = e => { if (!menu.contains(e.target) && e.target !== toggle) closeMenu(true); };
+    onDocKeydown = e => { if (e.key === 'Escape') closeMenu(true); };
+
+    let layoutPending = false;
+    const layout = () => {
+      if (layoutPending) return;
+      layoutPending = true;
+      requestAnimationFrame(() => {
+        layoutPending = false;
+
+        // 1. Return all overflowed items back to topbar (in original order).
+        for (const item of items) {
+          if (item.node.parentElement !== topbar) {
+            item.placeholder.after(item.node);
+          }
+        }
+        closeMenu();
+
+        // 2. Reset any separator display overrides from the previous layout pass.
+        topbar.querySelectorAll('.tb-sep').forEach(s => { s.style.display = ''; });
+
+        // 3. Move trailing items into the menu until the topbar fits.
+        //    Skip items that are hidden by app logic (display:none) — they
+        //    don't contribute to overflow width and should stay in the topbar
+        //    so that show/hide toggling by app code continues to work.
+        for (let i = items.length - 1; i >= 0; i--) {
+          if (topbar.scrollWidth <= topbar.clientWidth) break;
+          const item = items[i];
+          if (item.node.classList.contains('topbar-essential')) continue;
+          if (item.node.style.display === 'none') continue;
+          menu.prepend(item.node);
+        }
+
+        // 4. Hide orphan separators at the visible boundaries of #topbar.
+        const tbVisible = Array.from(topbar.childNodes)
+          .filter(n => n.nodeType === Node.ELEMENT_NODE &&
+                       getComputedStyle(n).display !== 'none');
+        // Trailing separators
+        for (let i = tbVisible.length - 1; i >= 0; i--) {
+          if (tbVisible[i].classList.contains('tb-sep')) tbVisible[i].style.display = 'none';
+          else break;
+        }
+        // Leading separators
+        for (let i = 0; i < tbVisible.length; i++) {
+          if (tbVisible[i].classList.contains('tb-sep')) tbVisible[i].style.display = 'none';
+          else break;
+        }
+
+        // 5. Show the caret only when there are overflow items.
+        const hasOverflow = menu.children.length > 0;
+        toggle.hidden = !hasOverflow;
+        if (!hasOverflow) closeMenu();
+      });
+    };
+
+    // Caret click — open/close the menu and position it under the toggle button.
+    // stopPropagation prevents the toggle's own click from reaching onDocClick
+    // which is attached to the document and would immediately close the menu.
+    toggle.addEventListener('click', e => {
+      e.stopPropagation();
+      const r = toggle.getBoundingClientRect();
+      menu.style.top = (r.bottom + 4) + 'px';
+      menu.style.right = (window.innerWidth - r.right) + 'px';
+      const isOpen = menu.classList.toggle('open');
+      toggle.setAttribute('aria-expanded', String(isOpen));
+      // Add dismiss listeners only while the menu is open, so they don't fire
+      // on every click/keydown throughout the rest of the application lifetime.
+      if (isOpen) {
+        document.addEventListener('click', onDocClick);
+        document.addEventListener('keydown', onDocKeydown);
+        dismissBound = true;
+        // Move focus to the first focusable item in the menu for keyboard users.
+        const firstFocusable = menu.querySelector(
+          'button:not([hidden]):not([disabled]), input:not([hidden]):not([disabled]), select:not([hidden]):not([disabled])'
+        );
+        firstFocusable?.focus();
+      } else {
+        closeMenu();
+      }
+    });
+
+    // Re-run layout on window resize, orientation change, and whenever
+    // #topbar itself changes size (e.g. after show/hide of conditional buttons).
+    window.addEventListener('resize', layout);
+    window.addEventListener('orientationchange', layout);
+    new ResizeObserver(layout).observe(topbar);
+
+    layout();
   }
 
   _getEventCoords(e) {
