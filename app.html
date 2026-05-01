@@ -69,8 +69,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 /* ---- Topbar overflow caret/menu ---- */
 #topbarOverflowWrap{position:relative;flex-shrink:0;display:flex;align-items:center;margin:0 4px;}
 #topbarOverflowToggle{flex-shrink:0;padding:6px 10px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:16px;font-weight:400;cursor:pointer;white-space:nowrap;min-height:var(--tap-min);min-width:var(--tap-min);transition:all 140ms ease;display:flex;align-items:center;justify-content:center;line-height:1;}
-#topbarOverflowToggle:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
-#topbarOverflowToggle[aria-expanded="true"]{background:rgba(255,255,255,0.1);border-color:var(--line-1);}
+#topbarOverflowToggle:hover,#topbarOverflowToggle[aria-expanded="true"]{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 #topbarOverflowMenu{position:fixed;width:min(92vw,340px);max-height:min(70vh,520px);overflow-y:auto;display:none;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--line-1);border-radius:14px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);z-index:60;touch-action:pan-y;}
 #topbarOverflowMenu button{-webkit-user-select:none;user-select:none;touch-action:pan-y;}
 #topbarOverflowMenu select,#topbarOverflowMenu input[type="color"]{touch-action:auto;-webkit-user-select:auto;user-select:auto;}
