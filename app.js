@@ -2729,13 +2729,18 @@ export class App {
     // Use let so that closeMenu and the dismiss handlers can mutually reference
     // each other without temporal-dead-zone issues.
     let onDocClick, onDocKeydown;
+    // Track whether dismiss listeners are currently attached to avoid
+    // unconditional removeEventListener calls before the menu has ever opened.
+    let dismissBound = false;
 
     const closeMenu = () => {
       menu.classList.remove('open');
       toggle.setAttribute('aria-expanded', 'false');
-      // Remove dismiss listeners unconditionally — safe even if not currently added.
-      document.removeEventListener('click', onDocClick);
-      document.removeEventListener('keydown', onDocKeydown);
+      if (dismissBound) {
+        document.removeEventListener('click', onDocClick);
+        document.removeEventListener('keydown', onDocKeydown);
+        dismissBound = false;
+      }
     };
 
     onDocClick = () => closeMenu();
@@ -2806,6 +2811,7 @@ export class App {
       if (isOpen) {
         document.addEventListener('click', onDocClick);
         document.addEventListener('keydown', onDocKeydown);
+        dismissBound = true;
       } else {
         closeMenu();
       }

@@ -72,7 +72,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #topbarOverflowToggle:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 #topbarOverflowToggle[aria-expanded="true"]{background:rgba(255,255,255,0.1);border-color:var(--line-1);}
 #topbarOverflowMenu{position:fixed;width:min(92vw,340px);max-height:min(70vh,520px);overflow-y:auto;display:none;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--line-1);border-radius:14px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);z-index:60;touch-action:pan-y;}
-#topbarOverflowMenu,#topbarOverflowMenu *{-webkit-user-select:none;user-select:none;touch-action:pan-y;}
+#topbarOverflowMenu button{-webkit-user-select:none;user-select:none;touch-action:pan-y;}
 #topbarOverflowMenu select,#topbarOverflowMenu input[type="color"]{touch-action:auto;-webkit-user-select:auto;user-select:auto;}
 #topbarOverflowMenu.open{display:flex;}
 #topbarOverflowMenu .tb-sep{display:none;}
@@ -344,6 +344,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <div id="topbarWrap">
 <button id="layersToggle" aria-expanded="false" aria-controls="layersPanel">Layers</button>
 <div id="topbar">
+  <!-- topbar-essential is applied to #brushBtnWrap (the direct #topbar child)
+       because the overflow manager tracks direct children of #topbar -->
   <div id="brushBtnWrap" class="topbar-essential">
     <button id="brushBtn" class="active">🐦 Boid</button>
   </div>
