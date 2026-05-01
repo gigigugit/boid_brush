@@ -52,6 +52,7 @@ Because the main app version is free-flow only, the brush always uses an empty m
 
 ## Notes
 
+- The startup defaults are tuned toward **faster settling**: lighter injection, stronger viscosity/decay, a slightly coarser fluid grid, and a higher stop threshold so a click-sized dab settles and commits within a few seconds.
 - The brush uses the shared **primary color** as its base pigment color.
 - The implementation is intentionally **free-flow only**; it does not expose the playground's blob authoring workflow.
 - Undo snapshots the painted layer content at stroke start, not the solver's internal state.

@@ -107,11 +107,13 @@ export function fluid_set_mask_rgba(handle, rgba) {
  * @param {number} substeps
  * @param {number} motion_decay
  * @param {number} stop_speed
+ * @param {number} pigment_carry
+ * @param {number} pigment_retention
  * @param {number} simulation_type
  * @param {number} render_mode
  */
-export function fluid_set_params(handle, particle_radius, viscosity, density, surface_tension, time_step, substeps, motion_decay, stop_speed, simulation_type, render_mode) {
-    wasm.fluid_set_params(handle, particle_radius, viscosity, density, surface_tension, time_step, substeps, motion_decay, stop_speed, simulation_type, render_mode);
+export function fluid_set_params(handle, particle_radius, viscosity, density, surface_tension, time_step, substeps, motion_decay, stop_speed, pigment_carry, pigment_retention, simulation_type, render_mode) {
+    wasm.fluid_set_params(handle, particle_radius, viscosity, density, surface_tension, time_step, substeps, motion_decay, stop_speed, pigment_carry, pigment_retention, simulation_type, render_mode);
 }
 
 /**

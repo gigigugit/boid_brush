@@ -153,6 +153,8 @@ class WasmBlobFluidSimulator {
       params.substeps,
       params.motionDecay,
       this._scaleDistance(params.stopSpeed),
+      params.pigmentCarry ?? 0.44,
+      params.pigmentRetention ?? 0.78,
       SIMULATION_TYPE_IDS[params.simulationType] ?? SIMULATION_TYPE_IDS.sph,
       RENDER_MODE_IDS[params.renderMode] ?? RENDER_MODE_IDS.hybrid
     );
