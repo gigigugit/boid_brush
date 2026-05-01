@@ -2733,7 +2733,8 @@ export class App {
     // unconditional removeEventListener calls before the menu has ever opened.
     let dismissBound = false;
 
-    const closeMenu = () => {
+    const closeMenu = (returnFocus = false) => {
+      const wasOpen = menu.classList.contains('open');
       menu.classList.remove('open');
       toggle.setAttribute('aria-expanded', 'false');
       if (dismissBound) {
@@ -2741,10 +2742,17 @@ export class App {
         document.removeEventListener('keydown', onDocKeydown);
         dismissBound = false;
       }
+      // Return focus to the caret toggle when the menu was closed by user action
+      // and focus was inside the menu (e.g. Escape key or outside click).
+      if (returnFocus && wasOpen && menu.contains(document.activeElement)) {
+        toggle.focus();
+      }
     };
 
-    onDocClick = () => closeMenu();
-    onDocKeydown = e => { if (e.key === 'Escape') closeMenu(); };
+    // Check the click target instead of stopping propagation on the menu so
+    // that events inside the menu can still bubble normally to their ancestors.
+    onDocClick = e => { if (!menu.contains(e.target) && e.target !== toggle) closeMenu(true); };
+    onDocKeydown = e => { if (e.key === 'Escape') closeMenu(true); };
 
     let layoutPending = false;
     const layout = () => {
@@ -2799,6 +2807,8 @@ export class App {
     };
 
     // Caret click — open/close the menu and position it under the toggle button.
+    // stopPropagation prevents the toggle's own click from reaching onDocClick
+    // which is attached to the document and would immediately close the menu.
     toggle.addEventListener('click', e => {
       e.stopPropagation();
       const r = toggle.getBoundingClientRect();
@@ -2812,13 +2822,15 @@ export class App {
         document.addEventListener('click', onDocClick);
         document.addEventListener('keydown', onDocKeydown);
         dismissBound = true;
+        // Move focus to the first focusable item in the menu for keyboard users.
+        const firstFocusable = menu.querySelector(
+          'button:not([hidden]):not([disabled]), input:not([hidden]):not([disabled]), select:not([hidden]):not([disabled])'
+        );
+        firstFocusable?.focus();
       } else {
         closeMenu();
       }
     });
-
-    // Clicks inside the overflow menu should not close it.
-    menu.addEventListener('click', e => e.stopPropagation());
 
     // Re-run layout on window resize, orientation change, and whenever
     // #topbar itself changes size (e.g. after show/hide of conditional buttons).
