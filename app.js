@@ -491,11 +491,9 @@ export class App {
 
     // Reinit WASM sims
     try {
-      await Promise.all([
-        this.brushes.boid?.init({ force: true }),
-        this.brushes.ant?.init({ force: true }),
-        this.brushes.fluid?.init({ force: true }),
-      ]);
+      if (this.brushes.boid) await this.brushes.boid.init({ force: true });
+      if (this.brushes.ant) await this.brushes.ant.init({ force: true });
+      if (this.brushes.fluid) await this.brushes.fluid.init({ force: true });
     } catch(e) { console.warn('WASM reinit failed:', e); }
 
     // Zoom to fit
@@ -4263,11 +4261,8 @@ export class App {
       this._normalizeSimulationData();
       this._ensureSimulationSpawns();
       this._syncSimulationUI();
-      // Restore document size (state only; actual resize happens via _resizeAll or resizeDocument)
       if (controls._docSized && controls._docW && controls._docH) {
-        this._docSized = true;
-        this._docW = controls._docW;
-        this._docH = controls._docH;
+        await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
     } catch { /* corrupt — ignore */ }
   }

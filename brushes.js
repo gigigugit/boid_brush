@@ -1064,6 +1064,13 @@ export class AntBrush {
       this._lastStampX = [];
       this._lastStampY = [];
     }
+    const sharedSim = this.app?.brushes?.boid?.sim;
+    const sharedReady = this.app?.brushes?.boid?._ready;
+    if (sharedSim && sharedReady) {
+      this.sim = sharedSim;
+      this._ready = true;
+      return this.sim;
+    }
     try {
       this.sim = await BoidSim.create(
         this.app.W || 800,
