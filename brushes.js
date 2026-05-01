@@ -722,11 +722,11 @@ export class BoidBrush {
     const app = this.app;
 
     if (p.sensingEnabled) {
-      const sensingSourceStatic = p.sensingSource === 'below';
+      const sensingSourceIsBelow = p.sensingSource === 'below';
       if (!this._sensingUploaded) {
         this._uploadSensing(p);
         this._sensingFrame = 0;
-      } else if (!sensingSourceStatic) {
+      } else if (!sensingSourceIsBelow) {
         this._sensingFrame++;
         if (this._sensingFrame >= 30) {
           this._uploadSensing(p);
