@@ -59,6 +59,12 @@ const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
+const PERF_TELEMETRY_KEY = 'bb_perfTelemetry';
+const PERF_WAKE_LOCK_KEY = 'bb_perfWakeLock';
+const PERF_UI_REFRESH_MS = 500;
+const PERF_SLOW_FRAME_MS = 20;
+const PERF_THROTTLE_GAP_MS = 250;
+const PERF_RECENT_EVENT_LIMIT = 10;
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -255,6 +261,8 @@ export class App {
     this._colorParseCtx = this._colorParseCanvas.getContext('2d');
     this._sensingCompositeCanvas = null;
     this._sensingCompositeCtx = null;
+    this._performanceTelemetry = this._createPerformanceTelemetryState();
+    this._wakeLockSentinel = null;
 
     // Internal clipboard buffer (fallback when Clipboard API unavailable)
     this._clipboardBlob = null;
@@ -340,6 +348,7 @@ export class App {
     buildSidebar(this);
     buildLayersPanel(this);
     initEdgeSliders(this);
+    this._initPerformanceTelemetry();
 
     // Events
     this._bindEvents();
@@ -3342,16 +3351,395 @@ export class App {
     if (btn) btn.classList.toggle('active', this.tilingMode);
   }
 
+  _createPerformanceTelemetryState() {
+    return {
+      initialized: false,
+      enabled: true,
+      wakeLockPreferred: false,
+      wakeLockActive: false,
+      lastFrameAt: 0,
+      frameCount: 0,
+      slowFrameCount: 0,
+      totalFrameMs: 0,
+      totalBrushMs: 0,
+      totalClearMs: 0,
+      totalOverlayMs: 0,
+      totalStatusMs: 0,
+      worstFrameMs: 0,
+      worstFramePhase: 'none',
+      maxBrushMs: 0,
+      maxClearMs: 0,
+      maxOverlayMs: 0,
+      maxStatusMs: 0,
+      longTaskCount: 0,
+      longTaskTotalMs: 0,
+      throttleGapCount: 0,
+      visibilityChanges: 0,
+      focusLostCount: 0,
+      pageHideCount: 0,
+      freezeCount: 0,
+      hiddenAt: 0,
+      hiddenMs: 0,
+      visibilityState: typeof document !== 'undefined' ? document.visibilityState : 'visible',
+      focused: typeof document !== 'undefined' ? document.hasFocus() : true,
+      memoryMB: null,
+      deviceMemoryGB: Number.isFinite(navigator?.deviceMemory) ? navigator.deviceMemory : null,
+      hardwareConcurrency: Number.isFinite(navigator?.hardwareConcurrency) ? navigator.hardwareConcurrency : null,
+      recentEvents: [],
+      lastUiRefreshAt: 0,
+      observer: null,
+    };
+  }
+
+  _resetPerformanceTelemetryStats() {
+    const t = this._performanceTelemetry;
+    t.lastFrameAt = 0;
+    t.frameCount = 0;
+    t.slowFrameCount = 0;
+    t.totalFrameMs = 0;
+    t.totalBrushMs = 0;
+    t.totalClearMs = 0;
+    t.totalOverlayMs = 0;
+    t.totalStatusMs = 0;
+    t.worstFrameMs = 0;
+    t.worstFramePhase = 'none';
+    t.maxBrushMs = 0;
+    t.maxClearMs = 0;
+    t.maxOverlayMs = 0;
+    t.maxStatusMs = 0;
+    t.longTaskCount = 0;
+    t.longTaskTotalMs = 0;
+    t.throttleGapCount = 0;
+    t.visibilityChanges = 0;
+    t.focusLostCount = 0;
+    t.pageHideCount = 0;
+    t.freezeCount = 0;
+    t.hiddenAt = document.visibilityState === 'hidden' ? performance.now() : 0;
+    t.hiddenMs = 0;
+    t.visibilityState = document.visibilityState;
+    t.focused = document.hasFocus();
+    t.memoryMB = null;
+    t.recentEvents.length = 0;
+    t.lastUiRefreshAt = 0;
+  }
+
+  _notePerformanceEvent(message) {
+    const t = this._performanceTelemetry;
+    const stamp = (performance.now() / 1000).toFixed(1) + 's';
+    t.recentEvents.unshift(`${stamp} ${message}`);
+    if (t.recentEvents.length > PERF_RECENT_EVENT_LIMIT) t.recentEvents.length = PERF_RECENT_EVENT_LIMIT;
+  }
+
+  _persistPerformancePreference(key, enabled) {
+    try {
+      localStorage.setItem(key, enabled ? '1' : '0');
+    } catch { /* ignore persistence errors */ }
+  }
+
+  _loadPerformancePreference(key, fallback) {
+    try {
+      const value = localStorage.getItem(key);
+      if (value == null) return fallback;
+      return value === '1';
+    } catch {
+      return fallback;
+    }
+  }
+
+  _initPerformanceTelemetry() {
+    const t = this._performanceTelemetry;
+    if (t.initialized) return;
+    t.initialized = true;
+    t.enabled = this._loadPerformancePreference(PERF_TELEMETRY_KEY, true);
+    t.wakeLockPreferred = this._loadPerformancePreference(PERF_WAKE_LOCK_KEY, false);
+    this._resetPerformanceTelemetryStats();
+    this._notePerformanceEvent('telemetry initialized');
+
+    if (typeof PerformanceObserver !== 'undefined') {
+      try {
+        t.observer = new PerformanceObserver(list => {
+          if (!t.enabled) return;
+          for (const entry of list.getEntries()) {
+            t.longTaskCount++;
+            t.longTaskTotalMs += entry.duration;
+            this._notePerformanceEvent(`long task ${entry.duration.toFixed(1)}ms`);
+          }
+          this._refreshPerformanceTelemetryUI(true);
+        });
+        t.observer.observe({ entryTypes: ['longtask'] });
+      } catch { /* unsupported */ }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      t.visibilityChanges++;
+      t.visibilityState = document.visibilityState;
+      if (document.visibilityState === 'hidden') {
+        t.hiddenAt = performance.now();
+        this._releasePerformanceWakeLock();
+        this._notePerformanceEvent('tab hidden');
+      } else {
+        if (t.hiddenAt) t.hiddenMs += performance.now() - t.hiddenAt;
+        t.hiddenAt = 0;
+        this._requestPerformanceWakeLock();
+        this._notePerformanceEvent('tab visible');
+      }
+      this._refreshPerformanceTelemetryUI(true);
+    });
+    window.addEventListener('focus', () => {
+      t.focused = true;
+      this._requestPerformanceWakeLock();
+      this._refreshPerformanceTelemetryUI(true);
+    });
+    window.addEventListener('blur', () => {
+      t.focused = false;
+      t.focusLostCount++;
+      this._notePerformanceEvent('window blurred');
+      this._refreshPerformanceTelemetryUI(true);
+    });
+    window.addEventListener('pagehide', () => {
+      t.pageHideCount++;
+      this._releasePerformanceWakeLock();
+      this._notePerformanceEvent('page hidden by browser');
+      this._refreshPerformanceTelemetryUI(true);
+    });
+    window.addEventListener('pageshow', () => {
+      this._requestPerformanceWakeLock();
+      this._notePerformanceEvent('page shown by browser');
+      this._refreshPerformanceTelemetryUI(true);
+    });
+    document.addEventListener('freeze', () => {
+      t.freezeCount++;
+      this._notePerformanceEvent('page lifecycle freeze');
+      this._refreshPerformanceTelemetryUI(true);
+    });
+    document.addEventListener('resume', () => {
+      this._notePerformanceEvent('page lifecycle resume');
+      this._requestPerformanceWakeLock();
+      this._refreshPerformanceTelemetryUI(true);
+    });
+
+    this._requestPerformanceWakeLock();
+    this._refreshPerformanceTelemetryUI(true);
+  }
+
+  setPerformanceTelemetryEnabled(enabled) {
+    const t = this._performanceTelemetry;
+    t.enabled = !!enabled;
+    this._persistPerformancePreference(PERF_TELEMETRY_KEY, t.enabled);
+    this._resetPerformanceTelemetryStats();
+    this._notePerformanceEvent(t.enabled ? 'telemetry enabled' : 'telemetry disabled');
+    this._refreshPerformanceTelemetryUI(true);
+    this.showToast(t.enabled ? '📊 Perf telemetry enabled' : '📊 Perf telemetry disabled');
+  }
+
+  async setPerformanceWakeLockEnabled(enabled) {
+    const t = this._performanceTelemetry;
+    t.wakeLockPreferred = !!enabled;
+    this._persistPerformancePreference(PERF_WAKE_LOCK_KEY, t.wakeLockPreferred);
+    if (t.wakeLockPreferred) await this._requestPerformanceWakeLock();
+    else await this._releasePerformanceWakeLock();
+    this._refreshPerformanceTelemetryUI(true);
+    this.showToast(t.wakeLockPreferred ? '🔆 Wake lock requested' : '🔆 Wake lock released');
+  }
+
+  async _requestPerformanceWakeLock() {
+    const t = this._performanceTelemetry;
+    if (!t.wakeLockPreferred || document.visibilityState !== 'visible' || !navigator.wakeLock) {
+      t.wakeLockActive = false;
+      return false;
+    }
+    if (this._wakeLockSentinel && !this._wakeLockSentinel.released) {
+      t.wakeLockActive = true;
+      return true;
+    }
+    try {
+      const sentinel = await navigator.wakeLock.request('screen');
+      this._wakeLockSentinel = sentinel;
+      t.wakeLockActive = true;
+      sentinel.addEventListener('release', () => {
+        if (this._wakeLockSentinel === sentinel) {
+          this._wakeLockSentinel = null;
+          t.wakeLockActive = false;
+          this._refreshPerformanceTelemetryUI(true);
+        }
+      });
+      this._notePerformanceEvent('screen wake lock acquired');
+      return true;
+    } catch (err) {
+      t.wakeLockActive = false;
+      this._notePerformanceEvent(`wake lock unavailable (${err?.name || 'error'})`);
+      return false;
+    } finally {
+      this._refreshPerformanceTelemetryUI(true);
+    }
+  }
+
+  async _releasePerformanceWakeLock() {
+    const t = this._performanceTelemetry;
+    const sentinel = this._wakeLockSentinel;
+    this._wakeLockSentinel = null;
+    t.wakeLockActive = false;
+    if (!sentinel) return;
+    try {
+      await sentinel.release();
+    } catch { /* already released */ }
+  }
+
+  _recordPerformanceFrame(frame) {
+    const t = this._performanceTelemetry;
+    if (!t.enabled) return;
+    if (Number.isFinite(frame.deltaMs) && t.lastFrameAt && t.focused && t.visibilityState === 'visible' && frame.deltaMs >= PERF_THROTTLE_GAP_MS) {
+      t.throttleGapCount++;
+      this._notePerformanceEvent(`raf gap ${frame.deltaMs.toFixed(1)}ms`);
+    }
+    if (frame.hidden) {
+      this._refreshPerformanceTelemetryUI();
+      return;
+    }
+    t.frameCount++;
+    t.totalFrameMs += frame.totalMs;
+    t.totalBrushMs += frame.brushMs;
+    t.totalClearMs += frame.clearMs;
+    t.totalOverlayMs += frame.overlayMs;
+    t.totalStatusMs += frame.statusMs;
+    t.maxBrushMs = Math.max(t.maxBrushMs, frame.brushMs);
+    t.maxClearMs = Math.max(t.maxClearMs, frame.clearMs);
+    t.maxOverlayMs = Math.max(t.maxOverlayMs, frame.overlayMs);
+    t.maxStatusMs = Math.max(t.maxStatusMs, frame.statusMs);
+    if (frame.totalMs >= PERF_SLOW_FRAME_MS) {
+      t.slowFrameCount++;
+      const phases = [
+        ['brush', frame.brushMs],
+        ['overlay', frame.overlayMs],
+        ['clear', frame.clearMs],
+        ['status', frame.statusMs],
+      ];
+      phases.sort((a, b) => b[1] - a[1]);
+      if (frame.totalMs > t.worstFrameMs) {
+        t.worstFrameMs = frame.totalMs;
+        t.worstFramePhase = phases[0][0];
+      }
+    }
+    if (performance.memory?.usedJSHeapSize) {
+      t.memoryMB = performance.memory.usedJSHeapSize / (1024 * 1024);
+    }
+    this._refreshPerformanceTelemetryUI();
+  }
+
+  _refreshPerformanceTelemetryUI(force = false) {
+    const t = this._performanceTelemetry;
+    const now = performance.now();
+    if (!force && now - t.lastUiRefreshAt < PERF_UI_REFRESH_MS) return;
+    t.lastUiRefreshAt = now;
+    const enabledEl = document.getElementById('perfTelemetryEnabled');
+    const wakeLockEl = document.getElementById('perfWakeLockEnabled');
+    const readoutEl = document.getElementById('perfTelemetryReadout');
+    if (enabledEl) enabledEl.checked = !!t.enabled;
+    if (wakeLockEl) wakeLockEl.checked = !!t.wakeLockPreferred;
+    if (!readoutEl) return;
+    if (!t.enabled) {
+      readoutEl.textContent = 'Telemetry is off.';
+      return;
+    }
+    const frameCount = Math.max(t.frameCount, 1);
+    const avgFrame = t.totalFrameMs / frameCount;
+    const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
+    const hiddenMs = t.hiddenMs + (t.hiddenAt ? performance.now() - t.hiddenAt : 0);
+    const lines = [
+      `State: ${t.visibilityState}${t.focused ? ' • focused' : ' • blurred'}${t.wakeLockPreferred ? ` • wake ${t.wakeLockActive ? 'on' : 'waiting'}` : ''}`,
+      `Frames: ${t.frameCount} • avg ${avgFrame.toFixed(1)}ms • ~${fps.toFixed(0)}fps • slow ${t.slowFrameCount}`,
+      `Attribution: brush ${(t.totalBrushMs / frameCount).toFixed(1)} • overlay ${(t.totalOverlayMs / frameCount).toFixed(1)} • clear ${(t.totalClearMs / frameCount).toFixed(1)} • status ${(t.totalStatusMs / frameCount).toFixed(1)} ms/frame`,
+      `Worst: ${t.worstFrameMs.toFixed(1)}ms (${t.worstFramePhase}) • long tasks ${t.longTaskCount} (${t.longTaskTotalMs.toFixed(0)}ms) • raf gaps ${t.throttleGapCount}`,
+      `Lifecycle: hidden ${(hiddenMs / 1000).toFixed(1)}s • vis ${t.visibilityChanges} • blur ${t.focusLostCount} • pagehide ${t.pageHideCount} • freeze ${t.freezeCount}`,
+      `Device: ${t.hardwareConcurrency || '?'} cores • ${t.deviceMemoryGB || '?'}GB mem${t.memoryMB != null ? ` • heap ${t.memoryMB.toFixed(0)}MB` : ''}`,
+    ];
+    if (t.recentEvents.length) lines.push(`Recent: ${t.recentEvents.slice(0, 3).join(' | ')}`);
+    readoutEl.textContent = lines.join('\n');
+  }
+
+  _getPerformanceStatusSummary() {
+    const t = this._performanceTelemetry;
+    if (!t.enabled || t.frameCount === 0) return '';
+    const avgFrame = t.totalFrameMs / t.frameCount;
+    const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
+    return `Perf ${fps.toFixed(0)}fps ${avgFrame.toFixed(1)}ms LT:${t.longTaskCount} Gap:${t.throttleGapCount}${t.wakeLockPreferred ? ` WL:${t.wakeLockActive ? 'on' : 'wait'}` : ''}`;
+  }
+
+  _buildPerformanceTelemetrySnapshot() {
+    const t = this._performanceTelemetry;
+    const frameCount = Math.max(t.frameCount, 1);
+    return JSON.stringify({
+      enabled: t.enabled,
+      wakeLockPreferred: t.wakeLockPreferred,
+      wakeLockActive: t.wakeLockActive,
+      visibilityState: t.visibilityState,
+      focused: t.focused,
+      frames: t.frameCount,
+      avgFrameMs: +(t.totalFrameMs / frameCount).toFixed(3),
+      avgBrushMs: +(t.totalBrushMs / frameCount).toFixed(3),
+      avgOverlayMs: +(t.totalOverlayMs / frameCount).toFixed(3),
+      avgClearMs: +(t.totalClearMs / frameCount).toFixed(3),
+      avgStatusMs: +(t.totalStatusMs / frameCount).toFixed(3),
+      slowFrames: t.slowFrameCount,
+      worstFrameMs: +t.worstFrameMs.toFixed(3),
+      worstFramePhase: t.worstFramePhase,
+      longTasks: t.longTaskCount,
+      longTaskTotalMs: +t.longTaskTotalMs.toFixed(3),
+      rafGaps: t.throttleGapCount,
+      hiddenMs: +(t.hiddenMs + (t.hiddenAt ? performance.now() - t.hiddenAt : 0)).toFixed(3),
+      visibilityChanges: t.visibilityChanges,
+      blurCount: t.focusLostCount,
+      pageHideCount: t.pageHideCount,
+      freezeCount: t.freezeCount,
+      memoryMB: t.memoryMB == null ? null : +t.memoryMB.toFixed(3),
+      hardwareConcurrency: t.hardwareConcurrency,
+      deviceMemoryGB: t.deviceMemoryGB,
+      recentEvents: t.recentEvents,
+    }, null, 2);
+  }
+
+  async copyPerformanceTelemetrySnapshot() {
+    const snapshot = this._buildPerformanceTelemetrySnapshot();
+    try {
+      await navigator.clipboard.writeText(snapshot);
+      this.showToast('📋 Perf snapshot copied');
+    } catch {
+      console.info(snapshot);
+      this.showToast('📋 Perf snapshot logged to console');
+    }
+  }
+
+  resetPerformanceTelemetry() {
+    this._resetPerformanceTelemetryStats();
+    this._notePerformanceEvent('telemetry reset');
+    this._refreshPerformanceTelemetryUI(true);
+    this.showToast('♻ Perf telemetry reset');
+  }
+
   // ========================================================
   // FRAME LOOP
   // ========================================================
 
   _frameLoop() {
+    const perf = this._performanceTelemetry.enabled ? this._performanceTelemetry : null;
+    const frameStart = perf ? performance.now() : 0;
+    const deltaMs = perf && perf.lastFrameAt ? frameStart - perf.lastFrameAt : 0;
+    if (perf) perf.lastFrameAt = frameStart;
+    if (document.visibilityState === 'hidden') {
+      if (perf) this._recordPerformanceFrame({ deltaMs, totalMs: 0, brushMs: 0, clearMs: 0, overlayMs: 0, statusMs: 0, hidden: true });
+      this._rafId = requestAnimationFrame(() => this._frameLoop());
+      return;
+    }
     const elapsed = (performance.now() - this._startTime) / 1000;
     const brush = this.getCurrentBrush();
     const p = this.getP();
+    let brushMs = 0;
+    let clearMs = 0;
+    let overlayMs = 0;
+    let statusMs = 0;
 
     // Taper pass — after stroke ends
+    const brushStart = perf ? performance.now() : 0;
     if (this.isTapering && brush && brush.taperFrame) {
       this.taperFrame++;
       const t = this.taperFrame / this.taperTotal;
@@ -3371,11 +3759,15 @@ export class App {
       // Skip during taper — taperFrame already steps the sim
       brush.onHoverFrame(elapsed);
     }
+    if (perf) brushMs = performance.now() - brushStart;
 
     // Update live overlay (particle visualization)
+    const clearStart = perf ? performance.now() : 0;
     this.lctx.clearRect(0, 0, this.W, this.H);
+    if (perf) clearMs = performance.now() - clearStart;
 
     // Brush size cursor preview
+    const overlayStart = perf ? performance.now() : 0;
     if (this._cursorX >= 0 && this._cursorY >= 0) {
       const canvasPos = this._screenToCanvas(this._cursorX, this._cursorY);
       const radius = p.stampSize / 2;
@@ -3408,9 +3800,23 @@ export class App {
       this.lctx.strokeRect(0, 0, this.W, this.H);
       this.lctx.restore();
     }
+    if (perf) overlayMs = performance.now() - overlayStart;
 
     // Update status
+    const statusStart = perf ? performance.now() : 0;
     this._updateStatus(brush);
+    if (perf) {
+      statusMs = performance.now() - statusStart;
+      this._recordPerformanceFrame({
+        deltaMs,
+        totalMs: performance.now() - frameStart,
+        brushMs,
+        clearMs,
+        overlayMs,
+        statusMs,
+        hidden: false,
+      });
+    }
 
     this._rafId = requestAnimationFrame(() => this._frameLoop());
   }
@@ -3424,6 +3830,8 @@ export class App {
     if (this.simulation.running) info += ' | Sim: running';
     else if (this.simulation.paused) info += ' | Sim: paused';
     if (brush && brush.getStatusInfo) info += ` | ${brush.getStatusInfo()}`;
+    const perf = this._getPerformanceStatusSummary();
+    if (perf) info += ` | ${perf}`;
     this.statusEl.textContent = info;
   }
 

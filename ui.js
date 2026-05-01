@@ -538,6 +538,14 @@ export function buildSidebar(app) {
     <div class="section-header" data-section="settings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
+      <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
+      <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
+      <div id="perfTelemetryReadout" style="white-space:pre-wrap;line-height:1.35;font-size:9px;color:rgba(230,236,248,0.92);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px;min-height:92px;">Telemetry is off.</div>
+      <span class="slider-desc">Tracks frame timing, slow-frame attribution, long tasks, tab visibility/focus changes, and optional wake-lock state. Wake lock can reduce device sleep, but browsers may still throttle hidden tabs.</span>
+      <div style="display:flex;gap:3px;margin:2px 0 4px;">
+        <button id="btnCopyPerfTelemetry">📋 Copy Perf</button>
+        <button id="btnResetPerfTelemetry">♻ Reset Perf</button>
+      </div>
       <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
         <button id="btnResetDefaults" class="reset-btn">🏭 Factory Reset</button>
@@ -648,10 +656,24 @@ export function buildSidebar(app) {
   document.getElementById('btnSaveSession')?.addEventListener('click', () => {
     app.saveSession(); app.showToast('💾 Session saved');
   });
+  document.getElementById('perfTelemetryEnabled')?.addEventListener('change', e => {
+    app.setPerformanceTelemetryEnabled(e.target.checked);
+  });
+  document.getElementById('perfWakeLockEnabled')?.addEventListener('change', e => {
+    app.setPerformanceWakeLockEnabled(e.target.checked);
+  });
+  document.getElementById('btnCopyPerfTelemetry')?.addEventListener('click', () => {
+    app.copyPerformanceTelemetrySnapshot();
+  });
+  document.getElementById('btnResetPerfTelemetry')?.addEventListener('click', () => {
+    app.resetPerformanceTelemetry();
+  });
   document.getElementById('btnResetDefaults')?.addEventListener('click', () => {
     if (confirm('Reset all controls to factory defaults?')) {
       localStorage.removeItem('bb_session_v1');
       localStorage.removeItem('bb_autosave');
+      localStorage.removeItem('bb_perfTelemetry');
+      localStorage.removeItem('bb_perfWakeLock');
       location.reload();
     }
   });
@@ -675,6 +697,7 @@ export function buildSidebar(app) {
       el.addEventListener('change', triggerAutoSave);
     });
   }
+  app._refreshPerformanceTelemetryUI(true);
 
   // Initial brush-specific visibility
   app._toggleBrushSections(app.activeBrush);
