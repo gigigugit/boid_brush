@@ -421,10 +421,16 @@ export class BoidBrush {
     if (force) {
       this._ready = false;
       this.sim = null;
+      this.app.sharedMotionSim = null;
       this._lastStampX = [];
       this._lastStampY = [];
       this._boidsSpawned = false;
       this._hoverSpawned = false;
+    }
+    if (this.app.sharedMotionSim) {
+      this.sim = this.app.sharedMotionSim;
+      this._ready = true;
+      return this.sim;
     }
     try {
       this.sim = await BoidSim.create(
@@ -432,6 +438,7 @@ export class BoidBrush {
         this.app.H || 600,
         10000
       );
+      this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
       console.error('BoidBrush: WASM init failed —', e);
@@ -1064,10 +1071,8 @@ export class AntBrush {
       this._lastStampX = [];
       this._lastStampY = [];
     }
-    const sharedSim = this.app?.brushes?.boid?.sim;
-    const sharedReady = this.app?.brushes?.boid?._ready;
-    if (sharedSim && sharedReady) {
-      this.sim = sharedSim;
+    if (this.app.sharedMotionSim) {
+      this.sim = this.app.sharedMotionSim;
       this._ready = true;
       return this.sim;
     }
@@ -1077,6 +1082,7 @@ export class AntBrush {
         this.app.H || 600,
         10000 // max agent pool capacity
       );
+      this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
       console.error('AntBrush: WASM init failed —', e);

@@ -170,6 +170,7 @@ export class App {
 
     // Brush engines
     this.brushes = {};
+    this.sharedMotionSim = null;
     this.activeBrush = 'boid';
 
     // Drawing state
@@ -2889,15 +2890,15 @@ export class App {
 
   _setViewPanForScreenAnchor(canvasX, canvasY, screenX, screenY) {
     const { baseX, baseY, centerX, centerY } = this._getCanvasViewMetrics();
-    let dx = canvasX - centerX;
-    const dy = canvasY - centerY;
-    if (this.viewFlipped) dx = -dx;
-    dx *= this.viewZoom;
-    const scaledY = dy * this.viewZoom;
+    let offsetX = canvasX - centerX;
+    const offsetY = canvasY - centerY;
+    if (this.viewFlipped) offsetX = -offsetX;
+    offsetX *= this.viewZoom;
+    const scaledY = offsetY * this.viewZoom;
     const cos = Math.cos(this.viewRotation);
     const sin = Math.sin(this.viewRotation);
-    const rx = dx * cos - scaledY * sin;
-    const ry = dx * sin + scaledY * cos;
+    const rx = offsetX * cos - scaledY * sin;
+    const ry = offsetX * sin + scaledY * cos;
     this.viewPanX = screenX - baseX - centerX - rx;
     this.viewPanY = screenY - baseY - centerY - ry;
   }
