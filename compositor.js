@@ -35,7 +35,7 @@ function _tileSetToRects(tileSet, cssW, cssH) {
     xs.sort((a, b) => a - b);
     let start = xs[0];
     let prev = xs[0];
-    for (let i = 1; i <= xs.length; i++) {
+    for (let i = 1; i < xs.length; i++) {
       const x = xs[i];
       if (x === prev + 1) {
         prev = x;
@@ -52,6 +52,14 @@ function _tileSetToRects(tileSet, cssW, cssH) {
       start = x;
       prev = x;
     }
+    const rectX = start * DIRTY_TILE_SIZE;
+    const rectY = ty * DIRTY_TILE_SIZE;
+    rects.push({
+      x: rectX,
+      y: rectY,
+      w: Math.min(cssW, (prev + 1) * DIRTY_TILE_SIZE) - rectX,
+      h: Math.min(cssH, (ty + 1) * DIRTY_TILE_SIZE) - rectY,
+    });
   }
   return rects;
 }
