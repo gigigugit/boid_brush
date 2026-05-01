@@ -2894,11 +2894,11 @@ export class App {
     const offsetY = canvasY - centerY;
     if (this.viewFlipped) offsetX = -offsetX;
     offsetX *= this.viewZoom;
-    const scaledY = offsetY * this.viewZoom;
+    const scaledOffsetY = offsetY * this.viewZoom;
     const cos = Math.cos(this.viewRotation);
     const sin = Math.sin(this.viewRotation);
-    const rx = offsetX * cos - scaledY * sin;
-    const ry = offsetX * sin + scaledY * cos;
+    const rx = offsetX * cos - scaledOffsetY * sin;
+    const ry = offsetX * sin + scaledOffsetY * cos;
     this.viewPanX = screenX - baseX - centerX - rx;
     this.viewPanY = screenY - baseY - centerY - ry;
   }
