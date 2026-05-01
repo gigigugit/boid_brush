@@ -53,19 +53,32 @@ html,body{overflow:hidden;width:100%;height:100%;
 
 /* ---- Top Bar ---- */
 #topbarWrap{position:fixed;inset:0 0 auto 0;height:var(--topbar-h);display:flex;align-items:center;z-index:30;background:rgba(17,20,28,0.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--line-0);box-shadow:0 2px 16px rgba(0,0,0,0.45);}
-#topbar{flex:1;min-width:0;height:100%;display:flex;align-items:center;padding:0 12px;gap:7px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:transparent;scroll-snap-type:x proximity;mask-image:linear-gradient(to right,transparent 0,black 16px,black calc(100% - 16px),transparent 100%);}
-#topbar::-webkit-scrollbar{display:none;}
-#topbar>*{flex-shrink:0;scroll-snap-align:start;}
+#topbar{flex:1;min-width:0;height:100%;display:flex;align-items:center;padding:0 6px;gap:7px;overflow:hidden;background:transparent;}
+#topbar>*{flex-shrink:0;}
 #sidebarToggle,#layersToggle{flex-shrink:0;margin:0 8px 0 0;padding:8px 12px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;min-height:var(--tap-min);transition:all 140ms ease;}
+#layersToggle{margin:0 4px 0 8px;}
 #sidebarToggle:hover,#layersToggle:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 #sidebarToggle.active,#layersToggle.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
-#topbar button{padding:8px 12px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;min-height:var(--tap-min);transition:all 140ms ease;letter-spacing:0.1px;}
-#topbar button:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
-#topbar button:active{transform:scale(0.96);}
-#topbar button.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
-#topbar button.eraser-active{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.5);box-shadow:0 0 6px rgba(224,80,80,0.25);}
-#topbar button.active-lock{background:linear-gradient(135deg,#c77a20,#e8a030);border-color:rgba(232,160,48,0.5);color:#fff;box-shadow:0 0 8px rgba(232,160,48,0.3);}
+#topbar button,#topbarOverflowMenu button{padding:8px 12px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;min-height:var(--tap-min);transition:all 140ms ease;letter-spacing:0.1px;}
+#topbar button:hover,#topbarOverflowMenu button:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
+#topbar button:active,#topbarOverflowMenu button:active{transform:scale(0.96);}
+#topbar button.active,#topbarOverflowMenu button.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
+#topbar button.eraser-active,#topbarOverflowMenu button.eraser-active{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.5);box-shadow:0 0 6px rgba(224,80,80,0.25);}
+#topbar button.active-lock,#topbarOverflowMenu button.active-lock{background:linear-gradient(135deg,#c77a20,#e8a030);border-color:rgba(232,160,48,0.5);color:#fff;box-shadow:0 0 8px rgba(232,160,48,0.3);}
 .tb-sep{width:1px;height:26px;background:rgba(255,255,255,0.1);margin-inline:2px;flex-shrink:0;}
+/* ---- Topbar overflow caret/menu ---- */
+#topbarOverflowWrap{position:relative;flex-shrink:0;display:flex;align-items:center;margin:0 4px;}
+#topbarOverflowToggle{flex-shrink:0;padding:6px 10px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:16px;font-weight:400;cursor:pointer;white-space:nowrap;min-height:var(--tap-min);min-width:var(--tap-min);transition:all 140ms ease;display:flex;align-items:center;justify-content:center;line-height:1;}
+#topbarOverflowToggle:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
+#topbarOverflowToggle[aria-expanded="true"]{background:rgba(255,255,255,0.1);border-color:var(--line-1);}
+#topbarOverflowMenu{position:fixed;width:min(92vw,340px);max-height:min(70vh,520px);overflow-y:auto;display:none;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--line-1);border-radius:14px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);z-index:60;touch-action:pan-y;}
+#topbarOverflowMenu,#topbarOverflowMenu *{-webkit-user-select:none;user-select:none;touch-action:pan-y;}
+#topbarOverflowMenu select,#topbarOverflowMenu input[type="color"]{touch-action:auto;-webkit-user-select:auto;user-select:auto;}
+#topbarOverflowMenu.open{display:flex;}
+#topbarOverflowMenu .tb-sep{display:none;}
+#topbarOverflowMenu #brushBtnWrap{width:100%;}
+#topbarOverflowMenu select{display:block;background:rgba(255,255,255,0.08);color:var(--ink-0);border:1px solid var(--line-1);border-radius:5px;padding:5px 8px;font-size:11px;cursor:pointer;width:100%;min-height:var(--tap-min);}
+#topbarOverflowMenu .bg-label{display:block;font-size:10px;color:var(--ink-3);font-weight:700;letter-spacing:0.85px;text-transform:uppercase;padding:4px 2px;}
 
 /* Color pickers */
 #primaryColor,#secondaryColor,#bgColor{width:var(--tap-min);min-width:var(--tap-min);height:var(--tap-min);border:2px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;}
@@ -329,19 +342,18 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Top Bar ══════════ -->
 <div id="topbarWrap">
+<button id="layersToggle" aria-expanded="false" aria-controls="layersPanel">Layers</button>
 <div id="topbar">
-  <button id="layersToggle" aria-expanded="false" aria-controls="layersPanel">Layers</button>
-  <div class="tb-sep"></div>
-  <div id="brushBtnWrap">
+  <div id="brushBtnWrap" class="topbar-essential">
     <button id="brushBtn" class="active">🐦 Boid</button>
   </div>
   <div class="tb-sep"></div>
-  <input type="color" id="primaryColor" value="#1a1a1a" title="Primary">
-  <button id="swapColors" title="Swap">⇄</button>
-  <input type="color" id="secondaryColor" value="#ffffff" title="Secondary">
+  <input type="color" id="primaryColor" class="topbar-essential" value="#1a1a1a" title="Primary">
+  <button id="swapColors" class="topbar-essential" title="Swap">⇄</button>
+  <input type="color" id="secondaryColor" class="topbar-essential" value="#ffffff" title="Secondary">
   <div class="tb-sep"></div>
-  <button id="undoBtn">↩ Undo</button>
-  <button id="redoBtn">↪ Redo</button>
+  <button id="undoBtn" class="topbar-essential">↩ Undo</button>
+  <button id="redoBtn" class="topbar-essential">↪ Redo</button>
   <div class="tb-sep"></div>
   <button id="rectSelectBtn" title="Rectangle Select (M)">⬚ Rect</button>
   <button id="ellipseSelectBtn" title="Ellipse Select">⬭ Ellipse</button>
@@ -371,6 +383,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="flipViewBtn" title="Flip canvas view (F)">🪞 Flip</button>
   <button id="tilingBtn" title="Tiling Mode (P)">🔁 Tile</button>
   <button id="alphaLockBtn" title="Alpha Lock (/) OFF">🔒 Alpha</button>
+</div>
+<div id="topbarOverflowWrap">
+  <button id="topbarOverflowToggle" aria-expanded="false" aria-controls="topbarOverflowMenu" aria-label="More toolbar controls" title="More tools" hidden>⌄</button>
+  <div id="topbarOverflowMenu" role="region" aria-label="Overflow toolbar controls"></div>
 </div>
 <button id="sidebarToggle">☰</button>
 </div>

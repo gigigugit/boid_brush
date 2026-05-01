@@ -340,6 +340,7 @@ export class App {
 
     // Events
     this._bindEvents();
+    this._initTopbarOverflow();
 
     // Restore session
     await this._ensureBuiltinCanvasTexture();
@@ -2709,6 +2710,110 @@ export class App {
       this.resizeDocument(w, h, bg);
       this._hideCanvasSizeModal();
     });
+  }
+
+  _initTopbarOverflow() {
+    const topbar = document.getElementById('topbar');
+    const menu = document.getElementById('topbarOverflowMenu');
+    const toggle = document.getElementById('topbarOverflowToggle');
+    if (!topbar || !menu || !toggle) return;
+
+    // Capture the initial ordered children and insert comment placeholders to
+    // track original positions so items can be returned in the right order.
+    const items = Array.from(topbar.children).map(node => {
+      const placeholder = document.createComment('tbof');
+      node.before(placeholder);
+      return { node, placeholder };
+    });
+
+    const closeMenu = () => {
+      menu.classList.remove('open');
+      toggle.setAttribute('aria-expanded', 'false');
+    };
+
+    let layoutPending = false;
+    const layout = () => {
+      if (layoutPending) return;
+      layoutPending = true;
+      requestAnimationFrame(() => {
+        layoutPending = false;
+
+        // 1. Return all overflowed items back to topbar (in original order).
+        for (const item of items) {
+          if (item.node.parentElement !== topbar) {
+            item.placeholder.after(item.node);
+          }
+        }
+        closeMenu();
+
+        // 2. Reset any separator display overrides from the previous layout pass.
+        topbar.querySelectorAll('.tb-sep').forEach(s => { s.style.display = ''; });
+
+        // 3. Move trailing items into the menu until the topbar fits.
+        //    Skip items that are hidden by app logic (display:none) — they
+        //    don't contribute to overflow width and should stay in the topbar
+        //    so that show/hide toggling by app code continues to work.
+        for (let i = items.length - 1; i >= 0; i--) {
+          if (topbar.scrollWidth <= topbar.clientWidth) break;
+          const item = items[i];
+          if (item.node.classList.contains('topbar-essential')) continue;
+          if (item.node.style.display === 'none') continue;
+          menu.prepend(item.node);
+        }
+
+        // 4. Hide orphan separators at the visible boundaries of #topbar.
+        const tbVisible = Array.from(topbar.childNodes)
+          .filter(n => n.nodeType === Node.ELEMENT_NODE &&
+                       getComputedStyle(n).display !== 'none');
+        // Trailing separators
+        for (let i = tbVisible.length - 1; i >= 0; i--) {
+          if (tbVisible[i].classList.contains('tb-sep')) tbVisible[i].style.display = 'none';
+          else break;
+        }
+        // Leading separators
+        for (let i = 0; i < tbVisible.length; i++) {
+          if (tbVisible[i].classList.contains('tb-sep')) tbVisible[i].style.display = 'none';
+          else break;
+        }
+
+        // 5. Show the caret only when there are overflow items.
+        const hasOverflow = menu.children.length > 0;
+        toggle.hidden = !hasOverflow;
+        if (!hasOverflow) closeMenu();
+      });
+    };
+
+    // Caret click — open/close the menu and position it under the toggle.
+    toggle.addEventListener('click', e => {
+      e.stopPropagation();
+      const r = toggle.getBoundingClientRect();
+      menu.style.top = (r.bottom + 4) + 'px';
+      menu.style.right = (window.innerWidth - r.right) + 'px';
+      const isOpen = menu.classList.toggle('open');
+      toggle.setAttribute('aria-expanded', String(isOpen));
+    });
+
+    // Clicks inside the overflow menu should not propagate to the document
+    // listener below (which would close the menu immediately).
+    menu.addEventListener('click', e => e.stopPropagation());
+
+    // Clicking anywhere outside the menu closes it.
+    document.addEventListener('click', closeMenu);
+
+    // Escape key closes the menu.
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && menu.classList.contains('open')) {
+        closeMenu();
+      }
+    });
+
+    // Re-run layout on window resize, orientation change, and whenever
+    // #topbar itself changes size (e.g. after show/hide of conditional buttons).
+    window.addEventListener('resize', layout);
+    window.addEventListener('orientationchange', layout);
+    new ResizeObserver(layout).observe(topbar);
+
+    layout();
   }
 
   _getEventCoords(e) {
