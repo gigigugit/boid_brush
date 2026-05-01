@@ -3388,6 +3388,9 @@ export class App {
       recentEvents: [],
       lastUiRefreshAt: 0,
       observer: null,
+      enabledEl: null,
+      wakeLockEl: null,
+      readoutEl: null,
     };
   }
 
@@ -3454,6 +3457,9 @@ export class App {
     t.wakeLockPreferred = this._loadPerformancePreference(PERF_WAKE_LOCK_KEY, false);
     this._resetPerformanceTelemetryStats();
     this._notePerformanceEvent('telemetry initialized');
+    t.enabledEl = document.getElementById('perfTelemetryEnabled');
+    t.wakeLockEl = document.getElementById('perfWakeLockEnabled');
+    t.readoutEl = document.getElementById('perfTelemetryReadout');
 
     if (typeof PerformanceObserver !== 'undefined') {
       try {
@@ -3588,7 +3594,7 @@ export class App {
   _recordPerformanceFrame(frame) {
     const t = this._performanceTelemetry;
     if (!t.enabled) return;
-    if (Number.isFinite(frame.deltaMs) && t.lastFrameAt && t.focused && t.visibilityState === 'visible' && frame.deltaMs >= PERF_THROTTLE_GAP_MS) {
+    if (this._isPerformanceThrottleGap(frame)) {
       t.throttleGapCount++;
       this._notePerformanceEvent(`raf gap ${frame.deltaMs.toFixed(1)}ms`);
     }
@@ -3626,14 +3632,23 @@ export class App {
     this._refreshPerformanceTelemetryUI();
   }
 
+  _isPerformanceThrottleGap(frame) {
+    const t = this._performanceTelemetry;
+    return Number.isFinite(frame.deltaMs)
+      && t.lastFrameAt
+      && t.focused
+      && t.visibilityState === 'visible'
+      && frame.deltaMs >= PERF_THROTTLE_GAP_MS;
+  }
+
   _refreshPerformanceTelemetryUI(force = false) {
     const t = this._performanceTelemetry;
     const now = performance.now();
     if (!force && now - t.lastUiRefreshAt < PERF_UI_REFRESH_MS) return;
     t.lastUiRefreshAt = now;
-    const enabledEl = document.getElementById('perfTelemetryEnabled');
-    const wakeLockEl = document.getElementById('perfWakeLockEnabled');
-    const readoutEl = document.getElementById('perfTelemetryReadout');
+    const enabledEl = t.enabledEl;
+    const wakeLockEl = t.wakeLockEl;
+    const readoutEl = t.readoutEl;
     if (enabledEl) enabledEl.checked = !!t.enabled;
     if (wakeLockEl) wakeLockEl.checked = !!t.wakeLockPreferred;
     if (!readoutEl) return;
@@ -3645,8 +3660,11 @@ export class App {
     const avgFrame = t.totalFrameMs / frameCount;
     const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
     const hiddenMs = t.hiddenMs + (t.hiddenAt ? performance.now() - t.hiddenAt : 0);
+    const wakeLockState = t.wakeLockPreferred
+      ? ` • wake ${t.wakeLockActive ? 'on' : 'waiting'}`
+      : '';
     const lines = [
-      `State: ${t.visibilityState}${t.focused ? ' • focused' : ' • blurred'}${t.wakeLockPreferred ? ` • wake ${t.wakeLockActive ? 'on' : 'waiting'}` : ''}`,
+      `State: ${t.visibilityState}${t.focused ? ' • focused' : ' • blurred'}${wakeLockState}`,
       `Frames: ${t.frameCount} • avg ${avgFrame.toFixed(1)}ms • ~${fps.toFixed(0)}fps • slow ${t.slowFrameCount}`,
       `Attribution: brush ${(t.totalBrushMs / frameCount).toFixed(1)} • overlay ${(t.totalOverlayMs / frameCount).toFixed(1)} • clear ${(t.totalClearMs / frameCount).toFixed(1)} • status ${(t.totalStatusMs / frameCount).toFixed(1)} ms/frame`,
       `Worst: ${t.worstFrameMs.toFixed(1)}ms (${t.worstFramePhase}) • long tasks ${t.longTaskCount} (${t.longTaskTotalMs.toFixed(0)}ms) • raf gaps ${t.throttleGapCount}`,
@@ -3726,6 +3744,8 @@ export class App {
     const deltaMs = perf && perf.lastFrameAt ? frameStart - perf.lastFrameAt : 0;
     if (perf) perf.lastFrameAt = frameStart;
     if (document.visibilityState === 'hidden') {
+      // Hidden tabs are browser-throttled anyway; skip the heavy frame work so
+      // we do not keep behaving like a costly background tab.
       if (perf) this._recordPerformanceFrame({ deltaMs, totalMs: 0, brushMs: 0, clearMs: 0, overlayMs: 0, statusMs: 0, hidden: true });
       this._rafId = requestAnimationFrame(() => this._frameLoop());
       return;
