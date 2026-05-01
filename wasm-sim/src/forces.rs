@@ -232,7 +232,6 @@ pub fn apply_neighbor_forces_grid(
 ) {
     let nd2 = p.neighbor_radius * p.neighbor_radius;
     let sd2 = p.separation_radius * p.separation_radius;
-    let cs = grid.cell_size;
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
@@ -253,9 +252,10 @@ pub fn apply_neighbor_forces_grid(
         let mut avy = 0.0f32;
         let mut ac = 0u32;
 
-        // Agent's own grid cell
-        let cell_xi = (xi / cs) as i32;
-        let cell_yi = (yi / cs) as i32;
+        // Retrieve pre-computed grid cell for this agent (avoids redundant division).
+        let (cell_xi, cell_yi) = grid.agent_cell(i);
+        // cell_xi / cell_yi are -1 only for dead agents, which are already
+        // filtered above by the FLAG_ALIVE check.
 
         // Inspect the 3×3 cell neighborhood (±1 in each axis).
         for ndy in -1i32..=1 {
