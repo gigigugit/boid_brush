@@ -253,6 +253,8 @@ export class App {
     this._colorParseCanvas.width = 1;
     this._colorParseCanvas.height = 1;
     this._colorParseCtx = this._colorParseCanvas.getContext('2d');
+    this._sensingCompositeCanvas = null;
+    this._sensingCompositeCtx = null;
 
     // Internal clipboard buffer (fallback when Clipboard API unavailable)
     this._clipboardBlob = null;
@@ -3875,10 +3877,22 @@ export class App {
     const p = this.getP();
     const src = p.sensingSource;
     const w = this.W * this.DPR, h = this.H * this.DPR;
-    const tmp = document.createElement('canvas');
-    tmp.width = w; tmp.height = h;
-    const tc = tmp.getContext('2d');
+    if (src === 'active') {
+      const l = this.getActiveLayer();
+      return l.ctx.getImageData(0, 0, w, h);
+    }
+    if (!this._sensingCompositeCanvas) {
+      this._sensingCompositeCanvas = document.createElement('canvas');
+      this._sensingCompositeCtx = this._sensingCompositeCanvas.getContext('2d');
+    }
+    const tmp = this._sensingCompositeCanvas;
+    if (tmp.width !== w || tmp.height !== h) {
+      tmp.width = w;
+      tmp.height = h;
+    }
+    const tc = this._sensingCompositeCtx;
     tc.setTransform(1, 0, 0, 1, 0, 0);
+    tc.clearRect(0, 0, w, h);
 
     if (src === 'below') {
       // Layers below active
@@ -3897,10 +3911,6 @@ export class App {
         tc.globalCompositeOperation = l.blend;
         tc.drawImage(l.canvas, 0, 0);
       }
-    } else {
-      // 'active'
-      const l = this.getActiveLayer();
-      tc.drawImage(l.canvas, 0, 0);
     }
     return tc.getImageData(0, 0, w, h);
   }
