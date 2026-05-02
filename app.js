@@ -2074,6 +2074,11 @@ export class App {
       const field = el.dataset.simField;
       const type = el.dataset.simType || 'number';
       const scale = parseFloat(el.dataset.simScale || '1');
+      const clampToInputBounds = (control, value, fallbackMin = Number.NEGATIVE_INFINITY) => {
+        const minVal = control.min !== '' ? +control.min : fallbackMin;
+        const maxVal = control.max !== '' ? +control.max : Number.POSITIVE_INFINITY;
+        return Math.max(minVal, Math.min(maxVal, value));
+      };
 
       // Write the current control value into target (no re-render).
       const writeField = () => {
@@ -2086,75 +2091,68 @@ export class App {
           if (el.value === '') delete target[field];
           else target[field] = el.value;
         } else if (el.type === 'range') {
-          const minVal = el.min !== '' ? +el.min : 1;
-           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
-           if (type === 'integer') {
-             target[field] = Math.max(minVal, Math.min(maxVal, Math.round(+el.value * scale)));
-           } else if (type === 'angle') {
-             target[field] = _parseAngleDegrees(el.value);
-           } else {
-             target[field] = Math.max(minVal, Math.min(maxVal, +el.value * scale));
-           }
-         } else if (el.value === '') {
-           delete target[field];
-         } else if (type === 'integer') {
-           const minVal = el.min !== '' ? +el.min : 1;
-           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
-           target[field] = Math.max(minVal, Math.min(maxVal, Math.round(+el.value)));
-         } else if (type === 'angle') {
-           target[field] = _parseAngleDegrees(el.value);
-         } else {
-           const minVal = el.min !== '' ? +el.min : Number.NEGATIVE_INFINITY;
-           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
-           target[field] = Math.max(minVal, Math.min(maxVal, +el.value));
-         }
-         return true;
-       };
+          if (type === 'integer') {
+            target[field] = clampToInputBounds(el, Math.round(+el.value * scale), 1);
+          } else if (type === 'angle') {
+            target[field] = _parseAngleDegrees(el.value);
+          } else {
+            target[field] = clampToInputBounds(el, +el.value * scale);
+          }
+        } else if (el.value === '') {
+          delete target[field];
+        } else if (type === 'integer') {
+          target[field] = clampToInputBounds(el, Math.round(+el.value), 1);
+        } else if (type === 'angle') {
+          target[field] = _parseAngleDegrees(el.value);
+        } else {
+          target[field] = clampToInputBounds(el, +el.value);
+        }
+        return true;
+      };
 
       // Live label update for range sliders (no re-render while dragging).
-       if (el.type === 'range') {
-         el.addEventListener('input', () => {
-           const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+      if (el.type === 'range') {
+        el.addEventListener('input', () => {
+          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
           if (!lbl) return;
-          if (type === 'angle') {
-            lbl.textContent = Math.round(+el.value) + '°';
-          } else if (type === 'integer') {
-            lbl.textContent = String(Math.max(+el.min || 0, Math.round(+el.value * scale)));
-          } else {
-            lbl.textContent = (+el.value * scale).toFixed(scale < 1 ? 2 : 1);
-           }
-           const numberInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
-             .find(candidate => candidate !== el && candidate.type === 'number');
-           if (numberInput) numberInput.value = type === 'angle' ? String(Math.round(+el.value)) : String(type === 'integer' ? Math.max(+el.min || 0, Math.round(+el.value * scale)) : (+el.value * scale));
-           // Restore reset-button opacity once the user moves the slider.
-           const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
-           if (resetBtn) resetBtn.style.opacity = '1';
-         });
-       } else if (el.type === 'number') {
-         el.addEventListener('input', () => {
-           const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
-           const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
-           const rangeInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
-             .find(candidate => candidate !== el && candidate.type === 'range');
-           if (el.value === '') {
-             if (lbl) lbl.textContent = 'Brush def.';
-             if (resetBtn) resetBtn.style.opacity = '0.35';
-             return;
-           }
-           const minVal = el.min !== '' ? +el.min : (type === 'integer' ? 1 : Number.NEGATIVE_INFINITY);
-           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
-           const numericValue = type === 'integer'
-             ? Math.max(minVal, Math.min(maxVal, Math.round(+el.value)))
-             : Math.max(minVal, Math.min(maxVal, +el.value));
-           if (lbl) {
-             if (type === 'angle') lbl.textContent = `${Math.round(numericValue)}°`;
-             else if (type === 'integer') lbl.textContent = String(numericValue);
-             else lbl.textContent = numericValue.toFixed(scale < 1 ? 2 : 1);
-           }
-           if (rangeInput) rangeInput.value = type === 'angle' ? String(Math.round(numericValue)) : String(scale ? numericValue / scale : numericValue);
-           if (resetBtn) resetBtn.style.opacity = '1';
-         });
-       }
+          const liveValue = type === 'angle'
+            ? Math.round(+el.value)
+            : type === 'integer'
+              ? clampToInputBounds(el, Math.round(+el.value * scale), 1)
+              : clampToInputBounds(el, +el.value * scale);
+          if (type === 'angle') lbl.textContent = `${liveValue}°`;
+          else if (type === 'integer') lbl.textContent = String(liveValue);
+          else lbl.textContent = liveValue.toFixed(scale < 1 ? 2 : 1);
+          const numberInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
+            .find(candidate => candidate !== el && candidate.type === 'number');
+          if (numberInput) numberInput.value = String(liveValue);
+          // Restore reset-button opacity once the user moves the slider.
+          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          if (resetBtn) resetBtn.style.opacity = '1';
+        });
+      } else if (el.type === 'number') {
+        el.addEventListener('input', () => {
+          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          const rangeInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
+            .find(candidate => candidate !== el && candidate.type === 'range');
+          if (el.value === '') {
+            if (lbl) lbl.textContent = 'Brush def.';
+            if (resetBtn) resetBtn.style.opacity = '0.35';
+            return;
+          }
+          const numericValue = type === 'integer'
+            ? clampToInputBounds(el, Math.round(+el.value), 1)
+            : clampToInputBounds(el, +el.value);
+          if (lbl) {
+            if (type === 'angle') lbl.textContent = `${Math.round(numericValue)}°`;
+            else if (type === 'integer') lbl.textContent = String(numericValue);
+            else lbl.textContent = numericValue.toFixed(scale < 1 ? 2 : 1);
+          }
+          if (rangeInput) rangeInput.value = type === 'angle' ? String(Math.round(numericValue)) : String(scale ? numericValue / scale : numericValue);
+          if (resetBtn) resetBtn.style.opacity = '1';
+        });
+      }
 
       // Commit on change + trigger re-render.
       const applyField = () => {
