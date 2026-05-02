@@ -57,6 +57,8 @@ const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
+// Base rate for path-guide playback. 1.0 cycle means traversing the full path
+// once (or there-and-back once for open paths).
 const DEFAULT_PATH_CYCLES_PER_SECOND = 0.12;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
@@ -2456,10 +2458,19 @@ export class App {
       const activePaths = (data?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
       if (activePaths.length) {
         this.simulation.pathProgress += (elapsed / 1000) * DEFAULT_PATH_CYCLES_PER_SECOND * p.simPathSpeed * p.simSpeed;
-        const target = this._getAnimatedSimulationPathTarget(activePaths[0], p);
-        if (target) {
-          this.leaderX = target.x;
-          this.leaderY = target.y;
+        if (this.simulation.pathProgress >= 1000) this.simulation.pathProgress %= 1000;
+        const targets = activePaths
+          .map(pathItem => this._getAnimatedSimulationPathTarget(pathItem, p))
+          .filter(Boolean);
+        if (targets.length) {
+          let sx = 0;
+          let sy = 0;
+          for (const target of targets) {
+            sx += target.x;
+            sy += target.y;
+          }
+          this.leaderX = sx / targets.length;
+          this.leaderY = sy / targets.length;
           return;
         }
       }
@@ -4791,6 +4802,7 @@ export class App {
       }
       controls._simulation = {
         enabled: this.simulation.enabled,
+        inspectorCollapsed: this.simulation.inspectorCollapsed,
         editorTool: this.simulation.editorTool,
         brushData: this.simulation.brushData,
         nextId: this.simulation.nextId,
@@ -4850,6 +4862,7 @@ export class App {
           if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
           if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
           this.simulation.enabled = !!val?.enabled;
+          this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
           // Restore scene-level variable overrides (seek etc.) persisted from last use.
           // Keep the default seek value if no value was saved (first ever session).
           if (val?.vars && typeof val.vars === 'object') {
