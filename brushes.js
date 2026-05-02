@@ -276,6 +276,12 @@ function _applySimulationGuides(brush, p, read) {
   const data = sim.brushData[app.activeBrush];
   if (!data) return;
   const { buffer, count, stride } = read;
+  const animatedPathTargets = app.activeBrush === 'boid'
+    ? (data.paths || [])
+        .filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
+        .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
+        .filter(Boolean)
+    : [];
 
   for (let i = 0; i < count; i++) {
     const base = i * stride;
@@ -303,38 +309,16 @@ function _applySimulationGuides(brush, p, read) {
       vy += (dy / d) * push;
     }
 
-    if (app.activeBrush === 'boid' && data.paths?.length) {
+    if (animatedPathTargets.length) {
       let sumX = 0;
       let sumY = 0;
-      for (const pathItem of data.paths) {
-        if (pathItem.enabled === false || !pathItem.points?.length) continue;
-        const config = app._resolveSimulationPathConfig(pathItem, p);
-        let closest = null;
-        let closestDistance = Infinity;
-        const pts = pathItem.points;
-        for (let j = 1; j < pts.length; j++) {
-          const candidate = _closestPointOnSegment(x, y, pts[j - 1].x, pts[j - 1].y, pts[j].x, pts[j].y);
-          const candidateDistance = Math.hypot(candidate.x - x, candidate.y - y);
-          if (candidateDistance < closestDistance) {
-            closest = candidate;
-            closestDistance = candidateDistance;
-          }
-        }
-        if (config.closed && pts.length > 2) {
-          const candidate = _closestPointOnSegment(x, y, pts[pts.length - 1].x, pts[pts.length - 1].y, pts[0].x, pts[0].y);
-          const candidateDistance = Math.hypot(candidate.x - x, candidate.y - y);
-          if (candidateDistance < closestDistance) {
-            closest = candidate;
-            closestDistance = candidateDistance;
-          }
-        }
-        if (!closest) continue;
-        const dx = closest.x - x;
-        const dy = closest.y - y;
+      for (const target of animatedPathTargets) {
+        const dx = target.x - x;
+        const dy = target.y - y;
         const d = Math.hypot(dx, dy);
-        if (d <= 0.0001 || d > config.radius) continue;
-        const falloff = 1 - d / config.radius;
-        const push = config.strength * p.simSpeed * falloff;
+        if (d <= 0.0001 || d > target.config.radius) continue;
+        const falloff = 1 - d / target.config.radius;
+        const push = target.config.strength * p.simSpeed * falloff;
         sumX += (dx / d) * push;
         sumY += (dy / d) * push;
       }

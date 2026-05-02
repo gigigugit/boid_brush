@@ -57,6 +57,7 @@ const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
+const DEFAULT_PATH_CYCLES_PER_SECOND = 0.12;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const PERF_TELEMETRY_KEY = 'bb_perfTelemetry';
@@ -119,6 +120,54 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
   const x = ax + dx * t;
   const y = ay + dy * t;
   return { x, y, distance: Math.hypot(px - x, py - y) };
+}
+
+function _samplePolylinePoint(points, progress, closed = false) {
+  if (!Array.isArray(points) || points.length === 0) return null;
+  if (points.length === 1) return { x: points[0].x, y: points[0].y };
+  const segments = [];
+  let totalLength = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length <= 1e-6) continue;
+    segments.push({ a, b, length });
+    totalLength += length;
+  }
+  if (closed && points.length > 2) {
+    const a = points[points.length - 1];
+    const b = points[0];
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length > 1e-6) {
+      segments.push({ a, b, length });
+      totalLength += length;
+    }
+  }
+  if (!segments.length || totalLength <= 1e-6) return { x: points[0].x, y: points[0].y };
+
+  let distance;
+  if (closed) {
+    distance = _wrapIndex(progress, 1) * totalLength;
+  } else {
+    const pingPong = _wrapIndex(progress, 2);
+    const t = pingPong <= 1 ? pingPong : 2 - pingPong;
+    distance = t * totalLength;
+  }
+
+  for (const segment of segments) {
+    if (distance <= segment.length) {
+      const t = segment.length <= 1e-6 ? 0 : distance / segment.length;
+      return {
+        x: _lerp(segment.a.x, segment.b.x, t),
+        y: _lerp(segment.a.y, segment.b.y, t),
+      };
+    }
+    distance -= segment.length;
+  }
+
+  const last = segments[segments.length - 1];
+  return { x: last.b.x, y: last.b.y };
 }
 
 function _capitalizeTextureChannel(name) {
@@ -277,6 +326,7 @@ export class App {
       enabled: false,
       running: false,
       paused: false,
+      inspectorCollapsed: false,
       editorTool: 'spawn',
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
@@ -1608,6 +1658,13 @@ export class App {
     };
   }
 
+  _getAnimatedSimulationPathTarget(pathItem, p = this.getP()) {
+    if (!pathItem?.points?.length) return null;
+    const config = this._resolveSimulationPathConfig(pathItem, p);
+    const point = _samplePolylinePoint(pathItem.points, this.simulation.pathProgress, config.closed);
+    return point ? { x: point.x, y: point.y, config, pathItem } : null;
+  }
+
   _resolveSimulationEdgeConfig(edge, p = this.getP()) {
     return {
       strength: Number.isFinite(edge?.strength) ? Math.max(0, edge.strength) : p.simEdgeForce,
@@ -1765,7 +1822,7 @@ export class App {
   _renderSimulationInspector() {
     const panel = document.getElementById('simOverlaySidebar');
     if (!panel) return;
-    const open = this.simulation.enabled && this._isMotionBrush();
+    const open = this.simulation.enabled && this._isMotionBrush() && !this.simulation.inspectorCollapsed;
     panel.classList.toggle('open', open);
     if (!open) {
       panel.innerHTML = '';
@@ -1814,6 +1871,7 @@ export class App {
           <div class="sim-inspector-subtitle">${isBoid ? 'Boid' : 'Ant'} simulation overrides live here.</div>
         </div>
         <div class="sim-inspector-actions">
+          <button data-sim-collapse="1">Collapse</button>
           ${clearSelectionBtn}
           <button data-sim-help="1">Help Pop-up</button>
         </div>
@@ -1928,7 +1986,7 @@ export class App {
         rows += `
           <div class="sim-inspector-group">
             <h3>Path Attraction</h3>
-            <div class="sim-inspector-note">All enabled boid paths attract simultaneously and are vector-summed together.</div>
+            <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Strength and radius apply to that moving guide point.</div>
             ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
             ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
             <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
@@ -1963,6 +2021,10 @@ export class App {
           id: +btn.dataset.simId,
         });
       });
+    });
+    panel.querySelector('[data-sim-collapse]')?.addEventListener('click', () => {
+      this.simulation.inspectorCollapsed = true;
+      this._syncSimulationUI();
     });
     panel.querySelector('[data-sim-help]')?.addEventListener('click', () => this._openSimulationHelp());
     panel.querySelector('[data-sim-clear-selection]')?.addEventListener('click', () => this._setSimulationSelection(null));
@@ -2127,6 +2189,7 @@ export class App {
 
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
+    document.getElementById('simInspectorToggle')?.classList.toggle('active', !this.simulation.inspectorCollapsed);
     const status = document.getElementById('simStatus');
     if (status) {
       status.textContent = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
@@ -2388,6 +2451,19 @@ export class App {
 
   _updateSimulationLeader(elapsed, p) {
     const center = this._getSimulationSpawnCenter();
+    if (this.activeBrush === 'boid') {
+      const data = this._getSimulationBrushData('boid');
+      const activePaths = (data?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
+      if (activePaths.length) {
+        this.simulation.pathProgress += (elapsed / 1000) * DEFAULT_PATH_CYCLES_PER_SECOND * p.simPathSpeed * p.simSpeed;
+        const target = this._getAnimatedSimulationPathTarget(activePaths[0], p);
+        if (target) {
+          this.leaderX = target.x;
+          this.leaderY = target.y;
+          return;
+        }
+      }
+    }
     this.leaderX = center.x;
     this.leaderY = center.y;
   }
@@ -2463,6 +2539,7 @@ export class App {
       for (const pathItem of data.paths || []) {
         if (!pathItem.points?.length) continue;
         const config = this._resolveSimulationPathConfig(pathItem, p);
+        const target = this._getAnimatedSimulationPathTarget(pathItem, p);
         ctx.save();
         ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
         ctx.strokeStyle = isSelected('paths', pathItem) ? 'rgba(168,218,255,0.98)' : 'rgba(116,166,255,0.85)';
@@ -2477,6 +2554,13 @@ export class App {
         ctx.globalAlpha *= 0.16;
         ctx.lineWidth = config.radius * 2;
         ctx.stroke();
+        if (target) {
+          ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
+          ctx.fillStyle = isSelected('paths', pathItem) ? 'rgba(196,233,255,0.98)' : 'rgba(136,190,255,0.95)';
+          ctx.beginPath();
+          ctx.arc(target.x, target.y, Math.max(5, Math.min(9, config.radius * 0.2)), 0, Math.PI * 2);
+          ctx.fill();
+        }
         const anchor = this._getSimulationAnchor(pathItem);
         drawDelete(anchor.x, anchor.y);
         ctx.restore();
@@ -2755,6 +2839,10 @@ export class App {
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
+    document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
+      this.simulation.inspectorCollapsed = !this.simulation.inspectorCollapsed;
+      this._syncSimulationUI();
+    });
     document.querySelectorAll('[data-sim-tool]').forEach(el => {
       el.addEventListener('click', () => this._setSimulationTool(el.dataset.simTool));
     });

@@ -431,6 +431,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <button class="sim-pill active" id="simRunBtn">Run</button>
       <button class="sim-pill" id="simPauseBtn">Pause</button>
       <button class="sim-pill warn" id="simStopBtn">Stop</button>
+      <button class="sim-pill active" id="simInspectorToggle">Settings</button>
       <span class="sim-status" id="simStatus">Ready</span>
     </div>
   </div>
@@ -483,8 +484,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </ul>
     <h3>Boid guides</h3>
     <ul>
-      <li>Every boid path contributes an attractive field at the same time.</li>
-      <li>Boids steer by vector-summing all enabled path and point attractions.</li>
+      <li>Each enabled boid path now animates a moving attraction point along the drawn stroke.</li>
+      <li>Boids steer by vector-summing enabled moving path guides and point attractions.</li>
       <li>Per-path strength and radius let you bias one guide more than another.</li>
     </ul>
     <h3>Repulsion hardness</h3>
@@ -495,6 +496,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <h3>Inspector workflow</h3>
     <ul>
       <li>Use the floating Simulation HUD to place spawn, attract, repel, path, edge, or pheromone items.</li>
+      <li>Use the Settings button in the Simulation HUD to collapse or reopen the right-side simulation inspector.</li>
       <li>Select an item on the canvas or from the inspector list to edit it in the right-side overlay.</li>
       <li>Disable an item to keep it in the scene without deleting it.</li>
     </ul>

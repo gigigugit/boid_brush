@@ -191,7 +191,7 @@ export function buildSidebar(app) {
     <div class="section-header" data-brushes="boid" data-section="boidSimulation">Boid Sim Guides <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid">
       ${sliderRow('simPathSpeed', 'Path Speed', 5, 200, 50, v => (v/20).toFixed(1) + '×')}
-      <span class="slider-desc">Use the Path tool in Simulation mode to draw a guide stroke that boids follow while painting</span>
+      <span class="slider-desc">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint</span>
     </div>
 
     <!-- Ant Simulation -->
