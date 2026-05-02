@@ -55,6 +55,7 @@ const SIM_LINE_HIT_RADIUS = 12;
 const SIM_DELETE_HIT_RADIUS = 10;
 const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
+const MAX_SWARM_COUNT = 2000;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
 // Keep traveled distance bounded during long simulation runs; each path still
@@ -1354,7 +1355,7 @@ export class App {
       boidUntouchAction: sel('boidUntouchAction') || 'persist',
       boidUnhoverAction: sel('boidUnhoverAction') || 'persist',
       // Swarm
-      count: val('count') || 60,
+      count: Math.max(1, Math.min(MAX_SWARM_COUNT, val('count') || 60)),
       // Forces
       seek: val('seek') / 100,
       cohesion: val('cohesion') / 100,
@@ -1567,7 +1568,7 @@ export class App {
         x: Number.isFinite(spawn?.x) ? spawn.x : this.W * 0.5,
         y: Number.isFinite(spawn?.y) ? spawn.y : this.H * 0.5,
         enabled: spawn?.enabled !== false,
-        count: Number.isFinite(spawn?.count) ? Math.max(1, Math.round(spawn.count)) : undefined,
+        count: Number.isFinite(spawn?.count) ? Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(spawn.count))) : undefined,
         shape: SIM_SPAWN_SHAPES.includes(spawn?.shape) ? spawn.shape : undefined,
         radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : undefined,
         angle: Number.isFinite(spawn?.angle) ? spawn.angle : undefined,
@@ -1641,7 +1642,7 @@ export class App {
 
   _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
     return {
-      count: Number.isFinite(spawn?.count) ? Math.max(1, Math.round(spawn.count)) : p.count,
+      count: Number.isFinite(spawn?.count) ? Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(spawn.count))) : p.count,
       shape: spawn?.shape || p.spawnShape,
       radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : p.spawnRadius,
       angle: Number.isFinite(spawn?.angle) ? spawn.angle : p.spawnAngle,
@@ -1938,7 +1939,7 @@ export class App {
       // Helper: render a slider row for a numeric override field.
       // Slider value = stored value / scale  (e.g. scale=0.01 → slider 0-200 maps to stored 0-2.0).
       // When the field is not set on target, shows "Brush def." and places thumb at midpoint.
-      const simSlider = (field, type, label, min, max, step, scale) => {
+      const simSlider = (field, type, label, min, max, step, scale, showNumberInput = false) => {
         const raw = target[field];
         const isSet = Number.isFinite(raw);
         let sliderVal;
@@ -1959,6 +1960,9 @@ export class App {
           : 'Brush def.';
         const unset = isSet ? '' : ' data-sim-unset="1"';
         const resetOpacity = isSet ? '' : ' style="opacity:0.35"';
+        const inputVal = isSet
+          ? (type === 'angle' ? Math.round(_formatAngleDegrees(raw)) : (type === 'integer' ? Math.round(raw) : raw))
+          : '';
         return `<div class="sim-slider-row">
           <div class="sim-slider-header">
             <span class="sim-slider-label">${label}</span>
@@ -1967,8 +1971,14 @@ export class App {
               <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
             </div>
           </div>
-          <input type="range" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
-                 data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>
+          <div class="sim-slider-controls">
+            <input type="range" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
+                   data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>
+            ${showNumberInput
+              ? `<input type="number" min="${min}" max="${max}" step="${step}" value="${inputVal}" placeholder="Brush def."
+                   data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>`
+              : ''}
+          </div>
         </div>`;
       };
 
@@ -1990,7 +2000,7 @@ export class App {
           <div class="sim-inspector-group">
             <h3>Spawn Overrides</h3>
             <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-            ${simSlider('count', 'integer', 'Count', 1, 200, 1, 1)}
+            ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
             <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
               <option value="">Brush default</option>
               ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
@@ -2077,29 +2087,34 @@ export class App {
           else target[field] = el.value;
         } else if (el.type === 'range') {
           const minVal = el.min !== '' ? +el.min : 1;
-          if (type === 'integer') {
-            target[field] = Math.max(minVal, Math.round(+el.value * scale));
-          } else if (type === 'angle') {
-            target[field] = _parseAngleDegrees(el.value);
-          } else {
-            target[field] = +el.value * scale;
-          }
-        } else if (el.value === '') {
-          delete target[field];
-        } else if (type === 'integer') {
-          target[field] = Math.max(1, Math.round(+el.value));
-        } else if (type === 'angle') {
-          target[field] = _parseAngleDegrees(el.value);
-        } else {
-          target[field] = +el.value;
-        }
-        return true;
-      };
+           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
+           if (type === 'integer') {
+             target[field] = Math.max(minVal, Math.min(maxVal, Math.round(+el.value * scale)));
+           } else if (type === 'angle') {
+             target[field] = _parseAngleDegrees(el.value);
+           } else {
+             target[field] = Math.max(minVal, Math.min(maxVal, +el.value * scale));
+           }
+         } else if (el.value === '') {
+           delete target[field];
+         } else if (type === 'integer') {
+           const minVal = el.min !== '' ? +el.min : 1;
+           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
+           target[field] = Math.max(minVal, Math.min(maxVal, Math.round(+el.value)));
+         } else if (type === 'angle') {
+           target[field] = _parseAngleDegrees(el.value);
+         } else {
+           const minVal = el.min !== '' ? +el.min : Number.NEGATIVE_INFINITY;
+           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
+           target[field] = Math.max(minVal, Math.min(maxVal, +el.value));
+         }
+         return true;
+       };
 
       // Live label update for range sliders (no re-render while dragging).
-      if (el.type === 'range') {
-        el.addEventListener('input', () => {
-          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+       if (el.type === 'range') {
+         el.addEventListener('input', () => {
+           const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
           if (!lbl) return;
           if (type === 'angle') {
             lbl.textContent = Math.round(+el.value) + '°';
@@ -2107,12 +2122,39 @@ export class App {
             lbl.textContent = String(Math.max(+el.min || 0, Math.round(+el.value * scale)));
           } else {
             lbl.textContent = (+el.value * scale).toFixed(scale < 1 ? 2 : 1);
-          }
-          // Restore reset-button opacity once the user moves the slider.
-          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
-          if (resetBtn) resetBtn.style.opacity = '1';
-        });
-      }
+           }
+           const numberInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
+             .find(candidate => candidate !== el && candidate.type === 'number');
+           if (numberInput) numberInput.value = type === 'angle' ? String(Math.round(+el.value)) : String(type === 'integer' ? Math.max(+el.min || 0, Math.round(+el.value * scale)) : (+el.value * scale));
+           // Restore reset-button opacity once the user moves the slider.
+           const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+           if (resetBtn) resetBtn.style.opacity = '1';
+         });
+       } else if (el.type === 'number') {
+         el.addEventListener('input', () => {
+           const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+           const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+           const rangeInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
+             .find(candidate => candidate !== el && candidate.type === 'range');
+           if (el.value === '') {
+             if (lbl) lbl.textContent = 'Brush def.';
+             if (resetBtn) resetBtn.style.opacity = '0.35';
+             return;
+           }
+           const minVal = el.min !== '' ? +el.min : (type === 'integer' ? 1 : Number.NEGATIVE_INFINITY);
+           const maxVal = el.max !== '' ? +el.max : Number.POSITIVE_INFINITY;
+           const numericValue = type === 'integer'
+             ? Math.max(minVal, Math.min(maxVal, Math.round(+el.value)))
+             : Math.max(minVal, Math.min(maxVal, +el.value));
+           if (lbl) {
+             if (type === 'angle') lbl.textContent = `${Math.round(numericValue)}°`;
+             else if (type === 'integer') lbl.textContent = String(numericValue);
+             else lbl.textContent = numericValue.toFixed(scale < 1 ? 2 : 1);
+           }
+           if (rangeInput) rangeInput.value = type === 'angle' ? String(Math.round(numericValue)) : String(scale ? numericValue / scale : numericValue);
+           if (resetBtn) resetBtn.style.opacity = '1';
+         });
+       }
 
       // Commit on change + trigger re-render.
       const applyField = () => {

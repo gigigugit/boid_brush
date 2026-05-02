@@ -4,6 +4,7 @@
 
 const PRESETS_KEY = 'bb_presets_v1';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
+const MAX_SWARM_COUNT = 2000;
 const NUDGE_BUTTON_STYLE = 'width:20px;height:20px;padding:0;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#ddd;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;';
 
 // ── Multiplier selector constants ───────────────────────────
@@ -138,7 +139,7 @@ export function buildSidebar(app) {
     <!-- Swarm (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
-      ${sliderRow('count', 'Count', 3, 200, 60)}
+      ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
     </div>
 
     <!-- Forces (boid + ant) -->
