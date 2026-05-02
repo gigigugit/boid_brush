@@ -1879,6 +1879,7 @@ export class App {
         </div>
         <div class="sim-inspector-actions">
           <button data-sim-collapse="1">Collapse</button>
+          <button data-sim-clear-canvas="1">Clear Canvas</button>
           ${clearSelectionBtn}
           <button data-sim-help="1">Help Pop-up</button>
         </div>
@@ -2033,6 +2034,7 @@ export class App {
       this.simulation.inspectorCollapsed = true;
       this._syncSimulationUI();
     });
+    panel.querySelector('[data-sim-clear-canvas]')?.addEventListener('click', () => this.clearActiveLayer());
     panel.querySelector('[data-sim-help]')?.addEventListener('click', () => this._openSimulationHelp());
     panel.querySelector('[data-sim-clear-selection]')?.addEventListener('click', () => this._setSimulationSelection(null));
     panel.querySelector('[data-sim-duplicate]')?.addEventListener('click', () => this._duplicateSelectedSimulationItem());
