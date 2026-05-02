@@ -57,6 +57,8 @@ const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
+// Keep traveled distance bounded during long simulation runs; each path still
+// wraps or ping-pongs against its own actual length when sampled.
 const PATH_DISTANCE_WRAP_THRESHOLD = 1000000;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
@@ -122,6 +124,10 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
   return { x, y, distance: Math.hypot(px - x, py - y) };
 }
 
+/**
+ * Sample a point along a polyline using an absolute traveled distance.
+ * Closed paths wrap continuously; open paths ping-pong forward and backward.
+ */
 function _samplePolylinePoint(points, distanceAlongPath, closed = false) {
   const validPoints = Array.isArray(points)
     ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
