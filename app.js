@@ -2174,12 +2174,18 @@ export class App {
     if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
+    const handle = document.getElementById('simOverlayHandle');
     const isMotion = this._isMotionBrush();
     if (btn) {
       btn.style.display = isMotion ? '' : 'none';
       btn.classList.toggle('active', !!this.simulation.enabled);
     }
     if (hud) hud.classList.toggle('open', !!this.simulation.enabled && isMotion);
+    if (handle) {
+      const showHandle = !!this.simulation.enabled && isMotion && this.simulation.inspectorCollapsed;
+      handle.classList.toggle('open', showHandle);
+      handle.setAttribute('aria-expanded', showHandle ? 'false' : 'true');
+    }
 
     const toolRow = document.getElementById('simToolRow');
     if (toolRow) {
@@ -2859,6 +2865,10 @@ export class App {
     document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
     document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
       this.simulation.inspectorCollapsed = !this.simulation.inspectorCollapsed;
+      this._syncSimulationUI();
+    });
+    document.getElementById('simOverlayHandle')?.addEventListener('click', () => {
+      this.simulation.inspectorCollapsed = false;
       this._syncSimulationUI();
     });
     document.querySelectorAll('[data-sim-tool]').forEach(el => {

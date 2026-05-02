@@ -222,6 +222,9 @@ html,body{overflow:hidden;width:100%;height:100%;
 /* Simulation inspector overlay */
 #simOverlaySidebar{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:min(320px,92vw);background:rgba(12,15,22,0.96);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:22;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;font-size:11px;transform:translateX(100%);transition:transform 220ms ease;box-shadow:var(--shadow-lg);}
 #simOverlaySidebar.open{transform:translateX(0);}
+#simOverlayHandle{position:fixed;top:calc(var(--topbar-h) + 84px);right:0;z-index:21;display:none;align-items:center;justify-content:center;writing-mode:vertical-rl;transform:translateX(100%);padding:10px 7px;border:1px solid var(--line-0);border-right:none;border-radius:12px 0 0 12px;background:rgba(12,15,22,0.94);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);color:#dfe7f8;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:transform 220ms ease,background 140ms ease,color 140ms ease;}
+#simOverlayHandle.open{display:flex;transform:translateX(0);}
+#simOverlayHandle:hover{background:rgba(255,255,255,0.12);color:#fff;}
 #simOverlaySidebar::-webkit-scrollbar{width:5px;}
 #simOverlaySidebar::-webkit-scrollbar-track{background:transparent;}
 #simOverlaySidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
@@ -465,6 +468,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Simulation Overlay Sidebar ══════════ -->
 <div id="simOverlaySidebar"></div>
+<button id="simOverlayHandle" type="button" aria-controls="simOverlaySidebar" aria-expanded="false">Simulation</button>
 
 <!-- ══════════ Ant Math Overlay Panel ══════════ -->
 <div id="antMathPanel"></div>
