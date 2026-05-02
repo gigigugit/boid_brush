@@ -1845,10 +1845,17 @@ export class App {
     if (this.simulation.selected && !selected) this.simulation.selected = null;
     const p = this.getP();
     const isBoid = this.activeBrush === 'boid';
+    const pointItems = data.points || [];
+    const attractPoints = [];
+    const repelPoints = [];
+    for (const point of pointItems) {
+      if (point?.type === 'repel') repelPoints.push(point);
+      else attractPoints.push(point);
+    }
     const groups = [
       { collection: 'spawns', kind: 'spawn', label: 'Spawn', items: data.spawns || [] },
-      { collection: 'points', kind: 'point', label: 'Attract Point', items: (data.points || []).filter(point => point?.type !== 'repel') },
-      { collection: 'points', kind: 'point', label: 'Repel Point', items: (data.points || []).filter(point => point?.type === 'repel') },
+      { collection: 'points', kind: 'point', label: 'Attract Point', items: attractPoints },
+      { collection: 'points', kind: 'point', label: 'Repel Point', items: repelPoints },
       ...(isBoid ? [{ collection: 'paths', kind: 'path', label: 'Path Guide', items: data.paths || [] }] : []),
       ...(!isBoid ? [{ collection: 'edges', kind: 'edge', label: 'Edge Barrier', items: data.edges || [] }] : []),
       ...(!isBoid ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone Trail', items: data.pheromonePaths || [] }] : []),
