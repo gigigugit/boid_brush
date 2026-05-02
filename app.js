@@ -57,11 +57,7 @@ const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
-// Default base rate for path-guide playback before the simPathSpeed and simSpeed
-// multipliers are applied. One cycle means traversing the full path once for
-// closed paths, or one full forward-and-reverse ping-pong for open paths.
-const DEFAULT_PATH_CYCLES_PER_SECOND = 0.12;
-const PATH_PROGRESS_WRAP_THRESHOLD = 1000;
+const PATH_DISTANCE_WRAP_THRESHOLD = 1000000;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const PERF_TELEMETRY_KEY = 'bb_perfTelemetry';
@@ -126,7 +122,7 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
   return { x, y, distance: Math.hypot(px - x, py - y) };
 }
 
-function _samplePolylinePoint(points, progress, closed = false) {
+function _samplePolylinePoint(points, distanceAlongPath, closed = false) {
   const validPoints = Array.isArray(points)
     ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
     : [];
@@ -155,11 +151,10 @@ function _samplePolylinePoint(points, progress, closed = false) {
 
   let distance;
   if (closed) {
-    distance = _wrapIndex(progress, 1) * totalLength;
+    distance = _wrapIndex(distanceAlongPath, totalLength);
   } else {
-    const pingPong = _wrapIndex(progress, 2);
-    const t = pingPong <= 1 ? pingPong : 2 - pingPong;
-    distance = t * totalLength;
+    const pingPongDistance = _wrapIndex(distanceAlongPath, totalLength * 2);
+    distance = pingPongDistance <= totalLength ? pingPongDistance : (totalLength * 2) - pingPongDistance;
   }
 
   for (const segment of segments) {
@@ -348,7 +343,6 @@ export class App {
       dragTarget: null,
       selected: null,
       pathDistance: 0,
-      pathProgress: 0,
       nextId: 1,
     };
 
@@ -1517,7 +1511,7 @@ export class App {
       simSpeed: (val('simSpeed') || 100) / 100,
       simPointStrength: (val('simPointStrength') || 0) / 100,
       simPointRadius: val('simPointRadius') || 120,
-      simPathSpeed: (val('simPathSpeed') || 50) / 20,
+      simPathSpeed: val('simPathSpeed') || 120,
       simEdgeForce: (val('simEdgeForce') || 100) / 100,
       simEdgeRadius: val('simEdgeRadius') || 28,
       simPheroPaintRadius: val('simPheroPaintRadius') || 18,
@@ -1668,7 +1662,7 @@ export class App {
   _getAnimatedSimulationPathTarget(pathItem, p = this.getP()) {
     if (!pathItem?.points?.length) return null;
     const config = this._resolveSimulationPathConfig(pathItem, p);
-    const point = _samplePolylinePoint(pathItem.points, this.simulation.pathProgress, config.closed);
+    const point = _samplePolylinePoint(pathItem.points, this.simulation.pathDistance, config.closed);
     return point ? { x: point.x, y: point.y, config, pathItem } : null;
   }
 
@@ -2240,7 +2234,7 @@ export class App {
     this.stopSimulation(false);
     this.simulation.running = true;
     this.simulation.paused = false;
-    this.simulation.pathProgress = 0;
+    this.simulation.pathDistance = 0;
     const center = this._getSimulationSpawnCenter();
     this.leaderX = center.x;
     this.leaderY = center.y;
@@ -2488,9 +2482,9 @@ export class App {
       const data = this._getSimulationBrushData('boid');
       const activePaths = (data?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
       if (activePaths.length) {
-        this.simulation.pathProgress += (elapsed / 1000) * DEFAULT_PATH_CYCLES_PER_SECOND * p.simPathSpeed * p.simSpeed;
-        if (this.simulation.pathProgress >= PATH_PROGRESS_WRAP_THRESHOLD) {
-          this.simulation.pathProgress %= PATH_PROGRESS_WRAP_THRESHOLD;
+        this.simulation.pathDistance += (elapsed / 1000) * p.simPathSpeed * p.simSpeed;
+        if (this.simulation.pathDistance >= PATH_DISTANCE_WRAP_THRESHOLD) {
+          this.simulation.pathDistance %= PATH_DISTANCE_WRAP_THRESHOLD;
         }
         const targets = activePaths
           .map(pathItem => this._getAnimatedSimulationPathTarget(pathItem, p))

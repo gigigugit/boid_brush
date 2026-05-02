@@ -190,7 +190,7 @@ export function buildSidebar(app) {
     <!-- Boid Simulation -->
     <div class="section-header" data-brushes="boid" data-section="boidSimulation">Boid Sim Guides <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid">
-      ${sliderRow('simPathSpeed', 'Path Speed', 1, 200, 50, v => (v/20).toFixed(2) + '×', 'How quickly animated path guides move along each path')}
+      ${sliderRow('simPathSpeed', 'Path Speed', 1, 200, 120, v => `${v}px/s`, 'How many pixels per second animated path guides travel, regardless of path length')}
       <span class="slider-desc">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint</span>
     </div>
 
@@ -1284,7 +1284,7 @@ const _sliderFormats = {
   antPheromoneDecay: v => (v / 1000).toFixed(3),
   simSpeed: v => (v / 100).toFixed(1) + '×',
   simPointStrength: v => (v / 100).toFixed(2),
-  simPathSpeed: v => (v / 20).toFixed(2) + '×',
+  simPathSpeed: v => `${v}px/s`,
   simEdgeForce: v => (v / 100).toFixed(2),
   simPheroPaintStrength: v => (v / 100).toFixed(2),
 };
