@@ -57,8 +57,9 @@ const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
-// Base rate for path-guide playback. 1.0 cycle means traversing the full path
-// once for closed paths, or one full forward-and-reverse ping-pong for open paths.
+// Default base rate for path-guide playback before the simPathSpeed and simSpeed
+// multipliers are applied. One cycle means traversing the full path once for
+// closed paths, or one full forward-and-reverse ping-pong for open paths.
 const DEFAULT_PATH_CYCLES_PER_SECOND = 0.12;
 const PATH_PROGRESS_WRAP_THRESHOLD = 1000;
 const DEFAULT_SIM_SEEK = 0;
