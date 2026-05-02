@@ -58,8 +58,9 @@ const MAX_SIM_HARDNESS = 10;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
 // Base rate for path-guide playback. 1.0 cycle means traversing the full path
-// once (or there-and-back once for open paths).
+// once for closed paths, or one full forward-and-reverse ping-pong for open paths.
 const DEFAULT_PATH_CYCLES_PER_SECOND = 0.12;
+const PATH_PROGRESS_WRAP_THRESHOLD = 1000;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const PERF_TELEMETRY_KEY = 'bb_perfTelemetry';
@@ -125,28 +126,31 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
 }
 
 function _samplePolylinePoint(points, progress, closed = false) {
-  if (!Array.isArray(points) || points.length === 0) return null;
-  if (points.length === 1) return { x: points[0].x, y: points[0].y };
+  const validPoints = Array.isArray(points)
+    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+    : [];
+  if (validPoints.length === 0) return null;
+  if (validPoints.length === 1) return { x: validPoints[0].x, y: validPoints[0].y };
   const segments = [];
   let totalLength = 0;
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
+  for (let i = 1; i < validPoints.length; i++) {
+    const a = validPoints[i - 1];
+    const b = validPoints[i];
     const length = Math.hypot(b.x - a.x, b.y - a.y);
     if (length <= 1e-6) continue;
     segments.push({ a, b, length });
     totalLength += length;
   }
-  if (closed && points.length > 2) {
-    const a = points[points.length - 1];
-    const b = points[0];
+  if (closed && validPoints.length > 2) {
+    const a = validPoints[validPoints.length - 1];
+    const b = validPoints[0];
     const length = Math.hypot(b.x - a.x, b.y - a.y);
     if (length > 1e-6) {
       segments.push({ a, b, length });
       totalLength += length;
     }
   }
-  if (!segments.length || totalLength <= 1e-6) return { x: points[0].x, y: points[0].y };
+  if (!segments.length || totalLength <= 1e-6) return { x: validPoints[0].x, y: validPoints[0].y };
 
   let distance;
   if (closed) {
@@ -2458,7 +2462,9 @@ export class App {
       const activePaths = (data?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
       if (activePaths.length) {
         this.simulation.pathProgress += (elapsed / 1000) * DEFAULT_PATH_CYCLES_PER_SECOND * p.simPathSpeed * p.simSpeed;
-        if (this.simulation.pathProgress >= 1000) this.simulation.pathProgress %= 1000;
+        if (this.simulation.pathProgress >= PATH_PROGRESS_WRAP_THRESHOLD) {
+          this.simulation.pathProgress %= PATH_PROGRESS_WRAP_THRESHOLD;
+        }
         const targets = activePaths
           .map(pathItem => this._getAnimatedSimulationPathTarget(pathItem, p))
           .filter(Boolean);
