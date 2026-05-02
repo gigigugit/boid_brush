@@ -1847,20 +1847,31 @@ export class App {
     const isBoid = this.activeBrush === 'boid';
     const groups = [
       { collection: 'spawns', kind: 'spawn', label: 'Spawn', items: data.spawns || [] },
-      { collection: 'points', kind: 'point', label: 'Force', items: data.points || [] },
-      ...(isBoid ? [{ collection: 'paths', kind: 'path', label: 'Path', items: data.paths || [] }] : []),
-      ...(!isBoid ? [{ collection: 'edges', kind: 'edge', label: 'Edge', items: data.edges || [] }] : []),
-      ...(!isBoid ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone', items: data.pheromonePaths || [] }] : []),
+      { collection: 'points', kind: 'point', label: 'Attract Point', items: (data.points || []).filter(point => point?.type !== 'repel') },
+      { collection: 'points', kind: 'point', label: 'Repel Point', items: (data.points || []).filter(point => point?.type === 'repel') },
+      ...(isBoid ? [{ collection: 'paths', kind: 'path', label: 'Path Guide', items: data.paths || [] }] : []),
+      ...(!isBoid ? [{ collection: 'edges', kind: 'edge', label: 'Edge Barrier', items: data.edges || [] }] : []),
+      ...(!isBoid ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone Trail', items: data.pheromonePaths || [] }] : []),
     ];
+    const describeSimulationItem = (group, item, idx) => {
+      const parts = [`${group.label} ${idx + 1}`];
+      if (group.kind === 'spawn') {
+        if (item.shape) parts.push(item.shape);
+      } else if (group.kind === 'path') {
+        parts.push(item.closed ? 'Closed' : 'Open');
+      }
+      if (item.enabled === false) parts.push('Off');
+      return parts.join(' · ');
+    };
     const summaryButtons = groups.map(group => {
       if (!group.items.length) return '';
       return `<div class="sim-inspector-group"><h3>${_escapeHtml(group.label)}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
         <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
-          ${_escapeHtml(group.label)} ${idx + 1}${item.enabled === false ? ' · Off' : ''}${item.type ? ` · ${item.type}` : ''}
+          ${_escapeHtml(describeSimulationItem(group, item, idx))}
         </button>`).join('')}</div></div>`;
     }).join('');
 
-    const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Scene</button>' : '';
+    const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Clear Selection</button>' : '';
 
     const seekPct = Math.round((Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK) * 100);
     const savedSessionsList = this.simulation.sessions.length
@@ -1881,7 +1892,7 @@ export class App {
           <button data-sim-collapse="1">Collapse</button>
           <button data-sim-clear-canvas="1">Clear Canvas</button>
           ${clearSelectionBtn}
-          <button data-sim-help="1">Help Pop-up</button>
+          <button data-sim-help="1">Help</button>
         </div>
       </div>
       <div class="sim-inspector-group">
@@ -1910,7 +1921,7 @@ export class App {
       inspector += `
         <div class="sim-inspector-group">
           <h3>No Selection</h3>
-          <div class="sim-inspector-note">Select a spawn, attract point, repel point, ${isBoid ? 'path' : 'edge, or pheromone path'} on the canvas or from the lists above to edit its per-item overrides.</div>
+          <div class="sim-inspector-note">Select a spawn, ${isBoid ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>
         </div>
       `;
     } else {
