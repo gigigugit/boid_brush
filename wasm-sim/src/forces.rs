@@ -12,6 +12,9 @@ use crate::noise::SimplexNoise;
 use crate::params::SimParams;
 use core::f32::consts::PI;
 
+#[cfg(feature = "spatial-hash")]
+use crate::spatial::SpatialGrid;
+
 // ---- Seek: steer toward target at max speed ----
 #[inline]
 pub fn seek(buf: &mut [f32], base: usize, tx: f32, ty: f32, weight: f32, max_speed: f32) {
@@ -105,6 +108,10 @@ pub fn in_fov(buf: &[f32], base: usize, ox: f32, oy: f32, fov_rad: f32) -> bool 
 
 // ---- Neighbor forces (cohesion + separation + alignment) ----
 // Applied all at once during the neighbor scan to avoid iterating twice.
+//
+// This is the fallback O(n²) all-pairs implementation. It is used when the
+// `spatial-hash` feature is disabled, and is retained for testing/comparison.
+#[cfg(any(not(feature = "spatial-hash"), test))]
 pub fn apply_neighbor_forces(
     buf: &mut [f32],
     agent_count: usize,
@@ -181,6 +188,118 @@ pub fn apply_neighbor_forces(
         if cc > 0 && p.cohesion > 0.0 {
             let gx = cx / cc as f32;
             let gy = cy / cc as f32;
+            let agent_coh = p.cohesion * buf[bi + COH_M];
+            seek(buf, bi, gx, gy, agent_coh, ms);
+        }
+
+        // Alignment: match average neighbor velocity
+        if ac > 0 && p.alignment > 0.0 {
+            let avg_vx = avx / ac as f32;
+            let avg_vy = avy / ac as f32;
+            buf[bi + AX] += (avg_vx - buf[bi + VX]) * p.alignment;
+            buf[bi + AY] += (avg_vy - buf[bi + VY]) * p.alignment;
+        }
+
+        // Separation: repel from close neighbors (uses per-agent sep_m)
+        if p.separation > 0.0 {
+            let agent_sep = p.separation * buf[bi + SEP_M];
+            buf[bi + AX] += sx * agent_sep;
+            buf[bi + AY] += sy * agent_sep;
+        }
+    }
+}
+
+// ---- Neighbor forces via spatial grid — O(n·k) instead of O(n²) ----
+//
+// Requires `grid` to have been built this frame (via `SpatialGrid::build()`).
+//
+// # Why 3×3 cells is sufficient
+// The grid cell size is set to max(neighbor_radius, separation_radius). An agent
+// in a cell that is ≥2 steps away in any axis has an x- (or y-) distance of at
+// least `cell_size` from the querying agent, so its Euclidean distance ≥
+// `cell_size` ≥ max(neighbor_r, separation_r). It therefore cannot pass either
+// the `d² < nd²` (cohesion/alignment) or `d² < sd²` (separation) checks, and
+// can be skipped safely.
+//
+// For a typical boid count of n and average k agents in the 3×3 neighborhood,
+// this reduces work from O(n²) to O(n·k).
+#[cfg(feature = "spatial-hash")]
+pub fn apply_neighbor_forces_grid(
+    buf: &mut [f32],
+    agent_count: usize,
+    p: &SimParams,
+    grid: &SpatialGrid,
+) {
+    let nd2 = p.neighbor_radius * p.neighbor_radius;
+    let sd2 = p.separation_radius * p.separation_radius;
+
+    for i in 0..agent_count {
+        let bi = i * STRIDE;
+        if !has_flag(buf, bi, FLAG_ALIVE) {
+            continue;
+        }
+
+        let xi = buf[bi + X];
+        let yi = buf[bi + Y];
+        let ms = p.max_speed;
+
+        let mut cx_acc = 0.0f32;
+        let mut cy_acc = 0.0f32;
+        let mut cc = 0u32;
+        let mut sx = 0.0f32;
+        let mut sy = 0.0f32;
+        let mut avx = 0.0f32;
+        let mut avy = 0.0f32;
+        let mut ac = 0u32;
+
+        // Retrieve pre-computed grid cell for this agent (avoids redundant division).
+        // `i` is always within 0..agent_count == grid.cell_of.len(), so the call is
+        // in-bounds. Returns (-1,-1) only for dead agents, already filtered above.
+        let (cell_xi, cell_yi) = grid.agent_cell(i);
+
+        // Inspect the 3×3 cell neighborhood (±1 in each axis).
+        for ndy in -1i32..=1 {
+            for ndx in -1i32..=1 {
+                for &j_u32 in grid.cell_agents(cell_xi + ndx, cell_yi + ndy) {
+                    let j = j_u32 as usize;
+                    if j == i {
+                        continue;
+                    }
+                    let bj = j * STRIDE;
+                    let xj = buf[bj + X];
+                    let yj = buf[bj + Y];
+
+                    // FOV check: skip agents outside field of view
+                    if !in_fov(buf, bi, xj, yj, p.fov_rad) {
+                        continue;
+                    }
+
+                    let dx = xj - xi;
+                    let dy = yj - yi;
+                    let d2 = dx * dx + dy * dy;
+
+                    if d2 < nd2 {
+                        cx_acc += xj;
+                        cy_acc += yj;
+                        cc += 1;
+                        avx += buf[bj + VX];
+                        avy += buf[bj + VY];
+                        ac += 1;
+                    }
+
+                    if d2 < sd2 && d2 > 0.0 {
+                        let d = d2.sqrt();
+                        sx -= dx / d;
+                        sy -= dy / d;
+                    }
+                }
+            }
+        }
+
+        // Cohesion: seek centroid of neighbors (uses per-agent coh_m)
+        if cc > 0 && p.cohesion > 0.0 {
+            let gx = cx_acc / cc as f32;
+            let gy = cy_acc / cc as f32;
             let agent_coh = p.cohesion * buf[bi + COH_M];
             seek(buf, bi, gx, gy, agent_coh, ms);
         }

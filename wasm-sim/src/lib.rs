@@ -26,6 +26,8 @@ mod params;
 mod sensing;
 mod sim;
 mod spawn;
+#[cfg(feature = "spatial-hash")]
+mod spatial;
 
 use boid::STRIDE;
 use fluid::FluidSimulation;
@@ -478,6 +480,230 @@ mod tests {
             assert!(boid::has_flag(&sim.buf, base, boid::FLAG_ALIVE));
             assert!(!sim.buf[base + boid::X].is_nan());
             assert!(!sim.buf[base + boid::Y].is_nan());
+        }
+    }
+}
+
+// =============================================================================
+// Spatial-hash integration tests
+// =============================================================================
+
+#[cfg(all(test, feature = "spatial-hash"))]
+mod spatial_integration_tests {
+    use super::*;
+    use crate::boid;
+    use crate::spatial::SpatialGrid;
+
+    /// The spatial-grid neighbor forces must produce the same accelerations
+    /// as the naive O(n²) scan when all agents are within neighbor_radius
+    /// of each other (single tight cluster).
+    #[test]
+    fn test_grid_forces_match_naive_for_cluster() {
+        let n = 15usize;
+        let mut sim_naive = Simulation::new(800, 600, 100);
+        let mut sim_grid = Simulation::new(800, 600, 100);
+
+        // Tight cluster well within default neighbor_radius (80 px)
+        for i in 0..n {
+            let x = 400.0 + (i as f32) * 3.0;
+            let y = 300.0;
+            sim_naive.spawn_one(x, y);
+            sim_grid.spawn_one(x, y);
+        }
+
+        // Ensure both sims have identical buffer contents (same velocities/multipliers)
+        sim_grid.buf[..n * STRIDE].copy_from_slice(&sim_naive.buf[..n * STRIDE]);
+        debug_assert_eq!(
+            &sim_naive.buf[..n * STRIDE],
+            &sim_grid.buf[..n * STRIDE],
+            "Buffer copy must produce identical contents before force comparison"
+        );
+
+        let p = crate::params::SimParams::default();
+        sim_naive.params = p.clone();
+        sim_grid.params = p.clone();
+
+        // Zero accelerations (phase 1 would do this before phase 2)
+        for i in 0..n {
+            let base = i * STRIDE;
+            sim_naive.buf[base + boid::AX] = 0.0;
+            sim_naive.buf[base + boid::AY] = 0.0;
+            sim_grid.buf[base + boid::AX] = 0.0;
+            sim_grid.buf[base + boid::AY] = 0.0;
+        }
+
+        // Naive O(n²) forces
+        crate::forces::apply_neighbor_forces(
+            &mut sim_naive.buf,
+            sim_naive.agent_count,
+            &sim_naive.params,
+        );
+
+        // Spatial-grid O(n·k) forces
+        let mut grid = SpatialGrid::new(100);
+        grid.build(
+            &sim_grid.buf,
+            sim_grid.agent_count,
+            p.neighbor_radius,
+            p.separation_radius,
+            800,
+            600,
+        );
+        crate::forces::apply_neighbor_forces_grid(
+            &mut sim_grid.buf,
+            sim_grid.agent_count,
+            &sim_grid.params,
+            &grid,
+        );
+
+        // Accelerations must match to floating-point precision
+        for i in 0..n {
+            let base = i * STRIDE;
+            let ax_n = sim_naive.buf[base + boid::AX];
+            let ay_n = sim_naive.buf[base + boid::AY];
+            let ax_g = sim_grid.buf[base + boid::AX];
+            let ay_g = sim_grid.buf[base + boid::AY];
+            assert!(
+                (ax_n - ax_g).abs() < 1e-4,
+                "AX mismatch at agent {i}: naive={ax_n}, grid={ax_g}"
+            );
+            assert!(
+                (ay_n - ay_g).abs() < 1e-4,
+                "AY mismatch at agent {i}: naive={ay_n}, grid={ay_g}"
+            );
+        }
+    }
+
+    /// Agents in two clusters separated by more than neighbor_radius should
+    /// not affect each other's forces through the spatial grid.
+    #[test]
+    fn test_grid_forces_isolated_clusters() {
+        let mut sim_grid = Simulation::new(800, 600, 100);
+
+        // Cluster A: around (100, 300)
+        for i in 0..5 {
+            sim_grid.spawn_one(100.0 + i as f32 * 2.0, 300.0);
+        }
+        // Cluster B: around (700, 300) — 600 px away, far beyond neighbor_radius=80
+        for i in 0..5 {
+            sim_grid.spawn_one(700.0 + i as f32 * 2.0, 300.0);
+        }
+
+        let p = crate::params::SimParams::default(); // neighbor_radius = 80
+        sim_grid.params = p.clone();
+
+        for i in 0..sim_grid.agent_count {
+            let base = i * STRIDE;
+            sim_grid.buf[base + boid::AX] = 0.0;
+            sim_grid.buf[base + boid::AY] = 0.0;
+        }
+
+        let mut grid = SpatialGrid::new(100);
+        grid.build(
+            &sim_grid.buf,
+            sim_grid.agent_count,
+            p.neighbor_radius,
+            p.separation_radius,
+            800,
+            600,
+        );
+        crate::forces::apply_neighbor_forces_grid(
+            &mut sim_grid.buf,
+            sim_grid.agent_count,
+            &sim_grid.params,
+            &grid,
+        );
+
+        // Compare against naive to ensure the grid agrees exactly
+        let mut sim_naive = Simulation::new(800, 600, 100);
+        for i in 0..5 {
+            sim_naive.spawn_one(100.0 + i as f32 * 2.0, 300.0);
+        }
+        for i in 0..5 {
+            sim_naive.spawn_one(700.0 + i as f32 * 2.0, 300.0);
+        }
+        // Copy buffer state so multipliers are identical
+        let n = sim_naive.agent_count;
+        sim_naive.buf[..n * STRIDE].copy_from_slice(&sim_grid.buf[..n * STRIDE]);
+        sim_naive.params = p.clone();
+        for i in 0..n {
+            let base = i * STRIDE;
+            sim_naive.buf[base + boid::AX] = 0.0;
+            sim_naive.buf[base + boid::AY] = 0.0;
+        }
+        crate::forces::apply_neighbor_forces(
+            &mut sim_naive.buf,
+            sim_naive.agent_count,
+            &sim_naive.params,
+        );
+
+        for i in 0..n {
+            let base = i * STRIDE;
+            assert!(
+                (sim_naive.buf[base + boid::AX] - sim_grid.buf[base + boid::AX]).abs() < 1e-4,
+                "AX mismatch at agent {i}"
+            );
+            assert!(
+                (sim_naive.buf[base + boid::AY] - sim_grid.buf[base + boid::AY]).abs() < 1e-4,
+                "AY mismatch at agent {i}"
+            );
+        }
+    }
+
+    /// Full step() with the spatial grid enabled should not produce NaN
+    /// over many frames with various forces active.
+    #[test]
+    fn test_spatial_grid_step_no_nan() {
+        let mut sim = Simulation::new(800, 600, 200);
+        for i in 0..100 {
+            sim.spawn_one(400.0 + (i % 20) as f32 * 10.0, 300.0 + (i / 20) as f32 * 10.0);
+        }
+        sim.params = crate::params::SimParams::default();
+        sim.params.target_x = 400.0;
+        sim.params.target_y = 300.0;
+        sim.params.cohesion = 0.2;
+        sim.params.alignment = 0.3;
+        sim.params.separation = 0.4;
+
+        for _ in 0..500 {
+            sim.step(1.0 / 60.0);
+        }
+
+        for i in 0..sim.agent_count {
+            let base = i * STRIDE;
+            assert!(!sim.buf[base + boid::X].is_nan(), "x NaN at agent {i}");
+            assert!(!sim.buf[base + boid::Y].is_nan(), "y NaN at agent {i}");
+            assert!(!sim.buf[base + boid::VX].is_nan(), "vx NaN at agent {i}");
+            assert!(!sim.buf[base + boid::VY].is_nan(), "vy NaN at agent {i}");
+        }
+    }
+
+    /// Rebuild grid many times with changing radii to verify no allocation panics
+    /// and correct total-agent counts in all scenarios.
+    #[test]
+    fn test_grid_rebuild_varying_params() {
+        let mut sim = Simulation::new(1920, 1080, 500);
+        for i in 0..200 {
+            let x = (i % 40) as f32 * 48.0;
+            let y = (i / 40) as f32 * 108.0;
+            sim.spawn_one(x, y);
+        }
+
+        let mut grid = SpatialGrid::new(500);
+        let radii = [(20.0f32, 10.0f32), (80.0, 25.0), (200.0, 50.0), (5.0, 3.0)];
+
+        for (nr, sr) in &radii {
+            grid.build(&sim.buf, sim.agent_count, *nr, *sr, 1920, 1080);
+
+            let total: u32 = (0..grid.grid_w as i32)
+                .flat_map(|cx| (0..grid.grid_h as i32).map(move |cy| (cx, cy)))
+                .map(|(cx, cy)| grid.cell_agents(cx, cy).len() as u32)
+                .sum();
+            assert_eq!(
+                total,
+                sim.agent_count as u32,
+                "Total mismatch at nr={nr}, sr={sr}"
+            );
         }
     }
 }

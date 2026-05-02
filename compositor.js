@@ -18,6 +18,51 @@ const BLEND_MODE_MAP = {
   'hard-light':8,'soft-light':9,'difference':10,'exclusion':11,
   'hue':12,'saturation':13,'color':14,'luminosity':15
 };
+const DIRTY_TILE_SIZE = 256;
+
+function _tileSetToRects(tileSet, cssW, cssH) {
+  const rows = new Map();
+  for (const key of tileSet || []) {
+    const [txStr, tyStr] = key.split(',');
+    const tx = Number(txStr);
+    const ty = Number(tyStr);
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+    if (!rows.has(ty)) rows.set(ty, []);
+    rows.get(ty).push(tx);
+  }
+  const rects = [];
+  for (const [ty, xs] of rows) {
+    xs.sort((a, b) => a - b);
+    let start = xs[0];
+    let prev = xs[0];
+    for (let i = 1; i < xs.length; i++) {
+      const x = xs[i];
+      if (x === prev + 1) {
+        prev = x;
+        continue;
+      }
+      const rectX = start * DIRTY_TILE_SIZE;
+      const rectY = ty * DIRTY_TILE_SIZE;
+      rects.push({
+        x: rectX,
+        y: rectY,
+        w: Math.min(cssW, (prev + 1) * DIRTY_TILE_SIZE) - rectX,
+        h: Math.min(cssH, (ty + 1) * DIRTY_TILE_SIZE) - rectY,
+      });
+      start = x;
+      prev = x;
+    }
+    const rectX = start * DIRTY_TILE_SIZE;
+    const rectY = ty * DIRTY_TILE_SIZE;
+    rects.push({
+      x: rectX,
+      y: rectY,
+      w: Math.min(cssW, (prev + 1) * DIRTY_TILE_SIZE) - rectX,
+      h: Math.min(cssH, (ty + 1) * DIRTY_TILE_SIZE) - rectY,
+    });
+  }
+  return rects;
+}
 
 // ----- GLSL shaders -----
 
@@ -112,6 +157,9 @@ export class Compositor {
     this._vao = null;
     this._w = 0;
     this._h = 0;
+    this._frontIndex = 0;
+    this._uploadCanvas = document.createElement('canvas');
+    this._uploadCtx = this._uploadCanvas.getContext('2d', { willReadFrequently: false });
     this._initGL();
   }
 
@@ -120,11 +168,12 @@ export class Compositor {
   // ---- Public API ----
 
   /** Composite layers array (index 0 = top, last = bottom) onto display canvas. */
-  composite(layers, cssW, cssH) {
+  composite(layers, cssW, cssH, options = {}) {
+    const dirtyRects = options.forceFull ? null : this._collectDirtyRects(layers, cssW, cssH);
     if (this.ready) {
-      this._compositeGL(layers, cssW, cssH);
+      this._compositeGL(layers, cssW, cssH, dirtyRects);
     } else {
-      this._composite2D(layers, cssW, cssH);
+      this._composite2D(layers, cssW, cssH, dirtyRects);
     }
   }
 
@@ -141,6 +190,7 @@ export class Compositor {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, pw, ph, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
     gl.bindTexture(gl.TEXTURE_2D, null);
+    this._frontIndex = 0;
   }
 
   /** Read pixel at CSS coords (for eyedropper). Returns [r,g,b,a]. */
@@ -247,43 +297,174 @@ export class Compositor {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
+  _collectDirtyRects(layers, cssW, cssH) {
+    let sawDirty = false;
+    const rectMap = new Map();
+    for (const layer of layers) {
+      if (!layer.dirty || !layer.visible) continue;
+      sawDirty = true;
+      if (!layer.dirtyTiles || !layer.dirtyTiles.size) return null;
+      for (const rect of _tileSetToRects(layer.dirtyTiles, cssW, cssH)) {
+        rectMap.set(`${rect.x},${rect.y},${rect.w},${rect.h}`, rect);
+      }
+    }
+    return sawDirty ? Array.from(rectMap.values()) : [];
+  }
+
+  _cssRectToDeviceRect(rect, cssW, cssH, bufferW, bufferH) {
+    const scaleX = bufferW / cssW;
+    const scaleY = bufferH / cssH;
+    const x0 = Math.max(0, Math.floor(rect.x * scaleX));
+    const x1 = Math.min(bufferW, Math.ceil((rect.x + rect.w) * scaleX));
+    const y0 = Math.max(0, Math.floor((cssH - (rect.y + rect.h)) * scaleY));
+    const y1 = Math.min(bufferH, Math.ceil((cssH - rect.y) * scaleY));
+    return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+  }
+
+  _drawScissored(gl, rects, cssW, cssH, draw) {
+    gl.enable(gl.SCISSOR_TEST);
+    for (const rect of rects) {
+      const device = this._cssRectToDeviceRect(rect, cssW, cssH, this.canvas.width, this.canvas.height);
+      if (!device.w || !device.h) continue;
+      gl.scissor(device.x, device.y, device.w, device.h);
+      draw();
+    }
+    gl.disable(gl.SCISSOR_TEST);
+  }
+
+  _ensureLayerTexture(gl, layer) {
+    if (!layer.glTex) {
+      layer.glTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, layer.glTex);
+      this._initTex(gl);
+      layer.dirty = true;
+      layer.dirtyTiles = null;
+    }
+  }
+
+  _uploadLayerTexture(gl, layer, cssW, cssH) {
+    this._ensureLayerTexture(gl, layer);
+    if (!layer.dirty) return;
+    gl.bindTexture(gl.TEXTURE_2D, layer.glTex);
+    if (!layer.dirtyTiles || !layer.dirtyTiles.size) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.canvas);
+      layer.dirty = false;
+      layer.dirtyTiles = null;
+      return;
+    }
+    const dpr = layer.canvas.width / cssW;
+    for (const rect of _tileSetToRects(layer.dirtyTiles, cssW, cssH)) {
+      const sx = Math.max(0, Math.floor(rect.x * dpr));
+      const sy = Math.max(0, Math.floor(rect.y * dpr));
+      const sw = Math.min(layer.canvas.width - sx, Math.ceil((rect.x + rect.w) * dpr) - sx);
+      const sh = Math.min(layer.canvas.height - sy, Math.ceil((rect.y + rect.h) * dpr) - sy);
+      if (sw <= 0 || sh <= 0) continue;
+      if (this._uploadCanvas.width !== sw || this._uploadCanvas.height !== sh) {
+        this._uploadCanvas.width = sw;
+        this._uploadCanvas.height = sh;
+      } else {
+        this._uploadCtx.clearRect(0, 0, sw, sh);
+      }
+      this._uploadCtx.drawImage(layer.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        sx,
+        layer.canvas.height - (sy + sh),
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        this._uploadCanvas,
+      );
+    }
+    layer.dirty = false;
+    layer.dirtyTiles = null;
+  }
+
   // ---- GPU composite ----
 
-  _compositeGL(layers, cssW, cssH) {
+  _compositeGL(layers, cssW, cssH, dirtyRects = null) {
+    if (dirtyRects && !dirtyRects.length) return;
     const gl = this.gl;
     const w = this.canvas.width, h = this.canvas.height;
     gl.viewport(0, 0, w, h);
     gl.bindVertexArray(this._vao);
+    const checkerSizeLoc = gl.getUniformLocation(this._checkerProg, 'uSize');
+    const passTexLoc = gl.getUniformLocation(this._passProg, 'uTex');
 
-    // Pass 1: checkerboard → FBO 0
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[0]);
-    gl.useProgram(this._checkerProg);
-    gl.uniform2f(gl.getUniformLocation(this._checkerProg, 'uSize'), cssW, cssH);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (!dirtyRects) {
+      // Pass 1: checkerboard → FBO 0
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[0]);
+      gl.useProgram(this._checkerProg);
+      gl.uniform2f(checkerSizeLoc, cssW, cssH);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    // Pass 2: blend layers bottom → top
-    let src = 0, dst = 1;
-    gl.useProgram(this._prog);
+      // Pass 2: blend layers bottom → top
+      let src = 0, dst = 1;
+      gl.useProgram(this._prog);
+      const uBase = gl.getUniformLocation(this._prog, 'uBase');
+      const uLayer = gl.getUniformLocation(this._prog, 'uLayer');
+      const uOpacity = gl.getUniformLocation(this._prog, 'uOpacity');
+      const uMode = gl.getUniformLocation(this._prog, 'uMode');
+
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const l = layers[i];
+        if (!l.visible) continue;
+        this._uploadLayerTexture(gl, l, cssW, cssH);
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[dst]);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._fboTex[src]);
+        gl.uniform1i(uBase, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, l.glTex);
+        gl.uniform1i(uLayer, 1);
+        gl.uniform1f(uOpacity, l.opacity);
+        gl.uniform1i(uMode, BLEND_MODE_MAP[l.blend] || 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        const tmp = src; src = dst; dst = tmp;
+      }
+
+      // Final blit to screen
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.useProgram(this._passProg);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._fboTex[src]);
+      gl.uniform1i(passTexLoc, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      this._frontIndex = src;
+      gl.bindVertexArray(null);
+      return;
+    }
+
     const uBase = gl.getUniformLocation(this._prog, 'uBase');
     const uLayer = gl.getUniformLocation(this._prog, 'uLayer');
     const uOpacity = gl.getUniformLocation(this._prog, 'uOpacity');
     const uMode = gl.getUniformLocation(this._prog, 'uMode');
+    const currentFront = this._frontIndex;
+    const back = 1 - currentFront;
 
+    // Start from previous composited frame in the back buffer.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[back]);
+    gl.useProgram(this._passProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._fboTex[currentFront]);
+    gl.uniform1i(passTexLoc, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Reset only the dirty tiles back to the checkerboard base.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[back]);
+    gl.useProgram(this._checkerProg);
+    gl.uniform2f(checkerSizeLoc, cssW, cssH);
+    this._drawScissored(gl, dirtyRects, cssW, cssH, () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4));
+
+    let src = back;
+    let dst = currentFront;
+    let drewVisibleLayer = false;
+    gl.useProgram(this._prog);
     for (let i = layers.length - 1; i >= 0; i--) {
       const l = layers[i];
       if (!l.visible) continue;
-      if (!l.glTex) {
-        l.glTex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, l.glTex);
-        this._initTex(gl);
-        l.dirty = true;
-      }
-      if (l.dirty) {
-        gl.bindTexture(gl.TEXTURE_2D, l.glTex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, l.canvas);
-        l.dirty = false;
-      }
-
+      this._uploadLayerTexture(gl, l, cssW, cssH);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[dst]);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this._fboTex[src]);
@@ -293,47 +474,64 @@ export class Compositor {
       gl.uniform1i(uLayer, 1);
       gl.uniform1f(uOpacity, l.opacity);
       gl.uniform1i(uMode, BLEND_MODE_MAP[l.blend] || 0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      this._drawScissored(gl, dirtyRects, cssW, cssH, () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4));
       const tmp = src; src = dst; dst = tmp;
+      drewVisibleLayer = true;
     }
+    if (!drewVisibleLayer) src = back;
 
-    // Final blit to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.useProgram(this._passProg);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._fboTex[src]);
-    gl.uniform1i(gl.getUniformLocation(this._passProg, 'uTex'), 0);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.uniform1i(passTexLoc, 0);
+    this._drawScissored(gl, dirtyRects, cssW, cssH, () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4));
+    this._frontIndex = src;
     gl.bindVertexArray(null);
   }
 
   // ---- 2D fallback ----
 
-  _composite2D(layers, cssW, cssH) {
+  _composite2D(layers, cssW, cssH, dirtyRects = null) {
+    if (dirtyRects && !dirtyRects.length) return;
     const ctx = this.canvas.getContext('2d');
     if (!ctx) return;
     const dpr = this.canvas.width / cssW;
-    ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Checkerboard
-    ctx.fillStyle = '#c8c8c8';
-    ctx.fillRect(0, 0, cssW, cssH);
-    ctx.fillStyle = '#e0e0e0';
-    const sz = 10;
-    for (let y = 0; y < cssH; y += sz)
-      for (let x = 0; x < cssW; x += sz)
-        if ((Math.floor(x / sz) + Math.floor(y / sz)) % 2 === 0) ctx.fillRect(x, y, sz, sz);
-    // Layers bottom → top
-    for (let i = layers.length - 1; i >= 0; i--) {
-      const l = layers[i];
-      if (!l.visible) continue;
-      ctx.globalAlpha = l.opacity;
-      ctx.globalCompositeOperation = l.blend;
-      ctx.drawImage(l.canvas, 0, 0, l.canvas.width, l.canvas.height, 0, 0, cssW, cssH);
+    const renderRegion = rect => {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (rect) {
+        ctx.beginPath();
+        ctx.rect(rect.x, rect.y, rect.w, rect.h);
+        ctx.clip();
+      }
+      ctx.fillStyle = '#c8c8c8';
+      ctx.fillRect(0, 0, cssW, cssH);
+      ctx.fillStyle = '#e0e0e0';
+      const sz = 10;
+      for (let y = 0; y < cssH; y += sz)
+        for (let x = 0; x < cssW; x += sz)
+          if ((Math.floor(x / sz) + Math.floor(y / sz)) % 2 === 0) ctx.fillRect(x, y, sz, sz);
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const l = layers[i];
+        if (!l.visible) continue;
+        ctx.globalAlpha = l.opacity;
+        ctx.globalCompositeOperation = l.blend;
+        ctx.drawImage(l.canvas, 0, 0, l.canvas.width, l.canvas.height, 0, 0, cssW, cssH);
+      }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.restore();
+    };
+
+    if (!dirtyRects) renderRegion(null);
+    else dirtyRects.forEach(renderRegion);
+
+    for (const layer of layers) {
+      if (!layer.visible || !layer.dirty) continue;
+      layer.dirty = false;
+      layer.dirtyTiles = null;
     }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.restore();
   }
 }
 

@@ -406,6 +406,7 @@ export class BoidBrush {
     // Sensing state
     this._sensingFrame = 0;
     this._sensingUploaded = false;
+    this._sensingLum = null;
     // Trail blur offscreen canvases
     this._blurCanvas = null;
     this._blurCtx = null;
@@ -454,7 +455,11 @@ export class BoidBrush {
     // Downsample to 1/4 resolution to reduce cost
     const dw = Math.max(1, w >> 2);
     const dh = Math.max(1, h >> 2);
-    const lum = new Uint8Array(dw * dh);
+    const lumLen = dw * dh;
+    if (!this._sensingLum || this._sensingLum.length !== lumLen) {
+      this._sensingLum = new Uint8Array(lumLen);
+    }
+    const lum = this._sensingLum;
     const channel = p.sensingChannel || 'darkness';
     const sx = w / dw;
     const sy = h / dh;
@@ -716,12 +721,19 @@ export class BoidBrush {
     const p = this.app.getP();
     const app = this.app;
 
-    // Periodically re-upload sensing data during long strokes (every 30 frames)
     if (p.sensingEnabled) {
-      this._sensingFrame++;
-      if (!this._sensingUploaded || this._sensingFrame >= 30) {
+      const sensingSourceIsBelow = p.sensingSource === 'below';
+      if (!this._sensingUploaded) {
         this._uploadSensing(p);
         this._sensingFrame = 0;
+      } else if (!sensingSourceIsBelow) {
+        // "Below" excludes the active stroke layer, so it stays unchanged during
+        // the stroke and doesn't need the periodic refresh used by active/all.
+        this._sensingFrame++;
+        if (this._sensingFrame >= 30) {
+          this._uploadSensing(p);
+          this._sensingFrame = 0;
+        }
       }
     }
 
@@ -3458,6 +3470,12 @@ export class AIDiffusionBrush {
     const points = app.getSymmetryPoints(cx, cy);
     for (const pt of points) {
       ctx.drawImage(rc, pt.x - half, pt.y - half, targetSize, targetSize);
+      app._markLayerDirty(layer, {
+        x: pt.x - half - 2,
+        y: pt.y - half - 2,
+        w: targetSize + 4,
+        h: targetSize + 4,
+      });
     }
 
     layer.dirty = true;
