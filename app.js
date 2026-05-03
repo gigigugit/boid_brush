@@ -3137,6 +3137,7 @@ export class App {
     });
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('simCanvasClearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
     document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
       this.simulation.inspectorCollapsed = !this.simulation.inspectorCollapsed;
