@@ -467,6 +467,27 @@ mod tests {
         assert_eq!(sim.buf[base + boid::X], 100.0);
         assert_eq!(sim.buf[base + boid::VX], 0.0);
 
+        sim.buf[base + boid::X] = 1.0;
+        sim.buf[base + boid::VX] = -6.0;
+        sim.step(1.0 / 60.0);
+        assert!(sim.buf[base + boid::X] >= 0.0, "agent escaped left bound");
+        assert_eq!(sim.buf[base + boid::X], 0.0);
+        assert_eq!(sim.buf[base + boid::VX], 0.0);
+
+        sim.buf[base + boid::Y] = 1.0;
+        sim.buf[base + boid::VY] = -5.0;
+        sim.step(1.0 / 60.0);
+        assert!(sim.buf[base + boid::Y] >= 0.0, "agent escaped top bound");
+        assert_eq!(sim.buf[base + boid::Y], 0.0);
+        assert_eq!(sim.buf[base + boid::VY], 0.0);
+
+        sim.buf[base + boid::Y] = 79.0;
+        sim.buf[base + boid::VY] = 5.0;
+        sim.step(1.0 / 60.0);
+        assert!(sim.buf[base + boid::Y] <= 80.0, "agent escaped bottom bound");
+        assert_eq!(sim.buf[base + boid::Y], 80.0);
+        assert_eq!(sim.buf[base + boid::VY], 0.0);
+
         sim.params.boundary_margin = 12.0;
         sim.buf[base + boid::X] = 111.0;
         sim.buf[base + boid::VX] = 4.0;

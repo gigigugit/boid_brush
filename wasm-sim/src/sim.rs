@@ -284,6 +284,7 @@ impl Simulation {
                 self.height as f32 + bounds_margin,
             )
         } else {
+            // Disabled sentinel: integrate() skips clamping when min > max.
             (1.0, 1.0, 0.0, 0.0)
         };
         for i in 0..self.agent_count {
