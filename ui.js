@@ -4,6 +4,7 @@
 
 const PRESETS_KEY = 'bb_presets_v1';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
+const MAX_SWARM_COUNT = 2000;
 const NUDGE_BUTTON_STYLE = 'width:20px;height:20px;padding:0;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#ddd;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;';
 
 // ── Multiplier selector constants ───────────────────────────
@@ -138,7 +139,7 @@ export function buildSidebar(app) {
     <!-- Swarm (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
-      ${sliderRow('count', 'Count', 3, 200, 60)}
+      ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
     </div>
 
     <!-- Forces (boid + ant) -->
@@ -175,33 +176,6 @@ export function buildSidebar(app) {
     <div class="section-body" data-brushes="boid ant">
       ${sliderRow('maxSpeed', 'Max Speed', 1, 30, 8, v => (v/2).toFixed(1))}
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
-    </div>
-
-    <!-- Simulation (boid + ant) -->
-    <div class="section-header" data-brushes="boid ant" data-section="simulation">Simulation <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
-      <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
-      <span class="slider-desc">Playback multiplier for autonomous painting</span>
-      ${sliderRow('simPointStrength', 'Point Force', 0, 200, 90, v => (v/100).toFixed(2))}
-      ${sliderRow('simPointRadius', 'Point Radius', 10, 300, 120)}
-      <span class="slider-desc">Spawn point, spread radius, and stamp settings continue to use the usual controls above</span>
-    </div>
-
-    <!-- Boid Simulation -->
-    <div class="section-header" data-brushes="boid" data-section="boidSimulation">Boid Sim Guides <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
-      ${sliderRow('simPathSpeed', 'Path Speed', 5, 200, 50, v => (v/20).toFixed(1) + '×')}
-      <span class="slider-desc">Use the Path tool in Simulation mode to draw a guide stroke that boids follow while painting</span>
-    </div>
-
-    <!-- Ant Simulation -->
-    <div class="section-header" data-brushes="ant" data-section="antSimulation">Ant Sim Guides <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="ant">
-      ${sliderRow('simEdgeForce', 'Edge Force', 0, 200, 100, v => (v/100).toFixed(2))}
-      ${sliderRow('simEdgeRadius', 'Avoid Radius', 0, 200, 28)}
-      ${sliderRow('simPheroPaintRadius', 'Phero Radius', 2, 80, 18)}
-      ${sliderRow('simPheroPaintStrength', 'Phero Paint', 0, 100, 55, v => (v/100).toFixed(2))}
-      <span class="slider-desc">Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow</span>
     </div>
 
     <!-- Bristle Shape (bristle only) -->
@@ -550,6 +524,17 @@ export function buildSidebar(app) {
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
         <button id="btnResetDefaults" class="reset-btn">🏭 Factory Reset</button>
       </div>
+    </div>
+    <div id="simControlStore" style="display:none" aria-hidden="true">
+      <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
+      ${sliderRow('simPointStrength', 'Point Force', 0, 200, 90, v => (v/100).toFixed(2))}
+      ${sliderRow('simPointRadius', 'Point Radius', 10, 300, 120)}
+      ${sliderRow('simBoundsMargin', 'Bounds Margin', 0, 240, 0, v => `${v}px`)}
+      ${sliderRow('simPathSpeed', 'Path Speed', 1, 200, 120, v => `${v}px/s`)}
+      ${sliderRow('simEdgeForce', 'Edge Force', 0, 200, 100, v => (v/100).toFixed(2))}
+      ${sliderRow('simEdgeRadius', 'Avoid Radius', 0, 200, 28)}
+      ${sliderRow('simPheroPaintRadius', 'Phero Radius', 2, 80, 18)}
+      ${sliderRow('simPheroPaintStrength', 'Phero Paint', 0, 100, 55, v => (v/100).toFixed(2))}
     </div>
   `;
 
@@ -1282,9 +1267,10 @@ const _sliderFormats = {
   antFollow: v => (v / 100).toFixed(2),
   antPheromoneRate: v => (v / 100).toFixed(2),
   antPheromoneDecay: v => (v / 1000).toFixed(3),
+  simBoundsMargin: v => `${v}px`,
   simSpeed: v => (v / 100).toFixed(1) + '×',
   simPointStrength: v => (v / 100).toFixed(2),
-  simPathSpeed: v => (v / 20).toFixed(1) + '×',
+  simPathSpeed: v => `${v}px/s`,
   simEdgeForce: v => (v / 100).toFixed(2),
   simPheroPaintStrength: v => (v / 100).toFixed(2),
 };

@@ -275,13 +275,34 @@ impl Simulation {
         forces::apply_neighbor_forces(&mut self.buf, self.agent_count, &self.params);
 
         // Phase 3: Integrate (uses per-agent speed multiplier)
+        let bounds_margin = p.boundary_margin;
+        let (min_x, min_y, max_x, max_y) = if bounds_margin >= 0.0 {
+            (
+                -bounds_margin,
+                -bounds_margin,
+                self.width as f32 + bounds_margin,
+                self.height as f32 + bounds_margin,
+            )
+        } else {
+            // Disabled sentinel: integrate() skips clamping when min > max.
+            (1.0, 1.0, 0.0, 0.0)
+        };
         for i in 0..self.agent_count {
             let base = i * STRIDE;
             if !has_flag(&self.buf, base, FLAG_ALIVE) {
                 continue;
             }
             let agent_ms = ms * self.buf[base + SPD_M];
-            forces::integrate(&mut self.buf, base, agent_ms, p.damping);
+            forces::integrate(
+                &mut self.buf,
+                base,
+                agent_ms,
+                p.damping,
+                min_x,
+                min_y,
+                max_x,
+                max_y,
+            );
         }
     }
 }

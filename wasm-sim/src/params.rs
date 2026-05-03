@@ -38,7 +38,7 @@
 //  28    | hue_var          | per-boid hue offset variance (0-1)
 //  29    | sat_var          | per-boid saturation offset variance (0-1)
 //  30    | lit_var          | per-boid lightness offset variance (0-1)
-//  31    | reserved         | 0.0
+//  31    | boundary_margin  | simulation bounds margin in px; negative disables bounds
 // =============================================================================
 
 use core::f32::consts::PI;
@@ -79,6 +79,7 @@ pub struct SimParams {
     pub hue_var: f32,
     pub sat_var: f32,
     pub lit_var: f32,
+    pub boundary_margin: f32,
 }
 
 impl Default for SimParams {
@@ -115,6 +116,7 @@ impl Default for SimParams {
             hue_var: 0.0,
             sat_var: 0.0,
             lit_var: 0.0,
+            boundary_margin: -1.0,
         }
     }
 }
@@ -155,6 +157,7 @@ impl SimParams {
             hue_var: raw[28],
             sat_var: raw[29],
             lit_var: raw[30],
+            boundary_margin: raw[31],
         }
     }
 }
