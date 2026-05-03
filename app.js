@@ -1882,11 +1882,107 @@ export class App {
     const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Clear Selection</button>' : '';
 
     const seekPct = Math.round((Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK) * 100);
+    const formatSimPanelValue = (id, value) => {
+      switch (id) {
+        case 'simSpeed': return `${(value / 100).toFixed(1)}×`;
+        case 'simPointStrength':
+        case 'simEdgeForce':
+        case 'simPheroPaintStrength':
+          return (value / 100).toFixed(2);
+        case 'simPathSpeed':
+          return `${Math.round(value)}px/s`;
+        default:
+          return String(Math.round(value));
+      }
+    };
+    const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => `
+      <div class="sim-slider-row">
+        <div class="sim-slider-header">
+          <span class="sim-slider-label">${label}</span>
+          <span class="sim-inspector-value" data-sim-param-label="${id}">${formatSimPanelValue(id, value)}</span>
+        </div>
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-sim-param="${id}">
+        ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
+      </div>`;
+    const simulationSettings = `
+      <div class="sim-inspector-group">
+        <h3>Simulation Settings</h3>
+        ${simPanelSlider({
+          id: 'simSpeed',
+          label: 'Playback Speed',
+          min: 10,
+          max: 300,
+          value: Math.round(p.simSpeed * 100),
+          desc: 'Playback multiplier for autonomous painting.',
+        })}
+        ${simPanelSlider({
+          id: 'simPointStrength',
+          label: 'Point Force',
+          min: 0,
+          max: 200,
+          value: Math.round(p.simPointStrength * 100),
+        })}
+        ${simPanelSlider({
+          id: 'simPointRadius',
+          label: 'Point Radius',
+          min: 10,
+          max: 300,
+          value: Math.round(p.simPointRadius),
+          desc: 'Spawn count, spread radius, and stamp settings still use the usual brush controls.',
+        })}
+      </div>
+      ${isBoid ? `
+        <div class="sim-inspector-group">
+          <h3>Boid Guide Settings</h3>
+          ${simPanelSlider({
+            id: 'simPathSpeed',
+            label: 'Path Speed',
+            min: 1,
+            max: 200,
+            value: Math.round(p.simPathSpeed),
+            desc: 'How many pixels per second animated path guides travel, regardless of path length.',
+          })}
+          <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint.</div>
+        </div>` : ''}
+      ${!isBoid ? `
+        <div class="sim-inspector-group">
+          <h3>Ant Guide Settings</h3>
+          ${simPanelSlider({
+            id: 'simEdgeForce',
+            label: 'Edge Force',
+            min: 0,
+            max: 200,
+            value: Math.round(p.simEdgeForce * 100),
+          })}
+          ${simPanelSlider({
+            id: 'simEdgeRadius',
+            label: 'Avoid Radius',
+            min: 0,
+            max: 200,
+            value: Math.round(p.simEdgeRadius),
+          })}
+          ${simPanelSlider({
+            id: 'simPheroPaintRadius',
+            label: 'Phero Radius',
+            min: 2,
+            max: 80,
+            value: Math.round(p.simPheroPaintRadius),
+          })}
+          ${simPanelSlider({
+            id: 'simPheroPaintStrength',
+            label: 'Phero Paint',
+            min: 0,
+            max: 100,
+            value: Math.round(p.simPheroPaintStrength * 100),
+            desc: 'Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow.',
+          })}
+        </div>` : ''}
+    `;
     const savedSessionsList = this.simulation.sessions.length
       ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
          <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
-            `<button data-sim-load-session="${i}" aria-label="Load saved session ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
-             <button class="danger" data-sim-del-session="${i}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
+             `<button data-sim-load-session="${i}" aria-label="Load saved session ${_escapeHtml(s.name)}">${_escapeHtml(s.name)}</button>
+              <button class="danger" data-sim-del-session="${i}" aria-label="Delete saved session ${_escapeHtml(s.name)}" style="padding:6px 7px">×</button>`
          ).join('')}</div>`
       : '';
 
@@ -1905,8 +2001,9 @@ export class App {
       </div>
       <div class="sim-inspector-group">
         <h3>Scene</h3>
-        <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong>${p.simSpeed.toFixed(2)}×</strong> (shown for reference from the brush sidebar). Brush sidebar values stay untouched; item values only override when explicitly set here.</div>
+        <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong>. Global simulation controls live in this panel; item values only override when explicitly set here.</div>
       </div>
+      ${simulationSettings}
       <div class="sim-inspector-group">
         <h3>Scene Variables</h3>
         <div class="sim-inspector-note">Override brush parameters for simulation playback. <strong>Seek</strong> defaults to 0 so agents follow guides instead of the cursor. Values persist when reopening simulation.</div>
@@ -2069,6 +2166,27 @@ export class App {
     panel.querySelector('[data-sim-delete]')?.addEventListener('click', () => {
       const entry = this._getSelectedSimulationEntry();
       if (entry) this._deleteSimulationItem(entry);
+    });
+    panel.querySelectorAll('[data-sim-param]').forEach(el => {
+      const paramId = el.dataset.simParam;
+      const source = document.getElementById(paramId);
+      const syncParamUI = value => {
+        const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
+        if (label) label.textContent = formatSimPanelValue(paramId, value);
+        if (paramId === 'simSpeed') {
+          const summary = panel.querySelector('[data-sim-summary="simSpeed"]');
+          if (summary) summary.textContent = formatSimPanelValue(paramId, value);
+        }
+      };
+      syncParamUI(+el.value);
+      if (!source) return;
+      const forward = eventName => {
+        source.value = el.value;
+        syncParamUI(+el.value);
+        source.dispatchEvent(new Event(eventName, { bubbles: true }));
+      };
+      el.addEventListener('input', () => forward('input'));
+      el.addEventListener('change', () => forward('change'));
     });
     panel.querySelectorAll('[data-sim-field]').forEach(el => {
       const field = el.dataset.simField;

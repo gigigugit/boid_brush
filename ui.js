@@ -178,33 +178,6 @@ export function buildSidebar(app) {
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
     </div>
 
-    <!-- Simulation (boid + ant) -->
-    <div class="section-header" data-brushes="boid ant" data-section="simulation">Simulation <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
-      <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
-      <span class="slider-desc">Playback multiplier for autonomous painting</span>
-      ${sliderRow('simPointStrength', 'Point Force', 0, 200, 90, v => (v/100).toFixed(2))}
-      ${sliderRow('simPointRadius', 'Point Radius', 10, 300, 120)}
-      <span class="slider-desc">Spawn point, spread radius, and stamp settings continue to use the usual controls above</span>
-    </div>
-
-    <!-- Boid Simulation -->
-    <div class="section-header" data-brushes="boid" data-section="boidSimulation">Boid Sim Guides <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid">
-      ${sliderRow('simPathSpeed', 'Path Speed', 1, 200, 120, v => `${v}px/s`, 'How many pixels per second animated path guides travel, regardless of path length')}
-      <span class="slider-desc">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint</span>
-    </div>
-
-    <!-- Ant Simulation -->
-    <div class="section-header" data-brushes="ant" data-section="antSimulation">Ant Sim Guides <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="ant">
-      ${sliderRow('simEdgeForce', 'Edge Force', 0, 200, 100, v => (v/100).toFixed(2))}
-      ${sliderRow('simEdgeRadius', 'Avoid Radius', 0, 200, 28)}
-      ${sliderRow('simPheroPaintRadius', 'Phero Radius', 2, 80, 18)}
-      ${sliderRow('simPheroPaintStrength', 'Phero Paint', 0, 100, 55, v => (v/100).toFixed(2))}
-      <span class="slider-desc">Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow</span>
-    </div>
-
     <!-- Bristle Shape (bristle only) -->
     <div class="section-header" data-brushes="bristle" data-section="bristleShape">Bristle Shape <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="bristle">
@@ -551,6 +524,16 @@ export function buildSidebar(app) {
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
         <button id="btnResetDefaults" class="reset-btn">🏭 Factory Reset</button>
       </div>
+    </div>
+    <div id="simControlStore" style="display:none" aria-hidden="true">
+      <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
+      ${sliderRow('simPointStrength', 'Point Force', 0, 200, 90, v => (v/100).toFixed(2))}
+      ${sliderRow('simPointRadius', 'Point Radius', 10, 300, 120)}
+      ${sliderRow('simPathSpeed', 'Path Speed', 1, 200, 120, v => `${v}px/s`)}
+      ${sliderRow('simEdgeForce', 'Edge Force', 0, 200, 100, v => (v/100).toFixed(2))}
+      ${sliderRow('simEdgeRadius', 'Avoid Radius', 0, 200, 28)}
+      ${sliderRow('simPheroPaintRadius', 'Phero Radius', 2, 80, 18)}
+      ${sliderRow('simPheroPaintStrength', 'Phero Paint', 0, 100, 55, v => (v/100).toFixed(2))}
     </div>
   `;
 
