@@ -1518,6 +1518,7 @@ export class App {
       simSpeed: (val('simSpeed') || 100) / 100,
       simPointStrength: (val('simPointStrength') || 0) / 100,
       simPointRadius: val('simPointRadius') || 120,
+      simBoundsMargin: Math.max(0, val('simBoundsMargin') || 0),
       simPathSpeed: val('simPathSpeed') || 120,
       simEdgeForce: (val('simEdgeForce') || 100) / 100,
       simEdgeRadius: val('simEdgeRadius') || 28,
@@ -1728,6 +1729,72 @@ export class App {
     return item ? { x: item.x, y: item.y } : { x: this.W * 0.5, y: this.H * 0.5 };
   }
 
+  _getSimulationBoundsRect(p = this.getP()) {
+    const margin = Math.max(0, p?.simBoundsMargin || 0);
+    return {
+      minX: -margin,
+      minY: -margin,
+      maxX: this.W + margin,
+      maxY: this.H + margin,
+    };
+  }
+
+  _clampSimulationPoint(x, y, p = this.getP()) {
+    const bounds = this._getSimulationBoundsRect(p);
+    return {
+      x: Math.max(bounds.minX, Math.min(bounds.maxX, x)),
+      y: Math.max(bounds.minY, Math.min(bounds.maxY, y)),
+    };
+  }
+
+  _constrainSimulationTargetToBounds(target, p = this.getP()) {
+    if (!target) return;
+    const bounds = this._getSimulationBoundsRect(p);
+    if (Array.isArray(target.points) && target.points.length) {
+      let minX = target.points[0].x;
+      let minY = target.points[0].y;
+      let maxX = target.points[0].x;
+      let maxY = target.points[0].y;
+      for (const pt of target.points) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y > maxY) maxY = pt.y;
+      }
+      let dx = 0;
+      let dy = 0;
+      if (minX < bounds.minX) dx = bounds.minX - minX;
+      else if (maxX > bounds.maxX) dx = bounds.maxX - maxX;
+      if (minY < bounds.minY) dy = bounds.minY - minY;
+      else if (maxY > bounds.maxY) dy = bounds.maxY - maxY;
+      if (dx || dy) {
+        for (const pt of target.points) {
+          pt.x += dx;
+          pt.y += dy;
+        }
+      }
+      return;
+    }
+    if (Number.isFinite(target.x) && Number.isFinite(target.y)) {
+      const clamped = this._clampSimulationPoint(target.x, target.y, p);
+      target.x = clamped.x;
+      target.y = clamped.y;
+    }
+  }
+
+  _constrainSimulationDataToBounds(brush = this.activeBrush, p = this.getP()) {
+    const data = this._getSimulationBrushData(brush);
+    if (!data) return;
+    for (const spawn of data.spawns || []) this._constrainSimulationTargetToBounds(spawn, p);
+    for (const point of data.points || []) this._constrainSimulationTargetToBounds(point, p);
+    if (brush === 'boid') {
+      for (const pathItem of data.paths || []) this._constrainSimulationTargetToBounds(pathItem, p);
+    } else if (brush === 'ant') {
+      for (const edge of data.edges || []) this._constrainSimulationTargetToBounds(edge, p);
+      for (const trail of data.pheromonePaths || []) this._constrainSimulationTargetToBounds(trail, p);
+    }
+  }
+
   _translateSimulationTarget(target, dx, dy) {
     if (!target) return;
     if (Array.isArray(target.points)) {
@@ -1735,10 +1802,12 @@ export class App {
         pt.x += dx;
         pt.y += dy;
       }
+      this._constrainSimulationTargetToBounds(target);
       return;
     }
     target.x += dx;
     target.y += dy;
+    this._constrainSimulationTargetToBounds(target);
   }
 
   _duplicateSelectedSimulationItem() {
@@ -1753,6 +1822,7 @@ export class App {
       clone.x += DUPLICATE_OFFSET;
       clone.y += DUPLICATE_OFFSET;
     }
+    this._constrainSimulationTargetToBounds(clone);
     items.push(clone);
     this._setSimulationSelection({ collection: entry.collection, kind: entry.kind, target: clone });
     this._maybeAutoSaveSession();
@@ -1810,6 +1880,8 @@ export class App {
     this.simulation.nextId = session.nextId || this.simulation.nextId;
     this.simulation.selected = null;
     this._normalizeSimulationData();
+    this._constrainSimulationDataToBounds('boid');
+    this._constrainSimulationDataToBounds('ant');
     this._ensureSimulationSpawns();
     this._renderSimulationInspector();
     this.saveSession();
@@ -1889,6 +1961,8 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
           return (value / 100).toFixed(2);
+        case 'simBoundsMargin':
+          return `${Math.round(value)}px`;
         case 'simPathSpeed':
           return `${Math.round(value)}px/s`;
         default:
@@ -1929,6 +2003,14 @@ export class App {
           max: 300,
           value: Math.round(p.simPointRadius),
           desc: 'Spawn count, spread radius, and stamp settings still use the usual brush controls.',
+        })}
+        ${simPanelSlider({
+          id: 'simBoundsMargin',
+          label: 'Bounds Margin',
+          min: 0,
+          max: 240,
+          value: Math.round(p.simBoundsMargin || 0),
+          desc: 'Extends the simulation bounds beyond the canvas edge. 0 keeps agents and guides inside the canvas.',
         })}
       </div>
       ${isBoid ? `
@@ -2184,6 +2266,10 @@ export class App {
         source.value = el.value;
         syncParamUI(+el.value);
         source.dispatchEvent(new Event(eventName, { bubbles: true }));
+        if (paramId === 'simBoundsMargin') {
+          this._constrainSimulationDataToBounds('boid');
+          this._constrainSimulationDataToBounds('ant');
+        }
       };
       el.addEventListener('input', () => forward('input'));
       el.addEventListener('change', () => forward('change'));
@@ -2335,6 +2421,10 @@ export class App {
     this.simulation.drawingPath = null;
     this.simulation.dragTarget = null;
     this._normalizeSimulationData();
+    if (next) {
+      this._constrainSimulationDataToBounds('boid');
+      this._constrainSimulationDataToBounds('ant');
+    }
     this._ensureSimulationSpawns();
     this._syncSimulationUI();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
@@ -2393,6 +2483,7 @@ export class App {
     const brush = this.getCurrentBrush();
     if (!brush) return;
     if (this.simulation.running) return;
+    this._constrainSimulationDataToBounds(this.activeBrush);
     const spawns = this._ensureSimulationSpawns().filter(spawn => spawn.enabled !== false);
     const spawn = spawns[0] || this._ensureSimulationSpawns()[0];
     this.stopSimulation(false);
@@ -2447,6 +2538,9 @@ export class App {
   _handleSimulationPointerDown(x, y) {
     if (!this.simulation.enabled || !this._isMotionBrush()) return false;
     if (this.simulation.running || this.simulation.paused) return true;
+    const clampedPoint = this._clampSimulationPoint(x, y);
+    x = clampedPoint.x;
+    y = clampedPoint.y;
 
     const hit = this._findSimulationHit(x, y);
     if (hit?.kind === 'delete') {
@@ -2491,6 +2585,9 @@ export class App {
 
   _handleSimulationPointerMove(x, y) {
     if (!this.simulation.enabled || !this._isMotionBrush()) return false;
+    const clampedPoint = this._clampSimulationPoint(x, y);
+    x = clampedPoint.x;
+    y = clampedPoint.y;
     if (this.simulation.dragTarget) {
       const hit = this.simulation.dragTarget;
       const dx = x - hit.lastX;

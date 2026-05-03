@@ -529,6 +529,7 @@ export function buildSidebar(app) {
       <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
       ${sliderRow('simPointStrength', 'Point Force', 0, 200, 90, v => (v/100).toFixed(2))}
       ${sliderRow('simPointRadius', 'Point Radius', 10, 300, 120)}
+      ${sliderRow('simBoundsMargin', 'Bounds Margin', 0, 240, 0, v => `${v}px`)}
       ${sliderRow('simPathSpeed', 'Path Speed', 1, 200, 120, v => `${v}px/s`)}
       ${sliderRow('simEdgeForce', 'Edge Force', 0, 200, 100, v => (v/100).toFixed(2))}
       ${sliderRow('simEdgeRadius', 'Avoid Radius', 0, 200, 28)}
@@ -1266,6 +1267,7 @@ const _sliderFormats = {
   antFollow: v => (v / 100).toFixed(2),
   antPheromoneRate: v => (v / 100).toFixed(2),
   antPheromoneDecay: v => (v / 1000).toFixed(3),
+  simBoundsMargin: v => `${v}px`,
   simSpeed: v => (v / 100).toFixed(1) + '×',
   simPointStrength: v => (v / 100).toFixed(2),
   simPathSpeed: v => `${v}px/s`,

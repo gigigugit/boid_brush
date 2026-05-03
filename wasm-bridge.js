@@ -125,6 +125,7 @@ export class BoidSim {
     v[28] = p.hueVar ?? 0;
     v[29] = p.satVar ?? 0;
     v[30] = p.litVar ?? 0;
+    v[31] = p.simBoundsMargin ?? -1;
     this._mod.set_params();
   }
 

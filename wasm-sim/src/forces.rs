@@ -323,7 +323,16 @@ pub fn apply_neighbor_forces_grid(
 
 // ---- Integrate: velocity += accel, clamp speed, apply damping, advance pos ----
 #[inline]
-pub fn integrate(buf: &mut [f32], base: usize, max_speed: f32, damping: f32) {
+pub fn integrate(
+    buf: &mut [f32],
+    base: usize,
+    max_speed: f32,
+    damping: f32,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+) {
     buf[base + VX] += buf[base + AX];
     buf[base + VY] += buf[base + AY];
 
@@ -338,6 +347,34 @@ pub fn integrate(buf: &mut [f32], base: usize, max_speed: f32, damping: f32) {
 
     buf[base + X] += buf[base + VX];
     buf[base + Y] += buf[base + VY];
+
+    if min_x <= max_x {
+        if buf[base + X] < min_x {
+            buf[base + X] = min_x;
+            if buf[base + VX] < 0.0 {
+                buf[base + VX] = 0.0;
+            }
+        } else if buf[base + X] > max_x {
+            buf[base + X] = max_x;
+            if buf[base + VX] > 0.0 {
+                buf[base + VX] = 0.0;
+            }
+        }
+    }
+
+    if min_y <= max_y {
+        if buf[base + Y] < min_y {
+            buf[base + Y] = min_y;
+            if buf[base + VY] < 0.0 {
+                buf[base + VY] = 0.0;
+            }
+        } else if buf[base + Y] > max_y {
+            buf[base + Y] = max_y;
+            if buf[base + VY] > 0.0 {
+                buf[base + VY] = 0.0;
+            }
+        }
+    }
 
     buf[base + LIFE] += 1.0;
 }

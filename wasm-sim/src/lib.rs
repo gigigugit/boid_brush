@@ -451,6 +451,31 @@ mod tests {
     }
 
     #[test]
+    fn test_simulation_bounds_clamp_agents_to_canvas_margin() {
+        let mut sim = Simulation::new(100, 80, 8);
+        sim.params.boundary_margin = 0.0;
+        sim.params.seek = 0.0;
+        sim.params.max_speed = 10.0;
+        sim.params.damping = 1.0;
+        sim.spawn_one(99.0, 40.0);
+        let base = 0;
+        sim.buf[base + boid::SPD_M] = 1.0;
+        sim.buf[base + boid::VX] = 6.0;
+        sim.buf[base + boid::VY] = 0.0;
+        sim.step(1.0 / 60.0);
+        assert!(sim.buf[base + boid::X] <= 100.0, "agent escaped right bound");
+        assert_eq!(sim.buf[base + boid::X], 100.0);
+        assert_eq!(sim.buf[base + boid::VX], 0.0);
+
+        sim.params.boundary_margin = 12.0;
+        sim.buf[base + boid::X] = 111.0;
+        sim.buf[base + boid::VX] = 4.0;
+        sim.step(1.0 / 60.0);
+        assert!(sim.buf[base + boid::X] <= 112.0, "agent escaped margin bound");
+        assert_eq!(sim.buf[base + boid::X], 112.0);
+    }
+
+    #[test]
     fn test_pool_integrity_random_ops() {
         let mut sim = Simulation::new(800, 600, 200);
         let mut rng = Rng::new(12345);

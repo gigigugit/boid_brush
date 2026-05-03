@@ -489,11 +489,14 @@ export class BoidBrush {
    * Returns `p` unchanged when simulation is not enabled.
    */
   _applySimVars(p) {
-    if (!this.app.simulation?.enabled) return p;
+    if (!this.app.simulation?.enabled) {
+      return Object.assign({}, p, { simBoundsMargin: -1 });
+    }
     const vars = this.app.simulation.vars;
     if (!vars) return p;
     return Object.assign({}, p, {
       seek: Number.isFinite(vars.seek) ? vars.seek : 0,
+      simBoundsMargin: p.simBoundsMargin,
     });
   }
 
@@ -1316,6 +1319,7 @@ export class AntBrush {
       // Ants wander more by default
       wander: p.wander,
       jitter: p.jitter,
+      simBoundsMargin: this.app.simulation?.enabled ? p.simBoundsMargin : -1,
     });
   }
 
