@@ -62,7 +62,7 @@ pub struct SimParams {
     pub flow_field: f32,
     pub flow_scale: f32,
     pub flee_radius: f32,
-    pub fov_rad: f32,          // stored in radians
+    pub fov_rad: f32, // stored in radians
     pub individuality: f32,
     pub quorum_threshold: u32,
     pub quorum_composite_strength: f32,

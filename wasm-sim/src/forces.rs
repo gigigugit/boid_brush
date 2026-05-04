@@ -53,7 +53,14 @@ pub fn jitter(buf: &mut [f32], base: usize, weight: f32, max_speed: f32, rng: &m
 
 // ---- Wander: Brownian angle walk ----
 #[inline]
-pub fn wander(buf: &mut [f32], base: usize, weight: f32, speed: f32, max_speed: f32, rng: &mut Rng) {
+pub fn wander(
+    buf: &mut [f32],
+    base: usize,
+    weight: f32,
+    speed: f32,
+    max_speed: f32,
+    rng: &mut Rng,
+) {
     if weight <= 0.0 {
         return;
     }
@@ -265,11 +272,7 @@ fn apply_composite_neighbor_force(
 }
 
 #[cfg(any(not(feature = "spatial-hash"), test))]
-fn compute_quorum_members(
-    buf: &[f32],
-    agent_count: usize,
-    p: &SimParams,
-) -> Vec<bool> {
+fn compute_quorum_members(buf: &[f32], agent_count: usize, p: &SimParams) -> Vec<bool> {
     let nd2 = p.neighbor_radius * p.neighbor_radius;
     let threshold = p.quorum_threshold;
     let mut members = vec![false; agent_count];
@@ -372,11 +375,7 @@ fn compute_quorum_members_grid(
 // This is the fallback O(n²) all-pairs implementation. It is used when the
 // `spatial-hash` feature is disabled, and is retained for testing/comparison.
 #[cfg(any(not(feature = "spatial-hash"), test))]
-pub fn apply_neighbor_forces(
-    buf: &mut [f32],
-    agent_count: usize,
-    p: &SimParams,
-) {
+pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams) {
     let nd2 = p.neighbor_radius * p.neighbor_radius;
     let sd2 = p.separation_radius * p.separation_radius;
     let quorum_members = quorum_enabled(p).then(|| compute_quorum_members(buf, agent_count, p));
@@ -488,7 +487,8 @@ pub fn apply_neighbor_forces_grid(
 ) {
     let nd2 = p.neighbor_radius * p.neighbor_radius;
     let sd2 = p.separation_radius * p.separation_radius;
-    let quorum_members = quorum_enabled(p).then(|| compute_quorum_members_grid(buf, agent_count, p, grid));
+    let quorum_members =
+        quorum_enabled(p).then(|| compute_quorum_members_grid(buf, agent_count, p, grid));
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
