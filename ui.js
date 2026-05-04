@@ -159,6 +159,13 @@ export function buildSidebar(app) {
       ${sliderRow('individuality', 'Individ.', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
+    <!-- Quorum (boid only) -->
+    <div class="section-header closed" data-brushes="boid" data-section="quorum">Quorum <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid">
+      ${sliderRow('quorumThreshold', 'Threshold', 0, 24, 0, v => v === 0 ? 'off' : v, 'Neighbors required before a local boid group becomes a quorum')}
+      ${sliderRow('quorumCompositeStrength', 'Composite', 0, 100, 35, v => (v/100).toFixed(2), 'How strongly quorum groups affect outgroup boids as one composite')}
+    </div>
+
     <!-- Variance (boid + ant) -->
     <div class="section-header closed" data-brushes="boid ant" data-section="variance">Variance <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="boid ant">
@@ -1207,6 +1214,7 @@ const _sliderFormats = {
   flowField: v => (v / 100).toFixed(2),
   flowScale: v => (v / 1000).toFixed(3),
   individuality: v => (v / 100).toFixed(2),
+  quorumCompositeStrength: v => (v / 100).toFixed(2),
   maxSpeed: v => (v / 2).toFixed(1),
   damping: v => (v / 100).toFixed(2),
   lbmStrokePull: v => (v / 100).toFixed(2),

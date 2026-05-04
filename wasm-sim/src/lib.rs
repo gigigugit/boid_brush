@@ -451,6 +451,77 @@ mod tests {
     }
 
     #[test]
+    fn test_quorum_members_ignore_outgroup_alignment() {
+        let mut sim = Simulation::new(200, 120, 8);
+        for x in [10.0, 20.0, 30.0, 70.0] {
+            sim.spawn_one(x, 60.0);
+        }
+
+        for i in 0..sim.agent_count {
+            let base = i * STRIDE;
+            sim.buf[base + boid::AX] = 0.0;
+            sim.buf[base + boid::AY] = 0.0;
+            sim.buf[base + boid::VX] = if i < 3 { 1.0 } else { -8.0 };
+            sim.buf[base + boid::VY] = 0.0;
+            sim.buf[base + boid::COH_M] = 1.0;
+            sim.buf[base + boid::SEP_M] = 1.0;
+        }
+
+        sim.params.alignment = 1.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.quorum_threshold = 2;
+        sim.params.quorum_composite_strength = 0.5;
+        sim.params.neighbor_radius = 80.0;
+        sim.params.separation_radius = 25.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+
+        crate::forces::apply_neighbor_forces(&mut sim.buf, sim.agent_count, &sim.params);
+
+        let quorum_member = 1 * STRIDE;
+        assert!(
+            sim.buf[quorum_member + boid::AX].abs() < 1e-4,
+            "quorum member should align only with in-group peers"
+        );
+    }
+
+    #[test]
+    fn test_outgroup_uses_weaker_quorum_composite_alignment() {
+        let mut sim = Simulation::new(200, 120, 8);
+        for x in [10.0, 20.0, 30.0, 70.0] {
+            sim.spawn_one(x, 60.0);
+        }
+
+        for i in 0..sim.agent_count {
+            let base = i * STRIDE;
+            sim.buf[base + boid::AX] = 0.0;
+            sim.buf[base + boid::AY] = 0.0;
+            sim.buf[base + boid::VX] = if i < 3 { 1.0 } else { 0.0 };
+            sim.buf[base + boid::VY] = 0.0;
+            sim.buf[base + boid::COH_M] = 1.0;
+            sim.buf[base + boid::SEP_M] = 1.0;
+        }
+
+        sim.params.alignment = 1.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.quorum_threshold = 2;
+        sim.params.quorum_composite_strength = 0.5;
+        sim.params.neighbor_radius = 80.0;
+        sim.params.separation_radius = 25.0;
+        sim.params.max_speed = 8.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+
+        crate::forces::apply_neighbor_forces(&mut sim.buf, sim.agent_count, &sim.params);
+
+        let outgroup = 3 * STRIDE;
+        assert!(
+            (sim.buf[outgroup + boid::AX] - 1.5).abs() < 1e-4,
+            "outgroup boid should align to a weaker summed quorum composite"
+        );
+    }
+
+    #[test]
     fn test_simulation_bounds_clamp_agents_to_canvas_margin() {
         let mut sim = Simulation::new(100, 80, 8);
         sim.params.boundary_margin = 0.0;
@@ -684,6 +755,78 @@ mod spatial_integration_tests {
         );
 
         for i in 0..n {
+            let base = i * STRIDE;
+            assert!(
+                (sim_naive.buf[base + boid::AX] - sim_grid.buf[base + boid::AX]).abs() < 1e-4,
+                "AX mismatch at agent {i}"
+            );
+            assert!(
+                (sim_naive.buf[base + boid::AY] - sim_grid.buf[base + boid::AY]).abs() < 1e-4,
+                "AY mismatch at agent {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_grid_forces_match_naive_with_quorum_enabled() {
+        let mut sim_naive = Simulation::new(240, 160, 16);
+        let mut sim_grid = Simulation::new(240, 160, 16);
+
+        for &(x, y, vx, vy) in &[
+            (20.0, 50.0, 1.0, 0.0),
+            (32.0, 55.0, 1.0, 0.0),
+            (28.0, 70.0, 1.0, 0.0),
+            (95.0, 60.0, -2.0, 0.5),
+            (108.0, 66.0, -1.5, -0.25),
+        ] {
+            sim_naive.spawn_one(x, y);
+            sim_grid.spawn_one(x, y);
+            let idx = sim_naive.agent_count - 1;
+            let base = idx * STRIDE;
+            for sim in [&mut sim_naive, &mut sim_grid] {
+                sim.buf[base + boid::VX] = vx;
+                sim.buf[base + boid::VY] = vy;
+                sim.buf[base + boid::AX] = 0.0;
+                sim.buf[base + boid::AY] = 0.0;
+                sim.buf[base + boid::COH_M] = 1.0;
+                sim.buf[base + boid::SEP_M] = 1.0;
+            }
+        }
+
+        let mut p = crate::params::SimParams::default();
+        p.cohesion = 0.25;
+        p.alignment = 0.5;
+        p.separation = 0.35;
+        p.quorum_threshold = 2;
+        p.quorum_composite_strength = 0.4;
+        p.neighbor_radius = 90.0;
+        p.separation_radius = 30.0;
+        sim_naive.params = p.clone();
+        sim_grid.params = p.clone();
+
+        crate::forces::apply_neighbor_forces(
+            &mut sim_naive.buf,
+            sim_naive.agent_count,
+            &sim_naive.params,
+        );
+
+        let mut grid = SpatialGrid::new(16);
+        grid.build(
+            &sim_grid.buf,
+            sim_grid.agent_count,
+            p.neighbor_radius,
+            p.separation_radius,
+            240,
+            160,
+        );
+        crate::forces::apply_neighbor_forces_grid(
+            &mut sim_grid.buf,
+            sim_grid.agent_count,
+            &sim_grid.params,
+            &grid,
+        );
+
+        for i in 0..sim_naive.agent_count {
             let base = i * STRIDE;
             assert!(
                 (sim_naive.buf[base + boid::AX] - sim_grid.buf[base + boid::AX]).abs() < 1e-4,
