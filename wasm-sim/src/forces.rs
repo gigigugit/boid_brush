@@ -232,7 +232,7 @@ fn apply_composite_neighbor_force(
         return;
     }
 
-    let strength = p.quorum_composite_strength.clamp(0.0, 1.0);
+    let strength = p.quorum_composite_strength;
     if strength <= 0.0 {
         return;
     }
