@@ -135,8 +135,8 @@ struct CompositeNeighborAccum {
 }
 
 #[inline]
-/// A quorum only becomes meaningful once a boid sees at least two neighbors;
-/// thresholds below that behave like singleton/direct-follow logic instead of group formation.
+/// A quorum threshold below 2 cannot form meaningful groups; only thresholds
+/// of 2 or more enable quorum-based grouping.
 fn quorum_enabled(p: &SimParams) -> bool {
     p.quorum_threshold >= 2
 }
@@ -251,7 +251,7 @@ fn apply_composite_neighbor_force(
         let mut composite_vx = composite.vx;
         let mut composite_vy = composite.vy;
         let composite_speed = (composite_vx * composite_vx + composite_vy * composite_vy).sqrt();
-        if composite_speed > max_speed && composite_speed > 0.0 {
+        if composite_speed > max_speed {
             let scale = max_speed / composite_speed;
             composite_vx *= scale;
             composite_vy *= scale;

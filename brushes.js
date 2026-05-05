@@ -39,6 +39,7 @@ const AGENT_VY = 3;
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
 const BOID_GROUP_COLOR_LIGHTNESS = 68;
+const BOID_GROUP_HUE_WRAP_OFFSET = 17;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -114,10 +115,10 @@ function _shadeColor(color, lightnessDelta = -12, saturationDelta = 4) {
   return hslToCSS(h, s + saturationDelta, l + lightnessDelta);
 }
 
-function _boidNeighborInFov(buffer, base, ox, oy, fovDeg) {
+function _boidNeighborInFov(buffer, base, otherX, otherY, fovDeg) {
   if (!Number.isFinite(fovDeg) || fovDeg >= 360) return true;
-  const dx = ox - buffer[base + AGENT_X];
-  const dy = oy - buffer[base + AGENT_Y];
+  const dx = otherX - buffer[base + AGENT_X];
+  const dy = otherY - buffer[base + AGENT_Y];
   const vx = buffer[base + AGENT_VX];
   const vy = buffer[base + AGENT_VY];
   let diff = Math.atan2(dy, dx) - Math.atan2(vy, vx);
@@ -185,7 +186,7 @@ function _computeBoidOverlayGroups(buffer, count, stride, p) {
 function _getBoidGroupCursorColor(groupId, alpha = 0.6) {
   if (groupId < 0) return `rgba(100,180,255,${alpha})`;
   const baseHue = BOID_GROUP_HUES[groupId % BOID_GROUP_HUES.length];
-  const hue = (baseHue + Math.floor(groupId / BOID_GROUP_HUES.length) * 17) % 360;
+  const hue = (baseHue + Math.floor(groupId / BOID_GROUP_HUES.length) * BOID_GROUP_HUE_WRAP_OFFSET) % 360;
   return `hsla(${hue},${BOID_GROUP_COLOR_SATURATION}%,${BOID_GROUP_COLOR_LIGHTNESS}%,${Math.max(0, Math.min(1, alpha))})`;
 }
 
