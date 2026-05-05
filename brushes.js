@@ -35,7 +35,10 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+// Predefined hue anchors used to visually separate detected boid quorum groups.
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
+const BOID_GROUP_COLOR_SATURATION = 85;
+const BOID_GROUP_COLOR_LIGHTNESS = 68;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -183,7 +186,7 @@ function _getBoidGroupCursorColor(groupId, alpha = 0.6) {
   if (groupId < 0) return `rgba(100,180,255,${alpha})`;
   const baseHue = BOID_GROUP_HUES[groupId % BOID_GROUP_HUES.length];
   const hue = (baseHue + Math.floor(groupId / BOID_GROUP_HUES.length) * 17) % 360;
-  return `hsla(${hue},85%,68%,${Math.max(0, Math.min(1, alpha))})`;
+  return `hsla(${hue},${BOID_GROUP_COLOR_SATURATION}%,${BOID_GROUP_COLOR_LIGHTNESS}%,${Math.max(0, Math.min(1, alpha))})`;
 }
 
 function _fillRadialPool(ctx, app, x, y, radius, color, opacity) {

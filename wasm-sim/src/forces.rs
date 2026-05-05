@@ -135,6 +135,8 @@ struct CompositeNeighborAccum {
 }
 
 #[inline]
+/// A quorum only becomes meaningful once a boid sees at least two neighbors;
+/// thresholds below that behave like singleton/direct-follow logic instead of group formation.
 fn quorum_enabled(p: &SimParams) -> bool {
     p.quorum_threshold >= 2
 }
