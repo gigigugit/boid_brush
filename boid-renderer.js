@@ -310,14 +310,16 @@ export class BoidStampRenderer {
   }
 
   render(renderState) {
-    const backend = this.webgpu.ready ? this.webgpu : this.canvas;
+    // The WebGPU stamp pass renders into an offscreen WebGPU canvas and then
+    // copies that result back into a 2D layer canvas. In practice that copy is
+    // unreliable across browsers/drivers, which can leave the layer blank even
+    // though the GPU draw succeeded. Keep WebGPU initialization available for
+    // simulation feature detection, but use the Canvas batch renderer for the
+    // actual layer output until the WebGPU path can render directly into the
+    // destination surface.
+    const backend = this.canvas;
     const ok = backend.render(renderState);
     this.activeKind = ok ? backend.kind : this.canvas.kind;
-    if (!ok && backend !== this.canvas) {
-      const fallbackOk = this.canvas.render(renderState);
-      this.activeKind = fallbackOk ? this.canvas.kind : this.activeKind;
-      return fallbackOk;
-    }
     return ok;
   }
 }
