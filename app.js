@@ -13,6 +13,8 @@ import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 
 const STORAGE_KEY = 'bb_session_v1';
+const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
+const APP_BUILD_ID = '2026-05-06-cache-check-1';
 const MAX_UNDO = 20;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -435,6 +437,7 @@ export class App {
       this.compositeAllLayers();
     });
 
+    this._announceBuildLoad();
     this.setStatus('Ready');
   }
 
@@ -3214,6 +3217,7 @@ export class App {
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('reloadAppBtn')?.addEventListener('click', () => this.reloadAppWithCacheBust());
     document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
@@ -5440,7 +5444,28 @@ export class App {
     this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 1800);
   }
 
+  reloadAppWithCacheBust() {
+    const url = new URL(window.location.href);
+    url.searchParams.set('bb_reload', `${Date.now()}`);
+    window.location.replace(url.toString());
+  }
+
+  _announceBuildLoad() {
+    let previousBuildId = '';
+    try {
+      previousBuildId = localStorage.getItem(BUILD_ID_STORAGE_KEY) || '';
+      localStorage.setItem(BUILD_ID_STORAGE_KEY, APP_BUILD_ID);
+    } catch { /* ignore storage failures */ }
+    if (!previousBuildId) {
+      this.showToast(`Build ${APP_BUILD_ID} loaded`);
+      return;
+    }
+    if (previousBuildId !== APP_BUILD_ID) {
+      this.showToast(`Updated build: ${previousBuildId} → ${APP_BUILD_ID}`);
+    }
+  }
+
   setStatus(msg) {
-    this.statusEl.textContent = msg;
+    this.statusEl.textContent = `${msg} · Build ${APP_BUILD_ID}`;
   }
 }
