@@ -464,6 +464,9 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       read.buffer.set(newest.data.subarray(0, newest.count * read.stride));
       this._gpuBuffersDirty = false;
       this._latestAppliedVersion = newest.version;
+    } else {
+      console.warn(`WebGPU boid sim readback count mismatch (${newest.count} GPU vs ${read.count} CPU); re-syncing GPU buffers from WASM state.`);
+      this._gpuBuffersDirty = true;
     }
     for (const slot of this._stagingSlots) {
       slot.ready = null;
@@ -555,11 +558,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         versionAppliedOrder: appliedOrder,
       };
       stagingSlot.busy = false;
-    }).catch(() => {
+    }).catch((error) => {
       try {
         stagingSlot.buffer.unmap();
       } catch {}
-      console.warn('WebGPU boid sim readback failed; re-syncing GPU buffers from WASM state.');
+      console.warn('WebGPU boid sim readback failed; re-syncing GPU buffers from WASM state.', error);
       stagingSlot.busy = false;
       stagingSlot.ready = null;
       this._gpuBuffersDirty = true;

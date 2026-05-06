@@ -21,6 +21,7 @@ const FLUID_MOVE_SEED_RATIO = 0.45;
 const FLUID_TIMESTEP_60FPS = 1 / 60;
 // Maximum pheromone intensity (maps to Uint8 luminance for sensing upload)
 const MAX_PHEROMONE = 255;
+const SHARED_MOTION_SIM_MAX_AGENTS = 10000;
 // Skip texture flow on nearly flat regions where the sampled slope is only a tiny fraction
 // of the texture's full gradient range; this avoids unnecessary blur-canvas churn.
 const MIN_TEXTURE_FLOW_SLOPE = 0.04;
@@ -524,15 +525,14 @@ function _applySimulationGuides(brush, p, read) {
 async function _createSharedMotionSim(app) {
   const width = app.W || 800;
   const height = app.H || 600;
-  const maxAgents = 10000;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      return await WebGPUBoidSim.create(width, height, maxAgents);
+      return await WebGPUBoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
   }
-  return BoidSim.create(width, height, maxAgents);
+  return BoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
 }
 
 export class BoidBrush {
