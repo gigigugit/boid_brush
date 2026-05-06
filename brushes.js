@@ -711,7 +711,6 @@ export class BoidBrush {
     if (!layer || layer.alphaLock) return false;
     if (this.app.tilingMode) return false;
     if (p.symmetryEnabled || p.stampImageCanvas) return false;
-    if (p.canvasTextureEnabled) return false;
     if (p.trailBlur > 0 || p.trailFlow > 0) return false;
     if (p.smudge > 0 || p.smudgeOnly) return false;
     if (p.kmMix && p.kmStrength > 0) return false;
@@ -733,6 +732,7 @@ export class BoidBrush {
     const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
     const baseHSL = hexToHSL(p.color);
     const baseRGB = hexToRGB(p.color);
+    const textureEnabled = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -756,6 +756,23 @@ export class BoidBrush {
       const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
         ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
         : baseRGB;
+      const pushInstance = (x, y) => {
+        let instOpacity = opacity;
+        let instSize = size;
+        if (textureEnabled) {
+          instOpacity *= _textureDepositDensity(this.app, p, x, y);
+          const edgeBreakup = this.app.getTextureEdgeBreakup?.(x, y, p) || 0;
+          if (edgeBreakup > 0) {
+            const field = this.app.sampleTextureField?.(x, y, p);
+            instSize *= Math.max(
+              TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+              1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+            );
+          }
+        }
+        if (instOpacity < 0.005 || instSize < 0.5) return;
+        instances.push(x, y, instSize, color.r, color.g, color.b, instOpacity);
+      };
 
       if (skipActive) {
         this._lastStampX[i] = ax;
@@ -766,7 +783,7 @@ export class BoidBrush {
       const prevX = this._lastStampX[i];
       const prevY = this._lastStampY[i];
       if (!interpolate || prevX === undefined || prevY === undefined) {
-        instances.push(ax, ay, size, color.r, color.g, color.b, opacity);
+        pushInstance(ax, ay);
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
         continue;
@@ -783,7 +800,7 @@ export class BoidBrush {
       const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
       for (let j = 1; j <= n; j++) {
         const t = j / n;
-        instances.push(prevX + dx * t, prevY + dy * t, size, color.r, color.g, color.b, opacity);
+        pushInstance(prevX + dx * t, prevY + dy * t);
       }
       this._lastStampX[i] = ax;
       this._lastStampY[i] = ay;
