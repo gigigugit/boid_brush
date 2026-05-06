@@ -603,4 +603,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   get mode() {
     return this._lastMode;
   }
+
+  markStateDirty() {
+    this._markStateDirty();
+  }
 }

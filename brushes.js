@@ -7,6 +7,7 @@
 // =============================================================================
 
 import { BoidSim, FluidSim } from './wasm-bridge.js';
+import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
@@ -417,9 +418,9 @@ function _textureDepositDensity(app, p, x, y) {
 function _applySimulationGuides(brush, p, read) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return;
+  if (!sim?.enabled) return false;
   const data = sim.brushData[app.activeBrush];
-  if (!data) return;
+  if (!data) return false;
   const { buffer, count, stride } = read;
   const animatedPathTargets = app.activeBrush === 'boid'
     ? (data.paths || [])
@@ -427,6 +428,11 @@ function _applySimulationGuides(brush, p, read) {
         .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
         .filter(Boolean)
     : [];
+  const hasPointGuides = Array.isArray(data.points) && data.points.some(point => point.enabled !== false);
+  const hasAntEdgeGuides = app.activeBrush === 'ant'
+    && Array.isArray(data.edges)
+    && data.edges.some(edge => edge.enabled !== false && edge.points?.length >= 2);
+  if (!hasPointGuides && !animatedPathTargets.length && !hasAntEdgeGuides) return false;
 
   for (let i = 0; i < count; i++) {
     const base = i * stride;
@@ -512,6 +518,21 @@ function _applySimulationGuides(brush, p, read) {
     buffer[base + AGENT_VX] = vx;
     buffer[base + AGENT_VY] = vy;
   }
+  return count > 0;
+}
+
+async function _createSharedMotionSim(app) {
+  const width = app.W || 800;
+  const height = app.H || 600;
+  const maxAgents = 10000;
+  if (typeof navigator !== 'undefined' && navigator.gpu) {
+    try {
+      return await WebGPUBoidSim.create(width, height, maxAgents);
+    } catch (error) {
+      console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
+    }
+  }
+  return BoidSim.create(width, height, maxAgents);
 }
 
 export class BoidBrush {
@@ -569,11 +590,7 @@ export class BoidBrush {
     }
     await this.renderer.init();
     try {
-      this.sim = await BoidSim.create(
-        this.app.W || 800,
-        this.app.H || 600,
-        10000
-      );
+      this.sim = await _createSharedMotionSim(this.app);
       this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
@@ -994,7 +1011,7 @@ export class BoidBrush {
 
     // Read agents
     const read = this.sim.readAgents();
-    _applySimulationGuides(this, p, read);
+    if (_applySimulationGuides(this, p, read)) this.sim.markStateDirty?.();
     const { buffer, count, stride } = read;
     if (count === 0) return;
 
@@ -1400,11 +1417,7 @@ export class AntBrush {
       return this.sim;
     }
     try {
-      this.sim = await BoidSim.create(
-        this.app.W || 800,
-        this.app.H || 600,
-        10000 // max agent pool capacity
-      );
+      this.sim = await _createSharedMotionSim(this.app);
       this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
@@ -1673,7 +1686,7 @@ export class AntBrush {
 
     // Read agents
     const read = this.sim.readAgents();
-    _applySimulationGuides(this, p, read);
+    if (_applySimulationGuides(this, p, read)) this.sim.markStateDirty?.();
     const { buffer, count, stride } = read;
     if (count === 0) return;
 
