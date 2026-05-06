@@ -345,6 +345,25 @@ export function buildSidebar(app) {
       ${sliderRow('stabilizer', 'Stabilizer', 0, 100, 0)}
     </div>
 
+    <!-- Stamp Image -->
+    <div class="section-header closed" data-brushes="boid ant bristle simple eraser" data-section="stampImage">Stamp Image <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid ant bristle simple eraser">
+      <label>Enable <input type="checkbox" id="stampImageEnabled"></label>
+      <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
+        <canvas id="stampImagePreview" width="72" height="72" style="width:72px;height:72px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:#0d0d12;image-rendering:auto;"></canvas>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;">
+          <strong id="stampImageName" style="font-size:12px;">No stamp loaded</strong>
+          <span id="stampImageFileName" class="slider-desc">Upload a PNG, WebP, JPEG, or similar image</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center;margin:4px 0;">
+        <button id="btnUploadStampImage" style="flex:1;">📂 Load Stamp</button>
+        <button id="btnClearStampImage" style="flex-shrink:0;">✕</button>
+      </div>
+      <label>Tint With Brush <input type="checkbox" id="stampImageTint" checked></label>
+      ${sliderRow('stampImageRotation', 'Rotation', 0, 360, 0, v => v + '°', 'Rotate the uploaded stamp while preserving its aspect ratio and soft alpha')}
+    </div>
+
     <!-- Canvas Texture -->
     <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
@@ -635,6 +654,23 @@ export function buildSidebar(app) {
   document.getElementById('btnClearTexture')?.addEventListener('click', () => {
     app.clearCanvasTexture();
     syncTextureUI(app);
+  });
+
+  // ── Stamp image upload ──
+  const _stampFileInput = document.createElement('input');
+  _stampFileInput.type = 'file';
+  _stampFileInput.accept = 'image/*';
+  _stampFileInput.addEventListener('change', async () => {
+    const file = _stampFileInput.files[0];
+    if (!file) return;
+    await app.loadCustomStampImage(file);
+    syncStampImageUI(app);
+    _stampFileInput.value = '';
+  });
+  document.getElementById('btnUploadStampImage')?.addEventListener('click', () => _stampFileInput.click());
+  document.getElementById('btnClearStampImage')?.addEventListener('click', () => {
+    app.clearCustomStampImage();
+    syncStampImageUI(app);
   });
 
   // ── Preset buttons ──
@@ -1161,6 +1197,7 @@ export function syncUI(app) {
   }
   _renderLayerList(app);
   syncTextureUI(app);
+  syncStampImageUI(app);
   syncEdgeSliders();
 }
 
@@ -1195,6 +1232,39 @@ export function syncTextureUI(app) {
     const ctx = preview.getContext('2d');
     ctx.clearRect(0, 0, preview.width, preview.height);
     if (active?.previewCanvas) ctx.drawImage(active.previewCanvas, 0, 0, preview.width, preview.height);
+  }
+}
+
+export function syncStampImageUI(app) {
+  const meta = app.getCustomStampImageMeta();
+  const nameEl = document.getElementById('stampImageName');
+  if (nameEl) nameEl.textContent = meta?.name || 'No stamp loaded';
+  const infoEl = document.getElementById('stampImageFileName');
+  if (infoEl) {
+    infoEl.textContent = meta
+      ? `Custom upload · ${meta.width}×${meta.height}`
+      : 'Upload a PNG, WebP, JPEG, or similar image';
+  }
+  const enableEl = document.getElementById('stampImageEnabled');
+  if (enableEl) {
+    enableEl.disabled = !meta;
+    if (!meta) enableEl.checked = false;
+  }
+  const clearBtn = document.getElementById('btnClearStampImage');
+  if (clearBtn) {
+    clearBtn.disabled = !meta;
+    clearBtn.title = meta ? 'Remove the current custom stamp image' : 'No custom stamp image to clear';
+  }
+  const preview = document.getElementById('stampImagePreview');
+  if (preview) {
+    const ctx = preview.getContext('2d');
+    ctx.clearRect(0, 0, preview.width, preview.height);
+    if (meta?.canvas) {
+      const aspect = meta.width > 0 && meta.height > 0 ? meta.width / meta.height : 1;
+      const drawW = aspect >= 1 ? preview.width : preview.width * aspect;
+      const drawH = aspect >= 1 ? preview.height / aspect : preview.height;
+      ctx.drawImage(meta.canvas, (preview.width - drawW) / 2, (preview.height - drawH) / 2, drawW, drawH);
+    }
   }
 }
 
@@ -1233,6 +1303,7 @@ const _sliderFormats = {
   lbmResolutionScale: v => v + '%',
   lbmFluidScale: v => (v / 100).toFixed(2) + '×',
   stampOpacity: v => (v / 100).toFixed(2),
+  stampImageRotation: v => v + '°',
   smudge: v => (v / 100).toFixed(2),
   canvasTextureStrength: v => (v / 100).toFixed(2),
   canvasTextureScale: v => (v / 100).toFixed(1) + '×',

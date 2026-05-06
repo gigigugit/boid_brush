@@ -22,6 +22,7 @@ const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
+const DEFAULT_STAMP_IMAGE_PATH = './circle.png';
 const PAPER_TEXTURE_FLECK_SCALE = 3.2;
 const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
 const PAPER_TEXTURE_FLECK_INTENSITY = 170;
@@ -304,6 +305,9 @@ export class App {
     this._canvasTexture = null;
     this._customCanvasTexture = null;
     this._activeCanvasTextureId = DEFAULT_CANVAS_TEXTURE_ID;
+    this._customStampImage = null;
+    this._stampTintCanvas = null;
+    this._stampTintCtx = null;
 
     // Smudge: cached image data for colour sampling (invalidated each composite)
     this._smudgeImageData = null;
@@ -915,6 +919,106 @@ export class App {
     this.showToast('Texture reset to built-in paper grain');
   }
 
+  async _setCustomStampImageFromDataUrl(dataUrl, name = 'Custom Stamp', { silent = false } = {}) {
+    const canvas = await this._canvasFromDataUrl(dataUrl);
+    this._customStampImage = {
+      id: 'custom-stamp',
+      name,
+      sourceType: 'upload',
+      canvas,
+      dataUrl,
+      width: canvas.width,
+      height: canvas.height,
+    };
+    this.invalidateParams();
+    if (document.getElementById('sidebar')) syncUI(this);
+    if (!silent) this.showToast('🖼 Stamp image loaded');
+    this._maybeAutoSaveSession();
+    return this._customStampImage;
+  }
+
+  async loadCustomStampImage(file) {
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = evt => resolve(evt.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await this._setCustomStampImageFromDataUrl(dataUrl, file?.name || 'Custom Stamp');
+      return true;
+    } catch {
+      this.showToast('⚠ Stamp image load failed — invalid image');
+      return false;
+    }
+  }
+
+  clearCustomStampImage({ silent = false } = {}) {
+    this._customStampImage = null;
+    this.invalidateParams();
+    if (document.getElementById('sidebar')) syncUI(this);
+    if (!silent) this.showToast('Stamp image cleared');
+    this._maybeAutoSaveSession();
+  }
+
+  getCustomStampImageMeta() {
+    if (!this._customStampImage) return null;
+    return {
+      id: this._customStampImage.id,
+      name: this._customStampImage.name,
+      sourceType: this._customStampImage.sourceType,
+      width: this._customStampImage.width,
+      height: this._customStampImage.height,
+      canvas: this._customStampImage.canvas,
+    };
+  }
+
+  _serializeCustomStampImageState() {
+    return this._customStampImage
+      ? {
+          name: this._customStampImage.name,
+          dataUrl: this._customStampImage.dataUrl,
+        }
+      : null;
+  }
+
+  async _restoreCustomStampImageState(state) {
+    if (!state?.dataUrl) {
+      this._customStampImage = null;
+      return;
+    }
+    try {
+      await this._setCustomStampImageFromDataUrl(state.dataUrl, state.name || 'Custom Stamp', { silent: true });
+    } catch {
+      this._customStampImage = null;
+      this.showToast('⚠ Saved custom stamp could not be restored');
+    }
+  }
+
+  async _loadDefaultStampImage({ enable = true } = {}) {
+    const response = await fetch(DEFAULT_STAMP_IMAGE_PATH);
+    if (!response.ok) {
+      throw new Error(`Default stamp image fetch failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = evt => resolve(evt.target.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    await this._setCustomStampImageFromDataUrl(dataUrl, 'circle.png', { silent: true });
+    if (enable) {
+      const enableEl = document.getElementById('stampImageEnabled');
+      if (enableEl) enableEl.checked = true;
+      this.invalidateParams();
+    }
+  }
+
+  hasActiveStampImage(p = this._cachedP || this.getP()) {
+    return !!p?.stampImageCanvas;
+  }
+
   /**
    * Sample the active texture at a canvas position.
    */
@@ -1389,6 +1493,10 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
+      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && this.activeBrush !== 'fluid',
+      stampImageCanvas: chk('stampImageEnabled') && this.activeBrush !== 'fluid' ? this._customStampImage?.canvas || null : null,
+      stampImageTint: chk('stampImageTint'),
+      stampImageRotation: (val('stampImageRotation') || 0) * Math.PI / 180,
       smudge: val('smudge') / 100,
       smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
@@ -4323,6 +4431,114 @@ export class App {
     });
   }
 
+  _getStampWrapPoints(x, y, size) {
+    if (!this.tilingMode) return [];
+    const r = size / 2;
+    const W = this.W;
+    const H = this.H;
+    const overLeft = x - r < 0;
+    const overRight = x + r > W;
+    const overTop = y - r < 0;
+    const overBottom = y + r > H;
+    const wraps = [];
+    if (overLeft) wraps.push({ x: x + W, y });
+    if (overRight) wraps.push({ x: x - W, y });
+    if (overTop) wraps.push({ x, y: y + H });
+    if (overBottom) wraps.push({ x, y: y - H });
+    if (overLeft && overTop) wraps.push({ x: x + W, y: y + H });
+    if (overRight && overTop) wraps.push({ x: x - W, y: y + H });
+    if (overLeft && overBottom) wraps.push({ x: x + W, y: y - H });
+    if (overRight && overBottom) wraps.push({ x: x - W, y: y - H });
+    return wraps;
+  }
+
+  _getTintedStampCanvas(bitmap, widthPx, heightPx, fillColor) {
+    if (!this._stampTintCanvas) {
+      this._stampTintCanvas = document.createElement('canvas');
+      this._stampTintCtx = this._stampTintCanvas.getContext('2d');
+    }
+    if (this._stampTintCanvas.width !== widthPx || this._stampTintCanvas.height !== heightPx) {
+      this._stampTintCanvas.width = widthPx;
+      this._stampTintCanvas.height = heightPx;
+    }
+    const ctx = this._stampTintCtx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, widthPx, heightPx);
+    ctx.drawImage(bitmap, 0, 0, widthPx, heightPx);
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = fillColor;
+    ctx.fillRect(0, 0, widthPx, heightPx);
+    ctx.globalCompositeOperation = 'source-over';
+    return this._stampTintCanvas;
+  }
+
+  _drawBitmapStamp(ctx, bitmap, x, y, size, color, opacity, options = {}) {
+    if (!bitmap || opacity <= 0 || size <= 0) return;
+    const p = options.p || this._cachedP || this.getP();
+    const rotation = options.rotation ?? p.stampImageRotation ?? 0;
+    const tintEnabled = options.tintEnabled ?? p.stampImageTint;
+    const applyTexture = options.applyTexture !== false;
+    const applyAlphaLock = options.applyAlphaLock !== false;
+    const applyImpasto = options.applyImpasto !== false;
+    const markDirty = options.markDirty !== false;
+    const applyTiling = options.applyTiling !== false;
+    const textureEnabled = applyTexture && this.hasCanvasTexture() && p.canvasTextureEnabled;
+    if (textureEnabled) opacity *= this.getTextureDepositDensity(x, y, p);
+    if (opacity <= 0) return;
+
+    const aspect = bitmap.width > 0 && bitmap.height > 0 ? bitmap.width / bitmap.height : 1;
+    const drawW = aspect >= 1 ? size : size * aspect;
+    const drawH = aspect >= 1 ? size / aspect : size;
+    const dirtySize = Math.sqrt(drawW * drawW + drawH * drawH);
+    const renderWidthPx = Math.max(1, Math.ceil(drawW * this.DPR));
+    const renderHeightPx = Math.max(1, Math.ceil(drawH * this.DPR));
+    const renderSource = tintEnabled
+      ? this._getTintedStampCanvas(bitmap, renderWidthPx, renderHeightPx, color)
+      : bitmap;
+    const heightSource = applyImpasto && p.impasto && p.impastoStrength > 0 && this._heightCtx
+      ? this._getTintedStampCanvas(bitmap, renderWidthPx, renderHeightPx, '#ffffff')
+      : null;
+    const activeLayer = this.getActiveLayer();
+    const useAlphaLock = applyAlphaLock && activeLayer && activeLayer.alphaLock && this.activeBrush !== 'eraser';
+
+    const drawAt = (tx, ty) => {
+      ctx.save();
+      if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
+      ctx.globalAlpha = opacity;
+      ctx.translate(tx, ty);
+      if (rotation) ctx.rotate(rotation);
+      ctx.drawImage(renderSource, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+
+      if (heightSource) {
+        const hctx = this._heightCtx;
+        hctx.save();
+        hctx.globalAlpha = Math.min(opacity * p.impastoStrength, 1);
+        hctx.translate(tx * this.DPR, ty * this.DPR);
+        if (rotation) hctx.rotate(rotation);
+        hctx.drawImage(heightSource, -(drawW * this.DPR) / 2, -(drawH * this.DPR) / 2, drawW * this.DPR, drawH * this.DPR);
+        hctx.restore();
+        this._heightDirty = true;
+      }
+
+      if (markDirty) this._markStampDirty(ctx, tx, ty, dirtySize);
+    };
+
+    drawAt(x, y);
+    if (applyTiling) {
+      for (const pt of this._getStampWrapPoints(x, y, dirtySize)) drawAt(pt.x, pt.y);
+    }
+  }
+
+  symBitmapStamp(ctx, x, y, size, color, opacity, options = {}) {
+    const p = options.p || this._cachedP || this.getP();
+    const bitmap = options.bitmap || p?.stampImageCanvas;
+    if (!bitmap) return;
+    for (const pt of this.getSymmetryPoints(x, y)) {
+      this._drawBitmapStamp(ctx, bitmap, pt.x, pt.y, size, color, opacity, { ...options, p });
+    }
+  }
+
   stampCircle(ctx, x, y, size, color, opacity) {
     const p = this._cachedP || this.getP();
     const textureEnabled = this.hasCanvasTexture() && p.canvasTextureEnabled;
@@ -4763,10 +4979,19 @@ export class App {
     return pts;
   }
 
-  symStamp(ctx, x, y, size, color, opacity) {
+  symCircleStamp(ctx, x, y, size, color, opacity) {
     for (const pt of this.getSymmetryPoints(x, y)) {
       this.stampCircle(ctx, pt.x, pt.y, size, color, opacity);
     }
+  }
+
+  symStamp(ctx, x, y, size, color, opacity) {
+    const p = this._cachedP || this.getP();
+    if (p?.stampImageCanvas) {
+      this.symBitmapStamp(ctx, x, y, size, color, opacity, { p });
+      return;
+    }
+    this.symCircleStamp(ctx, x, y, size, color, opacity);
   }
 
   // ========================================================
@@ -5105,6 +5330,7 @@ export class App {
         sessions: this.simulation.sessions,
       };
       controls._canvasTextureState = this._serializeCanvasTextureState();
+      controls._stampImageState = this._serializeCustomStampImageState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
     } catch { /* quota exceeded — ignore */ }
   }
@@ -5114,6 +5340,7 @@ export class App {
       await this._ensureBuiltinCanvasTexture();
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
+        await this._loadDefaultStampImage();
         syncUI(this);
         return;
       }
@@ -5121,9 +5348,15 @@ export class App {
       if (controls._canvasTextureState) {
         await this._restoreCanvasTextureState(controls._canvasTextureState);
       }
+      if (Object.prototype.hasOwnProperty.call(controls, '_stampImageState')) {
+        await this._restoreCustomStampImageState(controls._stampImageState);
+      } else {
+        await this._loadDefaultStampImage();
+      }
       for (const [id, val] of Object.entries(controls)) {
         if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
         if (id === '_canvasTextureState') continue;
+        if (id === '_stampImageState') continue;
         if (id === 'primaryColor') { this.primaryEl.value = val; continue; }
         if (id === 'secondaryColor') { this.secondaryEl.value = val; continue; }
         if (id === 'bgColor') { this.setBackgroundColor(val); continue; }

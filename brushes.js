@@ -317,6 +317,17 @@ function _applyTextureFlow(ctx, canvas, app, flow, p) {
  * effects (smudge, KM mix, impasto) to avoid side-effects on app state.
  */
 function _stampToBlurAccum(bctx, app, x, y, sz, color, op) {
+  if (app.hasActiveStampImage?.()) {
+    app.symBitmapStamp(bctx, x, y, sz, color, op, {
+      applyAlphaLock: false,
+      applyImpasto: false,
+      applyTexture: false,
+      applyTiling: false,
+      markDirty: false,
+      tintEnabled: app.getP().stampImageTint,
+    });
+    return;
+  }
   bctx.fillStyle = color;
   for (const pt of app.getSymmetryPoints(x, y)) {
     bctx.beginPath();
