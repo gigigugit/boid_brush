@@ -61,6 +61,11 @@ class WebGPUBoidStampRenderer {
     this._initPromise = null;
   }
 
+  _setRenderFailure(reason) {
+    this.lastRenderFailureReason = reason || 'WebGPU stamp draw failed';
+    return false;
+  }
+
   async init() {
     if (this.ready) return true;
     if (this.failed) return false;
@@ -258,45 +263,73 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   }
 
   _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr, allowBeforeReady = false }) {
-    if (!allowBeforeReady && !this.ready) return false;
-    if (!this.device || !this.context || !instances || count <= 0) return false;
+    if (!allowBeforeReady && !this.ready) return this._setRenderFailure('WebGPU renderer not ready');
+    if (!this.device) return this._setRenderFailure('WebGPU device unavailable');
+    if (!this.context) return this._setRenderFailure('WebGPU canvas context unavailable');
+    if (!this.pipeline) return this._setRenderFailure('WebGPU render pipeline unavailable');
+    if (!this.uniformBuffer) return this._setRenderFailure('WebGPU uniform buffer unavailable');
+    if (!instances) return this._setRenderFailure('stamp instance buffer missing');
+    if (count <= 0) return this._setRenderFailure('no stamp instances to draw');
     const widthPx = Math.max(1, Math.round(targetWidthPx));
     const heightPx = Math.max(1, Math.round(targetHeightPx));
-    this._ensureCanvas(widthPx, heightPx);
-    this._ensureInstanceBuffer(count);
+    try {
+      this._ensureCanvas(widthPx, heightPx);
+      this._ensureInstanceBuffer(count);
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU canvas setup failed: ${error?.message || error}`);
+    }
 
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, new Float32Array([
-      widthPx,
-      heightPx,
-      dpr,
-      0,
-    ]));
-    this.device.queue.writeBuffer(this.instanceBuffer, 0, instances.buffer, instances.byteOffset, count * INSTANCE_STRIDE * 4);
+    try {
+      this.device.queue.writeBuffer(this.uniformBuffer, 0, new Float32Array([
+        widthPx,
+        heightPx,
+        dpr,
+        0,
+      ]));
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU uniform upload failed: ${error?.message || error}`);
+    }
 
-    const bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [{
-        binding: 0,
-        resource: { buffer: this.uniformBuffer },
-      }],
-    });
+    try {
+      this.device.queue.writeBuffer(this.instanceBuffer, 0, instances.buffer, instances.byteOffset, count * INSTANCE_STRIDE * 4);
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU instance upload failed: ${error?.message || error}`);
+    }
 
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: this.context.getCurrentTexture().createView(),
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      }],
-    });
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.setVertexBuffer(0, this.instanceBuffer);
-    pass.draw(6, count, 0, 0);
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
-    return true;
+    let bindGroup;
+    try {
+      bindGroup = this.device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [{
+          binding: 0,
+          resource: { buffer: this.uniformBuffer },
+        }],
+      });
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU bind group creation failed: ${error?.message || error}`);
+    }
+
+    try {
+      const encoder = this.device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this.context.getCurrentTexture().createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(this.pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.setVertexBuffer(0, this.instanceBuffer);
+      pass.draw(6, count, 0, 0);
+      pass.end();
+      this.device.queue.submit([encoder.finish()]);
+      this.lastRenderFailureReason = '';
+      return true;
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU submit failed: ${error?.message || error}`);
+    }
   }
 
   async _verify2DInterop() {
@@ -345,21 +378,24 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   }
 
   render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr }) {
-    if (!this.ready || !targetCtx) return false;
+    if (!this.ready) return this._setRenderFailure('WebGPU renderer not ready');
+    if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
     const drew = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
-    if (!drew) {
-      this.lastRenderFailureReason = 'WebGPU stamp draw failed';
-      return false;
-    }
-    this.lastRenderFailureReason = '';
+    if (!drew) return false;
 
-    targetCtx.save();
-    targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-    targetCtx.globalAlpha = 1;
-    targetCtx.globalCompositeOperation = 'source-over';
-    targetCtx.drawImage(this.canvas, 0, 0);
-    targetCtx.restore();
-    return true;
+    try {
+      targetCtx.save();
+      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+      targetCtx.globalAlpha = 1;
+      targetCtx.globalCompositeOperation = 'source-over';
+      targetCtx.drawImage(this.canvas, 0, 0);
+      targetCtx.restore();
+      this.lastRenderFailureReason = '';
+      return true;
+    } catch (error) {
+      try { targetCtx.restore(); } catch {}
+      return this._setRenderFailure(`WebGPU→2D copy failed: ${error?.message || error}`);
+    }
   }
 }
 
