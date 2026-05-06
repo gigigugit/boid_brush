@@ -448,14 +448,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   _applyReadyResults() {
     let newest = null;
     for (const slot of this._stagingSlots) {
-      if (slot.ready && slot.ready.version !== this._stateVersion) {
+      if (!slot.ready) continue;
+      if (slot.ready.version !== this._stateVersion) {
         slot.ready = null;
         continue;
       }
-      if (slot.ready && slot.ready.version === this._stateVersion) {
-        if (!newest || slot.ready.versionAppliedOrder > newest.versionAppliedOrder) {
-          newest = slot.ready;
-        }
+      if (!newest || slot.ready.versionAppliedOrder > newest.versionAppliedOrder) {
+        newest = slot.ready;
       }
     }
     if (!newest || newest.version < this._latestAppliedVersion) return;
@@ -560,6 +559,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       try {
         stagingSlot.buffer.unmap();
       } catch {}
+      console.warn('WebGPU boid sim readback failed; re-syncing GPU buffers from WASM state.');
       stagingSlot.busy = false;
       stagingSlot.ready = null;
       this._gpuBuffersDirty = true;
