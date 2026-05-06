@@ -1,4 +1,7 @@
 const INSTANCE_STRIDE = 8;
+const GPU_UNIFORM_BUFFER_BYTES = 16; // vec2f canvasPx (8) + f32 dpr (4) + f32 pad (4)
+const GPU_INSTANCE_BUFFER_MIN_BYTES = 4096; // ~128 instances at 8 floats/instance before growth
+const GPU_STAMP_EDGE_SOFTNESS = 0.84; // Start feathering near the outer 16% of the circle
 
 class CanvasBoidStampRenderer {
   constructor() {
@@ -88,7 +91,7 @@ class WebGPUBoidStampRenderer {
         alphaMode: 'premultiplied',
       });
       this.uniformBuffer = this.device.createBuffer({
-        size: 16,
+        size: GPU_UNIFORM_BUFFER_BYTES,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       this.pipeline = this._createPipeline(this.presentationFormat);
@@ -163,7 +166,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   if (dist > 1.0) {
     discard;
   }
-  let edge = smoothstep(1.0, 0.84, dist);
+  let edge = smoothstep(1.0, ${GPU_STAMP_EDGE_SOFTNESS.toFixed(2)}, dist);
   return vec4f(input.color.rgb, input.color.a * edge);
 }
 `,
@@ -224,7 +227,10 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   _ensureInstanceBuffer(instanceCount) {
     const requiredBytes = Math.max(1, instanceCount) * INSTANCE_STRIDE * 4;
     if (this.instanceBuffer && requiredBytes <= this.instanceCapacity) return;
-    const nextCapacity = Math.max(requiredBytes, this.instanceCapacity ? this.instanceCapacity * 2 : 4096);
+    const nextCapacity = Math.max(
+      requiredBytes,
+      this.instanceCapacity ? this.instanceCapacity * 2 : GPU_INSTANCE_BUFFER_MIN_BYTES,
+    );
     this.instanceBuffer = this.device.createBuffer({
       size: nextCapacity,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,

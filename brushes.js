@@ -108,7 +108,7 @@ function hslToRGB(h, s, l) {
   return hexToRGB(hslToHex(h, s, l));
 }
 
-class _StampInstanceBuffer {
+class StampInstanceBuffer {
   constructor(initialCapacity = 1024) {
     this._stride = 8;
     this._capacity = Math.max(1, initialCapacity);
@@ -129,6 +129,8 @@ class _StampInstanceBuffer {
     this._data[base + 0] = x;
     this._data[base + 1] = y;
     this._data[base + 2] = size;
+    // Padding slot keeps the packed instance data aligned with the renderer's
+    // 8-float / 32-byte instance stride.
     this._data[base + 3] = 0;
     this._data[base + 4] = r / 255;
     this._data[base + 5] = g / 255;
@@ -710,7 +712,7 @@ export class BoidBrush {
     taperOpacity = false,
   } = {}) {
     const { buffer, count, stride } = read;
-    const instances = new _StampInstanceBuffer(Math.max(64, count));
+    const instances = new StampInstanceBuffer(Math.max(64, count));
     const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
     const baseHSL = hexToHSL(p.color);
     const baseRGB = hexToRGB(p.color);
@@ -759,6 +761,8 @@ export class BoidBrush {
       const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
       if (dist < step) continue;
 
+      // Cap interpolation work per agent so a single long jump cannot explode
+      // into an unbounded number of intermediate stamps in one frame.
       const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
       for (let j = 1; j <= n; j++) {
         const t = j / n;
