@@ -227,6 +227,8 @@ export class BoidSim {
   get wasm() {
     return this._mod;
   }
+
+  markStateDirty() {}
 }
 
 const FLUID_TYPE_MAP = {
