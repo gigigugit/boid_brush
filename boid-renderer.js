@@ -296,7 +296,10 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       this._interopProbeCanvas.height = 32;
       this._interopProbeCtx = this._interopProbeCanvas.getContext('2d', { willReadFrequently: true });
     }
-    if (!this._interopProbeCtx) return false;
+    if (!this._interopProbeCtx) {
+      console.warn('Boid WebGPU renderer 2D probe unavailable — falling back to Canvas2D.');
+      return false;
+    }
     const probeInstances = new Float32Array([
       16, 16, 20, 0,
       1, 0.15, 0.15, 1,
@@ -311,7 +314,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     if (!drew) return false;
     // Older/partial WebGPU implementations may not expose an explicit completion
     // promise. When available, wait so the probe samples the submitted frame.
-    if (typeof this.device.queue.onSubmittedWorkDone === 'function') {
+    if (this.device.queue.onSubmittedWorkDone) {
       await this.device.queue.onSubmittedWorkDone();
     }
     this._interopProbeCtx.save();
@@ -322,7 +325,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._interopProbeCtx.restore();
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
     if (pixel[3] > GPU_INTEROP_PROBE_ALPHA_MIN) return true;
-    console.warn('Boid WebGPU renderer copy-out unsupported — falling back to Canvas2D.');
+    console.warn('Boid WebGPU renderer copy out unsupported — falling back to Canvas2D.');
     return false;
   }
 
@@ -367,11 +370,16 @@ export class BoidStampRenderer {
   render(renderState) {
     const preferred = this.webgpu.ready ? this.webgpu : this.canvas;
     let ok = preferred.render(renderState);
-    const usedWebGPU = preferred === this.webgpu && ok;
+    let renderedWithWebGPU = preferred === this.webgpu && ok;
     if (!ok && preferred !== this.canvas) {
       ok = this.canvas.render(renderState);
+      renderedWithWebGPU = false;
     }
-    this.activeKind = ok ? (usedWebGPU ? this.webgpu.kind : this.canvas.kind) : this.canvas.kind;
+    if (!ok) {
+      this.activeKind = this.canvas.kind;
+      return false;
+    }
+    this.activeKind = renderedWithWebGPU ? this.webgpu.kind : this.canvas.kind;
     return ok;
   }
 }
