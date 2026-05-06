@@ -416,24 +416,66 @@ function _textureDepositDensity(app, p, x, y) {
   return app.getTextureDepositDensity(x, y, p);
 }
 
-function _applySimulationGuides(brush, p, read) {
+function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return false;
+  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
   const data = sim.brushData[app.activeBrush];
-  if (!data) return false;
+  if (!data) return { points: [], pathTargets: [], edges: [] };
+  return {
+    points: Array.isArray(data.points)
+      ? data.points
+          .filter(point => point.enabled !== false)
+          .map(point => {
+            const config = app._resolveSimulationPointConfig(point, p);
+            return {
+              x: point.x,
+              y: point.y,
+              type: point.type === 'repel' ? 'repel' : 'attract',
+              strength: config.strength,
+              radius: config.radius,
+              hardness: config.hardness,
+            };
+          })
+      : [],
+    pathTargets: app.activeBrush === 'boid'
+      ? (data.paths || [])
+          .filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
+          .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
+          .filter(Boolean)
+          .map(target => ({
+            x: target.x,
+            y: target.y,
+            strength: target.config.strength,
+            radius: target.config.radius,
+          }))
+      : [],
+    edges: app.activeBrush === 'ant'
+      ? (data.edges || [])
+          .filter(edge => edge.enabled !== false && edge.points?.length >= 2)
+          .map(edge => {
+            const config = app._resolveSimulationEdgeConfig(edge, p);
+            return {
+              points: edge.points,
+              strength: config.strength,
+              radius: config.radius,
+            };
+          })
+      : [],
+  };
+}
+
+function _syncSimulationGuidesToGpu(brush, guideState) {
+  if (!brush.sim?.setSimulationGuides) return { points: false, pathTargets: false };
+  return brush.sim.setSimulationGuides(guideState) || { points: false, pathTargets: false };
+}
+
+function _applySimulationGuides(brush, p, read, guideState = _collectSimulationGuides(brush, p), gpuSupport = {}) {
+  const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
+  const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
+  const edgeGuides = guideState.edges || [];
+  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
   const { buffer, count, stride } = read;
-  const animatedPathTargets = app.activeBrush === 'boid'
-    ? (data.paths || [])
-        .filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
-        .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
-        .filter(Boolean)
-    : [];
-  const hasPointGuides = Array.isArray(data.points) && data.points.some(point => point.enabled !== false);
-  const hasAntEdgeGuides = app.activeBrush === 'ant'
-    && Array.isArray(data.edges)
-    && data.edges.some(edge => edge.enabled !== false && edge.points?.length >= 2);
-  if (!hasPointGuides && !animatedPathTargets.length && !hasAntEdgeGuides) return false;
 
   for (let i = 0; i < count; i++) {
     const base = i * stride;
@@ -442,21 +484,19 @@ function _applySimulationGuides(brush, p, read) {
     let vx = buffer[base + AGENT_VX];
     let vy = buffer[base + AGENT_VY];
 
-    for (const point of data.points) {
-      if (point.enabled === false) continue;
-      const config = app._resolveSimulationPointConfig(point, p);
+    for (const point of pointGuides) {
       const dx = point.x - x;
       const dy = point.y - y;
       const d = Math.hypot(dx, dy);
-      if (d <= 0.0001 || d > config.radius) continue;
+      if (d <= 0.0001 || d > point.radius) continue;
       const sign = point.type === 'repel' ? -1 : 1;
-      const falloff = 1 - d / config.radius;
+      const falloff = 1 - d / point.radius;
       // Repel points use a hardness-shaped falloff so users can make repulsion
       // either soft/wide or tight/punchy; attract points stay linear.
       const shaped = point.type === 'repel'
-        ? Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, config.hardness))
+        ? Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, point.hardness))
         : falloff;
-      const push = config.strength * p.simSpeed * shaped * 0.85 * sign;
+      const push = point.strength * p.simSpeed * shaped * 0.85 * sign;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
     }
@@ -468,9 +508,9 @@ function _applySimulationGuides(brush, p, read) {
         const dx = target.x - x;
         const dy = target.y - y;
         const d = Math.hypot(dx, dy);
-        if (d <= 0.0001 || d > target.config.radius) continue;
-        const falloff = 1 - d / target.config.radius;
-        const push = target.config.strength * p.simSpeed * falloff;
+        if (d <= 0.0001 || d > target.radius) continue;
+        const falloff = 1 - d / target.radius;
+        const push = target.strength * p.simSpeed * falloff;
         sumX += (dx / d) * push;
         sumY += (dy / d) * push;
       }
@@ -478,12 +518,10 @@ function _applySimulationGuides(brush, p, read) {
       vy += sumY;
     }
 
-    if (app.activeBrush === 'ant' && data.edges?.length) {
+    if (app.activeBrush === 'ant' && edgeGuides.length) {
       const prevX = x - vx;
       const prevY = y - vy;
-      for (const edge of data.edges) {
-        if (edge.enabled === false) continue;
-        const config = app._resolveSimulationEdgeConfig(edge, p);
+      for (const edge of edgeGuides) {
         const pts = edge.points || [];
         for (let j = 1; j < pts.length; j++) {
           const a = pts[j - 1];
@@ -492,8 +530,8 @@ function _applySimulationGuides(brush, p, read) {
           const dx = x - closest.x;
           const dy = y - closest.y;
           const dist = Math.hypot(dx, dy);
-          if (config.radius > 0 && dist < config.radius && dist > 0.0001) {
-            const away = (1 - dist / config.radius) * config.strength * p.simSpeed;
+          if (edge.radius > 0 && dist < edge.radius && dist > 0.0001) {
+            const away = (1 - dist / edge.radius) * edge.strength * p.simSpeed;
             vx += (dx / dist) * away;
             vy += (dy / dist) * away;
           }
@@ -502,8 +540,8 @@ function _applySimulationGuides(brush, p, read) {
           if ((prevSide < 0 && curSide > 0) || (prevSide > 0 && curSide < 0)) {
             const nx = dy === 0 && dx === 0 ? 0 : dx / Math.max(dist, 1);
             const ny = dy === 0 && dx === 0 ? 0 : dy / Math.max(dist, 1);
-            x = closest.x + nx * Math.max(config.radius, 2);
-            y = closest.y + ny * Math.max(config.radius, 2);
+            x = closest.x + nx * Math.max(edge.radius, 2);
+            y = closest.y + ny * Math.max(edge.radius, 2);
             const dot = vx * nx + vy * ny;
             if (dot < 0) {
               vx -= 1.8 * dot * nx;
@@ -849,6 +887,8 @@ export class BoidBrush {
   onHoverFrame(elapsed) {
     if (!this._ready || !this._hoverSpawned) return;
     const p = this.app.getP();
+    const guideState = _collectSimulationGuides(this, p);
+    _syncSimulationGuidesToGpu(this, guideState);
     // Write params with the current hover leader position so boids follow
     this.sim.writeParams(this._applySimVars(p), this.app.leaderX, this.app.leaderY, elapsed);
     this.sim.step(1 / 60);
@@ -927,9 +967,14 @@ export class BoidBrush {
     // paint is ever deposited. In flat-stroke mode the composite path in onFrame
     // is required, so this initial stamp is omitted there.
     if (!this._flatActive) {
+      const guideState = _collectSimulationGuides(this, p);
+      const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
       this.sim.writeParams(this._applySimVars(p), x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
+      if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
+        this.sim.markStateDirty?.();
+      }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
         if (this._canUseBatchRenderer(p, false)) {
@@ -1023,12 +1068,14 @@ export class BoidBrush {
     }
 
     // Write sim params and step
+    const guideState = _collectSimulationGuides(this, p);
+    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(this._applySimVars(p), app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
     // Read agents
     const read = this.sim.readAgents();
-    if (_applySimulationGuides(this, p, read)) this.sim.markStateDirty?.();
+    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
     const { buffer, count, stride } = read;
     if (count === 0) return;
 
@@ -1603,9 +1650,14 @@ export class AntBrush {
     if (!this._flatActive) {
       // Override: set sensing to attract mode for pheromone following
       const antP = this._buildAntParams(p);
+      const guideState = _collectSimulationGuides(this, p);
+      const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
       this.sim.writeParams(antP, x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
+      if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
+        this.sim.markStateDirty?.();
+      }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
         this._baseHSL = hexToHSL(p.color);
@@ -1698,12 +1750,14 @@ export class AntBrush {
 
     // Write params with ant-specific overrides and step sim
     const antP = this._buildAntParams(p);
+    const guideState = _collectSimulationGuides(this, p);
+    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
     // Read agents
     const read = this.sim.readAgents();
-    if (_applySimulationGuides(this, p, read)) this.sim.markStateDirty?.();
+    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
     const { buffer, count, stride } = read;
     if (count === 0) return;
 
