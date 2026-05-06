@@ -7,6 +7,7 @@
 // =============================================================================
 
 import { BoidSim, FluidSim } from './wasm-bridge.js';
+import { createBoidStampRenderer } from './boid-renderer.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -88,6 +89,57 @@ function hslToHex(h, s, l) {
   const g = Math.round(hueToRgb(h) * 255).toString(16).padStart(2, '0');
   const b = Math.round(hueToRgb(h - 1 / 3) * 255).toString(16).padStart(2, '0');
   return `#${r}${g}${b}`;
+}
+
+function hexToRGB(hex) {
+  let value = String(hex || '#000000');
+  if (!/^#[\da-f]{3,6}$/i.test(value)) return { r: 0, g: 0, b: 0 };
+  if (value.length === 4) {
+    value = '#' + value.slice(1).split('').map(ch => ch + ch).join('');
+  }
+  return {
+    r: parseInt(value.slice(1, 3), 16),
+    g: parseInt(value.slice(3, 5), 16),
+    b: parseInt(value.slice(5, 7), 16),
+  };
+}
+
+function hslToRGB(h, s, l) {
+  return hexToRGB(hslToHex(h, s, l));
+}
+
+class _StampInstanceBuffer {
+  constructor(initialCapacity = 1024) {
+    this._stride = 8;
+    this._capacity = Math.max(1, initialCapacity);
+    this._data = new Float32Array(this._capacity * this._stride);
+    this.count = 0;
+  }
+
+  _grow() {
+    this._capacity *= 2;
+    const next = new Float32Array(this._capacity * this._stride);
+    next.set(this._data);
+    this._data = next;
+  }
+
+  push(x, y, size, r, g, b, a) {
+    if (this.count >= this._capacity) this._grow();
+    const base = this.count * this._stride;
+    this._data[base + 0] = x;
+    this._data[base + 1] = y;
+    this._data[base + 2] = size;
+    this._data[base + 3] = 0;
+    this._data[base + 4] = r / 255;
+    this._data[base + 5] = g / 255;
+    this._data[base + 6] = b / 255;
+    this._data[base + 7] = a;
+    this.count++;
+  }
+
+  finish() {
+    return this._data.subarray(0, this.count * this._stride);
+  }
 }
 
 function _colorWithAlpha(color, alpha) {
@@ -464,6 +516,7 @@ export class BoidBrush {
   constructor(app) {
     this.app = app;
     this.sim = null;
+    this.renderer = createBoidStampRenderer();
     this._ready = false;
     this._lastStampX = [];
     this._lastStampY = [];
@@ -491,6 +544,7 @@ export class BoidBrush {
     // paint from the current stroke, not previously painted layers.
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
+    this._renderBackend = 'legacy';
   }
 
   async init({ force = false } = {}) {
@@ -502,9 +556,12 @@ export class BoidBrush {
       this._lastStampY = [];
       this._boidsSpawned = false;
       this._hoverSpawned = false;
+      this.renderer.reset();
+      this._renderBackend = 'legacy';
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
+      await this.renderer.init();
       this._ready = true;
       return this.sim;
     }
@@ -514,6 +571,7 @@ export class BoidBrush {
         this.app.H || 600,
         10000
       );
+      await this.renderer.init();
       this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
@@ -629,6 +687,106 @@ export class BoidBrush {
     return hasAgents;
   }
 
+  _canUseBatchRenderer(p, flat = this._flatActive) {
+    const layer = this.app.getActiveLayer();
+    if (!layer || layer.alphaLock) return false;
+    if (this.app.tilingMode) return false;
+    if (p.symmetryEnabled || p.stampImageCanvas) return false;
+    if (p.canvasTextureEnabled) return false;
+    if (p.trailBlur > 0 || p.trailFlow > 0) return false;
+    if (p.smudge > 0 || p.smudgeOnly) return false;
+    if (p.kmMix && p.kmStrength > 0) return false;
+    if (p.impasto && p.impastoStrength > 0) return false;
+    return true;
+  }
+
+  _buildRenderBatch(read, p, {
+    flat = this._flatActive,
+    pressure = this.app.pressure,
+    interpolate = true,
+    applySkip = true,
+    taperCurve = 1,
+    taperSize = false,
+    taperOpacity = false,
+  } = {}) {
+    const { buffer, count, stride } = read;
+    const instances = new _StampInstanceBuffer(Math.max(64, count));
+    const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
+    const baseHSL = hexToHSL(p.color);
+    const baseRGB = hexToRGB(p.color);
+
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+
+      let size = p.stampSize * sm;
+      let opacity = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
+      if (taperSize) size *= taperCurve;
+      if (taperOpacity) opacity *= taperCurve;
+      opacity = Math.min(opacity, 1);
+      if (opacity < 0.005 || size < 0.5) continue;
+
+      const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
+        ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
+        : baseRGB;
+
+      if (skipActive) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        continue;
+      }
+
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+      if (!interpolate || prevX === undefined || prevY === undefined) {
+        instances.push(ax, ay, size, color.r, color.g, color.b, opacity);
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        continue;
+      }
+
+      const dx = ax - prevX;
+      const dy = ay - prevY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
+      if (dist < step) continue;
+
+      const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+      for (let j = 1; j <= n; j++) {
+        const t = j / n;
+        instances.push(prevX + dx * t, prevY + dy * t, size, color.r, color.g, color.b, opacity);
+      }
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
+    }
+
+    return {
+      instances: instances.finish(),
+      count: instances.count,
+    };
+  }
+
+  _renderBatchToTarget(targetCtx, batch) {
+    const ok = this.renderer.render({
+      instances: batch.instances,
+      count: batch.count,
+      targetCtx,
+      targetWidthPx: targetCtx?.canvas?.width || 0,
+      targetHeightPx: targetCtx?.canvas?.height || 0,
+      dpr: this.app.DPR,
+    });
+    this._renderBackend = ok ? this.renderer.activeKind : 'legacy';
+    return ok;
+  }
+
   /** Hover: spawn boids once at hover position, then let onHoverFrame step
    *  the simulation so boids flock exactly as they do during drawing.
    *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
@@ -736,29 +894,40 @@ export class BoidBrush {
       const { buffer, count, stride } = this.sim.readAgents();
       if (count > 0) {
         const layer = this.app.getActiveLayer();
-        this._baseHSL = hexToHSL(p.color);
-        for (let i = 0; i < count; i++) {
-          const base = i * stride;
-          const ax = buffer[base + 0];
-          const ay = buffer[base + 1];
-          const sm = buffer[base + 8];
-          const om = buffer[base + 9];
-          const agentHue = buffer[base + 20];
-          const agentSat = buffer[base + 21];
-          const agentLit = buffer[base + 22];
-          let sz = p.stampSize * sm;
-          let op = p.stampOpacity * om;
-          if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-          if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
-          op = Math.min(op, 1);
-          let color = p.color;
-          if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-            const [bh, bs, bl] = this._baseHSL;
-            color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+        if (this._canUseBatchRenderer(p, false)) {
+          const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
+            flat: false,
+            pressure,
+            interpolate: false,
+            applySkip: false,
+          });
+          this._renderBatchToTarget(layer.ctx, batch);
+        } else {
+          this._renderBackend = 'legacy';
+          this._baseHSL = hexToHSL(p.color);
+          for (let i = 0; i < count; i++) {
+            const base = i * stride;
+            const ax = buffer[base + 0];
+            const ay = buffer[base + 1];
+            const sm = buffer[base + 8];
+            const om = buffer[base + 9];
+            const agentHue = buffer[base + 20];
+            const agentSat = buffer[base + 21];
+            const agentLit = buffer[base + 22];
+            let sz = p.stampSize * sm;
+            let op = p.stampOpacity * om;
+            if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+            if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+            op = Math.min(op, 1);
+            let color = p.color;
+            if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+              const [bh, bs, bl] = this._baseHSL;
+              color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+            }
+            this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
+            this._lastStampX[i] = ax;
+            this._lastStampY[i] = ay;
           }
-          this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
-          this._lastStampX[i] = ax;
-          this._lastStampY[i] = ay;
         }
         layer.dirty = true;
         this.app.compositeAllLayers();
@@ -831,6 +1000,35 @@ export class BoidBrush {
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
     const skipN = p.skipStamps || 0;
     app.strokeFrame++;
+    if (this._canUseBatchRenderer(p, flat)) {
+      const batch = this._buildRenderBatch(read, p, {
+        flat,
+        pressure: app.pressure,
+        interpolate: true,
+        applySkip: skipN > 0,
+      });
+      if (batch.count > 0) {
+        this._renderBatchToTarget(stampCtx, batch);
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+      }
+      return;
+    }
+    this._renderBackend = 'legacy';
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -981,6 +1179,37 @@ export class BoidBrush {
     const layer = app.getActiveLayer();
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
+    if (this._canUseBatchRenderer(p, flat)) {
+      const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
+        flat,
+        interpolate: true,
+        applySkip: false,
+        taperCurve: curve,
+        taperSize: p.taperSize,
+        taperOpacity: p.taperOpacity,
+      });
+      if (batch.count > 0) {
+        this._renderBatchToTarget(stampCtx, batch);
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.taperOpacity) masterOp *= curve;
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+      }
+      return;
+    }
+    this._renderBackend = 'legacy';
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -1104,7 +1333,7 @@ export class BoidBrush {
   getStatusInfo() {
     if (!this._ready) return 'WASM loading...';
     const { count } = this.sim.readAgents();
-    return `Boid | Agents: ${count}`;
+    return `Boid | Agents: ${count} | Render: ${this._renderBackend}`;
   }
 
   deactivate() {
