@@ -729,6 +729,8 @@ export class App {
     bg.ctx.save();
     bg.ctx.setTransform(1, 0, 0, 1, 0, 0);
     bg.ctx.globalAlpha = 1;
+    // Replace the entire backing store so browsers do not keep any stale
+    // transparent pixels from an earlier frame.
     bg.ctx.globalCompositeOperation = 'copy';
     bg.ctx.fillStyle = color;
     bg.ctx.fillRect(0, 0, bg.canvas.width, bg.canvas.height);
