@@ -1004,7 +1004,7 @@ export class App {
     }
   }
 
-  async _loadDefaultStampImage({ enable = true } = {}) {
+  async _loadDefaultStampImage({ enable = false } = {}) {
     const response = await fetch(DEFAULT_STAMP_IMAGE_PATH);
     if (!response.ok) {
       throw new Error(`Default stamp image fetch failed (${response.status})`);
@@ -5354,10 +5354,11 @@ export class App {
         return;
       }
       const controls = JSON.parse(raw);
+      const hasSavedStampImageState = Object.prototype.hasOwnProperty.call(controls, '_stampImageState');
       if (controls._canvasTextureState) {
         await this._restoreCanvasTextureState(controls._canvasTextureState);
       }
-      if (Object.prototype.hasOwnProperty.call(controls, '_stampImageState')) {
+      if (hasSavedStampImageState) {
         await this._restoreCustomStampImageState(controls._stampImageState);
       } else {
         await this._loadDefaultStampImage();
@@ -5412,6 +5413,10 @@ export class App {
         if (!el) continue;
         if (el.type === 'checkbox') el.checked = val;
         else el.value = val;
+      }
+      if (!hasSavedStampImageState && this.activeBrush === 'boid') {
+        const stampImageToggle = document.getElementById('stampImageEnabled');
+        if (stampImageToggle?.checked) stampImageToggle.checked = false;
       }
       this._paramsDirty = true;
       syncUI(this);

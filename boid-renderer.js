@@ -45,6 +45,8 @@ class WebGPUBoidStampRenderer {
     this.kind = 'webgpu';
     this.ready = false;
     this.failed = false;
+    this.unavailableReason = 'WebGPU stamp renderer not initialized';
+    this.lastRenderFailureReason = '';
     this.canvas = null;
     this.context = null;
     this.adapter = null;
@@ -70,12 +72,14 @@ class WebGPUBoidStampRenderer {
   async _doInit() {
     if (typeof navigator === 'undefined' || !navigator.gpu || typeof document === 'undefined') {
       this.failed = true;
+      this.unavailableReason = 'navigator.gpu unavailable';
       return false;
     }
     try {
       this.adapter = await navigator.gpu.requestAdapter();
       if (!this.adapter) {
         this.failed = true;
+        this.unavailableReason = 'WebGPU adapter unavailable';
         return false;
       }
       this.device = await this.adapter.requestDevice();
@@ -83,6 +87,7 @@ class WebGPUBoidStampRenderer {
       this.context = this.canvas.getContext('webgpu');
       if (!this.context) {
         this.failed = true;
+        this.unavailableReason = 'WebGPU canvas context unavailable';
         return false;
       }
       this.presentationFormat = navigator.gpu.getPreferredCanvasFormat
@@ -104,11 +109,13 @@ class WebGPUBoidStampRenderer {
         return false;
       }
       this.ready = true;
+      this.unavailableReason = '';
       return true;
     } catch (error) {
       console.warn('Boid WebGPU renderer unavailable — falling back to Canvas2D.', error);
       this.failed = true;
       this.ready = false;
+      this.unavailableReason = error?.message || 'WebGPU renderer initialization failed';
       return false;
     } finally {
       this._initPromise = null;
@@ -118,6 +125,10 @@ class WebGPUBoidStampRenderer {
   reset() {
     this.instanceBuffer = null;
     this.instanceCapacity = 0;
+    this.ready = false;
+    this.failed = false;
+    this.unavailableReason = 'WebGPU stamp renderer not initialized';
+    this.lastRenderFailureReason = '';
   }
 
   _createPipeline(format) {
@@ -298,6 +309,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     }
     if (!this._interopProbeCtx) {
       console.warn('Boid WebGPU renderer 2D probe unavailable — falling back to Canvas2D.');
+      this.unavailableReason = '2D interop probe unavailable';
       return false;
     }
     // Packed as [x, y, size, pad, r, g, b, a] to match the renderer's instance stride.
@@ -328,13 +340,18 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
     if (pixel[3] > GPU_INTEROP_PROBE_ALPHA_MIN) return true;
     console.warn('Boid WebGPU renderer copy out unsupported — falling back to Canvas2D.');
+    this.unavailableReason = '2D interop copy out unsupported';
     return false;
   }
 
   render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr }) {
     if (!this.ready || !targetCtx) return false;
     const drew = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
-    if (!drew) return false;
+    if (!drew) {
+      this.lastRenderFailureReason = 'WebGPU stamp draw failed';
+      return false;
+    }
+    this.lastRenderFailureReason = '';
 
     targetCtx.save();
     targetCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -371,6 +388,12 @@ export class BoidStampRenderer {
 
   get webgpuReady() {
     return this.webgpu.ready;
+  }
+
+  get legacyReason() {
+    return this.webgpu.ready
+      ? (this.webgpu.lastRenderFailureReason || '')
+      : (this.webgpu.unavailableReason || 'WebGPU stamp renderer unavailable');
   }
 
   render(renderState) {

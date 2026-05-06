@@ -610,6 +610,7 @@ export class BoidBrush {
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
     this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
   }
 
   async init({ force = false } = {}) {
@@ -623,6 +624,7 @@ export class BoidBrush {
       this._hoverSpawned = false;
       this.renderer.reset();
       this._renderBackend = 'legacy';
+      this._renderLegacyReason = 'compatibility check pending';
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
@@ -749,15 +751,28 @@ export class BoidBrush {
   }
 
   _canUseBatchRenderer(p, flat = this._flatActive) {
+    return this._getBatchRendererSupport(p, flat).ok;
+  }
+
+  _getBatchRendererSupport(p, flat = this._flatActive) {
     const layer = this.app.getActiveLayer();
-    if (!layer || layer.alphaLock) return false;
-    if (this.app.tilingMode) return false;
-    if (p.symmetryEnabled || p.stampImageCanvas) return false;
-    if (p.trailBlur > 0 || p.trailFlow > 0) return false;
-    if (p.smudge > 0 || p.smudgeOnly) return false;
-    if (p.kmMix && p.kmStrength > 0) return false;
-    if (p.impasto && p.impastoStrength > 0) return false;
-    return true;
+    if (!layer) return { ok: false, reason: 'no active layer' };
+    if (layer.alphaLock) return { ok: false, reason: 'alpha lock enabled on active layer' };
+    if (this.app.tilingMode) return { ok: false, reason: 'tiling mode enabled' };
+    if (p.symmetryEnabled) return { ok: false, reason: 'symmetry enabled' };
+    if (p.stampImageCanvas) return { ok: false, reason: 'stamp image enabled' };
+    if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
+    if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
+    if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
+    if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
+    if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
+    if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
+    return { ok: true, reason: '' };
+  }
+
+  _setRenderBackend(kind, reason = '') {
+    this._renderBackend = kind;
+    this._renderLegacyReason = kind === 'legacy' ? reason : '';
   }
 
   _buildRenderBatch(read, p, {
@@ -863,7 +878,7 @@ export class BoidBrush {
       targetHeightPx: targetCtx?.canvas?.height || 0,
       dpr: this.app.DPR,
     });
-    this._renderBackend = ok ? this.renderer.activeKind : 'legacy';
+    this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
     return ok;
   }
 
@@ -872,9 +887,10 @@ export class BoidBrush {
     taperCurve = 1,
     taperSize = false,
     taperOpacity = false,
+    reason = '',
   } = {}) {
     const { buffer, count, stride } = read;
-    this._renderBackend = 'legacy';
+    this._setRenderBackend('legacy', reason || this._renderLegacyReason || this.renderer.legacyReason);
     this._baseHSL = hexToHSL(p.color);
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -1017,7 +1033,8 @@ export class BoidBrush {
       }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
-        if (this._canUseBatchRenderer(p, false)) {
+        const batchSupport = this._getBatchRendererSupport(p, false);
+        if (batchSupport.ok) {
           const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
             flat: false,
             pressure,
@@ -1025,10 +1042,16 @@ export class BoidBrush {
             applySkip: false,
           });
           if (!this._renderBatchToTarget(layer.ctx, batch)) {
-            this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, { flat: false });
+            this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
+              flat: false,
+              reason: this.renderer.legacyReason,
+            });
           }
         } else {
-          this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, { flat: false });
+          this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
+            flat: false,
+            reason: batchSupport.reason,
+          });
         }
         layer.dirty = true;
         this.app.compositeAllLayers();
@@ -1103,7 +1126,8 @@ export class BoidBrush {
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
     const skipN = p.skipStamps || 0;
     app.strokeFrame++;
-    if (this._canUseBatchRenderer(p, flat)) {
+    const batchSupport = this._getBatchRendererSupport(p, flat);
+    if (batchSupport.ok) {
       const batch = this._buildRenderBatch(read, p, {
         flat,
         pressure: app.pressure,
@@ -1112,7 +1136,10 @@ export class BoidBrush {
       });
       if (batch.count > 0) {
         if (!this._renderBatchToTarget(stampCtx, batch)) {
-          this._renderAgentsLegacy(stampCtx, read, p, app.pressure, { flat });
+          this._renderAgentsLegacy(stampCtx, read, p, app.pressure, {
+            flat,
+            reason: this.renderer.legacyReason,
+          });
         }
         if (flat) {
           const w = layer.canvas.width, h = layer.canvas.height;
@@ -1133,7 +1160,7 @@ export class BoidBrush {
       }
       return;
     }
-    this._renderBackend = 'legacy';
+    this._setRenderBackend('legacy', batchSupport.reason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -1284,7 +1311,8 @@ export class BoidBrush {
     const layer = app.getActiveLayer();
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
-    if (this._canUseBatchRenderer(p, flat)) {
+    const batchSupport = this._getBatchRendererSupport(p, flat);
+    if (batchSupport.ok) {
       const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
         flat,
         interpolate: true,
@@ -1300,6 +1328,7 @@ export class BoidBrush {
             taperCurve: curve,
             taperSize: p.taperSize,
             taperOpacity: p.taperOpacity,
+            reason: this.renderer.legacyReason,
           });
         }
         if (flat) {
@@ -1321,7 +1350,7 @@ export class BoidBrush {
       }
       return;
     }
-    this._renderBackend = 'legacy';
+    this._setRenderBackend('legacy', batchSupport.reason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -1445,7 +1474,10 @@ export class BoidBrush {
   getStatusInfo() {
     if (!this._ready) return 'WASM loading...';
     const { count } = this.sim.readAgents();
-    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}`;
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (this._getBatchRendererSupport(this.app.getP(), this._flatActive).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
   }
 
   deactivate() {
