@@ -430,6 +430,10 @@ export class App {
     // Composite & start loop
     this.compositeAllLayers();
     this._frameLoop();
+    requestAnimationFrame(() => {
+      this._fillBackgroundLayer();
+      this.compositeAllLayers();
+    });
 
     this.setStatus('Ready');
   }
@@ -724,11 +728,14 @@ export class App {
     const color = this.bgColorEl ? this.bgColorEl.value : '#ffffff';
     bg.ctx.save();
     bg.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    bg.ctx.globalAlpha = 1;
+    bg.ctx.globalCompositeOperation = 'copy';
     bg.ctx.fillStyle = color;
     bg.ctx.fillRect(0, 0, bg.canvas.width, bg.canvas.height);
     bg.ctx.restore();
     bg.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     bg.dirty = true;
+    bg.dirtyTiles = null;
   }
 
   setBackgroundColor(color) {
