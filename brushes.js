@@ -8,6 +8,7 @@
 
 import { BoidSim, FluidSim } from './wasm-bridge.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
+import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -567,17 +568,36 @@ export class BoidBrush {
       this._ready = true;
       return this.sim;
     }
+    await this.renderer.init();
     try {
-      this.sim = await BoidSim.create(
-        this.app.W || 800,
-        this.app.H || 600,
-        10000
-      );
-      await this.renderer.init();
+      if (this.renderer.webgpuReady) {
+        this.sim = await WebGPUBoidSim.create(
+          this.app.W || 800,
+          this.app.H || 600,
+          10000
+        );
+      } else {
+        this.sim = await BoidSim.create(
+          this.app.W || 800,
+          this.app.H || 600,
+          10000
+        );
+      }
       this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
-      console.error('BoidBrush: WASM init failed —', e);
+      console.warn('BoidBrush: WebGPU sim init failed, falling back to WASM —', e);
+      try {
+        this.sim = await BoidSim.create(
+          this.app.W || 800,
+          this.app.H || 600,
+          10000
+        );
+        this.app.sharedMotionSim = this.sim;
+        this._ready = true;
+      } catch (wasmError) {
+        console.error('BoidBrush: WASM init failed —', wasmError);
+      }
     }
   }
 
@@ -1337,7 +1357,7 @@ export class BoidBrush {
   getStatusInfo() {
     if (!this._ready) return 'WASM loading...';
     const { count } = this.sim.readAgents();
-    return `Boid | Agents: ${count} | Render: ${this._renderBackend}`;
+    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}`;
   }
 
   deactivate() {
