@@ -178,20 +178,20 @@ const PI : f32 = 3.141592653589793;
 const TAU : f32 = 6.283185307179586;
 
 struct ParamsBuffer {
-  values : array<f32, ${PARAMS_LEN}>;
-};
+  values : array<f32, ${PARAMS_LEN}>,
+}
 
-struct Meta {
+struct SimMeta {
   agentCount : u32,
   _pad0 : u32,
   width : f32,
   height : f32,
-};
+}
 
 @group(0) @binding(0) var<storage, read> inAgents : array<f32>;
 @group(0) @binding(1) var<storage, read_write> outAgents : array<f32>;
 @group(0) @binding(2) var<storage, read> params : ParamsBuffer;
-@group(0) @binding(3) var<uniform> meta : Meta;
+@group(0) @binding(3) var<uniform> simMeta : SimMeta;
 
 fn agentIndex(agent : u32, field : u32) -> u32 {
   return agent * STRIDE + field;
@@ -243,7 +243,7 @@ fn inFov(xi : f32, yi : f32, vx : f32, vy : f32, ox : f32, oy : f32, fovRad : f3
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn main(@builtin(global_invocation_id) gid : vec3u) {
   let i = gid.x;
-  if (i >= meta.agentCount) {
+  if (i >= simMeta.agentCount) {
     return;
   }
 
@@ -268,7 +268,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let flowScale = params.values[10];
   let fleeRadius = params.values[11];
   let fovRad = params.values[12] * PI / 180.0;
-  let target = vec2f(params.values[21], params.values[22]);
+  let goalPos = vec2f(params.values[21], params.values[22]);
   let time = params.values[23];
   let neighborRadius = max(params.values[24], 1.0);
   let separationRadius = max(params.values[25], 1.0);
@@ -290,14 +290,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var ax = 0.0;
   var ay = 0.0;
 
-  let toTarget = target - vec2f(xi, yi);
+  let toTarget = goalPos - vec2f(xi, yi);
   let targetDist = max(length(toTarget), 1.0);
   let desired = (toTarget / targetDist) * agentMaxSpeed;
   ax = ax + (desired.x - vx) * seek * seekMul;
   ay = ay + (desired.y - vy) * seek * seekMul;
 
   if (fleeRadius > 0.0) {
-    let away = vec2f(xi, yi) - target;
+    let away = vec2f(xi, yi) - goalPos;
     let fleeDist = length(away);
     if (fleeDist > 0.0 && fleeDist <= fleeRadius) {
       let strength = 1.0 - fleeDist / fleeRadius;
@@ -337,7 +337,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var sx = 0.0;
   var sy = 0.0;
 
-  for (var j = 0u; j < meta.agentCount; j = j + 1u) {
+  for (var j = 0u; j < simMeta.agentCount; j = j + 1u) {
     if (j == i) {
       continue;
     }
@@ -407,8 +407,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (boundsMargin >= 0.0) {
     let minX = -boundsMargin;
     let minY = -boundsMargin;
-    let maxX = meta.width + boundsMargin;
-    let maxY = meta.height + boundsMargin;
+    let maxX = simMeta.width + boundsMargin;
+    let maxY = simMeta.height + boundsMargin;
     if (x < minX) {
       x = minX;
       if (vx < 0.0) {
