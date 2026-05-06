@@ -246,8 +246,8 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this.instanceCapacity = nextCapacity;
   }
 
-  _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr }) {
-    if (!this.ready && this._initPromise === null) return false;
+  _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr, allowBeforeReady = false }) {
+    if (!allowBeforeReady && !this.ready) return false;
     if (!this.device || !this.context || !instances || count <= 0) return false;
     const widthPx = Math.max(1, Math.round(targetWidthPx));
     const heightPx = Math.max(1, Math.round(targetHeightPx));
@@ -300,6 +300,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       console.warn('Boid WebGPU renderer 2D probe unavailable — falling back to Canvas2D.');
       return false;
     }
+    // Packed as [x, y, size, pad, r, g, b, a] to match the renderer's instance stride.
     const probeInstances = new Float32Array([
       16, 16, 20, 0,
       1, 0.15, 0.15, 1,
@@ -310,6 +311,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       targetWidthPx: 32,
       targetHeightPx: 32,
       dpr: 1,
+      allowBeforeReady: true,
     });
     if (!drew) return false;
     // Older/partial WebGPU implementations may not expose an explicit completion
@@ -353,7 +355,11 @@ export class BoidStampRenderer {
 
   async init() {
     await this.canvas.init();
-    await this.webgpu.init();
+    try {
+      await this.webgpu.init();
+    } catch (error) {
+      console.warn('Boid WebGPU renderer init failed — falling back to Canvas2D.', error);
+    }
     this.activeKind = this.webgpu.ready ? this.webgpu.kind : this.canvas.kind;
   }
 
@@ -370,16 +376,16 @@ export class BoidStampRenderer {
   render(renderState) {
     const preferred = this.webgpu.ready ? this.webgpu : this.canvas;
     let ok = preferred.render(renderState);
-    let renderedWithWebGPU = preferred === this.webgpu && ok;
+    let usedBackend = preferred;
     if (!ok && preferred !== this.canvas) {
       ok = this.canvas.render(renderState);
-      renderedWithWebGPU = false;
+      usedBackend = this.canvas;
     }
     if (!ok) {
       this.activeKind = this.canvas.kind;
       return false;
     }
-    this.activeKind = renderedWithWebGPU ? this.webgpu.kind : this.canvas.kind;
+    this.activeKind = usedBackend.kind;
     return ok;
   }
 }
