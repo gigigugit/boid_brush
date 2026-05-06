@@ -872,6 +872,8 @@ export class BoidBrush {
         let walked = 0;
         let carry = Math.max(0, this._batchStampCarry[i] || 0);
         let emitted = 0;
+        // Cap interpolation work per agent so a single large jump cannot flood
+        // the batch with thousands of intermediate instances in one frame.
         while (carry + remaining >= step && emitted < 256) {
           const needed = step - carry;
           walked += needed;
@@ -886,6 +888,8 @@ export class BoidBrush {
           emitted++;
         }
         if (carry + remaining >= step) {
+          // If the segment still exceeds the cap, at least anchor one stamp at
+          // the current position so the stroke stays visually connected.
           pushInstance(ax, ay);
           this._lastStampX[i] = ax;
           this._lastStampY[i] = ay;
