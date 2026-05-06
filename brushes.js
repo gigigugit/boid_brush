@@ -28,6 +28,9 @@ const MIN_TEXTURE_FLOW_SLOPE = 0.04;
 const TEXTURE_FLOW_BASE_TRANSFER = 0.12;
 const TEXTURE_FLOW_SLOPE_TRANSFER = 0.28;
 const TEXTURE_FLOW_MAX_TRANSFER = 0.4;
+const TEXTURE_EDGE_BREAKUP_MIN_SIZE = 0.7;
+const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
+const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
 const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
@@ -467,10 +470,11 @@ function _collectSimulationGuides(brush, p) {
 
 function _syncSimulationGuidesToGpu(brush, guideState) {
   if (!brush.sim?.setSimulationGuides) return { points: false, pathTargets: false };
-  return brush.sim.setSimulationGuides(guideState) || { points: false, pathTargets: false };
+  return brush.sim.setSimulationGuides(guideState) ?? { points: false, pathTargets: false };
 }
 
 function _applySimulationGuides(brush, p, read, guideState = _collectSimulationGuides(brush, p), gpuSupport = {}) {
+  const app = brush.app;
   const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
   const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
   const edgeGuides = guideState.edges || [];
@@ -863,6 +867,42 @@ export class BoidBrush {
     return ok;
   }
 
+  _renderAgentsLegacy(targetCtx, read, p, pressure, {
+    flat = this._flatActive,
+    taperCurve = 1,
+    taperSize = false,
+    taperOpacity = false,
+  } = {}) {
+    const { buffer, count, stride } = read;
+    this._renderBackend = 'legacy';
+    this._baseHSL = hexToHSL(p.color);
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+      let sz = p.stampSize * sm;
+      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (taperSize) sz *= taperCurve;
+      if (taperOpacity) op *= taperCurve;
+      op = Math.min(op, 1);
+      let color = p.color;
+      if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+        const [bh, bs, bl] = this._baseHSL;
+        color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+      }
+      this.app.symStamp(targetCtx, ax, ay, sz, color, op);
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
+    }
+  }
+
   /** Hover: spawn boids once at hover position, then let onHoverFrame step
    *  the simulation so boids flock exactly as they do during drawing.
    *  Pen with tilt uses pencil azimuth for spawn angle; mouse uses UI angle. */
@@ -984,33 +1024,11 @@ export class BoidBrush {
             interpolate: false,
             applySkip: false,
           });
-          this._renderBatchToTarget(layer.ctx, batch);
-        } else {
-          this._renderBackend = 'legacy';
-          this._baseHSL = hexToHSL(p.color);
-          for (let i = 0; i < count; i++) {
-            const base = i * stride;
-            const ax = buffer[base + 0];
-            const ay = buffer[base + 1];
-            const sm = buffer[base + 8];
-            const om = buffer[base + 9];
-            const agentHue = buffer[base + 20];
-            const agentSat = buffer[base + 21];
-            const agentLit = buffer[base + 22];
-            let sz = p.stampSize * sm;
-            let op = p.stampOpacity * om;
-            if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-            if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
-            op = Math.min(op, 1);
-            let color = p.color;
-            if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-              const [bh, bs, bl] = this._baseHSL;
-              color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
-            }
-            this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
-            this._lastStampX[i] = ax;
-            this._lastStampY[i] = ay;
+          if (!this._renderBatchToTarget(layer.ctx, batch)) {
+            this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, { flat: false });
           }
+        } else {
+          this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, { flat: false });
         }
         layer.dirty = true;
         this.app.compositeAllLayers();
@@ -1093,7 +1111,9 @@ export class BoidBrush {
         applySkip: skipN > 0,
       });
       if (batch.count > 0) {
-        this._renderBatchToTarget(stampCtx, batch);
+        if (!this._renderBatchToTarget(stampCtx, batch)) {
+          this._renderAgentsLegacy(stampCtx, read, p, app.pressure, { flat });
+        }
         if (flat) {
           const w = layer.canvas.width, h = layer.canvas.height;
           const ctx = layer.ctx;
@@ -1274,7 +1294,14 @@ export class BoidBrush {
         taperOpacity: p.taperOpacity,
       });
       if (batch.count > 0) {
-        this._renderBatchToTarget(stampCtx, batch);
+        if (!this._renderBatchToTarget(stampCtx, batch)) {
+          this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
+            flat,
+            taperCurve: curve,
+            taperSize: p.taperSize,
+            taperOpacity: p.taperOpacity,
+          });
+        }
         if (flat) {
           const w = layer.canvas.width, h = layer.canvas.height;
           const ctx = layer.ctx;
