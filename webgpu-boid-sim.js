@@ -62,6 +62,7 @@ function packGuideMeta(pointCount, pathTargetCount) {
   const u32 = new Uint32Array(raw);
   u32[0] = pointCount >>> 0;
   u32[1] = pathTargetCount >>> 0;
+  // Padding slots keep this packed buffer aligned with the WGSL GuideMeta struct.
   u32[2] = 0;
   u32[3] = 0;
   return raw;
