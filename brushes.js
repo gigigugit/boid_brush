@@ -35,6 +35,11 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+// Predefined hue anchors used to visually separate detected boid quorum groups.
+const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
+const BOID_GROUP_COLOR_SATURATION = 85;
+const BOID_GROUP_COLOR_LIGHTNESS = 68;
+const BOID_GROUP_HUE_WRAP_OFFSET = 17;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -108,6 +113,81 @@ function _shadeColor(color, lightnessDelta = -12, saturationDelta = 4) {
     ? '#' + color.slice(1).split('').map(ch => ch + ch).join('')
     : color);
   return hslToCSS(h, s + saturationDelta, l + lightnessDelta);
+}
+
+function _boidNeighborInFov(buffer, base, otherX, otherY, fovDeg) {
+  if (!Number.isFinite(fovDeg) || fovDeg >= 360) return true;
+  const dx = otherX - buffer[base + AGENT_X];
+  const dy = otherY - buffer[base + AGENT_Y];
+  const vx = buffer[base + AGENT_VX];
+  const vy = buffer[base + AGENT_VY];
+  let diff = Math.atan2(dy, dx) - Math.atan2(vy, vx);
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  return Math.abs(diff) < (fovDeg * Math.PI / 180) / 2;
+}
+
+function _computeBoidOverlayGroups(buffer, count, stride, p) {
+  const groupIds = new Int16Array(count);
+  groupIds.fill(-1);
+  if (!count || !buffer || !Number.isFinite(p?.quorumThreshold) || p.quorumThreshold < 2) return groupIds;
+
+  const neighborRadius = Math.max(1, Number.isFinite(p.neighborRadius) ? p.neighborRadius : 80);
+  const neighborRadius2 = neighborRadius * neighborRadius;
+  const members = new Uint8Array(count);
+
+  for (let i = 0; i < count; i++) {
+    const baseI = i * stride;
+    const xi = buffer[baseI + AGENT_X];
+    const yi = buffer[baseI + AGENT_Y];
+    let seen = 0;
+    for (let j = 0; j < count; j++) {
+      if (i === j) continue;
+      const baseJ = j * stride;
+      const dx = buffer[baseJ + AGENT_X] - xi;
+      const dy = buffer[baseJ + AGENT_Y] - yi;
+      if (dx * dx + dy * dy >= neighborRadius2) continue;
+      if (!_boidNeighborInFov(buffer, baseI, buffer[baseJ + AGENT_X], buffer[baseJ + AGENT_Y], p.fov)) continue;
+      seen++;
+      if (seen >= p.quorumThreshold) {
+        members[i] = 1;
+        break;
+      }
+    }
+  }
+
+  let groupId = 0;
+  const stack = [];
+  for (let i = 0; i < count; i++) {
+    if (!members[i] || groupIds[i] !== -1) continue;
+    groupIds[i] = groupId;
+    stack.push(i);
+    while (stack.length) {
+      const current = stack.pop();
+      const baseI = current * stride;
+      const xi = buffer[baseI + AGENT_X];
+      const yi = buffer[baseI + AGENT_Y];
+      for (let j = 0; j < count; j++) {
+        if (!members[j] || groupIds[j] !== -1) continue;
+        const baseJ = j * stride;
+        const dx = buffer[baseJ + AGENT_X] - xi;
+        const dy = buffer[baseJ + AGENT_Y] - yi;
+        if (dx * dx + dy * dy >= neighborRadius2) continue;
+        groupIds[j] = groupId;
+        stack.push(j);
+      }
+    }
+    groupId++;
+  }
+
+  return groupIds;
+}
+
+function _getBoidGroupCursorColor(groupId, alpha = 0.6) {
+  if (groupId < 0) return `rgba(100,180,255,${alpha})`;
+  const baseHue = BOID_GROUP_HUES[groupId % BOID_GROUP_HUES.length];
+  const hue = (baseHue + Math.floor(groupId / BOID_GROUP_HUES.length) * BOID_GROUP_HUE_WRAP_OFFSET) % 360;
+  return `hsla(${hue},${BOID_GROUP_COLOR_SATURATION}%,${BOID_GROUP_COLOR_LIGHTNESS}%,${Math.max(0, Math.min(1, alpha))})`;
 }
 
 function _fillRadialPool(ctx, app, x, y, radius, color, opacity) {
@@ -963,13 +1043,14 @@ export class BoidBrush {
 
   drawOverlay(ctx, p) {
     if (!this._ready) return;
+    const { buffer, count, stride } = this.sim.readAgents();
+    const groupIds = _computeBoidOverlayGroups(buffer, count, stride, p);
 
     // Show hover-spawned boids even when showBoids is off (lighter colour)
     if (this._hoverSpawned) {
-      const { buffer, count, stride } = this.sim.readAgents();
-      ctx.fillStyle = 'rgba(100,180,255,0.35)';
       for (let i = 0; i < count; i++) {
         const base = i * stride;
+        ctx.fillStyle = _getBoidGroupCursorColor(groupIds[i], 0.35);
         ctx.fillRect(buffer[base] - 1, buffer[base + 1] - 1, 2, 2);
       }
       // Draw spawn area ring during hover
@@ -987,10 +1068,9 @@ export class BoidBrush {
     }
 
     if (!p.showBoids) return;
-    const { buffer, count, stride } = this.sim.readAgents();
-    ctx.fillStyle = 'rgba(100,180,255,0.6)';
     for (let i = 0; i < count; i++) {
       const base = i * stride;
+      ctx.fillStyle = _getBoidGroupCursorColor(groupIds[i], 0.6);
       ctx.fillRect(buffer[base] - 1, buffer[base + 1] - 1, 2, 2);
     }
 

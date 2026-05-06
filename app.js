@@ -1369,6 +1369,8 @@ export class App {
       flowScale: val('flowScale') / 1000,
       fleeRadius: val('fleeRadius'),
       individuality: val('individuality') / 100,
+      quorumThreshold: Math.max(0, Math.round(val('quorumThreshold') || 0)),
+      quorumCompositeStrength: val('quorumCompositeStrength') / 100,
       // Variance
       sizeVar: val('sizeVar') / 100,
       opacityVar: val('opacityVar') / 100,

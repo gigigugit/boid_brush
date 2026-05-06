@@ -25,9 +25,9 @@ mod noise;
 mod params;
 mod sensing;
 mod sim;
-mod spawn;
 #[cfg(feature = "spatial-hash")]
 mod spatial;
+mod spawn;
 
 use boid::STRIDE;
 use fluid::FluidSimulation;
@@ -48,7 +48,9 @@ where
 {
     SIM.with(|cell| {
         let mut borrow = cell.borrow_mut();
-        let sim = borrow.as_mut().expect("Simulation not initialized — call init() first");
+        let sim = borrow
+            .as_mut()
+            .expect("Simulation not initialized — call init() first");
         f(sim)
     })
 }
@@ -291,7 +293,9 @@ pub fn fluid_set_mask_rgba(handle: u32, rgba: &[u8]) {
 
 #[wasm_bindgen]
 pub fn fluid_add_particles(handle: u32, packed: &[f32], stride: u32) {
-    with_fluid_sim(handle, |sim| sim.add_particles_from_slice(packed, stride as usize));
+    with_fluid_sim(handle, |sim| {
+        sim.add_particles_from_slice(packed, stride as usize)
+    });
 }
 
 #[wasm_bindgen]
@@ -377,14 +381,8 @@ mod tests {
             let base = i * STRIDE;
             assert!(!sim.buf[base + boid::X].is_nan(), "x is NaN at agent {i}");
             assert!(!sim.buf[base + boid::Y].is_nan(), "y is NaN at agent {i}");
-            assert!(
-                !sim.buf[base + boid::VX].is_nan(),
-                "vx is NaN at agent {i}"
-            );
-            assert!(
-                !sim.buf[base + boid::VY].is_nan(),
-                "vy is NaN at agent {i}"
-            );
+            assert!(!sim.buf[base + boid::VX].is_nan(), "vx is NaN at agent {i}");
+            assert!(!sim.buf[base + boid::VY].is_nan(), "vy is NaN at agent {i}");
         }
     }
 
@@ -424,12 +422,7 @@ mod tests {
         sim.buf[base + boid::AX] = 0.0;
         sim.buf[base + boid::AY] = 0.0;
 
-        crate::sensing::apply_sensing_force(
-            &mut sim.buf,
-            base,
-            &sim.params,
-            &sim.sensing,
-        );
+        crate::sensing::apply_sensing_force(&mut sim.buf, base, &sim.params, &sim.sensing);
 
         // Agent should be pushed LEFT (negative x) away from bright right side
         assert!(
@@ -451,6 +444,77 @@ mod tests {
     }
 
     #[test]
+    fn test_quorum_members_ignore_outgroup_alignment() {
+        let mut sim = Simulation::new(200, 120, 8);
+        for x in [10.0, 20.0, 30.0, 40.0, 69.0] {
+            sim.spawn_one(x, 60.0);
+        }
+
+        for i in 0..sim.agent_count {
+            let base = i * STRIDE;
+            sim.buf[base + boid::AX] = 0.0;
+            sim.buf[base + boid::AY] = 0.0;
+            sim.buf[base + boid::VX] = if i < 4 { 1.0 } else { -8.0 };
+            sim.buf[base + boid::VY] = 0.0;
+            sim.buf[base + boid::COH_M] = 1.0;
+            sim.buf[base + boid::SEP_M] = 1.0;
+        }
+
+        sim.params.alignment = 1.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.quorum_threshold = 3;
+        sim.params.quorum_composite_strength = 0.5;
+        sim.params.neighbor_radius = 40.0;
+        sim.params.separation_radius = 25.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+
+        crate::forces::apply_neighbor_forces(&mut sim.buf, sim.agent_count, &sim.params);
+
+        let quorum_member = 3 * STRIDE;
+        assert!(
+            sim.buf[quorum_member + boid::AX].abs() < 1e-4,
+            "quorum member should align only with in-group peers"
+        );
+    }
+
+    #[test]
+    fn test_outgroup_uses_weaker_quorum_composite_alignment() {
+        let mut sim = Simulation::new(200, 120, 8);
+        for x in [10.0, 20.0, 30.0, 40.0, 69.0] {
+            sim.spawn_one(x, 60.0);
+        }
+
+        for i in 0..sim.agent_count {
+            let base = i * STRIDE;
+            sim.buf[base + boid::AX] = 0.0;
+            sim.buf[base + boid::AY] = 0.0;
+            sim.buf[base + boid::VX] = if i < 4 { 1.0 } else { 0.0 };
+            sim.buf[base + boid::VY] = 0.0;
+            sim.buf[base + boid::COH_M] = 1.0;
+            sim.buf[base + boid::SEP_M] = 1.0;
+        }
+
+        sim.params.alignment = 1.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.quorum_threshold = 3;
+        sim.params.quorum_composite_strength = 0.5;
+        sim.params.neighbor_radius = 40.0;
+        sim.params.separation_radius = 25.0;
+        sim.params.max_speed = 8.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+
+        crate::forces::apply_neighbor_forces(&mut sim.buf, sim.agent_count, &sim.params);
+
+        let outgroup = 4 * STRIDE;
+        assert!(
+            (sim.buf[outgroup + boid::AX] - 1.0).abs() < 1e-4,
+            "outgroup boid should align to a weaker summed quorum composite"
+        );
+    }
+
+    #[test]
     fn test_simulation_bounds_clamp_agents_to_canvas_margin() {
         let mut sim = Simulation::new(100, 80, 8);
         sim.params.boundary_margin = 0.0;
@@ -463,7 +527,10 @@ mod tests {
         sim.buf[base + boid::VX] = 6.0;
         sim.buf[base + boid::VY] = 0.0;
         sim.step(1.0 / 60.0);
-        assert!(sim.buf[base + boid::X] <= 100.0, "agent escaped right bound");
+        assert!(
+            sim.buf[base + boid::X] <= 100.0,
+            "agent escaped right bound"
+        );
         assert_eq!(sim.buf[base + boid::X], 100.0);
         assert_eq!(sim.buf[base + boid::VX], 0.0);
 
@@ -484,7 +551,10 @@ mod tests {
         sim.buf[base + boid::Y] = 79.0;
         sim.buf[base + boid::VY] = 5.0;
         sim.step(1.0 / 60.0);
-        assert!(sim.buf[base + boid::Y] <= 80.0, "agent escaped bottom bound");
+        assert!(
+            sim.buf[base + boid::Y] <= 80.0,
+            "agent escaped bottom bound"
+        );
         assert_eq!(sim.buf[base + boid::Y], 80.0);
         assert_eq!(sim.buf[base + boid::VY], 0.0);
 
@@ -492,7 +562,10 @@ mod tests {
         sim.buf[base + boid::X] = 111.0;
         sim.buf[base + boid::VX] = 4.0;
         sim.step(1.0 / 60.0);
-        assert!(sim.buf[base + boid::X] <= 112.0, "agent escaped margin bound");
+        assert!(
+            sim.buf[base + boid::X] <= 112.0,
+            "agent escaped margin bound"
+        );
         assert_eq!(sim.buf[base + boid::X], 112.0);
     }
 
@@ -696,13 +769,88 @@ mod spatial_integration_tests {
         }
     }
 
+    #[test]
+    fn test_grid_forces_match_naive_with_quorum_enabled() {
+        let mut sim_naive = Simulation::new(240, 160, 16);
+        let mut sim_grid = Simulation::new(240, 160, 16);
+
+        for &(x, y, vx, vy) in &[
+            (20.0, 50.0, 1.0, 0.0),
+            (32.0, 55.0, 1.0, 0.0),
+            (28.0, 70.0, 1.0, 0.0),
+            (95.0, 60.0, -2.0, 0.5),
+            (108.0, 66.0, -1.5, -0.25),
+        ] {
+            sim_naive.spawn_one(x, y);
+            sim_grid.spawn_one(x, y);
+            let idx = sim_naive.agent_count - 1;
+            let base = idx * STRIDE;
+            for sim in [&mut sim_naive, &mut sim_grid] {
+                sim.buf[base + boid::VX] = vx;
+                sim.buf[base + boid::VY] = vy;
+                sim.buf[base + boid::AX] = 0.0;
+                sim.buf[base + boid::AY] = 0.0;
+                sim.buf[base + boid::COH_M] = 1.0;
+                sim.buf[base + boid::SEP_M] = 1.0;
+            }
+        }
+
+        let mut p = crate::params::SimParams::default();
+        p.cohesion = 0.25;
+        p.alignment = 0.5;
+        p.separation = 0.35;
+        p.quorum_threshold = 2;
+        p.quorum_composite_strength = 0.4;
+        p.neighbor_radius = 90.0;
+        p.separation_radius = 30.0;
+        sim_naive.params = p.clone();
+        sim_grid.params = p.clone();
+
+        crate::forces::apply_neighbor_forces(
+            &mut sim_naive.buf,
+            sim_naive.agent_count,
+            &sim_naive.params,
+        );
+
+        let mut grid = SpatialGrid::new(16);
+        grid.build(
+            &sim_grid.buf,
+            sim_grid.agent_count,
+            p.neighbor_radius,
+            p.separation_radius,
+            240,
+            160,
+        );
+        crate::forces::apply_neighbor_forces_grid(
+            &mut sim_grid.buf,
+            sim_grid.agent_count,
+            &sim_grid.params,
+            &grid,
+        );
+
+        for i in 0..sim_naive.agent_count {
+            let base = i * STRIDE;
+            assert!(
+                (sim_naive.buf[base + boid::AX] - sim_grid.buf[base + boid::AX]).abs() < 1e-4,
+                "AX mismatch at agent {i}"
+            );
+            assert!(
+                (sim_naive.buf[base + boid::AY] - sim_grid.buf[base + boid::AY]).abs() < 1e-4,
+                "AY mismatch at agent {i}"
+            );
+        }
+    }
+
     /// Full step() with the spatial grid enabled should not produce NaN
     /// over many frames with various forces active.
     #[test]
     fn test_spatial_grid_step_no_nan() {
         let mut sim = Simulation::new(800, 600, 200);
         for i in 0..100 {
-            sim.spawn_one(400.0 + (i % 20) as f32 * 10.0, 300.0 + (i / 20) as f32 * 10.0);
+            sim.spawn_one(
+                400.0 + (i % 20) as f32 * 10.0,
+                300.0 + (i / 20) as f32 * 10.0,
+            );
         }
         sim.params = crate::params::SimParams::default();
         sim.params.target_x = 400.0;
@@ -746,8 +894,7 @@ mod spatial_integration_tests {
                 .map(|(cx, cy)| grid.cell_agents(cx, cy).len() as u32)
                 .sum();
             assert_eq!(
-                total,
-                sim.agent_count as u32,
+                total, sim.agent_count as u32,
                 "Total mismatch at nr={nr}, sr={sr}"
             );
         }

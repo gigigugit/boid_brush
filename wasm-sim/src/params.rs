@@ -4,7 +4,7 @@
 // JS writes a Float32Array of 32 floats into WASM memory before each step().
 // This module reads those raw floats into a typed struct.
 //
-// PARAMS BUFFER LAYOUT (Float32Array, 32 floats = 128 bytes)
+// PARAMS BUFFER LAYOUT (Float32Array, 34 floats = 136 bytes)
 // Offset | Param            | JS source (from getP())
 // -------|------------------|------------------------
 //   0    | seek             | p.seek  (0-1)
@@ -21,30 +21,32 @@
 //  11    | flee_radius      | p.fleeRadius (pixels)
 //  12    | fov              | p.fov (degrees, converted to radians in Rust)
 //  13    | individuality    | p.individuality (0-1)
-//  14    | sensing_enabled  | 0.0 or 1.0
-//  15    | sensing_mode     | 0.0 = avoid, 1.0 = attract
-//  16    | sensing_strength | p.sensingStrength (0-1)
-//  17    | sensing_radius   | p.sensingRadius (pixels)
-//  18    | sensing_threshold| p.sensingThreshold (0-1)
-//  19    | target_x         | cursor x (canvas coords)
-//  20    | target_y         | cursor y (canvas coords)
-//  21    | time             | elapsed time (seconds or ms, for flow field)
-//  22    | neighbor_radius  | default 80.0
-//  23    | separation_radius| default 25.0
-//  24    | size_var         | per-boid size variance (0-1)
-//  25    | opacity_var      | per-boid opacity variance (0-1)
-//  26    | speed_var        | per-boid speed variance (0-1)
-//  27    | force_var        | per-boid force weight variance (0-1)
-//  28    | hue_var          | per-boid hue offset variance (0-1)
-//  29    | sat_var          | per-boid saturation offset variance (0-1)
-//  30    | lit_var          | per-boid lightness offset variance (0-1)
-//  31    | boundary_margin  | simulation bounds margin in px; negative disables bounds
+//  14    | quorum_threshold | neighbor count needed to mark a local quorum; 0 disables
+//  15    | quorum_composite | how strongly a quorum influences outgroup boids as one composite
+//  16    | sensing_enabled  | 0.0 or 1.0
+//  17    | sensing_mode     | 0.0 = avoid, 1.0 = attract
+//  18    | sensing_strength | p.sensingStrength (0-1)
+//  19    | sensing_radius   | p.sensingRadius (pixels)
+//  20    | sensing_threshold| p.sensingThreshold (0-1)
+//  21    | target_x         | cursor x (canvas coords)
+//  22    | target_y         | cursor y (canvas coords)
+//  23    | time             | elapsed time (seconds or ms, for flow field)
+//  24    | neighbor_radius  | default 80.0
+//  25    | separation_radius| default 25.0
+//  26    | size_var         | per-boid size variance (0-1)
+//  27    | opacity_var      | per-boid opacity variance (0-1)
+//  28    | speed_var        | per-boid speed variance (0-1)
+//  29    | force_var        | per-boid force weight variance (0-1)
+//  30    | hue_var          | per-boid hue offset variance (0-1)
+//  31    | sat_var          | per-boid saturation offset variance (0-1)
+//  32    | lit_var          | per-boid lightness offset variance (0-1)
+//  33    | boundary_margin  | simulation bounds margin in px; negative disables bounds
 // =============================================================================
 
 use core::f32::consts::PI;
 
 /// Total number of f32s in the params buffer.
-pub const PARAMS_LEN: usize = 32;
+pub const PARAMS_LEN: usize = 34;
 
 #[derive(Clone, Debug)]
 pub struct SimParams {
@@ -60,8 +62,10 @@ pub struct SimParams {
     pub flow_field: f32,
     pub flow_scale: f32,
     pub flee_radius: f32,
-    pub fov_rad: f32,          // stored in radians
+    pub fov_rad: f32, // stored in radians
     pub individuality: f32,
+    pub quorum_threshold: u32,
+    pub quorum_composite_strength: f32,
     pub sensing_enabled: bool,
     pub sensing_attract: bool, // false = avoid, true = attract
     pub sensing_strength: f32,
@@ -99,6 +103,8 @@ impl Default for SimParams {
             flee_radius: 0.0,
             fov_rad: 2.0 * PI,
             individuality: 0.0,
+            quorum_threshold: 0,
+            quorum_composite_strength: 0.35,
             sensing_enabled: false,
             sensing_attract: false,
             sensing_strength: 0.5,
@@ -140,24 +146,26 @@ impl SimParams {
             flee_radius: raw[11],
             fov_rad: raw[12] * PI / 180.0, // degrees → radians
             individuality: raw[13],
-            sensing_enabled: raw[14] > 0.5,
-            sensing_attract: raw[15] > 0.5,
-            sensing_strength: raw[16],
-            sensing_radius: raw[17],
-            sensing_threshold: raw[18],
-            target_x: raw[19],
-            target_y: raw[20],
-            time: raw[21],
-            neighbor_radius: if raw[22] > 0.0 { raw[22] } else { 80.0 },
-            separation_radius: if raw[23] > 0.0 { raw[23] } else { 25.0 },
-            size_var: raw[24],
-            opacity_var: raw[25],
-            speed_var: raw[26],
-            force_var: raw[27],
-            hue_var: raw[28],
-            sat_var: raw[29],
-            lit_var: raw[30],
-            boundary_margin: raw[31],
+            quorum_threshold: raw[14].max(0.0).round() as u32,
+            quorum_composite_strength: raw[15].clamp(0.0, 1.0),
+            sensing_enabled: raw[16] > 0.5,
+            sensing_attract: raw[17] > 0.5,
+            sensing_strength: raw[18],
+            sensing_radius: raw[19],
+            sensing_threshold: raw[20],
+            target_x: raw[21],
+            target_y: raw[22],
+            time: raw[23],
+            neighbor_radius: if raw[24] > 0.0 { raw[24] } else { 80.0 },
+            separation_radius: if raw[25] > 0.0 { raw[25] } else { 25.0 },
+            size_var: raw[26],
+            opacity_var: raw[27],
+            speed_var: raw[28],
+            force_var: raw[29],
+            hue_var: raw[30],
+            sat_var: raw[31],
+            lit_var: raw[32],
+            boundary_margin: raw[33],
         }
     }
 }

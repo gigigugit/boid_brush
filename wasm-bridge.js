@@ -108,24 +108,26 @@ export class BoidSim {
     v[11] = p.fleeRadius ?? 0;
     v[12] = p.fov ?? 360;        // degrees; Rust converts to radians
     v[13] = p.individuality ?? 0;
-    v[14] = p.sensingEnabled ? 1 : 0;
-    v[15] = p.sensingMode === 'attract' ? 1 : 0;
-    v[16] = p.sensingStrength ?? 0.5;
-    v[17] = p.sensingRadius ?? 20;
-    v[18] = p.sensingThreshold ?? 0.1;
-    v[19] = targetX;
-    v[20] = targetY;
-    v[21] = time;
-    v[22] = p.neighborRadius ?? 80; // neighbor radius
-    v[23] = p.separationRadius ?? 25; // separation radius
-    v[24] = p.sizeVar ?? 0;
-    v[25] = p.opacityVar ?? 0;
-    v[26] = p.speedVar ?? 0;
-    v[27] = p.forceVar ?? 0;
-    v[28] = p.hueVar ?? 0;
-    v[29] = p.satVar ?? 0;
-    v[30] = p.litVar ?? 0;
-    v[31] = p.simBoundsMargin ?? -1;
+    v[14] = p.quorumThreshold ?? 0;
+    v[15] = p.quorumCompositeStrength ?? 0.35;
+    v[16] = p.sensingEnabled ? 1 : 0;
+    v[17] = p.sensingMode === 'attract' ? 1 : 0;
+    v[18] = p.sensingStrength ?? 0.5;
+    v[19] = p.sensingRadius ?? 20;
+    v[20] = p.sensingThreshold ?? 0.1;
+    v[21] = targetX;
+    v[22] = targetY;
+    v[23] = time;
+    v[24] = p.neighborRadius ?? 80; // neighbor radius
+    v[25] = p.separationRadius ?? 25; // separation radius
+    v[26] = p.sizeVar ?? 0;
+    v[27] = p.opacityVar ?? 0;
+    v[28] = p.speedVar ?? 0;
+    v[29] = p.forceVar ?? 0;
+    v[30] = p.hueVar ?? 0;
+    v[31] = p.satVar ?? 0;
+    v[32] = p.litVar ?? 0;
+    v[33] = p.simBoundsMargin ?? -1;
     this._mod.set_params();
   }
 

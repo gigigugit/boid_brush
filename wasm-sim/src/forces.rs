@@ -53,7 +53,14 @@ pub fn jitter(buf: &mut [f32], base: usize, weight: f32, max_speed: f32, rng: &m
 
 // ---- Wander: Brownian angle walk ----
 #[inline]
-pub fn wander(buf: &mut [f32], base: usize, weight: f32, speed: f32, max_speed: f32, rng: &mut Rng) {
+pub fn wander(
+    buf: &mut [f32],
+    base: usize,
+    weight: f32,
+    speed: f32,
+    max_speed: f32,
+    rng: &mut Rng,
+) {
     if weight <= 0.0 {
         return;
     }
@@ -106,28 +113,275 @@ pub fn in_fov(buf: &[f32], base: usize, ox: f32, oy: f32, fov_rad: f32) -> bool 
     diff.abs() < fov_rad / 2.0
 }
 
+#[derive(Clone, Copy, Default)]
+struct DirectNeighborAccum {
+    cx: f32,
+    cy: f32,
+    cc: u32,
+    sx: f32,
+    sy: f32,
+    avx: f32,
+    avy: f32,
+    ac: u32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CompositeNeighborAccum {
+    cx: f32,
+    cy: f32,
+    vx: f32,
+    vy: f32,
+    count: u32,
+}
+
+#[inline]
+/// A quorum threshold below 2 cannot form meaningful groups; only thresholds
+/// of 2 or more enable quorum-based grouping.
+fn quorum_enabled(p: &SimParams) -> bool {
+    p.quorum_threshold >= 2
+}
+
+#[inline]
+fn accumulate_direct_neighbor(
+    accum: &mut DirectNeighborAccum,
+    dx: f32,
+    dy: f32,
+    d2: f32,
+    xj: f32,
+    yj: f32,
+    vxj: f32,
+    vyj: f32,
+    nd2: f32,
+    sd2: f32,
+) {
+    if d2 < nd2 {
+        accum.cx += xj;
+        accum.cy += yj;
+        accum.cc += 1;
+        accum.avx += vxj;
+        accum.avy += vyj;
+        accum.ac += 1;
+    }
+
+    if d2 < sd2 && d2 > 0.0 {
+        let d = d2.sqrt();
+        accum.sx -= dx / d;
+        accum.sy -= dy / d;
+    }
+}
+
+#[inline]
+fn accumulate_composite_neighbor(
+    accum: &mut CompositeNeighborAccum,
+    xj: f32,
+    yj: f32,
+    vxj: f32,
+    vyj: f32,
+    d2: f32,
+    nd2: f32,
+    sd2: f32,
+) {
+    if d2 < nd2 || d2 < sd2 {
+        accum.cx += xj;
+        accum.cy += yj;
+        accum.vx += vxj;
+        accum.vy += vyj;
+        accum.count += 1;
+    }
+}
+
+#[inline]
+fn apply_accumulated_neighbor_forces(
+    buf: &mut [f32],
+    base: usize,
+    p: &SimParams,
+    max_speed: f32,
+    direct: &DirectNeighborAccum,
+) {
+    if direct.cc > 0 && p.cohesion > 0.0 {
+        let gx = direct.cx / direct.cc as f32;
+        let gy = direct.cy / direct.cc as f32;
+        let agent_coh = p.cohesion * buf[base + COH_M];
+        seek(buf, base, gx, gy, agent_coh, max_speed);
+    }
+
+    if direct.ac > 0 && p.alignment > 0.0 {
+        let avg_vx = direct.avx / direct.ac as f32;
+        let avg_vy = direct.avy / direct.ac as f32;
+        buf[base + AX] += (avg_vx - buf[base + VX]) * p.alignment;
+        buf[base + AY] += (avg_vy - buf[base + VY]) * p.alignment;
+    }
+
+    if p.separation > 0.0 {
+        let agent_sep = p.separation * buf[base + SEP_M];
+        buf[base + AX] += direct.sx * agent_sep;
+        buf[base + AY] += direct.sy * agent_sep;
+    }
+}
+
+#[inline]
+fn apply_composite_neighbor_force(
+    buf: &mut [f32],
+    base: usize,
+    p: &SimParams,
+    max_speed: f32,
+    xi: f32,
+    yi: f32,
+    sd2: f32,
+    composite: &CompositeNeighborAccum,
+) {
+    if composite.count == 0 {
+        return;
+    }
+
+    let strength = p.quorum_composite_strength;
+    if strength <= 0.0 {
+        return;
+    }
+
+    let cx = composite.cx / composite.count as f32;
+    let cy = composite.cy / composite.count as f32;
+
+    if p.cohesion > 0.0 {
+        let agent_coh = p.cohesion * buf[base + COH_M] * strength;
+        seek(buf, base, cx, cy, agent_coh, max_speed);
+    }
+
+    if p.alignment > 0.0 {
+        let mut composite_vx = composite.vx;
+        let mut composite_vy = composite.vy;
+        let composite_speed = (composite_vx * composite_vx + composite_vy * composite_vy).sqrt();
+        if composite_speed > max_speed {
+            let scale = max_speed / composite_speed;
+            composite_vx *= scale;
+            composite_vy *= scale;
+        }
+        buf[base + AX] += (composite_vx - buf[base + VX]) * p.alignment * strength;
+        buf[base + AY] += (composite_vy - buf[base + VY]) * p.alignment * strength;
+    }
+
+    if p.separation > 0.0 {
+        let dx = cx - xi;
+        let dy = cy - yi;
+        let d2 = dx * dx + dy * dy;
+        if d2 < sd2 && d2 > 0.0 {
+            let d = d2.sqrt();
+            let agent_sep = p.separation * buf[base + SEP_M] * strength;
+            buf[base + AX] -= (dx / d) * agent_sep;
+            buf[base + AY] -= (dy / d) * agent_sep;
+        }
+    }
+}
+
+#[cfg(any(not(feature = "spatial-hash"), test))]
+fn compute_quorum_members(buf: &[f32], agent_count: usize, p: &SimParams) -> Vec<bool> {
+    let nd2 = p.neighbor_radius * p.neighbor_radius;
+    let threshold = p.quorum_threshold;
+    let mut members = vec![false; agent_count];
+
+    for i in 0..agent_count {
+        let bi = i * STRIDE;
+        if !has_flag(buf, bi, FLAG_ALIVE) {
+            continue;
+        }
+
+        let xi = buf[bi + X];
+        let yi = buf[bi + Y];
+        let mut count = 0u32;
+
+        for j in 0..agent_count {
+            if i == j {
+                continue;
+            }
+            let bj = j * STRIDE;
+            if !has_flag(buf, bj, FLAG_ALIVE) {
+                continue;
+            }
+            let xj = buf[bj + X];
+            let yj = buf[bj + Y];
+            if !in_fov(buf, bi, xj, yj, p.fov_rad) {
+                continue;
+            }
+
+            let dx = xj - xi;
+            let dy = yj - yi;
+            if dx * dx + dy * dy < nd2 {
+                count += 1;
+                if count >= threshold {
+                    members[i] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    members
+}
+
+#[cfg(feature = "spatial-hash")]
+fn compute_quorum_members_grid(
+    buf: &[f32],
+    agent_count: usize,
+    p: &SimParams,
+    grid: &SpatialGrid,
+) -> Vec<bool> {
+    let nd2 = p.neighbor_radius * p.neighbor_radius;
+    let threshold = p.quorum_threshold;
+    let mut members = vec![false; agent_count];
+
+    for i in 0..agent_count {
+        let bi = i * STRIDE;
+        if !has_flag(buf, bi, FLAG_ALIVE) {
+            continue;
+        }
+
+        let xi = buf[bi + X];
+        let yi = buf[bi + Y];
+        let (cell_xi, cell_yi) = grid.agent_cell(i);
+        let mut count = 0u32;
+
+        'neighbor_cells: for ndy in -1i32..=1 {
+            for ndx in -1i32..=1 {
+                for &j_u32 in grid.cell_agents(cell_xi + ndx, cell_yi + ndy) {
+                    let j = j_u32 as usize;
+                    if i == j {
+                        continue;
+                    }
+                    let bj = j * STRIDE;
+                    let xj = buf[bj + X];
+                    let yj = buf[bj + Y];
+                    if !in_fov(buf, bi, xj, yj, p.fov_rad) {
+                        continue;
+                    }
+
+                    let dx = xj - xi;
+                    let dy = yj - yi;
+                    if dx * dx + dy * dy < nd2 {
+                        count += 1;
+                        if count >= threshold {
+                            members[i] = true;
+                            break 'neighbor_cells;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    members
+}
+
 // ---- Neighbor forces (cohesion + separation + alignment) ----
 // Applied all at once during the neighbor scan to avoid iterating twice.
 //
 // This is the fallback O(n²) all-pairs implementation. It is used when the
 // `spatial-hash` feature is disabled, and is retained for testing/comparison.
 #[cfg(any(not(feature = "spatial-hash"), test))]
-pub fn apply_neighbor_forces(
-    buf: &mut [f32],
-    agent_count: usize,
-    p: &SimParams,
-) {
-    let nd = p.neighbor_radius;
-    let sd = p.separation_radius;
-    let nd2 = nd * nd;
-    let sd2 = sd * sd;
+pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams) {
+    let nd2 = p.neighbor_radius * p.neighbor_radius;
+    let sd2 = p.separation_radius * p.separation_radius;
+    let quorum_members = quorum_enabled(p).then(|| compute_quorum_members(buf, agent_count, p));
 
-    // We need to accumulate per-agent neighbor data. Use stack arrays for small counts,
-    // otherwise heap — but agent_count is typically ≤ 200 in this phase.
-    // To avoid O(n) allocation, we iterate pairs and accumulate inline.
-
-    // For each alive agent, scan all other alive agents.
-    // This is O(n²) which is fine for ≤ 200. For 10k+ use spatial hash feature.
     for i in 0..agent_count {
         let bi = i * STRIDE;
         if !has_flag(buf, bi, FLAG_ALIVE) {
@@ -137,15 +391,9 @@ pub fn apply_neighbor_forces(
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let ms = p.max_speed;
-
-        let mut cx = 0.0f32;
-        let mut cy = 0.0f32;
-        let mut cc = 0u32;
-        let mut sx = 0.0f32;
-        let mut sy = 0.0f32;
-        let mut avx = 0.0f32;
-        let mut avy = 0.0f32;
-        let mut ac = 0u32;
+        let focal_quorum = quorum_members.as_ref().is_some_and(|members| members[i]);
+        let mut direct = DirectNeighborAccum::default();
+        let mut composite = CompositeNeighborAccum::default();
 
         for j in 0..agent_count {
             if i == j {
@@ -168,43 +416,52 @@ pub fn apply_neighbor_forces(
             let dy = yj - yi;
             let d2 = dx * dx + dy * dy;
 
-            if d2 < nd2 {
-                cx += xj;
-                cy += yj;
-                cc += 1;
-                avx += buf[bj + VX];
-                avy += buf[bj + VY];
-                ac += 1;
+            let neighbor_quorum = quorum_members.as_ref().is_some_and(|members| members[j]);
+            if focal_quorum {
+                if neighbor_quorum {
+                    accumulate_direct_neighbor(
+                        &mut direct,
+                        dx,
+                        dy,
+                        d2,
+                        xj,
+                        yj,
+                        buf[bj + VX],
+                        buf[bj + VY],
+                        nd2,
+                        sd2,
+                    );
+                }
+            } else if neighbor_quorum {
+                accumulate_composite_neighbor(
+                    &mut composite,
+                    xj,
+                    yj,
+                    buf[bj + VX],
+                    buf[bj + VY],
+                    d2,
+                    nd2,
+                    sd2,
+                );
+            } else {
+                accumulate_direct_neighbor(
+                    &mut direct,
+                    dx,
+                    dy,
+                    d2,
+                    xj,
+                    yj,
+                    buf[bj + VX],
+                    buf[bj + VY],
+                    nd2,
+                    sd2,
+                );
             }
-
-            if d2 < sd2 && d2 > 0.0 {
-                let d = d2.sqrt();
-                sx -= dx / d;
-                sy -= dy / d;
-            }
         }
 
-        // Cohesion: seek centroid of neighbors (uses per-agent coh_m)
-        if cc > 0 && p.cohesion > 0.0 {
-            let gx = cx / cc as f32;
-            let gy = cy / cc as f32;
-            let agent_coh = p.cohesion * buf[bi + COH_M];
-            seek(buf, bi, gx, gy, agent_coh, ms);
-        }
-
-        // Alignment: match average neighbor velocity
-        if ac > 0 && p.alignment > 0.0 {
-            let avg_vx = avx / ac as f32;
-            let avg_vy = avy / ac as f32;
-            buf[bi + AX] += (avg_vx - buf[bi + VX]) * p.alignment;
-            buf[bi + AY] += (avg_vy - buf[bi + VY]) * p.alignment;
-        }
-
-        // Separation: repel from close neighbors (uses per-agent sep_m)
-        if p.separation > 0.0 {
-            let agent_sep = p.separation * buf[bi + SEP_M];
-            buf[bi + AX] += sx * agent_sep;
-            buf[bi + AY] += sy * agent_sep;
+        apply_accumulated_neighbor_forces(buf, bi, p, ms, &direct);
+        if !focal_quorum {
+            apply_composite_neighbor_force(buf, bi, p, ms, xi, yi, sd2, &composite);
         }
     }
 }
@@ -232,6 +489,8 @@ pub fn apply_neighbor_forces_grid(
 ) {
     let nd2 = p.neighbor_radius * p.neighbor_radius;
     let sd2 = p.separation_radius * p.separation_radius;
+    let quorum_members =
+        quorum_enabled(p).then(|| compute_quorum_members_grid(buf, agent_count, p, grid));
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
@@ -242,15 +501,9 @@ pub fn apply_neighbor_forces_grid(
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let ms = p.max_speed;
-
-        let mut cx_acc = 0.0f32;
-        let mut cy_acc = 0.0f32;
-        let mut cc = 0u32;
-        let mut sx = 0.0f32;
-        let mut sy = 0.0f32;
-        let mut avx = 0.0f32;
-        let mut avy = 0.0f32;
-        let mut ac = 0u32;
+        let focal_quorum = quorum_members.as_ref().is_some_and(|members| members[i]);
+        let mut direct = DirectNeighborAccum::default();
+        let mut composite = CompositeNeighborAccum::default();
 
         // Retrieve pre-computed grid cell for this agent (avoids redundant division).
         // `i` is always within 0..agent_count == grid.cell_of.len(), so the call is
@@ -278,45 +531,54 @@ pub fn apply_neighbor_forces_grid(
                     let dy = yj - yi;
                     let d2 = dx * dx + dy * dy;
 
-                    if d2 < nd2 {
-                        cx_acc += xj;
-                        cy_acc += yj;
-                        cc += 1;
-                        avx += buf[bj + VX];
-                        avy += buf[bj + VY];
-                        ac += 1;
-                    }
-
-                    if d2 < sd2 && d2 > 0.0 {
-                        let d = d2.sqrt();
-                        sx -= dx / d;
-                        sy -= dy / d;
+                    let neighbor_quorum = quorum_members.as_ref().is_some_and(|members| members[j]);
+                    if focal_quorum {
+                        if neighbor_quorum {
+                            accumulate_direct_neighbor(
+                                &mut direct,
+                                dx,
+                                dy,
+                                d2,
+                                xj,
+                                yj,
+                                buf[bj + VX],
+                                buf[bj + VY],
+                                nd2,
+                                sd2,
+                            );
+                        }
+                    } else if neighbor_quorum {
+                        accumulate_composite_neighbor(
+                            &mut composite,
+                            xj,
+                            yj,
+                            buf[bj + VX],
+                            buf[bj + VY],
+                            d2,
+                            nd2,
+                            sd2,
+                        );
+                    } else {
+                        accumulate_direct_neighbor(
+                            &mut direct,
+                            dx,
+                            dy,
+                            d2,
+                            xj,
+                            yj,
+                            buf[bj + VX],
+                            buf[bj + VY],
+                            nd2,
+                            sd2,
+                        );
                     }
                 }
             }
         }
 
-        // Cohesion: seek centroid of neighbors (uses per-agent coh_m)
-        if cc > 0 && p.cohesion > 0.0 {
-            let gx = cx_acc / cc as f32;
-            let gy = cy_acc / cc as f32;
-            let agent_coh = p.cohesion * buf[bi + COH_M];
-            seek(buf, bi, gx, gy, agent_coh, ms);
-        }
-
-        // Alignment: match average neighbor velocity
-        if ac > 0 && p.alignment > 0.0 {
-            let avg_vx = avx / ac as f32;
-            let avg_vy = avy / ac as f32;
-            buf[bi + AX] += (avg_vx - buf[bi + VX]) * p.alignment;
-            buf[bi + AY] += (avg_vy - buf[bi + VY]) * p.alignment;
-        }
-
-        // Separation: repel from close neighbors (uses per-agent sep_m)
-        if p.separation > 0.0 {
-            let agent_sep = p.separation * buf[bi + SEP_M];
-            buf[bi + AX] += sx * agent_sep;
-            buf[bi + AY] += sy * agent_sep;
+        apply_accumulated_neighbor_forces(buf, bi, p, ms, &direct);
+        if !focal_quorum {
+            apply_composite_neighbor_force(buf, bi, p, ms, xi, yi, sd2, &composite);
         }
     }
 }
