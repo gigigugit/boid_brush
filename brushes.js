@@ -583,8 +583,7 @@ export class BoidBrush {
     this.sim = null;
     this.renderer = createBoidStampRenderer();
     this._ready = false;
-    this._lastStampX = [];
-    this._lastStampY = [];
+    this._resetInterpolationState();
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
     this._boidsSpawned = false;
@@ -618,8 +617,7 @@ export class BoidBrush {
       this._ready = false;
       this.sim = null;
       this.app.sharedMotionSim = null;
-      this._lastStampX = [];
-      this._lastStampY = [];
+      this._resetInterpolationState();
       this._boidsSpawned = false;
       this._hoverSpawned = false;
       this.renderer.reset();
@@ -691,6 +689,7 @@ export class BoidBrush {
   _clearAgents() {
     if (!this.sim) return;
     this.sim.clearAgents();
+    this._resetInterpolationState();
     this._boidsSpawned = false;
   }
 
@@ -775,6 +774,14 @@ export class BoidBrush {
     this._renderLegacyReason = kind === 'legacy' ? reason : '';
   }
 
+  _resetInterpolationState() {
+    this._lastStampX = [];
+    this._lastStampY = [];
+    this._lastBatchAgentX = [];
+    this._lastBatchAgentY = [];
+    this._batchStampCarry = [];
+  }
+
   _buildRenderBatch(read, p, {
     flat = this._flatActive,
     pressure = this.app.pressure,
@@ -834,33 +841,63 @@ export class BoidBrush {
       if (skipActive) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastBatchAgentX[i] = ax;
+        this._lastBatchAgentY[i] = ay;
+        this._batchStampCarry[i] = 0;
         continue;
       }
 
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
-      if (!interpolate || prevX === undefined || prevY === undefined) {
+      const prevStampX = this._lastStampX[i];
+      const prevStampY = this._lastStampY[i];
+      const prevAgentX = this._lastBatchAgentX[i];
+      const prevAgentY = this._lastBatchAgentY[i];
+      if (!interpolate
+        || prevStampX === undefined || prevStampY === undefined
+        || prevAgentX === undefined || prevAgentY === undefined) {
         pushInstance(ax, ay);
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastBatchAgentX[i] = ax;
+        this._lastBatchAgentY[i] = ay;
+        this._batchStampCarry[i] = 0;
         continue;
       }
 
-      const dx = ax - prevX;
-      const dy = ay - prevY;
+      const dx = ax - prevAgentX;
+      const dy = ay - prevAgentY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
-      if (dist < step) continue;
-
-      // Cap interpolation work per agent so a single long jump cannot explode
-      // into an unbounded number of intermediate stamps in one frame.
-      const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-      for (let j = 1; j <= n; j++) {
-        const t = j / n;
-        pushInstance(prevX + dx * t, prevY + dy * t);
+      if (dist > 0) {
+        let remaining = dist;
+        let walked = 0;
+        let carry = Math.max(0, this._batchStampCarry[i] || 0);
+        let emitted = 0;
+        while (carry + remaining >= step && emitted < 256) {
+          const needed = step - carry;
+          walked += needed;
+          remaining -= needed;
+          const t = Math.min(1, walked / dist);
+          const stampX = prevAgentX + dx * t;
+          const stampY = prevAgentY + dy * t;
+          pushInstance(stampX, stampY);
+          this._lastStampX[i] = stampX;
+          this._lastStampY[i] = stampY;
+          carry = 0;
+          emitted++;
+        }
+        if (carry + remaining >= step) {
+          pushInstance(ax, ay);
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+          carry = 0;
+          remaining = 0;
+        }
+        this._batchStampCarry[i] = carry + remaining;
+      } else {
+        this._batchStampCarry[i] = Math.max(0, this._batchStampCarry[i] || 0);
       }
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      this._lastBatchAgentX[i] = ax;
+      this._lastBatchAgentY[i] = ay;
     }
 
     return {
@@ -964,8 +1001,7 @@ export class BoidBrush {
     this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
     // Touch-down ends any prior hover preview; the stroke now owns agent motion.
     this._hoverSpawned = false;
-    this._lastStampX = [];
-    this._lastStampY = [];
+    this._resetInterpolationState();
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     this.app.strokeFrame = 0;
