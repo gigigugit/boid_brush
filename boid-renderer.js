@@ -101,7 +101,6 @@ class WebGPUBoidStampRenderer {
       const interopOk = await this._verify2DInterop();
       if (!interopOk) {
         this.failed = true;
-        this.ready = false;
         return false;
       }
       this.ready = true;
@@ -248,6 +247,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   }
 
   _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr }) {
+    if (!this.ready && this._initPromise === null) return false;
     if (!this.device || !this.context || !instances || count <= 0) return false;
     const widthPx = Math.max(1, Math.round(targetWidthPx));
     const heightPx = Math.max(1, Math.round(targetHeightPx));
