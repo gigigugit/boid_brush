@@ -296,7 +296,6 @@ export class BoidStampRenderer {
 
   async init() {
     await this.canvas.init();
-    await this.webgpu.init();
   }
 
   reset() {
