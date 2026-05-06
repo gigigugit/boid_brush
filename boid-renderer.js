@@ -53,6 +53,8 @@ class WebGPUBoidStampRenderer {
     this.instanceBuffer = null;
     this.instanceCapacity = 0;
     this.presentationFormat = null;
+    this._interopProbeCanvas = null;
+    this._interopProbeCtx = null;
     this._initPromise = null;
   }
 
@@ -95,6 +97,12 @@ class WebGPUBoidStampRenderer {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       this.pipeline = this._createPipeline(this.presentationFormat);
+      const interopOk = await this._verify2DInterop();
+      if (!interopOk) {
+        this.failed = true;
+        this.ready = false;
+        return false;
+      }
       this.ready = true;
       return true;
     } catch (error) {
@@ -238,8 +246,8 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this.instanceCapacity = nextCapacity;
   }
 
-  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr }) {
-    if (!this.ready || !instances || count <= 0 || !targetCtx) return false;
+  _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr }) {
+    if (!this.device || !this.context || !instances || count <= 0) return false;
     const widthPx = Math.max(1, Math.round(targetWidthPx));
     const heightPx = Math.max(1, Math.round(targetHeightPx));
     this._ensureCanvas(widthPx, heightPx);
@@ -276,6 +284,49 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     pass.draw(6, count, 0, 0);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
+    return true;
+  }
+
+  async _verify2DInterop() {
+    if (typeof document === 'undefined') return false;
+    if (!this._interopProbeCanvas) {
+      this._interopProbeCanvas = document.createElement('canvas');
+      this._interopProbeCanvas.width = 32;
+      this._interopProbeCanvas.height = 32;
+      this._interopProbeCtx = this._interopProbeCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    if (!this._interopProbeCtx) return false;
+    const probeInstances = new Float32Array([
+      16, 16, 20, 0,
+      1, 0.15, 0.15, 1,
+    ]);
+    const drew = this._drawToWebGPUCanvas({
+      instances: probeInstances,
+      count: 1,
+      targetWidthPx: 32,
+      targetHeightPx: 32,
+      dpr: 1,
+    });
+    if (!drew) return false;
+    if (typeof this.device.queue.onSubmittedWorkDone === 'function') {
+      await this.device.queue.onSubmittedWorkDone();
+    }
+    this._interopProbeCtx.save();
+    this._interopProbeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._interopProbeCtx.clearRect(0, 0, 32, 32);
+    this._interopProbeCtx.globalCompositeOperation = 'copy';
+    this._interopProbeCtx.drawImage(this.canvas, 0, 0);
+    this._interopProbeCtx.restore();
+    const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
+    if (pixel[3] > 16) return true;
+    console.warn('Boid WebGPU renderer copy-out unsupported — falling back to Canvas2D.');
+    return false;
+  }
+
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr }) {
+    if (!this.ready || !targetCtx) return false;
+    const drew = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
+    if (!drew) return false;
 
     targetCtx.save();
     targetCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -296,6 +347,8 @@ export class BoidStampRenderer {
 
   async init() {
     await this.canvas.init();
+    await this.webgpu.init();
+    this.activeKind = this.webgpu.ready ? this.webgpu.kind : this.canvas.kind;
   }
 
   reset() {
@@ -309,15 +362,13 @@ export class BoidStampRenderer {
   }
 
   render(renderState) {
-    // The WebGPU stamp pass renders into an offscreen WebGPU canvas and then
-    // copies that result back into a 2D layer canvas. In practice that copy is
-    // unreliable across browsers/drivers, which can leave the layer blank even
-    // though the GPU draw succeeded. Keep WebGPU initialization available for
-    // simulation feature detection, but use the Canvas batch renderer for the
-    // actual layer output until the WebGPU path can render directly into the
-    // destination surface.
-    const backend = this.canvas;
-    const ok = backend.render(renderState);
+    const preferred = this.webgpu.ready ? this.webgpu : this.canvas;
+    let ok = preferred.render(renderState);
+    let backend = preferred;
+    if (!ok && preferred !== this.canvas) {
+      ok = this.canvas.render(renderState);
+      backend = this.canvas;
+    }
     this.activeKind = ok ? backend.kind : this.canvas.kind;
     return ok;
   }
