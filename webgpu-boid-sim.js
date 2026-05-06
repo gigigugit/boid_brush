@@ -540,7 +540,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     this.device.queue.submit([encoder.finish()]);
 
     const version = this._stateVersion;
-    const appliedOrder = typeof performance !== 'undefined' && typeof performance.now === 'function'
+    const appliedTimestamp = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
     stagingSlot.busy = true;
@@ -555,7 +555,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         version,
         count: read.count,
         data,
-        versionAppliedOrder: appliedOrder,
+        versionAppliedOrder: appliedTimestamp,
       };
       stagingSlot.busy = false;
     }).catch((error) => {
