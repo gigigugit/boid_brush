@@ -394,7 +394,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let falloff = 1.0 - d / guideRadius;
     let guideSign = guide.params.y;
     let guideHardness = max(guide.params.z, 0.1);
-    let shaped = select(falloff, pow(falloff, guideHardness), guideSign < 0.0);
+    var shaped = falloff;
+    if (guideSign < 0.0) {
+      shaped = pow(falloff, guideHardness);
+    }
     let push = guide.params.x * simSpeed * shaped * 0.85 * guideSign;
     ax = ax + (dx / d) * push;
     ay = ay + (dy / d) * push;
