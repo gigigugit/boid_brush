@@ -2,6 +2,7 @@ const INSTANCE_STRIDE = 8;
 const GPU_UNIFORM_BUFFER_BYTES = 16; // vec2f canvasPx (8) + f32 dpr (4) + f32 pad (4)
 const GPU_INSTANCE_BUFFER_MIN_BYTES = 4096; // ~128 instances at 8 floats/instance before growth
 const GPU_STAMP_EDGE_SOFTNESS = 0.84; // Start feathering near the outer 16% of the circle
+const GPU_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGPU->2D canvas copy-out.
 
 class CanvasBoidStampRenderer {
   constructor() {
@@ -308,6 +309,8 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       dpr: 1,
     });
     if (!drew) return false;
+    // Older/partial WebGPU implementations may not expose an explicit completion
+    // promise. When available, wait so the probe samples the submitted frame.
     if (typeof this.device.queue.onSubmittedWorkDone === 'function') {
       await this.device.queue.onSubmittedWorkDone();
     }
@@ -318,7 +321,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._interopProbeCtx.drawImage(this.canvas, 0, 0);
     this._interopProbeCtx.restore();
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
-    if (pixel[3] > 16) return true;
+    if (pixel[3] > GPU_INTEROP_PROBE_ALPHA_MIN) return true;
     console.warn('Boid WebGPU renderer copy-out unsupported — falling back to Canvas2D.');
     return false;
   }
@@ -364,12 +367,11 @@ export class BoidStampRenderer {
   render(renderState) {
     const preferred = this.webgpu.ready ? this.webgpu : this.canvas;
     let ok = preferred.render(renderState);
-    let backend = preferred;
+    const usedWebGPU = preferred === this.webgpu && ok;
     if (!ok && preferred !== this.canvas) {
       ok = this.canvas.render(renderState);
-      backend = this.canvas;
     }
-    this.activeKind = ok ? backend.kind : this.canvas.kind;
+    this.activeKind = ok ? (usedWebGPU ? this.webgpu.kind : this.canvas.kind) : this.canvas.kind;
     return ok;
   }
 }
