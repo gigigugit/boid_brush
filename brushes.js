@@ -46,7 +46,11 @@ const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
 const BOID_GROUP_COLOR_LIGHTNESS = 68;
 const BOID_GROUP_HUE_WRAP_OFFSET = 17;
+// Probe up to 12 stamps per batch to confirm non-canvas backends copy visible
+// pixels to the 2D target without paying a full-batch readback cost.
 const STAMP_VISIBILITY_SAMPLE_COUNT = 12;
+// Disable GPU paths for the session after 2 consecutive probe/render failures.
+// This avoids repeated flicker/no-op draws on platforms with unstable interop.
 const GPU_RENDERER_FAILURE_LIMIT = 2;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
@@ -3154,6 +3158,8 @@ export class SimpleBrush {
     this._rendererInitPromise = this.renderer.init()
       .then(() => {
         if (this._rendererChainPatched) return;
+        // Temporary Simple-Brush-specific override: prefer procedural GPU paths
+        // (WebGPU/WebGL) with Canvas2D fallback while Boid keeps its own policy.
         this.renderer._getRendererChain = (renderState = {}) => {
           const chain = [];
           if (this._gpuDisabledReason) {
