@@ -610,6 +610,7 @@ export class BoidBrush {
     this._blurStrokeCtx = null;
     this._renderBackend = 'legacy';
     this._renderLegacyReason = 'compatibility check pending';
+    this._gpuBatchVisibilityVerified = false;
   }
 
   async init({ force = false } = {}) {
@@ -623,6 +624,7 @@ export class BoidBrush {
       this.renderer.reset();
       this._renderBackend = 'legacy';
       this._renderLegacyReason = 'compatibility check pending';
+      this._gpuBatchVisibilityVerified = false;
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
@@ -786,6 +788,7 @@ export class BoidBrush {
     pressure = this.app.pressure,
     interpolate = true,
     applySkip = true,
+    forceStamp = false,
     taperCurve = 1,
     taperSize = false,
     taperOpacity = false,
@@ -867,6 +870,10 @@ export class BoidBrush {
         }
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+      } else if (forceStamp) {
+        pushInstance(ax, ay);
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
       }
     }
 
@@ -874,6 +881,39 @@ export class BoidBrush {
       instances: instances.finish(),
       count: instances.count,
     };
+  }
+
+  _batchHasVisiblePixels(targetCtx, batch) {
+    if (!targetCtx || !batch?.instances || batch.count <= 0) return false;
+    const canvas = targetCtx.canvas;
+    if (!canvas?.width || !canvas?.height) return false;
+    const instances = batch.instances;
+    const dpr = this.app.DPR || 1;
+    const sampleCount = Math.min(batch.count, 12);
+    const stride = 8;
+    try {
+      for (let i = 0; i < sampleCount; i++) {
+        const base = i * stride;
+        const size = Math.max(1, instances[base + 2] * dpr);
+        const cx = Math.round(instances[base + 0] * dpr);
+        const cy = Math.round(instances[base + 1] * dpr);
+        const offsets = [
+          [0, 0],
+          [Math.min(size * 0.25, 2), 0],
+          [-Math.min(size * 0.25, 2), 0],
+          [0, Math.min(size * 0.25, 2)],
+          [0, -Math.min(size * 0.25, 2)],
+        ];
+        for (const [ox, oy] of offsets) {
+          const x = Math.max(0, Math.min(canvas.width - 1, Math.round(cx + ox)));
+          const y = Math.max(0, Math.min(canvas.height - 1, Math.round(cy + oy)));
+          if (targetCtx.getImageData(x, y, 1, 1).data[3] > 0) return true;
+        }
+      }
+    } catch {
+      return true;
+    }
+    return false;
   }
 
   _renderBatchToTarget(targetCtx, batch, p) {
@@ -891,6 +931,13 @@ export class BoidBrush {
       stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
     });
     this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
+    if (ok && this.renderer.activeKind !== 'canvas' && !stampBitmap && !this._gpuBatchVisibilityVerified) {
+      if (!this._batchHasVisiblePixels(targetCtx, batch)) {
+        this._setRenderBackend('legacy', 'GPU batch copy produced no visible pixels');
+        return false;
+      }
+      this._gpuBatchVisibilityVerified = true;
+    }
     return ok;
   }
 
@@ -1144,6 +1191,7 @@ export class BoidBrush {
         pressure: app.pressure,
         interpolate: true,
         applySkip: skipN > 0,
+        forceStamp: !!app.simulation?.running,
       });
       if (batch.count === 0) {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
