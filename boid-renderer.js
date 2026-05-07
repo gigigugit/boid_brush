@@ -3,6 +3,7 @@ const GPU_UNIFORM_BUFFER_BYTES = 16; // vec2f canvasPx (8) + f32 dpr (4) + f32 p
 const GPU_INSTANCE_BUFFER_MIN_BYTES = 4096; // ~128 instances at 8 floats/instance before growth
 const GPU_STAMP_EDGE_SOFTNESS = 0.84; // Start feathering near the outer 16% of the circle
 const GPU_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGPU->2D canvas copy-out.
+const WEBGL_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGL->2D canvas copy-out.
 
 class CanvasBoidStampRenderer {
   constructor() {
@@ -55,6 +56,8 @@ class WebGLBoidStampRenderer {
     this._stampTexture = null;
     this._stampTextureSource = null;
     this._uniforms = null;
+    this._interopProbeCanvas = null;
+    this._interopProbeCtx = null;
     this._initPromise = null;
   }
 
@@ -119,6 +122,12 @@ class WebGLBoidStampRenderer {
         this.gl.ONE,
         this.gl.ONE_MINUS_SRC_ALPHA,
       );
+      const interopOk = await this._verify2DInterop();
+      if (!interopOk) {
+        this.failed = true;
+        this.ready = false;
+        return false;
+      }
       this.ready = true;
       this.unavailableReason = '';
       return true;
@@ -146,6 +155,8 @@ class WebGLBoidStampRenderer {
     this._stampTexture = null;
     this._stampTextureSource = null;
     this._uniforms = null;
+    this._interopProbeCanvas = null;
+    this._interopProbeCtx = null;
   }
 
   _createShader(type, source) {
@@ -289,8 +300,45 @@ class WebGLBoidStampRenderer {
     return true;
   }
 
-  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1 }) {
-    if (!this.ready) return this._setRenderFailure('WebGL renderer not ready');
+  async _verify2DInterop() {
+    if (typeof document === 'undefined') return false;
+    if (!this.gl || !this.program || !this.instanceBuffer || !this.vao) {
+      this.unavailableReason = 'WebGL render state unavailable';
+      return false;
+    }
+    if (!this._interopProbeCanvas) {
+      this._interopProbeCanvas = document.createElement('canvas');
+      this._interopProbeCanvas.width = 32;
+      this._interopProbeCanvas.height = 32;
+      this._interopProbeCtx = this._interopProbeCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    if (!this._interopProbeCtx) {
+      this.unavailableReason = '2D interop probe unavailable';
+      return false;
+    }
+    const probeInstances = new Float32Array([
+      16, 16, 20, 0,
+      1, 0.15, 0.15, 1,
+    ]);
+    const drew = this.render({
+      instances: probeInstances,
+      count: 1,
+      targetCtx: this._interopProbeCtx,
+      targetWidthPx: 32,
+      targetHeightPx: 32,
+      dpr: 1,
+      allowBeforeReady: true,
+    });
+    if (!drew) return false;
+    const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
+    if (pixel[3] >= WEBGL_INTEROP_PROBE_ALPHA_MIN) return true;
+    console.warn('Boid WebGL renderer copy out unsupported — falling back to Canvas2D.');
+    this.unavailableReason = '2D interop copy out unsupported';
+    return false;
+  }
+
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1, allowBeforeReady = false }) {
+    if (!allowBeforeReady && !this.ready) return this._setRenderFailure('WebGL renderer not ready');
     if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
     if (!instances || count <= 0) return this._setRenderFailure('no stamp instances to draw');
     if (!this.gl || !this.program || !this.instanceBuffer || !this.vao) {
@@ -322,6 +370,7 @@ class WebGLBoidStampRenderer {
       this.gl.clear(this.gl.COLOR_BUFFER_BIT);
       this.gl.drawArraysInstanced(this.gl.TRIANGLES, 0, 6, count);
       this.gl.bindVertexArray(null);
+      this.gl.flush();
     } catch (error) {
       return this._setRenderFailure(`WebGL submit failed: ${error?.message || error}`);
     }
