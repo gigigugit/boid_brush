@@ -779,9 +779,6 @@ export class BoidBrush {
   _resetInterpolationState() {
     this._lastStampX = [];
     this._lastStampY = [];
-    this._lastBatchAgentX = [];
-    this._lastBatchAgentY = [];
-    this._batchStampCarry = [];
   }
 
   _buildRenderBatch(read, p, {
@@ -843,9 +840,6 @@ export class BoidBrush {
       if (skipActive) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
-        this._lastBatchAgentX[i] = ax;
-        this._lastBatchAgentY[i] = ay;
-        this._batchStampCarry[i] = 0;
         continue;
       }
 
@@ -855,9 +849,6 @@ export class BoidBrush {
         pushInstance(ax, ay);
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
-        this._lastBatchAgentX[i] = ax;
-        this._lastBatchAgentY[i] = ay;
-        this._batchStampCarry[i] = 0;
         continue;
       }
 
@@ -877,13 +868,8 @@ export class BoidBrush {
           }
           this._lastStampX[i] = ax;
           this._lastStampY[i] = ay;
-          this._batchStampCarry[i] = 0;
         }
-      } else {
-        this._batchStampCarry[i] = Math.max(0, this._batchStampCarry[i] || 0);
       }
-      this._lastBatchAgentX[i] = ax;
-      this._lastBatchAgentY[i] = ay;
     }
 
     return {
