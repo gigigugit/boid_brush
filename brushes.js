@@ -1151,30 +1151,28 @@ export class BoidBrush {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
         return;
       }
-      if (batch.count > 0) {
-        if (!this._renderBatchToTarget(stampCtx, batch, p)) {
-          this._renderAgentsLegacy(stampCtx, read, p, app.pressure, {
-            flat,
-            reason: this.renderer.legacyReason,
-          });
-        }
-        if (flat) {
-          const w = layer.canvas.width, h = layer.canvas.height;
-          const ctx = layer.ctx;
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.clearRect(0, 0, w, h);
-          ctx.drawImage(this._preStrokeCanvas, 0, 0);
-          let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
-          ctx.globalAlpha = Math.min(masterOp, 1);
-          ctx.drawImage(this._strokeCanvas, 0, 0);
-          ctx.globalAlpha = 1;
-          ctx.restore();
-        }
-        layer.dirty = true;
-        app.compositeAllLayers();
+      if (!this._renderBatchToTarget(stampCtx, batch, p)) {
+        this._renderAgentsLegacy(stampCtx, read, p, app.pressure, {
+          flat,
+          reason: this.renderer.legacyReason,
+        });
       }
+      if (flat) {
+        const w = layer.canvas.width, h = layer.canvas.height;
+        const ctx = layer.ctx;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(this._preStrokeCanvas, 0, 0);
+        let masterOp = p.stampOpacity;
+        if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+        ctx.globalAlpha = Math.min(masterOp, 1);
+        ctx.drawImage(this._strokeCanvas, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+      layer.dirty = true;
+      app.compositeAllLayers();
       return;
     }
     this._setRenderBackend('legacy', batchSupport.reason);
@@ -1342,33 +1340,31 @@ export class BoidBrush {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
         return;
       }
-      if (batch.count > 0) {
-        if (!this._renderBatchToTarget(stampCtx, batch, p)) {
-          this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
-            flat,
-            taperCurve: curve,
-            taperSize: p.taperSize,
-            taperOpacity: p.taperOpacity,
-            reason: this.renderer.legacyReason,
-          });
-        }
-        if (flat) {
-          const w = layer.canvas.width, h = layer.canvas.height;
-          const ctx = layer.ctx;
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.clearRect(0, 0, w, h);
-          ctx.drawImage(this._preStrokeCanvas, 0, 0);
-          let masterOp = p.stampOpacity;
-          if (p.taperOpacity) masterOp *= curve;
-          ctx.globalAlpha = Math.min(masterOp, 1);
-          ctx.drawImage(this._strokeCanvas, 0, 0);
-          ctx.globalAlpha = 1;
-          ctx.restore();
-        }
-        layer.dirty = true;
-        app.compositeAllLayers();
+      if (!this._renderBatchToTarget(stampCtx, batch, p)) {
+        this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
+          flat,
+          taperCurve: curve,
+          taperSize: p.taperSize,
+          taperOpacity: p.taperOpacity,
+          reason: this.renderer.legacyReason,
+        });
       }
+      if (flat) {
+        const w = layer.canvas.width, h = layer.canvas.height;
+        const ctx = layer.ctx;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(this._preStrokeCanvas, 0, 0);
+        let masterOp = p.stampOpacity;
+        if (p.taperOpacity) masterOp *= curve;
+        ctx.globalAlpha = Math.min(masterOp, 1);
+        ctx.drawImage(this._strokeCanvas, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+      layer.dirty = true;
+      app.compositeAllLayers();
       return;
     }
     this._setRenderBackend('legacy', batchSupport.reason);

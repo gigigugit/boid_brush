@@ -673,6 +673,8 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._interopProbeCtx.drawImage(this.canvas, 0, 0);
     this._interopProbeCtx.restore();
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
+    // Require a meaningful alpha value so partial/broken implementations that
+    // copy back only faint noise do not get treated as working WebGPU→2D interop.
     if (pixel[3] > GPU_INTEROP_PROBE_ALPHA_MIN) return true;
     console.warn('Boid WebGPU renderer copy out unsupported — falling back to Canvas2D.');
     this.unavailableReason = '2D interop copy out unsupported';
