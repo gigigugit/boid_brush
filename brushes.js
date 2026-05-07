@@ -856,19 +856,17 @@ export class BoidBrush {
       const dy = ay - prevStampY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
-      if (dist > 0) {
-        if (dist >= step) {
-          // Match legacy interpolation behavior: accumulate distance from the last
-          // emitted stamp, not from the last agent sample, so slow motion in
-          // simulation mode still produces subsequent stamps once spacing is met.
-          const emitCount = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-          for (let j = 1; j <= emitCount; j++) {
-            const t = j / emitCount;
-            pushInstance(prevStampX + dx * t, prevStampY + dy * t);
-          }
-          this._lastStampX[i] = ax;
-          this._lastStampY[i] = ay;
+      if (dist >= step) {
+        // Match legacy interpolation behavior: accumulate distance from the last
+        // emitted stamp, not from the last agent sample, so slow motion in
+        // simulation mode still produces subsequent stamps once spacing is met.
+        const emitCount = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= emitCount; j++) {
+          const t = j / emitCount;
+          pushInstance(prevStampX + dx * t, prevStampY + dy * t);
         }
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
       }
     }
 
