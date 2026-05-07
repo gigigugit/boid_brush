@@ -25,6 +25,7 @@ const WHEEL_ROTATION_DEG = 2;
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
 const DEFAULT_STAMP_IMAGE_PATH = './circle.png';
+const RETRYABLE_STARTUP_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const PAPER_TEXTURE_FLECK_SCALE = 3.2;
 const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
 const PAPER_TEXTURE_FLECK_INTENSITY = 170;
@@ -105,6 +106,32 @@ function _parseAngleDegrees(value) {
 
 function _deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function _sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function _fetchWithRetry(resource, {
+  attempts = 3,
+  delayMs = 250,
+  init,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(resource, init);
+      if (!RETRYABLE_STARTUP_FETCH_STATUSES.has(response.status) || attempt >= attempts) {
+        return response;
+      }
+      lastError = new Error(`Fetch failed (${response.status})`);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) throw error;
+    }
+    await _sleep(delayMs * attempt);
+  }
+  throw lastError || new Error('Fetch failed');
 }
 
 function _escapeHtml(str) {
@@ -376,7 +403,7 @@ export class App {
     this._toastTimer = null;
 
     // Kick off
-    this._init();
+    this._init().catch(error => this._handleInitError(error));
   }
 
   // ========================================================
@@ -1008,7 +1035,7 @@ export class App {
   }
 
   async _loadDefaultStampImage({ enable = false } = {}) {
-    const response = await fetch(DEFAULT_STAMP_IMAGE_PATH);
+    const response = await _fetchWithRetry(DEFAULT_STAMP_IMAGE_PATH);
     if (!response.ok) {
       throw new Error(`Default stamp image fetch failed (${response.status})`);
     }
@@ -5442,6 +5469,13 @@ export class App {
     this.toastEl.classList.add('show');
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 1800);
+  }
+
+  _handleInitError(error) {
+    console.error('App init failed:', error);
+    const message = error?.message || 'Unknown startup error';
+    this.setStatus(`Startup failed: ${message}`);
+    this.showToast('⚠ Startup failed');
   }
 
   reloadAppWithCacheBust() {

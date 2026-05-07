@@ -35,6 +35,40 @@ const SHAPE_MAP = {
   noise_scatter: 14, bullseye: 15, cross: 16, wave: 17, voronoi: 18,
 };
 
+const RETRYABLE_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function _sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function _resolveWasmBinaryUrl(wasmPath) {
+  const url = new URL(wasmPath, import.meta.url);
+  url.pathname = url.pathname.replace(/\.js$/, '_bg.wasm');
+  return url;
+}
+
+async function _fetchWithRetry(resource, {
+  attempts = 3,
+  delayMs = 250,
+  init,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(resource, init);
+      if (!RETRYABLE_FETCH_STATUSES.has(response.status) || attempt >= attempts) {
+        return response;
+      }
+      lastError = new Error(`Fetch failed (${response.status})`);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) throw error;
+    }
+    await _sleep(delayMs * attempt);
+  }
+  throw lastError || new Error('Fetch failed');
+}
+
 export class BoidSim {
   /**
    * Load WASM and initialize the simulation.
@@ -46,7 +80,7 @@ export class BoidSim {
    */
   static async create(width, height, maxAgents, wasmPath = './wasm-sim/pkg/boid_sim.js') {
     const mod = await import(wasmPath);
-    const wasm = await mod.default(); // init WASM — returns InitOutput with .memory
+    const wasm = await mod.default(_fetchWithRetry(_resolveWasmBinaryUrl(wasmPath))); // init WASM — returns InitOutput with .memory
     mod.sim_init(width, height, maxAgents);
 
     const instance = new BoidSim();
@@ -268,7 +302,7 @@ async function _getOrLoadFluidModule(wasmPath) {
     _fluidModulePath = wasmPath;
     _fluidModulePromise = (async () => {
       const mod = await import(wasmPath);
-      if (typeof mod.default === 'function') await mod.default();
+      if (typeof mod.default === 'function') await mod.default(_fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)));
       if (typeof mod.fluid_create_simulator !== 'function') {
         throw new Error('Fluid exports are unavailable in the WASM module.');
       }
