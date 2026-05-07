@@ -3967,6 +3967,11 @@ export class App {
       totalClearMs: 0,
       totalOverlayMs: 0,
       totalStatusMs: 0,
+      renderSubmittedStamps: 0,
+      renderEstimatedStamps: 0,
+      renderFallbackCount: 0,
+      renderBackendCounts: { webgpu: 0, webgl: 0, canvas: 0, legacy: 0 },
+      lastRenderFallbackReason: '',
       worstFrameMs: 0,
       worstFramePhase: 'none',
       maxBrushMs: 0,
@@ -4006,6 +4011,14 @@ export class App {
     t.totalClearMs = 0;
     t.totalOverlayMs = 0;
     t.totalStatusMs = 0;
+    t.renderSubmittedStamps = 0;
+    t.renderEstimatedStamps = 0;
+    t.renderFallbackCount = 0;
+    t.renderBackendCounts.webgpu = 0;
+    t.renderBackendCounts.webgl = 0;
+    t.renderBackendCounts.canvas = 0;
+    t.renderBackendCounts.legacy = 0;
+    t.lastRenderFallbackReason = '';
     t.worstFrameMs = 0;
     t.worstFramePhase = 'none';
     t.maxBrushMs = 0;
@@ -4234,6 +4247,23 @@ export class App {
     this._refreshPerformanceTelemetryUI();
   }
 
+  recordBrushRenderTelemetry({ backend = 'legacy', submittedStamps = 0, renderedStampsEstimate = 0, fallbackReason = '' } = {}) {
+    const t = this._performanceTelemetry;
+    if (!t.enabled) return;
+    const key = backend === 'webgpu' || backend === 'webgl' || backend === 'canvas' ? backend : 'legacy';
+    t.renderBackendCounts[key] = (t.renderBackendCounts[key] || 0) + 1;
+    t.renderSubmittedStamps += Math.max(0, submittedStamps | 0);
+    t.renderEstimatedStamps += Math.max(0, renderedStampsEstimate | 0);
+    if (fallbackReason) {
+      t.renderFallbackCount++;
+      if (fallbackReason !== t.lastRenderFallbackReason) {
+        t.lastRenderFallbackReason = fallbackReason;
+        this._notePerformanceEvent(`render fallback: ${fallbackReason}`);
+      }
+    }
+    this._refreshPerformanceTelemetryUI();
+  }
+
   _isPerformanceThrottleGap(frame) {
     const t = this._performanceTelemetry;
     return Number.isFinite(frame.deltaMs)
@@ -4269,6 +4299,7 @@ export class App {
       `State: ${t.visibilityState}${t.focused ? ' • focused' : ' • blurred'}${wakeLockState}`,
       `Frames: ${t.frameCount} • avg ${avgFrame.toFixed(1)}ms • ~${fps.toFixed(0)}fps • slow ${t.slowFrameCount}`,
       `Attribution: brush ${(t.totalBrushMs / frameCount).toFixed(1)} • overlay ${(t.totalOverlayMs / frameCount).toFixed(1)} • clear ${(t.totalClearMs / frameCount).toFixed(1)} • status ${(t.totalStatusMs / frameCount).toFixed(1)} ms/frame`,
+      `Render: submit ${t.renderSubmittedStamps} • est ${t.renderEstimatedStamps} • fb ${t.renderFallbackCount} • backends wg:${t.renderBackendCounts.webgpu} gl:${t.renderBackendCounts.webgl} c2d:${t.renderBackendCounts.canvas} cpu:${t.renderBackendCounts.legacy}`,
       `Worst: ${t.worstFrameMs.toFixed(1)}ms (${t.worstFramePhase}) • long tasks ${t.longTaskCount} (${t.longTaskTotalMs.toFixed(0)}ms) • raf gaps ${t.throttleGapCount}`,
       `Lifecycle: hidden ${(hiddenMs / 1000).toFixed(1)}s • vis ${t.visibilityChanges} • blur ${t.focusLostCount} • pagehide ${t.pageHideCount} • freeze ${t.freezeCount}`,
       `Device: ${t.hardwareConcurrency || '?'} cores • ${t.deviceMemoryGB || '?'}GB mem${t.memoryMB != null ? ` • heap ${t.memoryMB.toFixed(0)}MB` : ''}`,
@@ -4282,7 +4313,20 @@ export class App {
     if (!t.enabled || t.frameCount === 0) return '';
     const avgFrame = t.totalFrameMs / t.frameCount;
     const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
-    return `Perf ${fps.toFixed(0)}fps ${avgFrame.toFixed(1)}ms LT:${t.longTaskCount} Gap:${t.throttleGapCount}${t.wakeLockPreferred ? ` WL:${t.wakeLockActive ? 'on' : 'wait'}` : ''}`;
+    const activeSeconds = Math.max(0.001, t.totalFrameMs / 1000);
+    const stampRate = t.renderEstimatedStamps / activeSeconds;
+    const backendCounts = t.renderBackendCounts;
+    let backend = 'cpu';
+    if (backendCounts.webgpu >= backendCounts.webgl
+      && backendCounts.webgpu >= backendCounts.canvas
+      && backendCounts.webgpu >= backendCounts.legacy) {
+      backend = 'wgpu';
+    } else if (backendCounts.webgl >= backendCounts.canvas && backendCounts.webgl >= backendCounts.legacy) {
+      backend = 'webgl';
+    } else if (backendCounts.canvas >= backendCounts.legacy) {
+      backend = 'c2d';
+    }
+    return `Perf ${fps.toFixed(0)}fps ${avgFrame.toFixed(1)}ms St:${stampRate.toFixed(0)}/s B:${backend} Fb:${t.renderFallbackCount} LT:${t.longTaskCount} Gap:${t.throttleGapCount}${t.wakeLockPreferred ? ` WL:${t.wakeLockActive ? 'on' : 'wait'}` : ''}`;
   }
 
   _buildPerformanceTelemetrySnapshot() {
@@ -4300,6 +4344,11 @@ export class App {
       avgOverlayMs: +(t.totalOverlayMs / frameCount).toFixed(3),
       avgClearMs: +(t.totalClearMs / frameCount).toFixed(3),
       avgStatusMs: +(t.totalStatusMs / frameCount).toFixed(3),
+      renderSubmittedStamps: t.renderSubmittedStamps,
+      renderEstimatedStamps: t.renderEstimatedStamps,
+      renderFallbackCount: t.renderFallbackCount,
+      renderBackendCounts: t.renderBackendCounts,
+      lastRenderFallbackReason: t.lastRenderFallbackReason,
       slowFrames: t.slowFrameCount,
       worstFrameMs: +t.worstFrameMs.toFixed(3),
       worstFramePhase: t.worstFramePhase,

@@ -784,6 +784,11 @@ export class BoidBrush {
     this._renderLegacyReason = kind === 'legacy' ? reason : '';
   }
 
+  _formatLegacyFallbackReason(reason) {
+    const coreReason = reason || this._gpuDisabledReason || 'GPU simple-stamp renderer failed';
+    return `${coreReason}; using CPU fallback`;
+  }
+
   _resetInterpolationState() {
     this._lastStampX = [];
     this._lastStampY = [];
@@ -3192,8 +3197,6 @@ export class SimpleBrush {
     if (!layer) return { ok: false, reason: 'no active layer' };
     if (this._flatActive || p.flatStroke) return { ok: false, reason: 'flat stroke enabled' };
     if (layer.alphaLock) return { ok: false, reason: 'alpha lock enabled on active layer' };
-    if (this.app.tilingMode) return { ok: false, reason: 'tiling mode enabled' };
-    if (p.symmetryEnabled) return { ok: false, reason: 'symmetry enabled' };
     if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
     if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
     if (p.canvasTextureEnabled) return { ok: false, reason: 'canvas texture enabled' };
@@ -3201,9 +3204,33 @@ export class SimpleBrush {
     if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
     if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
     if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
-    if (p.stampImageCanvas) return { ok: false, reason: 'custom stamp image GPU path pending (stage 2)' };
     if (this._gpuDisabledReason) return { ok: false, reason: this._gpuDisabledReason };
+    if (!this.renderer.canRenderBatch({ stampBitmap: p.stampImageCanvas || null })) {
+      return { ok: false, reason: this.renderer.getUnavailableReason({ stampBitmap: p.stampImageCanvas || null }) };
+    }
     return { ok: true, reason: '' };
+  }
+
+  _expandRenderPoints(points, stampSize, p) {
+    if (!points?.length) return [];
+    const expanded = [];
+    const seen = new Set();
+    const addPoint = (x, y) => {
+      const key = `${Math.round(x * 1000)}:${Math.round(y * 1000)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      expanded.push({ x, y });
+    };
+    for (const point of points) {
+      const symPoints = p.symmetryEnabled ? this.app.getSymmetryPoints(point.x, point.y) : [point];
+      for (const symPoint of symPoints) {
+        addPoint(symPoint.x, symPoint.y);
+        if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
+        const wraps = this.app._getStampWrapPoints(symPoint.x, symPoint.y, stampSize);
+        for (const wrap of wraps) addPoint(wrap.x, wrap.y);
+      }
+    }
+    return expanded;
   }
 
   _buildSimpleBatch(points, p, pressure) {
@@ -3251,15 +3278,31 @@ export class SimpleBrush {
   _renderPointBatch(points, pressure) {
     const p = this.app.getP();
     const support = this._getBatchRendererSupport(p);
+    const requestedStamps = points?.length || 0;
     if (!support.ok) {
       this._setRenderBackend('legacy', support.reason);
+      this.app.recordBrushRenderTelemetry?.({
+        backend: 'legacy',
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+        fallbackReason: support.reason,
+      });
       return false;
     }
     this._ensureRendererInit();
     const layer = this.app.getActiveLayer();
-    const batch = this._buildSimpleBatch(points, p, pressure);
+    const stampSize = Math.max(1, p.pressureSize ? p.stampSize * (0.3 + 0.7 * pressure) : p.stampSize);
+    const renderPoints = this._expandRenderPoints(points, stampSize, p);
+    const batch = this._buildSimpleBatch(renderPoints, p, pressure);
+    const stampBitmap = p.stampImageCanvas || null;
     if (batch.count <= 0) {
-      this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: null }));
+      const backend = this.renderer.getPreferredBatchRendererKind({ stampBitmap });
+      this._setRenderBackend(backend);
+      this.app.recordBrushRenderTelemetry?.({
+        backend,
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+      });
       return true;
     }
     const ok = this.renderer.render({
@@ -3269,18 +3312,24 @@ export class SimpleBrush {
       targetWidthPx: layer.canvas.width,
       targetHeightPx: layer.canvas.height,
       dpr: this.app.DPR,
-      stampBitmap: null,
-      stampTint: true,
-      stampRotation: 0,
-      stampAspect: 1,
+      stampBitmap,
+      stampTint: p.stampImageTint !== false,
+      stampRotation: p.stampImageRotation || 0,
+      stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
     });
     this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
     if (!ok) {
       this._gpuFailureCount++;
       if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
         this._gpuDisabledReason = 'GPU simple-stamp renderer failed repeatedly';
-        this._setRenderBackend('legacy', `${this._gpuDisabledReason}; using CPU fallback`);
+        this._setRenderBackend('legacy', this._formatLegacyFallbackReason(this._gpuDisabledReason));
       }
+      this.app.recordBrushRenderTelemetry?.({
+        backend: 'legacy',
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+        fallbackReason: this._renderLegacyReason || this.renderer.legacyReason || 'GPU simple-stamp renderer failed',
+      });
       return false;
     }
     if (this.renderer.activeKind !== 'canvas' && !this._batchHasVisiblePixels(layer.ctx, batch)) {
@@ -3288,10 +3337,21 @@ export class SimpleBrush {
       if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
         this._gpuDisabledReason = 'GPU simple-stamp visibility probe failed';
       }
-      this._setRenderBackend('legacy', `${this._gpuDisabledReason || 'GPU simple-stamp visibility probe failed'}; using CPU fallback`);
+      this._setRenderBackend('legacy', this._formatLegacyFallbackReason(this._gpuDisabledReason || 'GPU simple-stamp visibility probe failed'));
+      this.app.recordBrushRenderTelemetry?.({
+        backend: 'legacy',
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+        fallbackReason: this._renderLegacyReason || 'GPU simple-stamp visibility probe failed',
+      });
       return false;
     }
     this._gpuFailureCount = 0;
+    this.app.recordBrushRenderTelemetry?.({
+      backend: this.renderer.activeKind || 'canvas',
+      submittedStamps: requestedStamps,
+      renderedStampsEstimate: batch.count,
+    });
     return true;
   }
 
