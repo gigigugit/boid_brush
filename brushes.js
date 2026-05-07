@@ -766,6 +766,9 @@ export class BoidBrush {
     if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
     if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
     if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
+    if (!this.renderer.webgpuReady) {
+      return { ok: false, reason: this.renderer.legacyReason || 'WebGPU stamp renderer unavailable' };
+    }
     return { ok: true, reason: '' };
   }
 
