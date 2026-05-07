@@ -772,7 +772,7 @@ export class BoidStampRenderer {
     } catch (error) {
       console.warn('Boid WebGPU renderer init failed — falling back to Canvas2D.', error);
     }
-    this.activeKind = this.webgpu.ready ? this.webgpu.kind : (this.webgl.ready ? this.webgl.kind : this.canvas.kind);
+    this.activeKind = this.canvas.kind;
   }
 
   reset() {
@@ -788,11 +788,11 @@ export class BoidStampRenderer {
 
   canRenderBatch({ stampBitmap = null } = {}) {
     if (stampBitmap) return this.webgl.ready;
-    return this.webgpu.ready || this.webgl.ready;
+    return true;
   }
 
   getPreferredBatchRendererKind({ stampBitmap = null } = {}) {
-    if (!stampBitmap && this.webgpu.ready) return this.webgpu.kind;
+    if (!stampBitmap) return this.canvas.kind;
     if (this.webgl.ready) return this.webgl.kind;
     return this.canvas.kind;
   }
@@ -814,9 +814,11 @@ export class BoidStampRenderer {
 
   _getRendererChain(renderState = {}) {
     const chain = [];
-    if (!renderState.stampBitmap && this.webgpu.ready) chain.push(this.webgpu);
-    if (this.webgl.ready) chain.push(this.webgl);
-    if (!renderState.stampBitmap) chain.push(this.canvas);
+    if (renderState.stampBitmap) {
+      if (this.webgl.ready) chain.push(this.webgl);
+      return chain;
+    }
+    chain.push(this.canvas);
     return chain;
   }
 

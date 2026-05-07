@@ -1268,7 +1268,16 @@ export class BoidBrush {
         const dy = ay - prevY;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist < step) continue; // accumulate distance until next stamp
+        if (dist < step) {
+          if (!app.simulation?.running) continue; // accumulate distance until next stamp
+          app.symStamp(stampCtx, ax, ay, sz, color, op);
+          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+            _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
+          }
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+          continue;
+        }
 
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
         for (let j = 1; j <= n; j++) {
