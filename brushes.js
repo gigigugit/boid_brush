@@ -3120,10 +3120,17 @@ export class BristleBrush {
 export class SimpleBrush {
   constructor(app) {
     this.app = app;
+    this.renderer = createBoidStampRenderer();
     this._lastStampX = null;
     this._lastStampY = null;
     this._needsComposite = false;
     this._active = false;
+    this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuFailureCount = 0;
+    this._gpuDisabledReason = '';
+    this._rendererInitPromise = null;
+    this._rendererChainPatched = false;
     // Flat-stroke (wet buffer) canvases
     this._strokeCanvas = null;
     this._strokeCtx = null;
@@ -3137,6 +3144,147 @@ export class SimpleBrush {
     this._blurTmpCtx = null;
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
+    this._ensureRendererInit();
+  }
+
+  _ensureRendererInit() {
+    if (this._rendererInitPromise) return this._rendererInitPromise;
+    this._rendererInitPromise = this.renderer.init()
+      .then(() => {
+        if (this._rendererChainPatched) return;
+        this.renderer._getRendererChain = (renderState = {}) => {
+          const chain = [];
+          if (this._gpuDisabledReason) {
+            chain.push(this.renderer.canvas);
+            return chain;
+          }
+          if (renderState.stampBitmap) {
+            if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
+            chain.push(this.renderer.canvas);
+            return chain;
+          }
+          if (this.renderer.webgpu.ready) chain.push(this.renderer.webgpu);
+          if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
+          chain.push(this.renderer.canvas);
+          return chain;
+        };
+        this._rendererChainPatched = true;
+      })
+      .catch(() => {});
+    return this._rendererInitPromise;
+  }
+
+  _setRenderBackend(kind, reason = '') {
+    this._renderBackend = kind;
+    this._renderLegacyReason = kind === 'legacy' ? reason : '';
+  }
+
+  _getBatchRendererSupport(p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer) return { ok: false, reason: 'no active layer' };
+    if (this._flatActive || p.flatStroke) return { ok: false, reason: 'flat stroke enabled' };
+    if (layer.alphaLock) return { ok: false, reason: 'alpha lock enabled on active layer' };
+    if (this.app.tilingMode) return { ok: false, reason: 'tiling mode enabled' };
+    if (p.symmetryEnabled) return { ok: false, reason: 'symmetry enabled' };
+    if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
+    if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
+    if (p.canvasTextureEnabled) return { ok: false, reason: 'canvas texture enabled' };
+    if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
+    if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
+    if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
+    if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
+    if (p.stampImageCanvas) return { ok: false, reason: 'custom stamp image GPU path pending (stage 2)' };
+    if (this._gpuDisabledReason) return { ok: false, reason: this._gpuDisabledReason };
+    return { ok: true, reason: '' };
+  }
+
+  _buildSimpleBatch(points, p, pressure) {
+    const color = hexToRGB(p.color);
+    const instances = new StampInstanceBuffer(Math.max(16, points.length));
+    for (const pt of points) {
+      let sz = p.stampSize;
+      if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      let op = p.stampOpacity;
+      if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      op = Math.min(op, 1);
+      if (sz < 0.5 || op < 0.005) continue;
+      instances.push(pt.x, pt.y, sz, color.r, color.g, color.b, op);
+    }
+    return { instances: instances.finish(), count: instances.count };
+  }
+
+  _batchHasVisiblePixels(targetCtx, batch) {
+    if (!targetCtx || !batch?.instances || batch.count <= 0) return false;
+    const canvas = targetCtx.canvas;
+    if (!canvas?.width || !canvas?.height) return false;
+    const instances = batch.instances;
+    const dpr = this.app.DPR || 1;
+    const sampleCount = Math.min(batch.count, 8);
+    const stride = 8;
+    try {
+      for (let i = 0; i < sampleCount; i++) {
+        const base = i * stride;
+        const size = Math.max(1, instances[base + 2] * dpr);
+        const cx = Math.round(instances[base + 0] * dpr);
+        const cy = Math.round(instances[base + 1] * dpr);
+        const x = Math.max(0, Math.min(canvas.width - 1, cx));
+        const y = Math.max(0, Math.min(canvas.height - 1, cy));
+        if (targetCtx.getImageData(x, y, 1, 1).data[3] > 0) return true;
+        const edge = Math.round(Math.min(size * 0.2, 2));
+        const ex = Math.max(0, Math.min(canvas.width - 1, x + edge));
+        if (targetCtx.getImageData(ex, y, 1, 1).data[3] > 0) return true;
+      }
+    } catch {
+      return true;
+    }
+    return false;
+  }
+
+  _renderPointBatch(points, pressure) {
+    const p = this.app.getP();
+    const support = this._getBatchRendererSupport(p);
+    if (!support.ok) {
+      this._setRenderBackend('legacy', support.reason);
+      return false;
+    }
+    this._ensureRendererInit();
+    const layer = this.app.getActiveLayer();
+    const batch = this._buildSimpleBatch(points, p, pressure);
+    if (batch.count <= 0) {
+      this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: null }));
+      return true;
+    }
+    const ok = this.renderer.render({
+      instances: batch.instances,
+      count: batch.count,
+      targetCtx: layer.ctx,
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      dpr: this.app.DPR,
+      stampBitmap: null,
+      stampTint: true,
+      stampRotation: 0,
+      stampAspect: 1,
+    });
+    this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
+    if (!ok) {
+      this._gpuFailureCount++;
+      if (this._gpuFailureCount >= 2) {
+        this._gpuDisabledReason = 'GPU simple-stamp renderer failed repeatedly';
+        this._setRenderBackend('legacy', `${this._gpuDisabledReason}; using CPU fallback`);
+      }
+      return false;
+    }
+    if (this.renderer.activeKind !== 'canvas' && !this._batchHasVisiblePixels(layer.ctx, batch)) {
+      this._gpuFailureCount++;
+      if (this._gpuFailureCount >= 2) {
+        this._gpuDisabledReason = 'GPU simple-stamp visibility probe failed';
+      }
+      this._setRenderBackend('legacy', `${this._gpuDisabledReason || 'GPU simple-stamp visibility probe failed'}; using CPU fallback`);
+      return false;
+    }
+    this._gpuFailureCount = 0;
+    return true;
   }
 
   onDown(x, y, pressure) {
@@ -3187,7 +3335,9 @@ export class SimpleBrush {
     this._lastStampY = y;
     this.app.strokeFrame = 0;
     this._active = true;
-    this._stamp(x, y, pressure);
+    if (!this._renderPointBatch([{ x, y }], pressure)) {
+      this._stamp(x, y, pressure);
+    }
     this._markDirty();
   }
 
@@ -3206,9 +3356,13 @@ export class SimpleBrush {
     if (dist < step) return; // accumulate distance until next stamp
 
     const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    const points = [];
     for (let j = 1; j <= n; j++) {
       const t = j / n;
-      this._stamp(this._lastStampX + dx * t, this._lastStampY + dy * t, pressure);
+      points.push({ x: this._lastStampX + dx * t, y: this._lastStampY + dy * t });
+    }
+    if (!this._renderPointBatch(points, pressure)) {
+      for (const pt of points) this._stamp(pt.x, pt.y, pressure);
     }
     this._lastStampX = x;
     this._lastStampY = y;
@@ -3318,8 +3472,18 @@ export class SimpleBrush {
   }
 
   drawOverlay() { /* nothing */ }
-  getStatusInfo() { return 'Simple'; }
-  deactivate() { this._active = false; this._flatActive = false; }
+  getStatusInfo() {
+    const p = this.app.getP();
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (this._getBatchRendererSupport(p).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Simple | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+  }
+  deactivate() {
+    this._active = false;
+    this._flatActive = false;
+    this._setRenderBackend('legacy', 'compatibility check pending');
+  }
 }
 
 // =============================================================================
