@@ -40,6 +40,308 @@ class CanvasBoidStampRenderer {
   }
 }
 
+class WebGLBoidStampRenderer {
+  constructor() {
+    this.kind = 'webgl';
+    this.ready = false;
+    this.failed = false;
+    this.unavailableReason = 'WebGL2 stamp renderer not initialized';
+    this.lastRenderFailureReason = '';
+    this.canvas = null;
+    this.gl = null;
+    this.program = null;
+    this.instanceBuffer = null;
+    this.vao = null;
+    this._stampTexture = null;
+    this._stampTextureSource = null;
+    this._uniforms = null;
+    this._initPromise = null;
+  }
+
+  _setRenderFailure(reason) {
+    this.lastRenderFailureReason = reason || 'WebGL stamp draw failed';
+    return false;
+  }
+
+  async init() {
+    if (this.ready) return true;
+    if (this.failed) return false;
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = this._doInit();
+    return this._initPromise;
+  }
+
+  async _doInit() {
+    if (typeof document === 'undefined') {
+      this.failed = true;
+      this.unavailableReason = 'document unavailable';
+      return false;
+    }
+    try {
+      this.canvas = document.createElement('canvas');
+      this.gl = this.canvas.getContext('webgl2', {
+        alpha: true,
+        antialias: false,
+        premultipliedAlpha: true,
+        preserveDrawingBuffer: true,
+      });
+      if (!this.gl) {
+        this.failed = true;
+        this.unavailableReason = 'WebGL2 context unavailable';
+        return false;
+      }
+      this.program = this._createProgram();
+      this.instanceBuffer = this.gl.createBuffer();
+      this.vao = this.gl.createVertexArray();
+      if (!this.program || !this.instanceBuffer || !this.vao) {
+        this.failed = true;
+        this.unavailableReason = 'WebGL2 renderer setup failed';
+        return false;
+      }
+      this._bindInstanceLayout();
+      this.gl.useProgram(this.program);
+      this._uniforms = {
+        canvasPx: this.gl.getUniformLocation(this.program, 'uCanvasPx'),
+        dpr: this.gl.getUniformLocation(this.program, 'uDpr'),
+        stampScale: this.gl.getUniformLocation(this.program, 'uStampScale'),
+        rotation: this.gl.getUniformLocation(this.program, 'uRotation'),
+        useStampTexture: this.gl.getUniformLocation(this.program, 'uUseStampTexture'),
+        tintStamp: this.gl.getUniformLocation(this.program, 'uTintStamp'),
+        stampTexture: this.gl.getUniformLocation(this.program, 'uStampTexture'),
+      };
+      this.gl.uniform1i(this._uniforms.stampTexture, 0);
+      this.gl.disable(this.gl.DEPTH_TEST);
+      this.gl.disable(this.gl.CULL_FACE);
+      this.gl.enable(this.gl.BLEND);
+      this.gl.blendFuncSeparate(
+        this.gl.SRC_ALPHA,
+        this.gl.ONE_MINUS_SRC_ALPHA,
+        this.gl.ONE,
+        this.gl.ONE_MINUS_SRC_ALPHA,
+      );
+      this.ready = true;
+      this.unavailableReason = '';
+      return true;
+    } catch (error) {
+      console.warn('Boid WebGL renderer unavailable — falling back to Canvas2D.', error);
+      this.failed = true;
+      this.ready = false;
+      this.unavailableReason = error?.message || 'WebGL2 renderer initialization failed';
+      return false;
+    } finally {
+      this._initPromise = null;
+    }
+  }
+
+  reset() {
+    this.ready = false;
+    this.failed = false;
+    this.unavailableReason = 'WebGL2 stamp renderer not initialized';
+    this.lastRenderFailureReason = '';
+    this.canvas = null;
+    this.gl = null;
+    this.program = null;
+    this.instanceBuffer = null;
+    this.vao = null;
+    this._stampTexture = null;
+    this._stampTextureSource = null;
+    this._uniforms = null;
+  }
+
+  _createShader(type, source) {
+    const shader = this.gl.createShader(type);
+    this.gl.shaderSource(shader, source);
+    this.gl.compileShader(shader);
+    if (this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) return shader;
+    const info = this.gl.getShaderInfoLog(shader);
+    this.gl.deleteShader(shader);
+    throw new Error(info || 'WebGL shader compilation failed');
+  }
+
+  _createProgram() {
+    const vertex = this._createShader(this.gl.VERTEX_SHADER, `#version 300 es
+      precision highp float;
+      layout(location=0) in vec2 aCenter;
+      layout(location=1) in float aSize;
+      layout(location=2) in float aPad;
+      layout(location=3) in vec4 aColor;
+
+      uniform vec2 uCanvasPx;
+      uniform float uDpr;
+      uniform vec2 uStampScale;
+      uniform vec2 uRotation;
+
+      out vec2 vLocal;
+      out vec2 vUV;
+      out vec4 vColor;
+
+      const vec2 QUAD[6] = vec2[6](
+        vec2(-1.0, -1.0),
+        vec2( 1.0, -1.0),
+        vec2(-1.0,  1.0),
+        vec2(-1.0,  1.0),
+        vec2( 1.0, -1.0),
+        vec2( 1.0,  1.0)
+      );
+
+      void main() {
+        vec2 local = QUAD[gl_VertexID];
+        vec2 scaledLocal = local * uStampScale;
+        vec2 rotatedLocal = vec2(
+          scaledLocal.x * uRotation.x - scaledLocal.y * uRotation.y,
+          scaledLocal.x * uRotation.y + scaledLocal.y * uRotation.x
+        );
+        vec2 centerPx = aCenter * uDpr;
+        vec2 posPx = centerPx + rotatedLocal * (aSize * uDpr * 0.5);
+        vec2 clip = vec2(
+          (posPx.x / uCanvasPx.x) * 2.0 - 1.0,
+          1.0 - (posPx.y / uCanvasPx.y) * 2.0
+        );
+        gl_Position = vec4(clip, 0.0, 1.0);
+        vLocal = local;
+        vUV = local * 0.5 + 0.5;
+        vColor = aColor;
+      }
+    `);
+    const fragment = this._createShader(this.gl.FRAGMENT_SHADER, `#version 300 es
+      precision highp float;
+      in vec2 vLocal;
+      in vec2 vUV;
+      in vec4 vColor;
+
+      uniform bool uUseStampTexture;
+      uniform bool uTintStamp;
+      uniform sampler2D uStampTexture;
+
+      out vec4 outColor;
+
+      void main() {
+        if (uUseStampTexture) {
+          vec4 sampleColor = texture(uStampTexture, vUV);
+          if (sampleColor.a <= 0.001) discard;
+          outColor = uTintStamp
+            ? vec4(vColor.rgb, vColor.a * sampleColor.a)
+            : vec4(sampleColor.rgb, sampleColor.a * vColor.a);
+          return;
+        }
+
+        float dist = length(vLocal);
+        if (dist > 1.0) discard;
+        float edge = 1.0 - smoothstep(${GPU_STAMP_EDGE_SOFTNESS.toFixed(2)}, 1.0, dist);
+        outColor = vec4(vColor.rgb, vColor.a * edge);
+      }
+    `);
+    const program = this.gl.createProgram();
+    this.gl.attachShader(program, vertex);
+    this.gl.attachShader(program, fragment);
+    this.gl.linkProgram(program);
+    this.gl.deleteShader(vertex);
+    this.gl.deleteShader(fragment);
+    if (this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) return program;
+    const info = this.gl.getProgramInfoLog(program);
+    this.gl.deleteProgram(program);
+    throw new Error(info || 'WebGL program link failed');
+  }
+
+  _bindInstanceLayout() {
+    this.gl.bindVertexArray(this.vao);
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.instanceBuffer);
+    this.gl.enableVertexAttribArray(0);
+    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, INSTANCE_STRIDE * 4, 0);
+    this.gl.vertexAttribDivisor(0, 1);
+    this.gl.enableVertexAttribArray(1);
+    this.gl.vertexAttribPointer(1, 1, this.gl.FLOAT, false, INSTANCE_STRIDE * 4, 8);
+    this.gl.vertexAttribDivisor(1, 1);
+    this.gl.enableVertexAttribArray(2);
+    this.gl.vertexAttribPointer(2, 1, this.gl.FLOAT, false, INSTANCE_STRIDE * 4, 12);
+    this.gl.vertexAttribDivisor(2, 1);
+    this.gl.enableVertexAttribArray(3);
+    this.gl.vertexAttribPointer(3, 4, this.gl.FLOAT, false, INSTANCE_STRIDE * 4, 16);
+    this.gl.vertexAttribDivisor(3, 1);
+    this.gl.bindVertexArray(null);
+  }
+
+  _ensureCanvas(widthPx, heightPx) {
+    if (this.canvas.width !== widthPx || this.canvas.height !== heightPx) {
+      this.canvas.width = widthPx;
+      this.canvas.height = heightPx;
+    }
+    this.gl.viewport(0, 0, widthPx, heightPx);
+  }
+
+  _ensureStampTexture(bitmap) {
+    if (!bitmap) return true;
+    if (!this._stampTexture) {
+      this._stampTexture = this.gl.createTexture();
+      if (!this._stampTexture) return false;
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this._stampTexture);
+      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+    }
+    if (this._stampTextureSource === bitmap) return true;
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this._stampTexture);
+    this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, bitmap);
+    this._stampTextureSource = bitmap;
+    return true;
+  }
+
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1 }) {
+    if (!this.ready) return this._setRenderFailure('WebGL renderer not ready');
+    if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
+    if (!instances || count <= 0) return this._setRenderFailure('no stamp instances to draw');
+    if (!this.gl || !this.program || !this.instanceBuffer || !this.vao) {
+      return this._setRenderFailure('WebGL render state unavailable');
+    }
+    const widthPx = Math.max(1, Math.round(targetWidthPx));
+    const heightPx = Math.max(1, Math.round(targetHeightPx));
+    const aspect = Number.isFinite(stampAspect) && stampAspect > 0 ? stampAspect : 1;
+    const stampScale = aspect >= 1 ? [1, 1 / aspect] : [aspect, 1];
+
+    try {
+      this._ensureCanvas(widthPx, heightPx);
+      this.gl.useProgram(this.program);
+      this.gl.bindVertexArray(this.vao);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.instanceBuffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, instances.subarray(0, count * INSTANCE_STRIDE), this.gl.DYNAMIC_DRAW);
+      this.gl.uniform2f(this._uniforms.canvasPx, widthPx, heightPx);
+      this.gl.uniform1f(this._uniforms.dpr, dpr);
+      this.gl.uniform2f(this._uniforms.stampScale, stampScale[0], stampScale[1]);
+      this.gl.uniform2f(this._uniforms.rotation, Math.cos(stampRotation || 0), Math.sin(stampRotation || 0));
+      this.gl.uniform1i(this._uniforms.useStampTexture, stampBitmap ? 1 : 0);
+      this.gl.uniform1i(this._uniforms.tintStamp, stampTint ? 1 : 0);
+      if (stampBitmap) {
+        if (!this._ensureStampTexture(stampBitmap)) {
+          return this._setRenderFailure('WebGL stamp texture unavailable');
+        }
+      }
+      this.gl.clearColor(0, 0, 0, 0);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+      this.gl.drawArraysInstanced(this.gl.TRIANGLES, 0, 6, count);
+      this.gl.bindVertexArray(null);
+    } catch (error) {
+      return this._setRenderFailure(`WebGL submit failed: ${error?.message || error}`);
+    }
+
+    try {
+      targetCtx.save();
+      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+      targetCtx.globalAlpha = 1;
+      targetCtx.globalCompositeOperation = 'source-over';
+      targetCtx.drawImage(this.canvas, 0, 0);
+      targetCtx.restore();
+      this.lastRenderFailureReason = '';
+      return true;
+    } catch (error) {
+      try { targetCtx.restore(); } catch {}
+      return this._setRenderFailure(`WebGL→2D copy failed: ${error?.message || error}`);
+    }
+  }
+}
+
 class WebGPUBoidStampRenderer {
   constructor() {
     this.kind = 'webgpu';
@@ -402,6 +704,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
 export class BoidStampRenderer {
   constructor() {
     this.canvas = new CanvasBoidStampRenderer();
+    this.webgl = new WebGLBoidStampRenderer();
     this.webgpu = new WebGPUBoidStampRenderer();
     this.activeKind = this.canvas.kind;
   }
@@ -409,15 +712,21 @@ export class BoidStampRenderer {
   async init() {
     await this.canvas.init();
     try {
+      await this.webgl.init();
+    } catch (error) {
+      console.warn('Boid WebGL renderer init failed — falling back to Canvas2D.', error);
+    }
+    try {
       await this.webgpu.init();
     } catch (error) {
       console.warn('Boid WebGPU renderer init failed — falling back to Canvas2D.', error);
     }
-    this.activeKind = this.webgpu.ready ? this.webgpu.kind : this.canvas.kind;
+    this.activeKind = this.webgpu.ready ? this.webgpu.kind : (this.webgl.ready ? this.webgl.kind : this.canvas.kind);
   }
 
   reset() {
     this.canvas.reset();
+    this.webgl.reset();
     this.webgpu.reset();
     this.activeKind = this.canvas.kind;
   }
@@ -426,19 +735,44 @@ export class BoidStampRenderer {
     return this.webgpu.ready;
   }
 
+  canRenderBatch({ stampBitmap = null } = {}) {
+    if (stampBitmap) return this.webgl.ready;
+    return this.webgpu.ready || this.webgl.ready;
+  }
+
+  getUnavailableReason({ stampBitmap = null } = {}) {
+    if (stampBitmap) {
+      return this.webgl.lastRenderFailureReason || this.webgl.unavailableReason || 'GPU stamp-image renderer unavailable';
+    }
+    return this.legacyReason;
+  }
+
   get legacyReason() {
-    return this.webgpu.ready
-      ? (this.webgpu.lastRenderFailureReason || '')
-      : (this.webgpu.unavailableReason || 'WebGPU stamp renderer unavailable');
+    return this.webgpu.lastRenderFailureReason
+      || this.webgl.lastRenderFailureReason
+      || (this.webgpu.ready ? '' : (this.webgpu.unavailableReason || ''))
+      || (this.webgl.ready ? '' : (this.webgl.unavailableReason || ''))
+      || 'GPU stamp renderer unavailable';
+  }
+
+  _getRendererChain(renderState = {}) {
+    const chain = [];
+    if (!renderState.stampBitmap && this.webgpu.ready) chain.push(this.webgpu);
+    if (this.webgl.ready) chain.push(this.webgl);
+    if (!renderState.stampBitmap) chain.push(this.canvas);
+    return chain;
   }
 
   render(renderState) {
-    const preferred = this.webgpu.ready ? this.webgpu : this.canvas;
-    let ok = preferred.render(renderState);
-    let usedBackend = preferred;
-    if (!ok && preferred !== this.canvas) {
-      ok = this.canvas.render(renderState);
-      usedBackend = this.canvas;
+    const chain = this._getRendererChain(renderState);
+    let ok = false;
+    let usedBackend = this.canvas;
+    for (const renderer of chain) {
+      ok = renderer.render(renderState);
+      if (ok) {
+        usedBackend = renderer;
+        break;
+      }
     }
     if (!ok) {
       this.activeKind = this.canvas.kind;

@@ -759,15 +759,14 @@ export class BoidBrush {
     if (layer.alphaLock) return { ok: false, reason: 'alpha lock enabled on active layer' };
     if (this.app.tilingMode) return { ok: false, reason: 'tiling mode enabled' };
     if (p.symmetryEnabled) return { ok: false, reason: 'symmetry enabled' };
-    if (p.stampImageCanvas) return { ok: false, reason: 'stamp image enabled' };
     if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
     if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
     if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
     if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
     if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
     if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
-    if (!this.renderer.webgpuReady) {
-      return { ok: false, reason: this.renderer.legacyReason || 'WebGPU stamp renderer unavailable' };
+    if (!this.renderer.canRenderBatch({ stampBitmap: p.stampImageCanvas || null })) {
+      return { ok: false, reason: this.renderer.getUnavailableReason({ stampBitmap: p.stampImageCanvas || null }) };
     }
     return { ok: true, reason: '' };
   }
@@ -913,7 +912,8 @@ export class BoidBrush {
     };
   }
 
-  _renderBatchToTarget(targetCtx, batch) {
+  _renderBatchToTarget(targetCtx, batch, p) {
+    const stampBitmap = p?.stampImageCanvas || null;
     const ok = this.renderer.render({
       instances: batch.instances,
       count: batch.count,
@@ -921,6 +921,10 @@ export class BoidBrush {
       targetWidthPx: targetCtx?.canvas?.width || 0,
       targetHeightPx: targetCtx?.canvas?.height || 0,
       dpr: this.app.DPR,
+      stampBitmap,
+      stampTint: p?.stampImageTint !== false,
+      stampRotation: p?.stampImageRotation || 0,
+      stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
     });
     this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
     return ok;
@@ -1084,7 +1088,7 @@ export class BoidBrush {
             interpolate: false,
             applySkip: false,
           });
-          if (!this._renderBatchToTarget(layer.ctx, batch)) {
+          if (!this._renderBatchToTarget(layer.ctx, batch, p)) {
             this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
               flat: false,
               reason: this.renderer.legacyReason,
@@ -1178,7 +1182,7 @@ export class BoidBrush {
         applySkip: skipN > 0,
       });
       if (batch.count > 0) {
-        if (!this._renderBatchToTarget(stampCtx, batch)) {
+        if (!this._renderBatchToTarget(stampCtx, batch, p)) {
           this._renderAgentsLegacy(stampCtx, read, p, app.pressure, {
             flat,
             reason: this.renderer.legacyReason,
@@ -1365,7 +1369,7 @@ export class BoidBrush {
         taperOpacity: p.taperOpacity,
       });
       if (batch.count > 0) {
-        if (!this._renderBatchToTarget(stampCtx, batch)) {
+        if (!this._renderBatchToTarget(stampCtx, batch, p)) {
           this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
             flat,
             taperCurve: curve,
