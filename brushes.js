@@ -46,6 +46,8 @@ const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
 const BOID_GROUP_COLOR_LIGHTNESS = 68;
 const BOID_GROUP_HUE_WRAP_OFFSET = 17;
+const STAMP_VISIBILITY_SAMPLE_COUNT = 12;
+const GPU_RENDERER_FAILURE_LIMIT = 2;
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -889,7 +891,7 @@ export class BoidBrush {
     if (!canvas?.width || !canvas?.height) return false;
     const instances = batch.instances;
     const dpr = this.app.DPR || 1;
-    const sampleCount = Math.min(batch.count, 12);
+    const sampleCount = Math.min(batch.count, STAMP_VISIBILITY_SAMPLE_COUNT);
     const stride = 8;
     try {
       for (let i = 0; i < sampleCount; i++) {
@@ -3219,7 +3221,7 @@ export class SimpleBrush {
     if (!canvas?.width || !canvas?.height) return false;
     const instances = batch.instances;
     const dpr = this.app.DPR || 1;
-    const sampleCount = Math.min(batch.count, 8);
+    const sampleCount = Math.min(batch.count, STAMP_VISIBILITY_SAMPLE_COUNT);
     const stride = 8;
     try {
       for (let i = 0; i < sampleCount; i++) {
@@ -3269,7 +3271,7 @@ export class SimpleBrush {
     this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
     if (!ok) {
       this._gpuFailureCount++;
-      if (this._gpuFailureCount >= 2) {
+      if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
         this._gpuDisabledReason = 'GPU simple-stamp renderer failed repeatedly';
         this._setRenderBackend('legacy', `${this._gpuDisabledReason}; using CPU fallback`);
       }
@@ -3277,7 +3279,7 @@ export class SimpleBrush {
     }
     if (this.renderer.activeKind !== 'canvas' && !this._batchHasVisiblePixels(layer.ctx, batch)) {
       this._gpuFailureCount++;
-      if (this._gpuFailureCount >= 2) {
+      if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
         this._gpuDisabledReason = 'GPU simple-stamp visibility probe failed';
       }
       this._setRenderBackend('legacy', `${this._gpuDisabledReason || 'GPU simple-stamp visibility probe failed'}; using CPU fallback`);
