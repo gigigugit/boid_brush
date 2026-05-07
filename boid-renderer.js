@@ -740,6 +740,12 @@ export class BoidStampRenderer {
     return this.webgpu.ready || this.webgl.ready;
   }
 
+  getPreferredBatchRendererKind({ stampBitmap = null } = {}) {
+    if (!stampBitmap && this.webgpu.ready) return this.webgpu.kind;
+    if (this.webgl.ready) return this.webgl.kind;
+    return this.canvas.kind;
+  }
+
   getUnavailableReason({ stampBitmap = null } = {}) {
     if (stampBitmap) {
       return this.webgl.lastRenderFailureReason || this.webgl.unavailableReason || 'GPU stamp-image renderer unavailable';

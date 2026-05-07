@@ -851,11 +851,7 @@ export class BoidBrush {
 
       const prevStampX = this._lastStampX[i];
       const prevStampY = this._lastStampY[i];
-      const prevAgentX = this._lastBatchAgentX[i];
-      const prevAgentY = this._lastBatchAgentY[i];
-      if (!interpolate
-        || prevStampX === undefined || prevStampY === undefined
-        || prevAgentX === undefined || prevAgentY === undefined) {
+      if (!interpolate || prevStampX === undefined || prevStampY === undefined) {
         pushInstance(ax, ay);
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
@@ -865,40 +861,24 @@ export class BoidBrush {
         continue;
       }
 
-      const dx = ax - prevAgentX;
-      const dy = ay - prevAgentY;
+      const dx = ax - prevStampX;
+      const dy = ay - prevStampY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
       if (dist > 0) {
-        let remaining = dist;
-        let walked = 0;
-        let carry = Math.max(0, this._batchStampCarry[i] || 0);
-        let emitted = 0;
-        // Cap interpolation work per agent so a single large jump cannot flood
-        // the batch with thousands of intermediate instances in one frame.
-        while (carry + remaining >= step && emitted < 256) {
-          const needed = step - carry;
-          walked += needed;
-          remaining -= needed;
-          const t = Math.min(1, walked / dist);
-          const stampX = prevAgentX + dx * t;
-          const stampY = prevAgentY + dy * t;
-          pushInstance(stampX, stampY);
-          this._lastStampX[i] = stampX;
-          this._lastStampY[i] = stampY;
-          carry = 0;
-          emitted++;
-        }
-        if (carry + remaining >= step) {
-          // If the segment still exceeds the cap, at least anchor one stamp at
-          // the current position so the stroke stays visually connected.
-          pushInstance(ax, ay);
+        if (dist >= step) {
+          // Match legacy interpolation behavior: accumulate distance from the last
+          // emitted stamp, not from the last agent sample, so slow motion in
+          // simulation mode still produces subsequent stamps once spacing is met.
+          const emitCount = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+          for (let j = 1; j <= emitCount; j++) {
+            const t = j / emitCount;
+            pushInstance(prevStampX + dx * t, prevStampY + dy * t);
+          }
           this._lastStampX[i] = ax;
           this._lastStampY[i] = ay;
-          carry = 0;
-          remaining = 0;
+          this._batchStampCarry[i] = 0;
         }
-        this._batchStampCarry[i] = carry + remaining;
       } else {
         this._batchStampCarry[i] = Math.max(0, this._batchStampCarry[i] || 0);
       }
@@ -1181,6 +1161,10 @@ export class BoidBrush {
         interpolate: true,
         applySkip: skipN > 0,
       });
+      if (batch.count === 0) {
+        this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
+        return;
+      }
       if (batch.count > 0) {
         if (!this._renderBatchToTarget(stampCtx, batch, p)) {
           this._renderAgentsLegacy(stampCtx, read, p, app.pressure, {
@@ -1368,6 +1352,10 @@ export class BoidBrush {
         taperSize: p.taperSize,
         taperOpacity: p.taperOpacity,
       });
+      if (batch.count === 0) {
+        this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
+        return;
+      }
       if (batch.count > 0) {
         if (!this._renderBatchToTarget(stampCtx, batch, p)) {
           this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
