@@ -761,7 +761,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._hasSubmittedFrame = true;
     // Warm-up: first submitted frame has no previously completed frame to copy yet.
     if (!copiedPriorFrame) {
-      return this._setRenderFailure('WebGPU frame warm-up: awaiting completed frame for 2D copy');
+      return this._setRenderFailure('WebGPU renderer warming up (first frame deferred for 2D copy)');
     }
     this.lastRenderFailureReason = '';
     return true;
