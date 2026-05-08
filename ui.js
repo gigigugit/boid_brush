@@ -696,13 +696,9 @@ export function buildSidebar(app) {
   document.getElementById('btnResetPerfTelemetry')?.addEventListener('click', () => {
     app.resetPerformanceTelemetry();
   });
-  document.getElementById('btnResetDefaults')?.addEventListener('click', () => {
+  document.getElementById('btnResetDefaults')?.addEventListener('click', async () => {
     if (confirm('Reset all controls to factory defaults?')) {
-      localStorage.removeItem('bb_session_v1');
-      localStorage.removeItem('bb_autosave');
-      localStorage.removeItem('bb_perfTelemetry');
-      localStorage.removeItem('bb_perfWakeLock');
-      location.reload();
+      await app.reloadAppWithCacheBust({ wipeSession: true });
     }
   });
   // Auto-save toggle

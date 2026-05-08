@@ -5702,7 +5702,54 @@ export class App {
     this.showToast('⚠ Startup failed');
   }
 
-  reloadAppWithCacheBust() {
+  async _clearReloadCaches() {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.allSettled(keys.map(key => caches.delete(key)));
+      }
+    } catch { /* ignore cache API failures */ }
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.allSettled(registrations.map(reg => reg.unregister()));
+      }
+    } catch { /* ignore SW failures */ }
+  }
+
+  _clearReloadStorageArtifacts({ wipeSession = false } = {}) {
+    try {
+      localStorage.removeItem(BUILD_ID_STORAGE_KEY);
+    } catch { /* ignore localStorage failures */ }
+
+    if (wipeSession) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore localStorage failures */ }
+      try { localStorage.removeItem('bb_autosave'); } catch { /* ignore localStorage failures */ }
+      try { localStorage.removeItem('bb_perfTelemetry'); } catch { /* ignore localStorage failures */ }
+      try { localStorage.removeItem('bb_perfWakeLock'); } catch { /* ignore localStorage failures */ }
+    }
+
+    try { sessionStorage.clear(); } catch { /* ignore sessionStorage failures */ }
+
+    // Best-effort cookie eviction for same-origin readable cookies.
+    try {
+      const cookieNames = document.cookie
+        .split(';')
+        .map(part => part.split('=')[0]?.trim())
+        .filter(Boolean);
+      for (const name of cookieNames) {
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;SameSite=Lax`;
+      }
+    } catch { /* ignore cookie failures */ }
+  }
+
+  async reloadAppWithCacheBust({ wipeSession = false } = {}) {
+    const btn = document.getElementById('reloadAppBtn');
+    if (btn) btn.disabled = true;
+    this.setStatus('Reloading app (clearing caches)…');
+    await this._clearReloadCaches();
+    this._clearReloadStorageArtifacts({ wipeSession });
     const url = new URL(window.location.href);
     url.searchParams.set('bb_reload', `${Date.now()}`);
     window.location.replace(url.toString());
