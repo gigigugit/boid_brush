@@ -406,7 +406,7 @@ export function buildSidebar(app) {
     <!-- Taper -->
     <div class="section-header" data-section="taper">Taper <span class="chevron">▼</span></div>
     <div class="section-body">
-      ${sliderRow('taperLength', 'Length', 0, 120, 20, v => v === 0 ? 'off' : v + ' frames')}
+      ${sliderRow('taperLength', 'Length', 0, 120, 20, v => +v === 0 ? 'off' : v + ' frames')}
       ${sliderRow('taperCurve', 'Curve', 10, 300, 100, v => (v/100).toFixed(1))}
       <label>Taper Size <input type="checkbox" id="taperSize" checked></label>
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
@@ -1315,7 +1315,7 @@ const _sliderFormats = {
   canvasTextureEdgeBreakup: v => (v / 100).toFixed(2),
   canvasTextureSmudgeDrag: v => (v / 100).toFixed(2),
   canvasTexturePooling: v => (v / 100).toFixed(2),
-  taperLength: v => v === 0 ? 'off' : v + ' fr',
+  taperLength: v => +v === 0 ? 'off' : v + ' frames',
   taperCurve: v => (v / 100).toFixed(1),
   sensingStrength: v => (v / 100).toFixed(2),
   sensingThreshold: v => (v / 100).toFixed(2),
