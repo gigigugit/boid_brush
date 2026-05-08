@@ -617,8 +617,6 @@ export class BoidBrush {
     this._renderBackend = 'legacy';
     this._renderLegacyReason = 'compatibility check pending';
     this._gpuBatchVisibilityVerified = false;
-    this._gpuDisabledReason = '';
-    this._gpuFailureCount = 0;
     this._rendererChainPatched = false;
   }
 
@@ -626,10 +624,6 @@ export class BoidBrush {
     if (this._rendererChainPatched) return;
     this.renderer._getRendererChain = (renderState = {}) => {
       const chain = [];
-      if (this._gpuDisabledReason) {
-        chain.push(this.renderer.canvas);
-        return chain;
-      }
       if (renderState.stampBitmap) {
         if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
         chain.push(this.renderer.canvas);
@@ -655,8 +649,6 @@ export class BoidBrush {
       this._renderBackend = 'legacy';
       this._renderLegacyReason = 'compatibility check pending';
       this._gpuBatchVisibilityVerified = false;
-      this._gpuDisabledReason = '';
-      this._gpuFailureCount = 0;
       this._rendererChainPatched = false;
     }
     if (this.app.sharedMotionSim) {
@@ -802,7 +794,6 @@ export class BoidBrush {
     if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
     if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
     if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
-    if (this._gpuDisabledReason) return { ok: false, reason: this._gpuDisabledReason };
     if (!this.renderer.canRenderBatch({ stampBitmap: p.stampImageCanvas || null })) {
       return { ok: false, reason: this.renderer.getUnavailableReason({ stampBitmap: p.stampImageCanvas || null }) };
     }
@@ -815,7 +806,7 @@ export class BoidBrush {
   }
 
   _formatLegacyFallbackReason(reason) {
-    const coreReason = reason || this._gpuDisabledReason || 'GPU simple-stamp renderer failed';
+    const coreReason = reason || 'GPU boid-stamp renderer failed';
     return `${coreReason}; using CPU fallback`;
   }
 
@@ -972,26 +963,13 @@ export class BoidBrush {
       stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
     });
     this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
-    if (!ok) {
-      this._gpuFailureCount++;
-      if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
-        this._gpuDisabledReason = 'GPU boid-stamp renderer failed repeatedly';
-        this._setRenderBackend('legacy', this._formatLegacyFallbackReason(this._gpuDisabledReason));
-      }
-      return false;
-    }
-    if (this.renderer.activeKind !== 'canvas' && !stampBitmap && !this._gpuBatchVisibilityVerified) {
+    if (ok && this.renderer.activeKind !== 'canvas' && !stampBitmap && !this._gpuBatchVisibilityVerified) {
       if (!this._batchHasVisiblePixels(targetCtx, batch)) {
-        this._gpuFailureCount++;
-        if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
-          this._gpuDisabledReason = 'GPU boid-stamp visibility probe failed';
-        }
-        this._setRenderBackend('legacy', this._formatLegacyFallbackReason(this._gpuDisabledReason || 'GPU boid-stamp visibility probe failed'));
+        this._setRenderBackend('legacy', 'GPU batch copy produced no visible pixels');
         return false;
       }
       this._gpuBatchVisibilityVerified = true;
     }
-    this._gpuFailureCount = 0;
     return ok;
   }
 
