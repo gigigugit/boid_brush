@@ -4,6 +4,8 @@ const GPU_INSTANCE_BUFFER_MIN_BYTES = 4096; // ~128 instances at 8 floats/instan
 const GPU_STAMP_EDGE_SOFTNESS = 0.84; // Start feathering near the outer 16% of the circle
 const GPU_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGPU->2D canvas copy-out.
 const WEBGL_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGL->2D canvas copy-out.
+const GPU_INTEROP_PROBE_RED_MIN = 128; // Require visible red channel signal to avoid alpha-only/noise false positives.
+const WEBGL_INTEROP_PROBE_RED_MIN = 128; // Require visible red channel signal to avoid alpha-only/noise false positives.
 
 const DEFAULT_COMPOSITE_OPERATION = 'source-over';
 
@@ -334,7 +336,7 @@ class WebGLBoidStampRenderer {
     });
     if (!drew) return false;
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
-    if (pixel[3] >= WEBGL_INTEROP_PROBE_ALPHA_MIN) return true;
+    if (pixel[3] >= WEBGL_INTEROP_PROBE_ALPHA_MIN && pixel[0] >= WEBGL_INTEROP_PROBE_RED_MIN) return true;
     console.warn('Boid WebGL renderer copy out unsupported — falling back to Canvas2D.');
     this.unavailableReason = '2D interop copy out unsupported';
     return false;
@@ -729,7 +731,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
     // Require a meaningful alpha value so partial/broken implementations that
     // copy back only faint noise do not get treated as working WebGPU→2D interop.
-    if (pixel[3] >= GPU_INTEROP_PROBE_ALPHA_MIN) return true;
+    if (pixel[3] >= GPU_INTEROP_PROBE_ALPHA_MIN && pixel[0] >= GPU_INTEROP_PROBE_RED_MIN) return true;
     console.warn('Boid WebGPU renderer copy out unsupported — falling back to Canvas2D.');
     this.unavailableReason = '2D interop copy out unsupported';
     return false;
