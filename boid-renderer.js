@@ -795,7 +795,11 @@ export class BoidStampRenderer {
   }
 
   getPreferredBatchRendererKind({ stampBitmap = null } = {}) {
-    if (!stampBitmap) return this.canvas.kind;
+    if (stampBitmap) {
+      if (this.webgl.ready) return this.webgl.kind;
+      return this.canvas.kind;
+    }
+    if (this.webgpu.ready) return this.webgpu.kind;
     if (this.webgl.ready) return this.webgl.kind;
     return this.canvas.kind;
   }
