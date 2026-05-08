@@ -3196,10 +3196,8 @@ export class SimpleBrush {
     const layer = this.app.getActiveLayer();
     if (!layer) return { ok: false, reason: 'no active layer' };
     if (this._flatActive || p.flatStroke) return { ok: false, reason: 'flat stroke enabled' };
-    if (layer.alphaLock) return { ok: false, reason: 'alpha lock enabled on active layer' };
     if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
     if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
-    if (p.canvasTextureEnabled) return { ok: false, reason: 'canvas texture enabled' };
     if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
     if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
     if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
@@ -3235,12 +3233,24 @@ export class SimpleBrush {
 
   _buildSimpleBatch(points, p, pressure) {
     const color = hexToRGB(p.color);
+    const canvasTextureActive = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
     const instances = new StampInstanceBuffer(Math.max(16, points.length));
     for (const pt of points) {
       let sz = p.stampSize;
       if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
       let op = p.stampOpacity;
       if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (canvasTextureActive) {
+        op *= this.app.getTextureDepositDensity?.(pt.x, pt.y, p) ?? 1;
+        const edgeBreakup = this.app.getTextureEdgeBreakup?.(pt.x, pt.y, p) || 0;
+        if (edgeBreakup > 0) {
+          const field = this.app.sampleTextureField?.(pt.x, pt.y, p);
+          sz *= Math.max(
+            TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+            1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+          );
+        }
+      }
       op = Math.min(op, 1);
       if (sz < 0.5 || op < 0.005) continue;
       instances.push(pt.x, pt.y, sz, color.r, color.g, color.b, op);
@@ -3295,6 +3305,7 @@ export class SimpleBrush {
     const renderPoints = this._expandRenderPoints(points, stampSize, p);
     const batch = this._buildSimpleBatch(renderPoints, p, pressure);
     const stampBitmap = p.stampImageCanvas || null;
+    const compositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
     if (batch.count <= 0) {
       const backend = this.renderer.getPreferredBatchRendererKind({ stampBitmap });
       this._setRenderBackend(backend);
@@ -3312,6 +3323,7 @@ export class SimpleBrush {
       targetWidthPx: layer.canvas.width,
       targetHeightPx: layer.canvas.height,
       dpr: this.app.DPR,
+      compositeOperation,
       stampBitmap,
       stampTint: p.stampImageTint !== false,
       stampRotation: p.stampImageRotation || 0,

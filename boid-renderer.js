@@ -5,6 +5,8 @@ const GPU_STAMP_EDGE_SOFTNESS = 0.84; // Start feathering near the outer 16% of 
 const GPU_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGPU->2D canvas copy-out.
 const WEBGL_INTEROP_PROBE_ALPHA_MIN = 16; // Treat tiny alpha noise as empty when probing WebGL->2D canvas copy-out.
 
+const DEFAULT_COMPOSITE_OPERATION = 'source-over';
+
 class CanvasBoidStampRenderer {
   constructor() {
     this.kind = 'canvas';
@@ -16,9 +18,10 @@ class CanvasBoidStampRenderer {
 
   reset() {}
 
-  render({ instances, count, targetCtx }) {
+  render({ instances, count, targetCtx, compositeOperation = DEFAULT_COMPOSITE_OPERATION }) {
     if (!targetCtx || !instances || count <= 0) return false;
     targetCtx.save();
+    targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
     for (let i = 0; i < count; i++) {
       const base = i * INSTANCE_STRIDE;
       const x = instances[base + 0];
@@ -337,7 +340,7 @@ class WebGLBoidStampRenderer {
     return false;
   }
 
-  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1, allowBeforeReady = false }) {
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1, allowBeforeReady = false, compositeOperation = DEFAULT_COMPOSITE_OPERATION }) {
     if (!allowBeforeReady && !this.ready) return this._setRenderFailure('WebGL renderer not ready');
     if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
     if (!instances || count <= 0) return this._setRenderFailure('no stamp instances to draw');
@@ -379,7 +382,7 @@ class WebGLBoidStampRenderer {
       targetCtx.save();
       targetCtx.setTransform(1, 0, 0, 1, 0, 0);
       targetCtx.globalAlpha = 1;
-      targetCtx.globalCompositeOperation = 'source-over';
+      targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
       targetCtx.drawImage(this.canvas, 0, 0);
       targetCtx.restore();
       this.lastRenderFailureReason = '';
@@ -730,7 +733,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     return false;
   }
 
-  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr }) {
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, compositeOperation = DEFAULT_COMPOSITE_OPERATION }) {
     if (!this.ready) return this._setRenderFailure('WebGPU renderer not ready');
     if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
     const drew = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
@@ -740,7 +743,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       targetCtx.save();
       targetCtx.setTransform(1, 0, 0, 1, 0, 0);
       targetCtx.globalAlpha = 1;
-      targetCtx.globalCompositeOperation = 'source-over';
+      targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
       targetCtx.drawImage(this.canvas, 0, 0);
       targetCtx.restore();
       this.lastRenderFailureReason = '';
