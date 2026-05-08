@@ -1384,8 +1384,11 @@ export class BoidBrush {
     const app = this.app;
     const curve = Math.pow(1 - t, p.taperCurve);
 
-    // Step sim without leader tracking (they drift)
-    this.sim.step(1 / 60);
+    // Freeze agent positions — do NOT step the simulation during taper.
+    // Advancing the sim causes boids to drift from the stroke endpoint and
+    // stamp at wrong locations with full size/opacity, which is the reported
+    // "large and opaque stamps" bug. Keeping positions frozen lets the taper
+    // fade them out cleanly in place.
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -1396,7 +1399,7 @@ export class BoidBrush {
     if (batchSupport.ok) {
       const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
         flat,
-        interpolate: true,
+        interpolate: false,   // stamp directly at frozen positions, no gap-fill
         applySkip: false,
         taperCurve: curve,
         taperSize: p.taperSize,
@@ -1459,31 +1462,9 @@ export class BoidBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      // Interpolation: fill gaps between previous and current position
-      const step = p.stampSeparation > 0
-        ? p.stampSeparation
-        : Math.max(1, sz * 0.25);
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
-
-      if (prevX !== undefined) {
-        const dx = ax - prevX;
-        const dy = ay - prevY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < step) continue; // accumulate distance
-
-        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        for (let j = 1; j <= n; j++) {
-          const tt = j / n;
-          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
-        }
-      } else {
-        app.symStamp(stampCtx, ax, ay, sz, color, op);
-      }
-
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      // Stamp directly at frozen position (skip distance interpolation to
+      // avoid accumulating paint when boids are stationary).
+      app.symStamp(stampCtx, ax, ay, sz, color, op);
     }
 
     if (flat) {
@@ -2040,7 +2021,9 @@ export class AntBrush {
     const app = this.app;
     const curve = Math.pow(1 - t, p.taperCurve);
 
-    this.sim.step(1 / 60);
+    // Freeze agent positions — do NOT step the simulation during taper.
+    // Stepping causes ants to drift and stamp at unexpected locations with
+    // full size/opacity, producing the "large and opaque" taper bug.
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -2072,28 +2055,8 @@ export class AntBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      const step = p.stampSeparation > 0
-        ? p.stampSeparation
-        : Math.max(1, sz * 0.25);
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
-
-      if (prevX !== undefined) {
-        const dx = ax - prevX;
-        const dy = ay - prevY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < step) continue;
-        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        for (let j = 1; j <= n; j++) {
-          const tt = j / n;
-          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
-        }
-      } else {
-        app.symStamp(stampCtx, ax, ay, sz, color, op);
-      }
-
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      // Stamp directly at frozen position (no distance interpolation).
+      app.symStamp(stampCtx, ax, ay, sz, color, op);
     }
 
     if (flat) {

@@ -113,8 +113,8 @@ function _sleep(ms) {
 }
 
 async function _fetchWithRetry(resource, {
-  attempts = 3,
-  delayMs = 250,
+  attempts = 6,
+  delayMs = 400,
   init,
 } = {}) {
   let lastError = null;
@@ -129,7 +129,9 @@ async function _fetchWithRetry(resource, {
       lastError = error;
       if (attempt >= attempts) throw error;
     }
-    await _sleep(delayMs * attempt);
+    // Exponential back-off with jitter — gives TLS 0-RTT (HTTP 425) time to settle
+    const jitter = Math.random() * 100;
+    await _sleep(delayMs * attempt + jitter);
   }
   throw lastError || new Error('Fetch failed');
 }
@@ -816,6 +818,125 @@ export class App {
     return c;
   }
 
+  /** Linen canvas texture — coarse woven grid with thread noise. */
+  _buildBuiltinLinenTextureCanvas() {
+    const sz = 256;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    const THREAD = 9; // pixels per thread period
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const warpPhase = (x % THREAD) / THREAD * Math.PI * 2;
+        const weftPhase = (y % THREAD) / THREAD * Math.PI * 2;
+        const warp = Math.sin(warpPhase + _valueNoise2D(x, y, 5, 13) * 1.5) * 0.5 + 0.5;
+        const weft = Math.sin(weftPhase + _valueNoise2D(x, y, 5, 37) * 1.5) * 0.5 + 0.5;
+        const weave = Math.max(warp, weft);
+        const micro = _valueNoise2D(x, y, 2.5, 59) * 0.18;
+        const coarse = _valueNoise2D(x, y, 28, 7) * 0.06;
+        let grey = 168 + weave * 40 + micro * 20 + coarse * 20 - 25;
+        grey = Math.max(60, Math.min(230, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** Rough watercolor paper — pronounced tooth with soft pits. */
+  _buildBuiltinWatercolorTextureCanvas() {
+    const sz = 256;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const macro = _valueNoise2D(x, y, 52, 3);
+        const mid   = _valueNoise2D(x, y, 22, 17);
+        const fine  = _valueNoise2D(x, y, 8,  41);
+        const pit   = _valueNoise2D(x, y, 4.5, 83);
+        const fibre = Math.abs(Math.sin((x * 0.07 + y * 0.04) + mid * 5.5)) * 0.5 + 0.5;
+        let grey = 165
+          + (macro - 0.5) * 55
+          + (mid   - 0.5) * 32
+          + (fine  - 0.5) * 18
+          + (fibre - 0.5) * 10;
+        if (pit < 0.22) grey -= (0.22 - pit) * 140;
+        grey = Math.max(45, Math.min(228, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** Charcoal / drawing paper — fine consistent tooth with light directional grain. */
+  _buildBuiltinCharcoalTextureCanvas() {
+    const sz = 192;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const tooth  = _valueNoise2D(x, y, 4, 23);
+        const medium = _valueNoise2D(x, y, 12, 47);
+        const coarse = _valueNoise2D(x, y, 30, 5);
+        // Horizontal directional grain for drawing paper feel
+        const grain = Math.sin(y * 0.62 + _valueNoise2D(x, y, 8, 61) * 3.8) * 0.5 + 0.5;
+        let grey = 175
+          + (tooth  - 0.5) * 22
+          + (medium - 0.5) * 18
+          + (coarse - 0.5) * 14
+          + (grain  - 0.5) *  8;
+        grey = Math.max(80, Math.min(225, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** Smooth Bristol board — subtle micro-texture, nearly flat. */
+  _buildBuiltinBristolTextureCanvas() {
+    const sz = 128;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const micro  = _valueNoise2D(x, y, 2.2, 31);
+        const smooth = _valueNoise2D(x, y, 18,  19);
+        let grey = 195
+          + (micro  - 0.5) * 12
+          + (smooth - 0.5) *  6;
+        grey = Math.max(150, Math.min(238, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
   _createCanvasTextureRecord({ id, name, sourceType, canvas, dataUrl = null, persistDataUrl = false }) {
     const width = canvas.width;
     const height = canvas.height;
@@ -875,15 +996,19 @@ export class App {
   }
 
   async _ensureBuiltinCanvasTexture() {
-    if (!this._builtinCanvasTextures.has(DEFAULT_CANVAS_TEXTURE_ID)) {
-      const canvas = this._buildBuiltinPaperTextureCanvas();
-      const texture = this._createCanvasTextureRecord({
-        id: DEFAULT_CANVAS_TEXTURE_ID,
-        name: 'Paper Grain',
-        sourceType: 'builtin',
-        canvas,
-      });
-      this._builtinCanvasTextures.set(texture.id, texture);
+    const BUILTINS = [
+      { id: DEFAULT_CANVAS_TEXTURE_ID,    name: 'Paper Grain',      build: () => this._buildBuiltinPaperTextureCanvas() },
+      { id: 'builtin-linen',              name: 'Linen Canvas',     build: () => this._buildBuiltinLinenTextureCanvas() },
+      { id: 'builtin-watercolor',         name: 'Watercolor Paper', build: () => this._buildBuiltinWatercolorTextureCanvas() },
+      { id: 'builtin-charcoal',           name: 'Charcoal Paper',   build: () => this._buildBuiltinCharcoalTextureCanvas() },
+      { id: 'builtin-bristol',            name: 'Bristol Board',    build: () => this._buildBuiltinBristolTextureCanvas() },
+    ];
+    for (const { id, name, build } of BUILTINS) {
+      if (!this._builtinCanvasTextures.has(id)) {
+        const canvas = build();
+        const texture = this._createCanvasTextureRecord({ id, name, sourceType: 'builtin', canvas });
+        this._builtinCanvasTextures.set(id, texture);
+      }
     }
     if (!this._canvasTexture) {
       this._setActiveCanvasTexture(this._builtinCanvasTextures.get(DEFAULT_CANVAS_TEXTURE_ID), { silent: true });
@@ -1035,9 +1160,17 @@ export class App {
   }
 
   async _loadDefaultStampImage({ enable = false } = {}) {
-    const response = await _fetchWithRetry(DEFAULT_STAMP_IMAGE_PATH);
+    let response;
+    try {
+      response = await _fetchWithRetry(DEFAULT_STAMP_IMAGE_PATH);
+    } catch {
+      // Network unavailable or persistent 425 Too Early (TLS 0-RTT) — skip default stamp silently.
+      // The user can still load a custom stamp at any time.
+      return;
+    }
     if (!response.ok) {
-      throw new Error(`Default stamp image fetch failed (${response.status})`);
+      // Non-retryable error (e.g. 404 in local dev) — degrade gracefully.
+      return;
     }
     const blob = await response.blob();
     const dataUrl = await new Promise((resolve, reject) => {
@@ -3151,6 +3284,7 @@ export class App {
     document.getElementById('ellipseSelectBtn')?.classList.toggle('active', this.activeTool === 'ellipse-select');
     document.getElementById('lassoSelectBtn')?.classList.toggle('active', this.activeTool === 'lasso-select');
     document.getElementById('fillBtn')?.classList.toggle('active', this.activeTool === 'fill');
+    document.getElementById('eyedropperBtn')?.classList.toggle('active', this.activeTool === 'eyedropper');
     const deselectBtn = document.getElementById('deselectBtn');
     if (deselectBtn) deselectBtn.style.display = this.selectionMgr?.active ? '' : 'none';
     const transformBtn = document.getElementById('transformBtn');
@@ -3276,6 +3410,7 @@ export class App {
     document.getElementById('ellipseSelectBtn')?.addEventListener('click', () => this.setTool('ellipse-select'));
     document.getElementById('lassoSelectBtn')?.addEventListener('click', () => this.setTool('lasso-select'));
     document.getElementById('fillBtn')?.addEventListener('click', () => this.setTool('fill'));
+    document.getElementById('eyedropperBtn')?.addEventListener('click', () => this.setTool('eyedropper'));
     document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     // Transform tool
     document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
@@ -3608,6 +3743,11 @@ export class App {
       this._floodFill(x, y);
       return;
     }
+    // Eyedropper tool dispatch
+    if (this.activeTool === 'eyedropper') {
+      this._pickColor(x, y);
+      return;
+    }
     // Selection tool dispatch - click outside selection starts a new one
     if (this.activeTool !== 'brush') {
       this._commitFloatingPixels(); // stamp any floating pixels before new selection
@@ -3780,6 +3920,7 @@ export class App {
       if (e.key === 'm' || e.key === 'M') { this.setTool('rect-select'); return; }
       if (e.key === 'l' || e.key === 'L') { this.setTool('lasso-select'); return; }
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
+      if (e.key === 'e' || e.key === 'E') { this.setTool('eyedropper'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
     // 0 = reset view
@@ -4786,6 +4927,40 @@ export class App {
    * Flood-fill a contiguous region of similar colour on the active layer.
    * Receives CSS-pixel coordinates and converts to device pixels internally.
    */
+  /**
+   * Sample the colour at (x, y) from the composited visible image and set it
+   * as the primary colour.  Switches back to the brush tool immediately after.
+   */
+  _pickColor(x, y) {
+    // Sample from the composite (flattened visible) canvas for a WYSIWYG pick
+    const src = this.compositeCanvas;
+    const dpr = this.DPR;
+    const px = Math.round(x * dpr);
+    const py = Math.round(y * dpr);
+    if (px < 0 || px >= src.width || py < 0 || py >= src.height) {
+      this.setTool('brush');
+      return;
+    }
+    // Reuse the 1×1 parse canvas to avoid creating a new context
+    const ctx = this._colorParseCtx;
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.drawImage(src, -px, -py);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    if (d[3] === 0) {
+      // Transparent pixel — sample background color instead
+      const bg = this.bgColorEl?.value || '#ffffff';
+      this.primaryEl.value = bg;
+    } else {
+      const toHex = v => v.toString(16).padStart(2, '0');
+      this.primaryEl.value = `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`;
+    }
+    this._recordColor(this.primaryEl.value);
+    this._paramsDirty = true;
+    this.showToast(`🔬 Picked ${this.primaryEl.value}`);
+    // Return to brush mode after picking
+    this.setTool('brush');
+  }
+
   _floodFill(x, y) {
     const layer = this.getActiveLayer();
     if (!layer) return;
