@@ -1231,31 +1231,27 @@ export class BoidBrush {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
         return;
       }
-      if (!this._renderBatchToTarget(stampCtx, batch, p)) {
-        this._renderAgentsLegacy(stampCtx, read, p, app.pressure, {
-          flat,
-          reason: this.renderer.legacyReason,
-        });
+      if (this._renderBatchToTarget(stampCtx, batch, p)) {
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+        return;
       }
-      if (flat) {
-        const w = layer.canvas.width, h = layer.canvas.height;
-        const ctx = layer.ctx;
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(this._preStrokeCanvas, 0, 0);
-        let masterOp = p.stampOpacity;
-        if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
-        ctx.globalAlpha = Math.min(masterOp, 1);
-        ctx.drawImage(this._strokeCanvas, 0, 0);
-        ctx.globalAlpha = 1;
-        ctx.restore();
-      }
-      layer.dirty = true;
-      app.compositeAllLayers();
-      return;
     }
-    this._setRenderBackend('legacy', batchSupport.reason);
+    this._setRenderBackend('legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
