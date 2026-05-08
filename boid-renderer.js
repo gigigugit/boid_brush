@@ -413,6 +413,7 @@ class WebGPUBoidStampRenderer {
     this._interopProbeCanvas = null;
     this._interopProbeCtx = null;
     this._initPromise = null;
+    this._hasSubmittedFrame = false;
   }
 
   _setRenderFailure(reason) {
@@ -488,6 +489,7 @@ class WebGPUBoidStampRenderer {
     this.failed = false;
     this.unavailableReason = 'WebGPU stamp renderer not initialized';
     this.lastRenderFailureReason = '';
+    this._hasSubmittedFrame = false;
   }
 
   _createPipeline(format) {
@@ -544,7 +546,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   if (dist > 1.0) {
     discard;
   }
-  let edge = smoothstep(1.0, ${GPU_STAMP_EDGE_SOFTNESS.toFixed(2)}, dist);
+  let edge = 1.0 - smoothstep(${GPU_STAMP_EDGE_SOFTNESS.toFixed(2)}, 1.0, dist);
   return vec4f(input.color.rgb, input.color.a * edge);
 }
 `,
@@ -736,22 +738,31 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
   render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, compositeOperation = DEFAULT_COMPOSITE_OPERATION }) {
     if (!this.ready) return this._setRenderFailure('WebGPU renderer not ready');
     if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
-    const drew = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
-    if (!drew) return false;
-
-    try {
-      targetCtx.save();
-      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-      targetCtx.globalAlpha = 1;
-      targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
-      targetCtx.drawImage(this.canvas, 0, 0);
-      targetCtx.restore();
-      this.lastRenderFailureReason = '';
-      return true;
-    } catch (error) {
-      try { targetCtx.restore(); } catch {}
-      return this._setRenderFailure(`WebGPU→2D copy failed: ${error?.message || error}`);
+    let copiedPriorFrame = false;
+    if (this._hasSubmittedFrame) {
+      try {
+        targetCtx.save();
+        targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+        targetCtx.globalAlpha = 1;
+        targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
+        targetCtx.drawImage(this.canvas, 0, 0);
+        targetCtx.restore();
+        copiedPriorFrame = true;
+      } catch (error) {
+        try { targetCtx.restore(); } catch {}
+        return this._setRenderFailure(`WebGPU→2D copy failed: ${error?.message || error}`);
+      }
     }
+
+    const submitted = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
+    if (!submitted) return false;
+    this._hasSubmittedFrame = true;
+    // Warm-up: first submitted frame has no previously completed frame to copy yet.
+    if (!copiedPriorFrame) {
+      return this._setRenderFailure('WebGPU frame warm-up: awaiting completed frame for 2D copy');
+    }
+    this.lastRenderFailureReason = '';
+    return true;
   }
 }
 
