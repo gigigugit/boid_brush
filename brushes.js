@@ -1202,7 +1202,9 @@ export class BoidBrush {
         pressure: app.pressure,
         interpolate: true,
         applySkip: skipN > 0,
-        forceStamp: !!app.simulation?.running,
+        // Ensure active draw mode never drops to "no visible stamps" when
+        // per-frame boid movement stays below spacing thresholds.
+        forceStamp: !!app.isDrawing || !!app.simulation?.running,
       });
       if (batch.count === 0) {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
@@ -1280,7 +1282,9 @@ export class BoidBrush {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < step) {
-          if (!app.simulation?.running) continue; // accumulate distance until next stamp
+          // Keep draw mode responsive: when movement is below spacing, still
+          // emit one stamp per frame (matching batch forceStamp behavior).
+          if (!app.isDrawing && !app.simulation?.running) continue;
           app.symStamp(stampCtx, ax, ay, sz, color, op);
           if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
             _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
