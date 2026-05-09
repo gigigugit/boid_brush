@@ -785,9 +785,7 @@ export class BoidBrush {
   _getBatchRendererSupport(p, flat = this._flatActive) {
     const layer = this.app.getActiveLayer();
     if (!layer) return { ok: false, reason: 'no active layer' };
-    if (layer.alphaLock) return { ok: false, reason: 'alpha lock enabled on active layer' };
-    if (this.app.tilingMode) return { ok: false, reason: 'tiling mode enabled' };
-    if (p.symmetryEnabled) return { ok: false, reason: 'symmetry enabled' };
+    if (layer.alphaLock && flat) return { ok: false, reason: 'alpha lock enabled with flat stroke' };
     if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
     if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
     if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
@@ -855,21 +853,36 @@ export class BoidBrush {
         ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
         : baseRGB;
       const pushInstance = (x, y) => {
-        let instOpacity = opacity;
-        let instSize = size;
-        if (textureEnabled) {
-          instOpacity *= _textureDepositDensity(this.app, p, x, y);
-          const edgeBreakup = this.app.getTextureEdgeBreakup?.(x, y, p) || 0;
-          if (edgeBreakup > 0) {
-            const field = this.app.sampleTextureField?.(x, y, p);
-            instSize *= Math.max(
-              TEXTURE_EDGE_BREAKUP_MIN_SIZE,
-              1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
-            );
+        const renderPoints = p.symmetryEnabled
+          ? this.app.getSymmetryPoints(x, y)
+          : [{ x, y }];
+        const seen = new Set();
+        const emitInstance = (px, py) => {
+          const key = `${Math.round(px * 1000)}:${Math.round(py * 1000)}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          let instOpacity = opacity;
+          let instSize = size;
+          if (textureEnabled) {
+            instOpacity *= _textureDepositDensity(this.app, p, px, py);
+            const edgeBreakup = this.app.getTextureEdgeBreakup?.(px, py, p) || 0;
+            if (edgeBreakup > 0) {
+              const field = this.app.sampleTextureField?.(px, py, p);
+              instSize *= Math.max(
+                TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+                1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+              );
+            }
           }
+          if (instOpacity < 0.005 || instSize < 0.5) return;
+          instances.push(px, py, instSize, color.r, color.g, color.b, instOpacity);
+        };
+        for (const point of renderPoints) {
+          emitInstance(point.x, point.y);
+          if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
+          const wraps = this.app._getStampWrapPoints(point.x, point.y, size);
+          for (const wrap of wraps) emitInstance(wrap.x, wrap.y);
         }
-        if (instOpacity < 0.005 || instSize < 0.5) return;
-        instances.push(x, y, instSize, color.r, color.g, color.b, instOpacity);
       };
 
       if (skipActive) {
@@ -948,8 +961,9 @@ export class BoidBrush {
     return false;
   }
 
-  _renderBatchToTarget(targetCtx, batch, p) {
+  _renderBatchToTarget(targetCtx, batch, p, { allowAlphaLock = false } = {}) {
     const stampBitmap = p?.stampImageCanvas || null;
+    const layer = this.app.getActiveLayer();
     const ok = this.renderer.render({
       instances: batch.instances,
       count: batch.count,
@@ -961,6 +975,7 @@ export class BoidBrush {
       stampTint: p?.stampImageTint !== false,
       stampRotation: p?.stampImageRotation || 0,
       stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+      compositeOperation: allowAlphaLock && layer?.alphaLock ? 'source-atop' : 'source-over',
     });
     this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
     if (ok && this.renderer.activeKind !== 'canvas' && !stampBitmap && !this._gpuBatchVisibilityVerified) {
@@ -1131,7 +1146,7 @@ export class BoidBrush {
             interpolate: false,
             applySkip: false,
           });
-          if (!this._renderBatchToTarget(layer.ctx, batch, p)) {
+          if (!this._renderBatchToTarget(layer.ctx, batch, p, { allowAlphaLock: true })) {
             this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
               flat: false,
               reason: this.renderer.legacyReason,
@@ -1231,7 +1246,7 @@ export class BoidBrush {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
         return;
       }
-      if (this._renderBatchToTarget(stampCtx, batch, p)) {
+      if (this._renderBatchToTarget(stampCtx, batch, p, { allowAlphaLock: !flat })) {
         if (flat) {
           const w = layer.canvas.width, h = layer.canvas.height;
           const ctx = layer.ctx;
@@ -1430,7 +1445,7 @@ export class BoidBrush {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
         return;
       }
-      if (!this._renderBatchToTarget(stampCtx, batch, p)) {
+      if (!this._renderBatchToTarget(stampCtx, batch, p, { allowAlphaLock: !flat })) {
         this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
           flat,
           taperCurve: curve,
