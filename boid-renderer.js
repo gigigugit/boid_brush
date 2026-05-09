@@ -63,6 +63,11 @@ class WebGLBoidStampRenderer {
     this._uniforms = null;
     this._interopProbeCanvas = null;
     this._interopProbeCtx = null;
+    this._copyMode = 'drawImage';
+    this._readbackCanvas = null;
+    this._readbackCtx = null;
+    this._readbackPixels = null;
+    this._readbackImageData = null;
     this._initPromise = null;
   }
 
@@ -162,6 +167,11 @@ class WebGLBoidStampRenderer {
     this._uniforms = null;
     this._interopProbeCanvas = null;
     this._interopProbeCtx = null;
+    this._copyMode = 'drawImage';
+    this._readbackCanvas = null;
+    this._readbackCtx = null;
+    this._readbackPixels = null;
+    this._readbackImageData = null;
   }
 
   _createShader(type, source) {
@@ -285,6 +295,78 @@ class WebGLBoidStampRenderer {
     this.gl.viewport(0, 0, widthPx, heightPx);
   }
 
+  _ensureReadbackSurface(widthPx, heightPx) {
+    if (typeof document === 'undefined') return false;
+    if (!this._readbackCanvas) {
+      this._readbackCanvas = document.createElement('canvas');
+      this._readbackCtx = this._readbackCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    if (!this._readbackCtx) return false;
+    if (this._readbackCanvas.width !== widthPx || this._readbackCanvas.height !== heightPx) {
+      this._readbackCanvas.width = widthPx;
+      this._readbackCanvas.height = heightPx;
+      this._readbackImageData = null;
+    }
+    const pixelBytes = widthPx * heightPx * 4;
+    if (!this._readbackPixels || this._readbackPixels.length !== pixelBytes) {
+      this._readbackPixels = new Uint8Array(pixelBytes);
+      this._readbackImageData = null;
+    }
+    if (!this._readbackImageData || this._readbackImageData.width !== widthPx || this._readbackImageData.height !== heightPx) {
+      this._readbackImageData = this._readbackCtx.createImageData(widthPx, heightPx);
+    }
+    return true;
+  }
+
+  _copyViaReadPixels(targetCtx, widthPx, heightPx, compositeOperation = DEFAULT_COMPOSITE_OPERATION) {
+    if (!this.gl) return this._setRenderFailure('WebGL context unavailable for readback');
+    if (!this._ensureReadbackSurface(widthPx, heightPx)) {
+      return this._setRenderFailure('WebGL readback surface unavailable');
+    }
+    try {
+      this.gl.readPixels(0, 0, widthPx, heightPx, this.gl.RGBA, this.gl.UNSIGNED_BYTE, this._readbackPixels);
+    } catch (error) {
+      return this._setRenderFailure(`WebGL readPixels failed: ${error?.message || error}`);
+    }
+
+    const src = this._readbackPixels;
+    const dest = this._readbackImageData.data;
+    for (let y = 0; y < heightPx; y++) {
+      const srcRow = (heightPx - 1 - y) * widthPx * 4;
+      const destRow = y * widthPx * 4;
+      for (let x = 0; x < widthPx; x++) {
+        const srcIdx = srcRow + x * 4;
+        const destIdx = destRow + x * 4;
+        const alpha = src[srcIdx + 3];
+        if (alpha > 0 && alpha < 255) {
+          const scale = 255 / alpha;
+          dest[destIdx + 0] = Math.min(255, Math.round(src[srcIdx + 0] * scale));
+          dest[destIdx + 1] = Math.min(255, Math.round(src[srcIdx + 1] * scale));
+          dest[destIdx + 2] = Math.min(255, Math.round(src[srcIdx + 2] * scale));
+        } else {
+          dest[destIdx + 0] = src[srcIdx + 0];
+          dest[destIdx + 1] = src[srcIdx + 1];
+          dest[destIdx + 2] = src[srcIdx + 2];
+        }
+        dest[destIdx + 3] = alpha;
+      }
+    }
+
+    try {
+      this._readbackCtx.putImageData(this._readbackImageData, 0, 0);
+      targetCtx.save();
+      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+      targetCtx.globalAlpha = 1;
+      targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
+      targetCtx.drawImage(this._readbackCanvas, 0, 0);
+      targetCtx.restore();
+      return true;
+    } catch (error) {
+      try { targetCtx.restore(); } catch {}
+      return this._setRenderFailure(`WebGL readback copy failed: ${error?.message || error}`);
+    }
+  }
+
   _ensureStampTexture(bitmap) {
     if (!bitmap) return true;
     if (!this._stampTexture) {
@@ -325,6 +407,7 @@ class WebGLBoidStampRenderer {
       16, 16, 20, 0,
       1, 0.15, 0.15, 1,
     ]);
+    this._copyMode = 'drawImage';
     const drew = this.render({
       instances: probeInstances,
       count: 1,
@@ -337,6 +420,26 @@ class WebGLBoidStampRenderer {
     if (!drew) return false;
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
     if (pixel[3] >= WEBGL_INTEROP_PROBE_ALPHA_MIN && pixel[0] >= WEBGL_INTEROP_PROBE_RED_MIN) return true;
+
+    this._interopProbeCtx.clearRect(0, 0, 32, 32);
+    this._copyMode = 'readPixels';
+    const readbackDrew = this.render({
+      instances: probeInstances,
+      count: 1,
+      targetCtx: this._interopProbeCtx,
+      targetWidthPx: 32,
+      targetHeightPx: 32,
+      dpr: 1,
+      allowBeforeReady: true,
+    });
+    if (!readbackDrew) return false;
+    const readbackPixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
+    if (readbackPixel[3] >= WEBGL_INTEROP_PROBE_ALPHA_MIN && readbackPixel[0] >= WEBGL_INTEROP_PROBE_RED_MIN) {
+      console.warn('Boid WebGL renderer using readPixels copy fallback.');
+      return true;
+    }
+
+    this._copyMode = 'drawImage';
     console.warn('Boid WebGL renderer copy out unsupported — falling back to Canvas2D.');
     this.unavailableReason = '2D interop copy out unsupported';
     return false;
@@ -380,19 +483,26 @@ class WebGLBoidStampRenderer {
       return this._setRenderFailure(`WebGL submit failed: ${error?.message || error}`);
     }
 
-    try {
-      targetCtx.save();
-      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-      targetCtx.globalAlpha = 1;
-      targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
-      targetCtx.drawImage(this.canvas, 0, 0);
-      targetCtx.restore();
-      this.lastRenderFailureReason = '';
-      return true;
-    } catch (error) {
-      try { targetCtx.restore(); } catch {}
-      return this._setRenderFailure(`WebGL→2D copy failed: ${error?.message || error}`);
+    let copied = false;
+    if (this._copyMode === 'readPixels') {
+      copied = this._copyViaReadPixels(targetCtx, widthPx, heightPx, compositeOperation);
+    } else {
+      try {
+        targetCtx.save();
+        targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+        targetCtx.globalAlpha = 1;
+        targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
+        targetCtx.drawImage(this.canvas, 0, 0);
+        targetCtx.restore();
+        copied = true;
+      } catch (error) {
+        try { targetCtx.restore(); } catch {}
+        return this._setRenderFailure(`WebGL→2D copy failed: ${error?.message || error}`);
+      }
     }
+    if (!copied) return false;
+    this.lastRenderFailureReason = '';
+    return true;
   }
 }
 
