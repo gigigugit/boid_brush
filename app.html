@@ -634,6 +634,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 import { App } from './app.js';
 const app = new App();
 window._app = app; // expose for debugging
+window.boidGpuDebug = () => window._app?.brushes?.boid?.getDebugState?.() || null;
+window.clearBoidGpuDebug = () => window._app?.brushes?.boid?.clearDebugState?.() || false;
 </script>
 </body>
 </html>

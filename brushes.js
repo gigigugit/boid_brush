@@ -636,6 +636,10 @@ export class BoidBrush {
     this._rendererChainPatched = false;
     this._gpuPreviewActive = false;
     this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._debugMaxEvents = 120;
   }
 
   _patchRendererChain() {
@@ -672,11 +676,13 @@ export class BoidBrush {
       this._renderLegacyReason = 'compatibility check pending';
       this._gpuBatchVisibilityVerified = false;
       this._rendererChainPatched = false;
+      this._gpuPreviewRenderer = null;
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
       await this.renderer.init();
       this._patchRendererChain();
+      this._syncRenderBackendStatus();
       this._ready = true;
       return this.sim;
     }
@@ -685,10 +691,22 @@ export class BoidBrush {
     try {
       this.sim = await _createSharedMotionSim(this.app);
       this.app.sharedMotionSim = this.sim;
+      this._syncRenderBackendStatus();
       this._ready = true;
     } catch (e) {
       console.error('BoidBrush: WASM init failed —', e);
     }
+  }
+
+  _syncRenderBackendStatus() {
+    const p = this.app.getP?.();
+    if (!p) return;
+    const support = this._getBatchRendererSupport(p, this._flatActive);
+    if (!support.ok) {
+      this._setRenderBackend('legacy', support.reason || 'compatibility check pending');
+      return;
+    }
+    this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
   }
 
   /** Capture canvas luminance and upload to WASM for pixel sensing */
@@ -824,6 +842,7 @@ export class BoidBrush {
   _setRenderBackend(kind, reason = '') {
     this._renderBackend = kind;
     this._renderLegacyReason = kind === 'legacy' ? reason : '';
+    this._pushRenderDebug('set-render-backend', { kind, reason: this._renderLegacyReason || reason || '' });
   }
 
   _formatLegacyFallbackReason(reason) {
@@ -831,15 +850,66 @@ export class BoidBrush {
     return `${coreReason}; using CPU fallback`;
   }
 
+  _pushRenderDebug(type, details = {}) {
+    const entry = {
+      seq: ++this._debugSeq,
+      type,
+      t: typeof performance !== 'undefined' && Number.isFinite(performance.now())
+        ? Number(performance.now().toFixed(2))
+        : Date.now(),
+      ...details,
+    };
+    this._debugEvents.push(entry);
+    if (this._debugEvents.length > this._debugMaxEvents) {
+      this._debugEvents.splice(0, this._debugEvents.length - this._debugMaxEvents);
+    }
+    return entry;
+  }
+
+  getDebugState() {
+    return {
+      ready: this._ready,
+      renderBackend: this._renderBackend,
+      renderLegacyReason: this._renderLegacyReason,
+      gpuPreviewActive: this._gpuPreviewActive,
+      gpuPreviewLayer: this._gpuPreviewLayer ? { width: this._gpuPreviewLayer.canvas?.width || 0, height: this._gpuPreviewLayer.canvas?.height || 0 } : null,
+      gpuPreviewRendererKind: this._gpuPreviewRenderer?.kind || null,
+      events: this._debugEvents.slice(),
+      webgpu: this.renderer?.webgpu?.getDebugState?.() || null,
+    };
+  }
+
+  clearDebugState() {
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this.renderer?.webgpu?.clearDebugState?.();
+    return true;
+  }
+
+  _getGpuPreviewRenderer(p) {
+    if (p?.stampImageCanvas) return null;
+    if (this.renderer.webgpu?.ready) return this.renderer.webgpu;
+    if (this.renderer.webgl?.ready) return this.renderer.webgl;
+    return null;
+  }
+
+  _getGpuPreviewCanvas(renderer) {
+    if (!renderer) return null;
+    if (renderer.kind === 'webgpu') {
+      return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+    }
+    return renderer.previewCanvas || renderer.canvas || null;
+  }
+
   _canUseGpuPreview(targetCtx, p) {
     const layer = this.app.getActiveLayer();
     if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
     if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
     if (this._flatActive) return false;
-    if (!this.renderer.webgl?.ready) return false;
+    if (!this._getGpuPreviewRenderer(p)) return false;
     if (p?.stampImageCanvas) return false;
     if (p?.sensingEnabled) return false;
-    if ((p?.taperLength || 0) > 0) return false;
+    if ((p?.taperLength || 0) > 0 && !this.app.isDrawing && !this.app.simulation?.running) return false;
     if (layer.alphaLock) return false;
     if (layer.blend !== 'source-over') return false;
     if (Math.abs((layer.opacity ?? 1) - 1) > 1e-3) return false;
@@ -848,31 +918,96 @@ export class BoidBrush {
 
   _clearGpuPreview({ composite = false } = {}) {
     const layer = this._gpuPreviewLayer;
-    if (layer?.gpuPreviewCanvas === this.renderer.webgl?.canvas) {
+    const renderer = this._gpuPreviewRenderer;
+    this._pushRenderDebug('clear-gpu-preview', {
+      composite,
+      rendererKind: renderer?.kind || null,
+      hadPreviewLayer: !!layer,
+    });
+    const previewCanvas = this._getGpuPreviewCanvas(renderer);
+    if (renderer) renderer.onPreviewUpdated = null;
+    if (layer?.gpuPreviewCanvas && previewCanvas && layer.gpuPreviewCanvas === previewCanvas) {
       layer.gpuPreviewCanvas = null;
       layer.dirty = true;
     }
+    if (renderer?.clearSurface && layer?.canvas?.width && layer?.canvas?.height) {
+      renderer.clearSurface(layer.canvas.width, layer.canvas.height);
+    }
     this._gpuPreviewActive = false;
     this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
     if (composite && layer) this.app.compositeAllLayers();
   }
 
   _commitGpuPreviewToLayer() {
     const layer = this._gpuPreviewLayer;
-    if (!layer || !this.renderer.webgl?.ready) {
+    const renderer = this._gpuPreviewRenderer;
+    if (!layer || !renderer?.ready) {
+      this._pushRenderDebug('commit-gpu-preview-skipped', {
+        hasLayer: !!layer,
+        rendererKind: renderer?.kind || null,
+        rendererReady: !!renderer?.ready,
+      });
       this._clearGpuPreview();
       return false;
     }
-    const ok = this.renderer.webgl.copyTo2D(
+    if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+      this._pushRenderDebug('commit-gpu-preview-deferred', {
+        rendererKind: renderer.kind,
+        previewSyncPending: !!renderer._previewSyncPending,
+        previewSyncQueued: !!renderer._previewSyncQueued,
+      });
+      renderer.onPreviewUpdated = (canvas) => {
+        if (!canvas) return;
+        if (!this._gpuPreviewActive || this._gpuPreviewLayer !== layer || this._gpuPreviewRenderer !== renderer) return;
+        this._pushRenderDebug('preview-updated', {
+          rendererKind: renderer.kind,
+          width: canvas.width,
+          height: canvas.height,
+          deferredCommit: true,
+        });
+        layer.gpuPreviewCanvas = canvas;
+        const ok = renderer.copyTo2D(
+          layer.ctx,
+          layer.canvas.width,
+          layer.canvas.height,
+          layer.alphaLock ? 'source-atop' : 'source-over',
+        );
+        renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+        layer.gpuPreviewCanvas = null;
+        this._gpuPreviewActive = false;
+        this._gpuPreviewLayer = null;
+        renderer.onPreviewUpdated = null;
+        this._gpuPreviewRenderer = null;
+        this._pushRenderDebug('commit-gpu-preview', {
+          ok,
+          rendererKind: renderer.kind,
+          copiedFromLivePreview: true,
+          deferred: true,
+        });
+        if (!ok) return;
+        layer.dirty = true;
+        this.app.compositeAllLayers();
+      };
+      return true;
+    }
+    const ok = renderer.copyTo2D(
       layer.ctx,
       layer.canvas.width,
       layer.canvas.height,
       layer.alphaLock ? 'source-atop' : 'source-over',
     );
-    this.renderer.webgl.clearSurface(layer.canvas.width, layer.canvas.height);
+    renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
     layer.gpuPreviewCanvas = null;
     this._gpuPreviewActive = false;
     this._gpuPreviewLayer = null;
+    renderer.onPreviewUpdated = null;
+    this._gpuPreviewRenderer = null;
+    this._pushRenderDebug('commit-gpu-preview', {
+      ok,
+      rendererKind: renderer.kind,
+      copiedFromLivePreview: renderer.kind === 'webgpu' ? !!renderer._hasLivePreviewFrame : true,
+    });
     if (!ok) return false;
     layer.dirty = true;
     this.app.compositeAllLayers();
@@ -881,16 +1016,45 @@ export class BoidBrush {
 
   _renderBatchToGpuPreview(batch, p) {
     const layer = this.app.getActiveLayer();
-    const webgl = this.renderer.webgl;
-    if (!layer || !webgl?.ready) return false;
-    if (!this._gpuPreviewActive || this._gpuPreviewLayer !== layer) {
-      if (!webgl.clearSurface(layer.canvas.width, layer.canvas.height)) return false;
+    const renderer = this._getGpuPreviewRenderer(p);
+    if (!layer || !renderer?.ready) return false;
+    const needsFreshSurface = !this._gpuPreviewActive || this._gpuPreviewLayer !== layer || this._gpuPreviewRenderer !== renderer;
+    renderer.onPreviewUpdated = (canvas) => {
+      if (!canvas) return;
+      if (!this._gpuPreviewActive || this._gpuPreviewLayer !== layer || this._gpuPreviewRenderer !== renderer) return;
+      this._pushRenderDebug('preview-updated', {
+        rendererKind: renderer.kind,
+        width: canvas.width,
+        height: canvas.height,
+      });
+      layer.gpuPreviewCanvas = canvas;
+      layer.dirty = true;
+      this.app.compositeAllLayers();
+    };
+    if (this._gpuPreviewActive && this._gpuPreviewRenderer && this._gpuPreviewRenderer !== renderer) {
+      this._commitGpuPreviewToLayer();
+    }
+    if (needsFreshSurface) {
+      if (renderer.kind === 'webgpu') {
+        renderer.invalidatePreview?.();
+      } else if (!renderer.clearSurface?.(layer.canvas.width, layer.canvas.height)) {
+        return false;
+      }
       this._gpuPreviewActive = true;
       this._gpuPreviewLayer = layer;
-      layer.gpuPreviewCanvas = webgl.canvas;
+      this._gpuPreviewRenderer = renderer;
+      layer.gpuPreviewCanvas = this._getGpuPreviewCanvas(renderer);
     }
+    this._pushRenderDebug('render-gpu-preview', {
+      rendererKind: renderer.kind,
+      count: batch.count,
+      needsFreshSurface,
+      hadLivePreviewFrame: renderer.kind === 'webgpu' ? !!renderer._hasLivePreviewFrame : true,
+      layerWidth: layer.canvas.width,
+      layerHeight: layer.canvas.height,
+    });
     const stampBitmap = p?.stampImageCanvas || null;
-    const ok = webgl.render({
+    const ok = renderer.render({
       instances: batch.instances,
       count: batch.count,
       targetWidthPx: layer.canvas.width,
@@ -901,17 +1065,20 @@ export class BoidBrush {
       stampRotation: p?.stampImageRotation || 0,
       stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
       copyToTarget: false,
-      clear: false,
+      clear: needsFreshSurface,
     });
     if (!ok) {
+      this._pushRenderDebug('render-gpu-preview-failed', {
+        rendererKind: renderer.kind,
+        reason: renderer.lastRenderFailureReason || '',
+      });
       this._commitGpuPreviewToLayer();
       this._clearGpuPreview();
       return false;
     }
-    layer.gpuPreviewCanvas = webgl.canvas;
+    layer.gpuPreviewCanvas = this._getGpuPreviewCanvas(renderer);
     layer.dirty = true;
-    this._setRenderBackend(webgl.kind);
-    this._gpuBatchVisibilityVerified = true;
+    this._setRenderBackend(renderer.kind);
     return true;
   }
 
@@ -1184,6 +1351,13 @@ export class BoidBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    this._pushRenderDebug('pointer-down', {
+      x,
+      y,
+      pressure,
+      flatStroke: !!p.flatStroke,
+      taperLength: p.taperLength || 0,
+    });
     if (this._gpuPreviewActive) this._clearGpuPreview({ composite: true });
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
       ? (this.app._ensureSimulationSpawns('boid').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('boid')[0])
@@ -1295,6 +1469,13 @@ export class BoidBrush {
   }
 
   onUp(x, y) {
+    this._pushRenderDebug('pointer-up', {
+      x,
+      y,
+      flatStroke: this._flatActive,
+      gpuPreviewActive: this._gpuPreviewActive,
+      gpuPreviewRendererKind: this._gpuPreviewRenderer?.kind || null,
+    });
     // Flush paint that was deposited by the initial onDown stamp or by the last
     // onFrame call. Covers the quick-tap case where isDrawing goes false before
     // the next RAF frame fires. Only runs in non-flat mode — flat stroke

@@ -561,11 +561,69 @@ class WebGPUBoidStampRenderer {
     this._interopProbeCtx = null;
     this._initPromise = null;
     this._hasSubmittedFrame = false;
+    this._accumulationTexture = null;
+    this._accumulationView = null;
+    this._accumulationWidth = 0;
+    this._accumulationHeight = 0;
+    this._presentSampler = null;
+    this._presentPipeline = null;
+    this.previewCanvas = null;
+    this._previewCtx = null;
+    this._previewSyncPending = false;
+    this._previewSyncQueued = false;
+    this._pendingPreviewWidth = 0;
+    this._pendingPreviewHeight = 0;
+    this._hasLivePreviewFrame = false;
+    this.onPreviewUpdated = null;
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._debugMaxEvents = 120;
   }
 
   _setRenderFailure(reason) {
     this.lastRenderFailureReason = reason || 'WebGPU stamp draw failed';
+    this._pushDebugEvent('render-failure', { reason: this.lastRenderFailureReason });
     return false;
+  }
+
+  _pushDebugEvent(type, details = {}) {
+    const entry = {
+      seq: ++this._debugSeq,
+      type,
+      t: typeof performance !== 'undefined' && Number.isFinite(performance.now())
+        ? Number(performance.now().toFixed(2))
+        : Date.now(),
+      ...details,
+    };
+    this._debugEvents.push(entry);
+    if (this._debugEvents.length > this._debugMaxEvents) {
+      this._debugEvents.splice(0, this._debugEvents.length - this._debugMaxEvents);
+    }
+    return entry;
+  }
+
+  getDebugState() {
+    return {
+      kind: this.kind,
+      ready: this.ready,
+      failed: this.failed,
+      unavailableReason: this.unavailableReason,
+      lastRenderFailureReason: this.lastRenderFailureReason,
+      hasSubmittedFrame: this._hasSubmittedFrame,
+      hasLivePreviewFrame: this._hasLivePreviewFrame,
+      previewSyncPending: this._previewSyncPending,
+      previewSyncQueued: this._previewSyncQueued,
+      canvas: this.canvas ? { width: this.canvas.width, height: this.canvas.height } : null,
+      previewCanvas: this.previewCanvas ? { width: this.previewCanvas.width, height: this.previewCanvas.height } : null,
+      accumulation: this._accumulationTexture ? { width: this._accumulationWidth, height: this._accumulationHeight } : null,
+      events: this._debugEvents.slice(),
+    };
+  }
+
+  clearDebugState() {
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    return true;
   }
 
   async init() {
@@ -580,13 +638,16 @@ class WebGPUBoidStampRenderer {
     if (typeof navigator === 'undefined' || !navigator.gpu || typeof document === 'undefined') {
       this.failed = true;
       this.unavailableReason = 'navigator.gpu unavailable';
+      this._pushDebugEvent('init-unavailable', { reason: this.unavailableReason });
       return false;
     }
     try {
+      this._pushDebugEvent('init-start');
       this.adapter = await navigator.gpu.requestAdapter();
       if (!this.adapter) {
         this.failed = true;
         this.unavailableReason = 'WebGPU adapter unavailable';
+        this._pushDebugEvent('init-failed', { reason: this.unavailableReason });
         return false;
       }
       this.device = await this.adapter.requestDevice();
@@ -610,19 +671,27 @@ class WebGPUBoidStampRenderer {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       this.pipeline = this._createPipeline(this.presentationFormat);
+      this._presentSampler = this.device.createSampler({
+        magFilter: 'linear',
+        minFilter: 'linear',
+      });
+      this._presentPipeline = this._createPresentPipeline(this.presentationFormat);
       const interopOk = await this._verify2DInterop();
       if (!interopOk) {
         this.failed = true;
+        this._pushDebugEvent('init-failed', { reason: this.unavailableReason || '2D interop probe failed' });
         return false;
       }
       this.ready = true;
       this.unavailableReason = '';
+      this._pushDebugEvent('init-ready');
       return true;
     } catch (error) {
       console.warn('Boid WebGPU renderer unavailable — falling back to Canvas2D.', error);
       this.failed = true;
       this.ready = false;
       this.unavailableReason = error?.message || 'WebGPU renderer initialization failed';
+      this._pushDebugEvent('init-failed', { reason: this.unavailableReason });
       return false;
     } finally {
       this._initPromise = null;
@@ -630,13 +699,38 @@ class WebGPUBoidStampRenderer {
   }
 
   reset() {
+    this.canvas = null;
+    this.context = null;
+    this.adapter = null;
+    this.device = null;
+    this.pipeline = null;
+    this.uniformBuffer = null;
+    this.presentationFormat = null;
     this.instanceBuffer = null;
     this.instanceCapacity = 0;
+    this._interopProbeCanvas = null;
+    this._interopProbeCtx = null;
+    this._initPromise = null;
     this.ready = false;
     this.failed = false;
     this.unavailableReason = 'WebGPU stamp renderer not initialized';
     this.lastRenderFailureReason = '';
     this._hasSubmittedFrame = false;
+    this._accumulationTexture = null;
+    this._accumulationView = null;
+    this._accumulationWidth = 0;
+    this._accumulationHeight = 0;
+    this._presentSampler = null;
+    this._presentPipeline = null;
+    this.previewCanvas = null;
+    this._previewCtx = null;
+    this._previewSyncPending = false;
+    this._previewSyncQueued = false;
+    this._pendingPreviewWidth = 0;
+    this._pendingPreviewHeight = 0;
+    this._hasLivePreviewFrame = false;
+    this.onPreviewUpdated = null;
+    this.clearDebugState();
   }
 
   _createPipeline(format) {
@@ -740,6 +834,72 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     });
   }
 
+  _createPresentPipeline(format) {
+    const shader = this.device.createShaderModule({
+      code: `
+@group(0) @binding(0) var uTex : texture_2d<f32>;
+@group(0) @binding(1) var uSampler : sampler;
+
+struct VertexOutput {
+  @builtin(position) position : vec4f,
+  @location(0) uv : vec2f,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
+  var pos = array<vec2f, 6>(
+    vec2f(-1.0, -1.0),
+    vec2f( 1.0, -1.0),
+    vec2f(-1.0,  1.0),
+    vec2f(-1.0,  1.0),
+    vec2f( 1.0, -1.0),
+    vec2f( 1.0,  1.0)
+  );
+  var out : VertexOutput;
+  let p = pos[vertexIndex];
+  out.position = vec4f(p, 0.0, 1.0);
+  out.uv = vec2f(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
+  return out;
+}
+
+@fragment
+fn fs_main(input : VertexOutput) -> @location(0) vec4f {
+  return textureSample(uTex, uSampler, input.uv);
+}
+`,
+    });
+
+    return this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: {
+        module: shader,
+        entryPoint: 'vs_main',
+      },
+      fragment: {
+        module: shader,
+        entryPoint: 'fs_main',
+        targets: [{
+          format,
+          blend: {
+            color: {
+              srcFactor: 'src-alpha',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+            alpha: {
+              srcFactor: 'one',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+          },
+        }],
+      },
+      primitive: {
+        topology: 'triangle-list',
+      },
+    });
+  }
+
   _ensureCanvas(widthPx, heightPx) {
     if (this.canvas.width === widthPx && this.canvas.height === heightPx) return;
     this.canvas.width = widthPx;
@@ -749,6 +909,122 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       format: this.presentationFormat,
       alphaMode: 'premultiplied',
     });
+    this._accumulationTexture = null;
+    this._accumulationView = null;
+    this._accumulationWidth = 0;
+    this._accumulationHeight = 0;
+    this._hasSubmittedFrame = false;
+  }
+
+  _ensurePreviewCanvas(widthPx, heightPx) {
+    if (!this.previewCanvas) {
+      this.previewCanvas = document.createElement('canvas');
+      this._previewCtx = this.previewCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    if (!this.previewCanvas || !this._previewCtx) return false;
+    if (this.previewCanvas.width !== widthPx || this.previewCanvas.height !== heightPx) {
+      this.previewCanvas.width = widthPx;
+      this.previewCanvas.height = heightPx;
+    }
+    return true;
+  }
+
+  _syncPreviewCanvas(widthPx, heightPx) {
+    if (!this.canvas) return false;
+    if (!this._ensurePreviewCanvas(widthPx, heightPx)) return false;
+    try {
+      this._previewCtx.save();
+      this._previewCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._previewCtx.clearRect(0, 0, widthPx, heightPx);
+      this._previewCtx.globalCompositeOperation = 'copy';
+      this._previewCtx.drawImage(this.canvas, 0, 0, widthPx, heightPx);
+      this._previewCtx.restore();
+      this._hasLivePreviewFrame = true;
+      this._pushDebugEvent('preview-sync-complete', { widthPx, heightPx });
+      this.onPreviewUpdated?.(this.previewCanvas);
+      return true;
+    } catch {
+      try { this._previewCtx.restore(); } catch {}
+      this._pushDebugEvent('preview-sync-failed', { widthPx, heightPx });
+      return false;
+    }
+  }
+
+  _clearPreviewCanvas() {
+    const hadLivePreviewFrame = this._hasLivePreviewFrame;
+    this._hasLivePreviewFrame = false;
+    this._pendingPreviewWidth = 0;
+    this._pendingPreviewHeight = 0;
+    this._previewSyncPending = false;
+    this._previewSyncQueued = false;
+    if (hadLivePreviewFrame) this._pushDebugEvent('preview-cleared');
+    if (!this.previewCanvas || !this._previewCtx) return;
+    this._previewCtx.save();
+    this._previewCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._previewCtx.clearRect(0, 0, this.previewCanvas.width, this.previewCanvas.height);
+    this._previewCtx.restore();
+  }
+
+  invalidatePreview() {
+    this._clearPreviewCanvas();
+    return true;
+  }
+
+  _schedulePreviewSync(widthPx, heightPx) {
+    this._pendingPreviewWidth = widthPx;
+    this._pendingPreviewHeight = heightPx;
+    if (this._previewSyncPending) {
+      this._previewSyncQueued = true;
+      this._pushDebugEvent('preview-sync-queued', { widthPx, heightPx });
+      return;
+    }
+    this._previewSyncPending = true;
+    this._pushDebugEvent('preview-sync-requested', { widthPx, heightPx });
+    const finalize = () => {
+      const syncWidth = this._pendingPreviewWidth;
+      const syncHeight = this._pendingPreviewHeight;
+      this._previewSyncPending = false;
+      this._syncPreviewCanvas(syncWidth, syncHeight);
+      if (this._previewSyncQueued) {
+        this._previewSyncQueued = false;
+        this._schedulePreviewSync(this._pendingPreviewWidth, this._pendingPreviewHeight);
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        if (this.device?.queue?.onSubmittedWorkDone) {
+          this.device.queue.onSubmittedWorkDone().then(finalize, () => {
+            this._previewSyncPending = false;
+          });
+          return;
+        }
+        finalize();
+      });
+      return;
+    }
+    if (this.device?.queue?.onSubmittedWorkDone) {
+      this.device.queue.onSubmittedWorkDone().then(finalize, () => {
+        this._previewSyncPending = false;
+      });
+      return;
+    }
+    finalize();
+  }
+
+  _ensureAccumulationTexture(widthPx, heightPx) {
+    if (this._accumulationTexture
+      && this._accumulationWidth === widthPx
+      && this._accumulationHeight === heightPx) {
+      return;
+    }
+    this._accumulationTexture = this.device.createTexture({
+      size: { width: widthPx, height: heightPx },
+      format: this.presentationFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this._accumulationView = this._accumulationTexture.createView();
+    this._accumulationWidth = widthPx;
+    this._accumulationHeight = heightPx;
   }
 
   _ensureInstanceBuffer(instanceCount) {
@@ -765,7 +1041,43 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this.instanceCapacity = nextCapacity;
   }
 
-  _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr, allowBeforeReady = false }) {
+  _presentAccumulation(encoder) {
+    if (!this._presentPipeline || !this._presentSampler || !this._accumulationView) {
+      return this._setRenderFailure('WebGPU present pipeline unavailable');
+    }
+    let bindGroup;
+    try {
+      bindGroup = this.device.createBindGroup({
+        layout: this._presentPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this._accumulationView },
+          { binding: 1, resource: this._presentSampler },
+        ],
+      });
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU present bind group failed: ${error?.message || error}`);
+    }
+
+    try {
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this.context.getCurrentTexture().createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(this._presentPipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(6, 1, 0, 0);
+      pass.end();
+      return true;
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU present pass failed: ${error?.message || error}`);
+    }
+  }
+
+  _drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr, allowBeforeReady = false, clear = true }) {
     if (!allowBeforeReady && !this.ready) return this._setRenderFailure('WebGPU renderer not ready');
     if (!this.device) return this._setRenderFailure('WebGPU device unavailable');
     if (!this.context) return this._setRenderFailure('WebGPU canvas context unavailable');
@@ -775,8 +1087,10 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     if (count <= 0) return this._setRenderFailure('no stamp instances to draw');
     const widthPx = Math.max(1, Math.round(targetWidthPx));
     const heightPx = Math.max(1, Math.round(targetHeightPx));
+    this._pushDebugEvent('draw-request', { count, widthPx, heightPx, dpr, allowBeforeReady, clear });
     try {
       this._ensureCanvas(widthPx, heightPx);
+      this._ensureAccumulationTexture(widthPx, heightPx);
       this._ensureInstanceBuffer(count);
     } catch (error) {
       return this._setRenderFailure(`WebGPU canvas setup failed: ${error?.message || error}`);
@@ -816,9 +1130,9 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [{
-          view: this.context.getCurrentTexture().createView(),
+          view: this._accumulationView,
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
+          loadOp: clear ? 'clear' : 'load',
           storeOp: 'store',
         }],
       });
@@ -827,11 +1141,82 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       pass.setVertexBuffer(0, this.instanceBuffer);
       pass.draw(6, count, 0, 0);
       pass.end();
+      const presented = this._presentAccumulation(encoder);
+      if (!presented) return false;
       this.device.queue.submit([encoder.finish()]);
+      this._schedulePreviewSync(widthPx, heightPx);
+      this._hasSubmittedFrame = true;
+      this._pushDebugEvent('draw-submitted', { count, widthPx, heightPx, clear });
       this.lastRenderFailureReason = '';
       return true;
     } catch (error) {
       return this._setRenderFailure(`WebGPU submit failed: ${error?.message || error}`);
+    }
+  }
+
+  clearSurface(widthPx, heightPx) {
+    if (!this.ready) return this._setRenderFailure('WebGPU renderer not ready');
+    const width = Math.max(1, Math.round(widthPx));
+    const height = Math.max(1, Math.round(heightPx));
+    this._pushDebugEvent('clear-request', { widthPx: width, heightPx: height });
+    try {
+      this._ensureCanvas(width, height);
+      this._ensureAccumulationTexture(width, height);
+      const encoder = this.device.createCommandEncoder();
+      const clearPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this._accumulationView,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      clearPass.end();
+      const presented = this._presentAccumulation(encoder);
+      if (!presented) return false;
+      this.device.queue.submit([encoder.finish()]);
+      this._clearPreviewCanvas();
+      this._schedulePreviewSync(width, height);
+      this._hasSubmittedFrame = false;
+      this._pushDebugEvent('clear-submitted', { widthPx: width, heightPx: height });
+      this.lastRenderFailureReason = '';
+      return true;
+    } catch (error) {
+      return this._setRenderFailure(`WebGPU clear failed: ${error?.message || error}`);
+    }
+  }
+
+  copyTo2D(targetCtx, widthPx, heightPx, compositeOperation = DEFAULT_COMPOSITE_OPERATION) {
+    if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
+    const sourceCanvas = (this._hasLivePreviewFrame ? this.previewCanvas : null) || this.canvas;
+    if (!sourceCanvas) return this._setRenderFailure('WebGPU preview canvas unavailable');
+    this._pushDebugEvent('copy-to-2d', {
+      widthPx: Math.max(1, Math.round(widthPx || sourceCanvas.width)),
+      heightPx: Math.max(1, Math.round(heightPx || sourceCanvas.height)),
+      source: this._hasLivePreviewFrame ? 'preview' : 'swapchain',
+      compositeOperation: compositeOperation || DEFAULT_COMPOSITE_OPERATION,
+    });
+    try {
+      targetCtx.save();
+      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+      targetCtx.globalAlpha = 1;
+      targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
+      targetCtx.drawImage(
+        sourceCanvas,
+        0,
+        0,
+        sourceCanvas.width,
+        sourceCanvas.height,
+        0,
+        0,
+        Math.max(1, Math.round(widthPx || sourceCanvas.width)),
+        Math.max(1, Math.round(heightPx || sourceCanvas.height)),
+      );
+      targetCtx.restore();
+      return true;
+    } catch (error) {
+      try { targetCtx.restore(); } catch {}
+      return this._setRenderFailure(`WebGPU→2D copy failed: ${error?.message || error}`);
     }
   }
 
@@ -853,6 +1238,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       16, 16, 20, 0,
       1, 0.15, 0.15, 1,
     ]);
+    this._pushDebugEvent('interop-probe-start');
     const drew = this._drawToWebGPUCanvas({
       instances: probeInstances,
       count: 1,
@@ -874,6 +1260,8 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._interopProbeCtx.drawImage(this.canvas, 0, 0);
     this._interopProbeCtx.restore();
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
+    this._clearPreviewCanvas();
+    this._pushDebugEvent('interop-probe-result', { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] });
     // Require a meaningful alpha value so partial/broken implementations that
     // copy back only faint noise do not get treated as working WebGPU→2D interop.
     if (pixel[3] >= GPU_INTEROP_PROBE_ALPHA_MIN && pixel[0] >= GPU_INTEROP_PROBE_RED_MIN) return true;
@@ -882,9 +1270,15 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     return false;
   }
 
-  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, compositeOperation = DEFAULT_COMPOSITE_OPERATION }) {
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, compositeOperation = DEFAULT_COMPOSITE_OPERATION, copyToTarget = true, clear = true }) {
     if (!this.ready) return this._setRenderFailure('WebGPU renderer not ready');
-    if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
+    if (copyToTarget && !targetCtx) return this._setRenderFailure('2D target context unavailable');
+    if (!copyToTarget) {
+      const submittedDirect = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr, clear });
+      if (!submittedDirect) return false;
+      this.lastRenderFailureReason = '';
+      return true;
+    }
     let copiedPriorFrame = false;
     if (this._hasSubmittedFrame) {
       try {
@@ -892,7 +1286,17 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
         targetCtx.setTransform(1, 0, 0, 1, 0, 0);
         targetCtx.globalAlpha = 1;
         targetCtx.globalCompositeOperation = compositeOperation || DEFAULT_COMPOSITE_OPERATION;
-        targetCtx.drawImage(this.canvas, 0, 0);
+        targetCtx.drawImage(
+          this.canvas,
+          0,
+          0,
+          this.canvas.width,
+          this.canvas.height,
+          0,
+          0,
+          Math.max(1, Math.round(targetWidthPx || this.canvas.width)),
+          Math.max(1, Math.round(targetHeightPx || this.canvas.height)),
+        );
         targetCtx.restore();
         copiedPriorFrame = true;
       } catch (error) {
@@ -901,7 +1305,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       }
     }
 
-    const submitted = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr });
+    const submitted = this._drawToWebGPUCanvas({ instances, count, targetWidthPx, targetHeightPx, dpr, clear });
     if (!submitted) return false;
     this._hasSubmittedFrame = true;
     // Warm-up: first submitted frame has no previously completed frame to copy yet.

@@ -405,15 +405,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   for (var pathIndex = 0u; pathIndex < guideMeta.pathTargetCount; pathIndex = pathIndex + 1u) {
-    let target = pathTargets[pathIndex].data;
-    let dx = target.x - xi;
-    let dy = target.y - yi;
+    let pathTargetData = pathTargets[pathIndex].data;
+    let dx = pathTargetData.x - xi;
+    let dy = pathTargetData.y - yi;
     let d = length(vec2f(dx, dy));
-    if (d <= 0.0001 || d > target.w) {
+    if (d <= 0.0001 || d > pathTargetData.w) {
       continue;
     }
-    let falloff = 1.0 - d / target.w;
-    let push = target.z * simSpeed * falloff;
+    let falloff = 1.0 - d / pathTargetData.w;
+    let push = pathTargetData.z * simSpeed * falloff;
     ax = ax + (dx / d) * push;
     ay = ay + (dy / d) * push;
   }
