@@ -917,8 +917,9 @@ export class BoidBrush {
         this._lastStampY[i] = ay;
       } else if (forceStamp) {
         pushInstance(ax, ay);
-        this._lastStampX[i] = ax;
-        this._lastStampY[i] = ay;
+        // Keep the interpolation anchor at the last spacing-qualified stamp so
+        // sub-threshold motion can accumulate across frames into additional
+        // emitted stamps instead of collapsing to exactly one stamp per agent.
       }
     }
 
@@ -1308,6 +1309,7 @@ export class BoidBrush {
       const prevX = this._lastStampX[i];
       const prevY = this._lastStampY[i];
 
+      let advanceAnchor = true;
       if (prevX !== undefined) {
         const dx = ax - prevX;
         const dy = ay - prevY;
@@ -1321,8 +1323,10 @@ export class BoidBrush {
           if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
             _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
           }
-          this._lastStampX[i] = ax;
-          this._lastStampY[i] = ay;
+          // Keep the interpolation anchor at the last spacing-qualified stamp so
+          // slow motion can accumulate into future gap-fill stamps instead of
+          // resetting to one stamp per agent on every frame.
+          advanceAnchor = false;
           continue;
         }
 
@@ -1342,8 +1346,10 @@ export class BoidBrush {
         }
       }
 
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      if (advanceAnchor) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+      }
     }
 
     // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
