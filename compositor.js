@@ -445,7 +445,7 @@ export class Compositor {
           gl.uniform1f(uOpacity, 1);
           gl.uniform1i(uMode, BLEND_MODE_MAP['source-over']);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          const previewTmp = src; src = dst; dst = previewTmp;
+          const tmp = src; src = dst; dst = tmp;
         }
       }
 
@@ -513,7 +513,7 @@ export class Compositor {
         gl.uniform1f(uOpacity, 1);
         gl.uniform1i(uMode, BLEND_MODE_MAP['source-over']);
         this._drawScissored(gl, dirtyRects, cssW, cssH, () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4));
-        const previewTmp = src; src = dst; dst = previewTmp;
+        const tmp = src; src = dst; dst = tmp;
         drewVisibleLayer = true;
       }
     }

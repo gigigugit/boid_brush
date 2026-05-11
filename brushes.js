@@ -1556,7 +1556,7 @@ export class BoidBrush {
     if (batchSupport.ok) {
       const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
         flat,
-        interpolate: false,   // stamp directly at frozen positions, no gap-fill
+        interpolate: false,  // stamp directly at frozen positions, no gap-fill
         applySkip: false,
         taperCurve: curve,
         taperSize: p.taperSize,
