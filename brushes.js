@@ -52,11 +52,9 @@ const STAMP_VISIBILITY_SAMPLE_COUNT = 12;
 // Disable GPU paths for the session after 2 consecutive probe/render failures.
 // This avoids repeated flicker/no-op draws on platforms with unstable interop.
 const GPU_RENDERER_FAILURE_LIMIT = 2;
-// iPad/iPhone WebKit can render the hidden WebGL boid surface, but drawing that
-// live WebGL canvas back through the compositor is unreliable. Keep using the
-// older direct-to-layer path there so the renderer can fall back to readPixels
-// or Canvas2D instead of showing an invisible preview.
-const DISABLE_BOID_GPU_PREVIEW_ON_APPLE_TOUCH_WEBKIT = (() => {
+// Apple touch WebKit remains unreliable for boid GPU copy-out/compositing.
+// Route normal boid stamp rendering to the Canvas2D batch backend there.
+const DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT = (() => {
   try {
     if (typeof navigator === 'undefined') return false;
     const ua = navigator.userAgent || '';
@@ -643,6 +641,9 @@ export class BoidBrush {
   _patchRendererChain() {
     if (this._rendererChainPatched) return;
     this.renderer._getRendererChain = (renderState = {}) => {
+      if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT && !renderState.stampBitmap) {
+        return [this.renderer.canvas];
+      }
       const chain = [];
       if (renderState.stampBitmap) {
         if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
@@ -833,7 +834,7 @@ export class BoidBrush {
   _canUseGpuPreview(targetCtx, p) {
     const layer = this.app.getActiveLayer();
     if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
-    if (DISABLE_BOID_GPU_PREVIEW_ON_APPLE_TOUCH_WEBKIT) return false;
+    if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
     if (this._flatActive) return false;
     if (!this.renderer.webgl?.ready) return false;
     if (p?.stampImageCanvas) return false;
