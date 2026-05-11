@@ -811,6 +811,8 @@ export class BoidBrush {
   _resetInterpolationState() {
     this._lastStampX = [];
     this._lastStampY = [];
+    this._lastSpacingX = [];
+    this._lastSpacingY = [];
   }
 
   _buildRenderBatch(read, p, {
@@ -888,15 +890,19 @@ export class BoidBrush {
       if (skipActive) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
         continue;
       }
 
-      const prevStampX = this._lastStampX[i];
-      const prevStampY = this._lastStampY[i];
+      const prevStampX = this._lastSpacingX[i];
+      const prevStampY = this._lastSpacingY[i];
       if (!interpolate || prevStampX === undefined || prevStampY === undefined) {
         pushInstance(ax, ay);
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
         continue;
       }
 
@@ -915,9 +921,13 @@ export class BoidBrush {
         }
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
       } else if (forceStamp) {
         pushInstance(ax, ay);
-        // Keep the interpolation anchor at the last spacing-qualified stamp so
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        // Keep the spacing anchor at the last spacing-qualified stamp so
         // sub-threshold motion can accumulate across frames into additional
         // emitted stamps instead of collapsing to exactly one stamp per agent.
       }
@@ -1284,6 +1294,8 @@ export class BoidBrush {
       if (app.strokeFrame <= skipN) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
         continue;
       }
 
@@ -1306,8 +1318,8 @@ export class BoidBrush {
       const step = p.stampSeparation > 0
         ? p.stampSeparation
         : Math.max(1, sz * 0.25);
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
+      const prevX = this._lastSpacingX[i];
+      const prevY = this._lastSpacingY[i];
 
       let advanceAnchor = true;
       if (prevX !== undefined) {
@@ -1323,7 +1335,9 @@ export class BoidBrush {
           if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
             _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
           }
-          // Keep the interpolation anchor at the last spacing-qualified stamp so
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+          // Keep the spacing anchor at the last spacing-qualified stamp so
           // slow motion can accumulate into future gap-fill stamps instead of
           // resetting to one stamp per agent on every frame.
           advanceAnchor = false;
@@ -1344,11 +1358,15 @@ export class BoidBrush {
         if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
           _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
         }
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
       }
 
       if (advanceAnchor) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
       }
     }
 
