@@ -43,7 +43,6 @@ Open `app.html` in a modern browser (or `index.html` for the landing page with l
 | `3` | Simple Brush |
 | `4` | Eraser |
 | `5` | Fluid Brush |
-| `6` | AI Diffusion |
 | `M` | Rectangle Select |
 | `L` | Lasso Select |
 | `T` | Transform (when selection active) |

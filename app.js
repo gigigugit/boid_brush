@@ -6,15 +6,180 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, AIDiffusionBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
-import { AIServer } from './ai-server.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-06-cache-check-1';
+const FACTORY_DEFAULTS = Object.freeze({
+  brushScale: 100,
+  fillTolerance: 32,
+  spawnRadius: 5,
+  spawnAngle: 0,
+  spawnJitter: 0,
+  count: 318,
+  seek: 75,
+  cohesion: 37,
+  separation: 15,
+  alignment: 22,
+  jitter: 0,
+  wander: 6,
+  wanderSpeed: 30,
+  fov: 115,
+  flowField: 0,
+  flowScale: 10,
+  fleeRadius: 0,
+  individuality: 0,
+  quorumThreshold: 0,
+  quorumCompositeStrength: 35,
+  sizeVar: 0,
+  opacityVar: 0,
+  speedVar: 0,
+  forceVar: 0,
+  hueVar: 0,
+  satVar: 0,
+  litVar: 0,
+  maxSpeed: 22,
+  damping: 95,
+  bristleCount: 30,
+  bristleWidth: 30,
+  bristleSpread: 10,
+  bristleSplay: 30,
+  bristleAngleOffset: 0,
+  bristleFan: 0,
+  bristleFanAngle: 90,
+  bristleLength: 20,
+  bristleStiffness: 50,
+  bristleDamping: 85,
+  bristleFriction: 40,
+  bristleSmoothing: 50,
+  pencilBlend: 80,
+  bSizeVar: 0,
+  bOpacityVar: 0,
+  bStiffVar: 0,
+  bLengthVar: 0,
+  bFrictionVar: 0,
+  bHueVar: 0,
+  lbmBrushRadius: 36,
+  lbmSpawnCount: 30,
+  lbmParticleRadius: 3,
+  lbmStrokePull: 36,
+  lbmStrokePull_multIdx: 5,
+  lbmStrokeRake: 55,
+  lbmStrokeRake_multIdx: 5,
+  lbmStrokeJitter: 65,
+  lbmStrokeJitter_multIdx: 5,
+  lbmHueJitter: 0,
+  lbmLightnessJitter: 0,
+  lbmInjectForce: 100,
+  lbmInjectForce_multIdx: 5,
+  lbmVortexStrength: 0,
+  lbmVortexStrength_multIdx: 5,
+  lbmBurstStrength: 0,
+  lbmBurstStrength_multIdx: 5,
+  lbmChevronStrength: 0,
+  lbmChevronStrength_multIdx: 5,
+  lbmUndulateStrength: 0,
+  lbmUndulateStrength_multIdx: 5,
+  lbmViscosity: 28,
+  lbmDensity: 30,
+  lbmSurfaceTension: 34,
+  lbmTimeStep: 16,
+  lbmSubsteps: 4,
+  lbmMotionDecay: 34,
+  lbmStopSpeed: 14,
+  lbmPigmentCarry: 65,
+  lbmPigmentRetention: 78,
+  lbmResolutionScale: 100,
+  lbmFluidScale: 115,
+  stampSize: 10,
+  stampOpacity: 15,
+  stampSeparation: 0,
+  smudge: 0,
+  skipStamps: 0,
+  stabilizer: 0,
+  stampImageRotation: 0,
+  canvasTextureStrength: 60,
+  canvasTextureScale: 100,
+  canvasTextureOffsetX: 0,
+  canvasTextureOffsetY: 0,
+  canvasTextureRotation: 0,
+  canvasTextureDeposit: 100,
+  canvasTextureFlow: 100,
+  canvasTextureEdgeBreakup: 35,
+  canvasTextureSmudgeDrag: 30,
+  canvasTexturePooling: 55,
+  symmetryCount: 4,
+  symmetryCenterX: 50,
+  symmetryCenterY: 50,
+  taperLength: 0,
+  taperCurve: 100,
+  sensingStrength: 50,
+  sensingRadius: 20,
+  sensingThreshold: 10,
+  antFollow: 40,
+  antPheromoneRate: 50,
+  antPheromoneDecay: 20,
+  antPheromoneSize: 6,
+  trailBlur: 0,
+  trailFlow: 0,
+  kmStrength: 50,
+  impastoStrength: 60,
+  impastoLightAngle: 45,
+  impastoLightElevation: 45,
+  simSpeed: 100,
+  simPointStrength: 90,
+  simPointRadius: 120,
+  simBoundsMargin: 0,
+  simPathSpeed: 120,
+  simEdgeForce: 100,
+  simEdgeRadius: 28,
+  simPheroPaintRadius: 18,
+  simPheroPaintStrength: 55,
+  pressureSpawnRadius: false,
+  bristleFanEnable: false,
+  pencilAngle: true,
+  showBristles: true,
+  lbmFirstPassPreview: true,
+  lbmShowFlow: true,
+  smudgeOnly: false,
+  pressureSize: true,
+  pressureOpacity: true,
+  flatStroke: false,
+  stampImageEnabled: false,
+  stampImageTint: true,
+  canvasTextureEnabled: true,
+  canvasTextureInvert: false,
+  symmetryEnabled: false,
+  symmetryMirror: false,
+  taperSize: true,
+  taperOpacity: true,
+  sensingEnabled: false,
+  showBoids: true,
+  showSpawn: true,
+  antTrailVisible: true,
+  antPheromoneToSensing: true,
+  kmMix: false,
+  impasto: false,
+  perfTelemetryEnabled: false,
+  perfWakeLockEnabled: false,
+  spawnShape: 'circle',
+  boidHoverAction: 'spawn',
+  boidTouchAction: 'spawn',
+  boidUntouchAction: 'cull',
+  boidUnhoverAction: 'cull',
+  lbmRenderMode: 'hybrid',
+  canvasTexturePreset: 'builtin-paper-grain',
+  sensingMode: 'avoid',
+  sensingChannel: 'darkness',
+  sensingSource: 'below',
+  _primaryColor: '#1a1a1a',
+  _secondaryColor: '#ffffff',
+  _activeBrush: 'boid',
+});
 const MAX_UNDO = 20;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -422,9 +587,6 @@ export class App {
     this._syncLayerSwitcher();
     this._syncAlphaLockUI();
 
-    // AI server
-    this.aiServer = new AIServer();
-
     // Brush engines
     this.brushes.boid = new BoidBrush(this);
     this.brushes.ant = new AntBrush(this);
@@ -432,7 +594,6 @@ export class App {
     this.brushes.fluid = new FluidBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
-    this.brushes.ai = new AIDiffusionBrush(this);
 
     // Init WASM-backed brushes
     await this.brushes.boid.init();
@@ -1486,10 +1647,10 @@ export class App {
     this.showToast('🗑 Layer cleared');
   }
 
-  compositeAllLayers() {
+  compositeAllLayers(options = {}) {
     this._smudgeImageData = null; // invalidate smudge cache
     const p = this._cachedP || this.getP();
-    const forceFullComposite = !!(p.impasto && p.impastoStrength > 0);
+    const forceFullComposite = !!(options.forceFull || (p.impasto && p.impastoStrength > 0));
     this.compositor?.composite(this.layers, this.W, this.H, { forceFull: forceFullComposite });
 
     // Impasto: recompute lighting overlay from height map when dirty, then draw
@@ -1763,19 +1924,6 @@ export class App {
       canvasTexturePooling: (val('canvasTexturePooling') || 0) / 100,
       // Color
       color: this.primaryEl.value,
-      // AI Diffusion
-      aiStampSize: Math.max(20, Math.round(val('aiStampSize') * scale)) || 80,
-      aiSteps: val('aiSteps') || 2,
-      aiStrength: (val('aiStrength') || 80) / 100,
-      aiGuidance: (val('aiGuidance') || 75) / 10,
-      maskFeather: val('maskFeather') || 20,
-      aiInputSource: sel('aiInputSource') || 'visible',
-      aiMode: sel('aiMode') || 'continuous',
-      aiInterval: val('aiInterval') || 30,
-      aiRandomSeed: chk('aiRandomSeed'),
-      aiSeed: +(document.getElementById('aiSeed')?.value || 42),
-      aiPrompt: document.getElementById('aiPromptText')?.value || '',
-      aiNegPrompt: document.getElementById('aiNegPromptText')?.value || '',
       // Trail blur
       trailBlur: val('trailBlur') || 0,
       trailFlow: val('trailFlow') / 100,
@@ -3226,7 +3374,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', simple: '🖌 Simple', eraser: '◻ Eraser', ai: '🤖 AI Diffusion' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -5573,11 +5721,6 @@ export class App {
       controls.secondaryColor = this.secondaryEl.value;
       controls.bgColor = this.bgColorEl ? this.bgColorEl.value : '#ffffff';
       controls.activeBrush = this.activeBrush;
-      // Save AI prompt textareas
-      const promptEl = document.getElementById('aiPromptText');
-      const negPromptEl = document.getElementById('aiNegPromptText');
-      if (promptEl) controls._aiPrompt = promptEl.value;
-      if (negPromptEl) controls._aiNegPrompt = negPromptEl.value;
       controls._colorHistory = this._colorHistory;
       controls._tilingMode = this.tilingMode;
       if (this._docSized) {
@@ -5600,13 +5743,62 @@ export class App {
     } catch { /* quota exceeded — ignore */ }
   }
 
+  _applyControlState(controls = {}) {
+    for (const [id, val] of Object.entries(controls)) {
+      if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
+      if (id === '_canvasTextureState') continue;
+      if (id === '_stampImageState') continue;
+      if (id === 'primaryColor' || id === '_primaryColor') { this.primaryEl.value = val; continue; }
+      if (id === 'secondaryColor' || id === '_secondaryColor') { this.secondaryEl.value = val; continue; }
+      if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
+      if (id === 'activeBrush' || id === '_activeBrush') { this.setBrush(val); continue; }
+      if (id === '_colorHistory') {
+        if (Array.isArray(val)) {
+          this._colorHistory = val.filter(v => typeof v === 'string' && /^#[0-9a-f]{6}$/.test(v));
+        }
+        this._renderColorHistory();
+        continue;
+      }
+      if (id === '_tilingMode') {
+        this.tilingMode = !!val;
+        this._syncTilingUI();
+        continue;
+      }
+      if (id === '_simulation') {
+        if (val?.brushData) this.simulation.brushData = val.brushData;
+        if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
+        if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
+        this.simulation.enabled = !!val?.enabled;
+        this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
+        if (val?.vars && typeof val.vars === 'object') {
+          this.simulation.vars = _normalizeSimulationVars(val.vars);
+        }
+        if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
+        continue;
+      }
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!val;
+      else el.value = val;
+    }
+  }
+
+  async _applyFactoryDefaults() {
+    await this._loadDefaultStampImage();
+    this._applyControlState(FACTORY_DEFAULTS);
+    this._paramsDirty = true;
+    syncUI(this);
+    this._normalizeSimulationData();
+    this._ensureSimulationSpawns();
+    this._syncSimulationUI();
+  }
+
   async _restoreSession() {
     try {
       await this._ensureBuiltinCanvasTexture();
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
-        await this._loadDefaultStampImage();
-        syncUI(this);
+        await this._applyFactoryDefaults();
         return;
       }
       const controls = JSON.parse(raw);
@@ -5619,57 +5811,7 @@ export class App {
       } else {
         await this._loadDefaultStampImage();
       }
-      for (const [id, val] of Object.entries(controls)) {
-        if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
-        if (id === '_canvasTextureState') continue;
-        if (id === '_stampImageState') continue;
-        if (id === 'primaryColor') { this.primaryEl.value = val; continue; }
-        if (id === 'secondaryColor') { this.secondaryEl.value = val; continue; }
-        if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
-        if (id === 'activeBrush') { this.setBrush(val); continue; }
-        if (id === '_aiPrompt') {
-          const el = document.getElementById('aiPromptText');
-          if (el) el.value = val;
-          const preview = document.getElementById('aiPromptPreview');
-          if (preview && val) preview.textContent = val;
-          continue;
-        }
-        if (id === '_aiNegPrompt') {
-          const el = document.getElementById('aiNegPromptText');
-          if (el) el.value = val;
-          continue;
-        }
-        if (id === '_colorHistory') {
-          if (Array.isArray(val)) {
-            this._colorHistory = val.filter(v => typeof v === 'string' && /^#[0-9a-f]{6}$/.test(v));
-          }
-          this._renderColorHistory();
-          continue;
-        }
-        if (id === '_tilingMode') {
-          this.tilingMode = !!val;
-          this._syncTilingUI();
-          continue;
-        }
-        if (id === '_simulation') {
-          if (val?.brushData) this.simulation.brushData = val.brushData;
-          if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
-          if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
-          this.simulation.enabled = !!val?.enabled;
-          this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
-          // Restore scene-level variable overrides (seek etc.) persisted from last use.
-          // Keep the default seek value if no value was saved (first ever session).
-          if (val?.vars && typeof val.vars === 'object') {
-            this.simulation.vars = _normalizeSimulationVars(val.vars);
-          }
-          if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
-          continue;
-        }
-        const el = document.getElementById(id);
-        if (!el) continue;
-        if (el.type === 'checkbox') el.checked = val;
-        else el.value = val;
-      }
+      this._applyControlState(controls);
       if (!hasSavedStampImageState && this.activeBrush === 'boid') {
         const stampImageToggle = document.getElementById('stampImageEnabled');
         if (stampImageToggle?.checked) stampImageToggle.checked = false;
@@ -5682,7 +5824,9 @@ export class App {
       if (controls._docSized && controls._docW && controls._docH) {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
-    } catch { /* corrupt — ignore */ }
+    } catch {
+      await this._applyFactoryDefaults();
+    }
   }
 
   // ========================================================

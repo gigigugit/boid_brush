@@ -171,6 +171,343 @@ class StampInstanceBuffer {
   }
 }
 
+function _ensureProceduralStampRendererInit(brush) {
+  if (!brush?.renderer) return Promise.resolve(false);
+  if (brush._rendererInitPromise) return brush._rendererInitPromise;
+  brush._rendererInitPromise = brush.renderer.init()
+    .then(() => {
+      if (brush._rendererChainPatched) return true;
+      brush.renderer._getRendererChain = (renderState = {}) => {
+        const chain = [];
+        if (brush._gpuDisabledReason) {
+          chain.push(brush.renderer.canvas);
+          return chain;
+        }
+        if (renderState.stampBitmap) {
+          if (brush.renderer.webgl.ready) chain.push(brush.renderer.webgl);
+          chain.push(brush.renderer.canvas);
+          return chain;
+        }
+        if (brush.renderer.webgpu.ready) chain.push(brush.renderer.webgpu);
+        if (brush.renderer.webgl.ready) chain.push(brush.renderer.webgl);
+        chain.push(brush.renderer.canvas);
+        return chain;
+      };
+      brush._rendererChainPatched = true;
+      return true;
+    })
+    .catch(() => false);
+  return brush._rendererInitPromise;
+}
+
+function _setProceduralRenderBackend(brush, kind, reason = '') {
+  brush._renderBackend = kind;
+  brush._renderLegacyReason = kind === 'legacy' ? reason : '';
+}
+
+function _formatProceduralLegacyFallbackReason(reason) {
+  const coreReason = reason || 'GPU procedural-stamp renderer failed';
+  return `${coreReason}; using CPU fallback`;
+}
+
+function _noteProceduralGpuFailure(brush, reason) {
+  brush._gpuFailureCount = (brush._gpuFailureCount || 0) + 1;
+  if (brush._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
+    brush._gpuDisabledReason = reason;
+  }
+  _setProceduralRenderBackend(
+    brush,
+    'legacy',
+    _formatProceduralLegacyFallbackReason(brush._gpuDisabledReason || reason),
+  );
+}
+
+function _resetProceduralGpuFailure(brush) {
+  brush._gpuFailureCount = 0;
+}
+
+function _getProceduralBatchRendererSupport(brush, p, flat = brush._flatActive) {
+  const layer = brush.app.getActiveLayer();
+  if (!layer) return { ok: false, reason: 'no active layer' };
+  if (layer.alphaLock && flat) return { ok: false, reason: 'alpha lock enabled with flat stroke' };
+  if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
+  if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
+  if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
+  if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
+  if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
+  if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
+  if (brush._gpuDisabledReason) return { ok: false, reason: brush._gpuDisabledReason };
+  if (!brush.renderer.canRenderBatch({ stampBitmap: p.stampImageCanvas || null })) {
+    return { ok: false, reason: brush.renderer.getUnavailableReason({ stampBitmap: p.stampImageCanvas || null }) };
+  }
+  return { ok: true, reason: '' };
+}
+
+function _batchHasVisiblePixels(targetCtx, batch, dpr = 1) {
+  if (!targetCtx || !batch?.instances || batch.count <= 0) return false;
+  const canvas = targetCtx.canvas;
+  if (!canvas?.width || !canvas?.height) return false;
+  const instances = batch.instances;
+  const sampleCount = Math.min(batch.count, STAMP_VISIBILITY_SAMPLE_COUNT);
+  const stride = 8;
+  try {
+    for (let i = 0; i < sampleCount; i++) {
+      const base = i * stride;
+      const size = Math.max(1, instances[base + 2] * dpr);
+      const cx = Math.round(instances[base + 0] * dpr);
+      const cy = Math.round(instances[base + 1] * dpr);
+      const offsets = [
+        [0, 0],
+        [Math.min(size * 0.25, 2), 0],
+        [-Math.min(size * 0.25, 2), 0],
+        [0, Math.min(size * 0.25, 2)],
+        [0, -Math.min(size * 0.25, 2)],
+      ];
+      for (const [ox, oy] of offsets) {
+        const x = Math.max(0, Math.min(canvas.width - 1, Math.round(cx + ox)));
+        const y = Math.max(0, Math.min(canvas.height - 1, Math.round(cy + oy)));
+        if (targetCtx.getImageData(x, y, 1, 1).data[3] > 0) return true;
+      }
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+function _emitBatchStampInstances(app, instances, p, x, y, size, colorRGB, opacity) {
+  const renderPoints = p.symmetryEnabled
+    ? app.getSymmetryPoints(x, y)
+    : [{ x, y }];
+  const seen = new Set();
+  const emitInstance = (px, py) => {
+    const key = `${Math.round(px * 1000)}:${Math.round(py * 1000)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    let instOpacity = opacity;
+    let instSize = size;
+    if (app.hasCanvasTexture?.() && p.canvasTextureEnabled) {
+      instOpacity *= _textureDepositDensity(app, p, px, py);
+      const edgeBreakup = app.getTextureEdgeBreakup?.(px, py, p) || 0;
+      if (edgeBreakup > 0) {
+        const field = app.sampleTextureField?.(px, py, p);
+        instSize *= Math.max(
+          TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+          1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+        );
+      }
+    }
+    if (instOpacity < 0.005 || instSize < 0.5) return;
+    instances.push(px, py, instSize, colorRGB.r, colorRGB.g, colorRGB.b, instOpacity);
+  };
+
+  for (const point of renderPoints) {
+    emitInstance(point.x, point.y);
+    if (!app.tilingMode || !app._getStampWrapPoints) continue;
+    const wraps = app._getStampWrapPoints(point.x, point.y, size);
+    for (const wrap of wraps) emitInstance(wrap.x, wrap.y);
+  }
+}
+
+function _resolveBatchCompositeOperation(brush, p, layer, allowAlphaLock = false) {
+  if (typeof brush._getBatchCompositeOperation === 'function') {
+    return brush._getBatchCompositeOperation(p, layer, allowAlphaLock);
+  }
+  return allowAlphaLock && layer?.alphaLock ? 'source-atop' : 'source-over';
+}
+
+function _getProceduralGpuPreviewRenderer(brush, p) {
+  if (p?.stampImageCanvas) return null;
+  if (brush.renderer.webgpu?.ready) return brush.renderer.webgpu;
+  if (brush.renderer.webgl?.ready) return brush.renderer.webgl;
+  return null;
+}
+
+function _getProceduralGpuPreviewCanvas(renderer) {
+  if (!renderer) return null;
+  if (renderer.kind === 'webgpu') {
+    return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+  }
+  return renderer.previewCanvas || renderer.canvas || null;
+}
+
+function _canUseProceduralGpuPreview(brush, targetCtx, p) {
+  const layer = brush.app.getActiveLayer();
+  if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
+  if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
+  if (brush._flatActive) return false;
+  if (!_getProceduralGpuPreviewRenderer(brush, p)) return false;
+  if (p?.stampImageCanvas) return false;
+  if ((p?.taperLength || 0) > 0 && !brush.app.isDrawing && !brush.app.simulation?.running) return false;
+  if (layer.alphaLock) return false;
+  if (layer.blend !== 'source-over') return false;
+  if (Math.abs((layer.opacity ?? 1) - 1) > 1e-3) return false;
+  return true;
+}
+
+function _clearProceduralGpuPreview(brush, { composite = false } = {}) {
+  const layer = brush._gpuPreviewLayer;
+  const renderer = brush._gpuPreviewRenderer;
+  const previewCanvas = _getProceduralGpuPreviewCanvas(renderer);
+  if (renderer) renderer.onPreviewUpdated = null;
+  if (layer?.gpuPreviewCanvas && previewCanvas && layer.gpuPreviewCanvas === previewCanvas) {
+    layer.gpuPreviewCanvas = null;
+    layer.dirty = true;
+  }
+  if (renderer?.clearSurface && layer?.canvas?.width && layer?.canvas?.height) {
+    renderer.clearSurface(layer.canvas.width, layer.canvas.height);
+  }
+  brush._gpuPreviewActive = false;
+  brush._gpuPreviewLayer = null;
+  brush._gpuPreviewRenderer = null;
+  if (composite && layer) brush.app.compositeAllLayers();
+}
+
+function _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock = false } = {}) {
+  const layer = brush._gpuPreviewLayer;
+  const renderer = brush._gpuPreviewRenderer;
+  if (!layer || !renderer?.ready) {
+    _clearProceduralGpuPreview(brush);
+    return false;
+  }
+  const compositeOperation = _resolveBatchCompositeOperation(
+    brush,
+    brush.app.getP(),
+    layer,
+    allowAlphaLock,
+  );
+  if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+    renderer.onPreviewUpdated = (canvas) => {
+      if (!canvas) return;
+      if (!brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer) return;
+      layer.gpuPreviewCanvas = canvas;
+      const ok = renderer.copyTo2D(
+        layer.ctx,
+        layer.canvas.width,
+        layer.canvas.height,
+        compositeOperation,
+      );
+      renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+      layer.gpuPreviewCanvas = null;
+      brush._gpuPreviewActive = false;
+      brush._gpuPreviewLayer = null;
+      renderer.onPreviewUpdated = null;
+      brush._gpuPreviewRenderer = null;
+      if (!ok) return;
+      layer.dirty = true;
+      brush.app.compositeAllLayers();
+    };
+    return true;
+  }
+  const ok = renderer.copyTo2D(
+    layer.ctx,
+    layer.canvas.width,
+    layer.canvas.height,
+    compositeOperation,
+  );
+  renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+  layer.gpuPreviewCanvas = null;
+  brush._gpuPreviewActive = false;
+  brush._gpuPreviewLayer = null;
+  renderer.onPreviewUpdated = null;
+  brush._gpuPreviewRenderer = null;
+  if (!ok) return false;
+  layer.dirty = true;
+  brush.app.compositeAllLayers();
+  return true;
+}
+
+function _renderProceduralBatchToGpuPreview(brush, batch, p) {
+  const layer = brush.app.getActiveLayer();
+  const renderer = _getProceduralGpuPreviewRenderer(brush, p);
+  if (!layer || !renderer?.ready) return false;
+  const needsFreshSurface = !brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer;
+  renderer.onPreviewUpdated = (canvas) => {
+    if (!canvas) return;
+    if (!brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer) return;
+    layer.gpuPreviewCanvas = canvas;
+    layer.dirty = true;
+    brush.app.compositeAllLayers();
+  };
+  if (brush._gpuPreviewActive && brush._gpuPreviewRenderer && brush._gpuPreviewRenderer !== renderer) {
+    _commitProceduralGpuPreviewToLayer(brush);
+  }
+  if (needsFreshSurface) {
+    if (renderer.kind === 'webgpu') {
+      renderer.invalidatePreview?.();
+    } else if (!renderer.clearSurface?.(layer.canvas.width, layer.canvas.height)) {
+      return false;
+    }
+    brush._gpuPreviewActive = true;
+    brush._gpuPreviewLayer = layer;
+    brush._gpuPreviewRenderer = renderer;
+    layer.gpuPreviewCanvas = _getProceduralGpuPreviewCanvas(renderer);
+  }
+  const stampBitmap = p?.stampImageCanvas || null;
+  const ok = renderer.render({
+    instances: batch.instances,
+    count: batch.count,
+    targetWidthPx: layer.canvas.width,
+    targetHeightPx: layer.canvas.height,
+    dpr: brush.app.DPR,
+    stampBitmap,
+    stampTint: p?.stampImageTint !== false,
+    stampRotation: p?.stampImageRotation || 0,
+    stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+    copyToTarget: false,
+    clear: needsFreshSurface,
+  });
+  if (!ok) {
+    _commitProceduralGpuPreviewToLayer(brush);
+    _clearProceduralGpuPreview(brush);
+    return false;
+  }
+  layer.gpuPreviewCanvas = _getProceduralGpuPreviewCanvas(renderer);
+  layer.dirty = true;
+  _setProceduralRenderBackend(brush, renderer.kind);
+  return true;
+}
+
+function _renderProceduralBatchToTarget(brush, targetCtx, batch, p, { allowAlphaLock = false, visibilityProbe = true } = {}) {
+  const stampBitmap = p?.stampImageCanvas || null;
+  const layer = brush.app.getActiveLayer();
+  const previewAllowed = _canUseProceduralGpuPreview(brush, targetCtx, p);
+  if (brush._gpuPreviewActive && !previewAllowed) {
+    _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock });
+  }
+  if (previewAllowed) {
+    return _renderProceduralBatchToGpuPreview(brush, batch, p);
+  }
+  if (batch.count <= 0) {
+    _setProceduralRenderBackend(brush, brush.renderer.getPreferredBatchRendererKind({ stampBitmap }));
+    return true;
+  }
+  const ok = brush.renderer.render({
+    instances: batch.instances,
+    count: batch.count,
+    targetCtx,
+    targetWidthPx: targetCtx?.canvas?.width || 0,
+    targetHeightPx: targetCtx?.canvas?.height || 0,
+    dpr: brush.app.DPR,
+    stampBitmap,
+    stampTint: p?.stampImageTint !== false,
+    stampRotation: p?.stampImageRotation || 0,
+    stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+    compositeOperation: _resolveBatchCompositeOperation(brush, p, layer, allowAlphaLock),
+  });
+  _setProceduralRenderBackend(brush, ok ? brush.renderer.activeKind : 'legacy', ok ? '' : brush.renderer.legacyReason);
+  if (!ok) {
+    _noteProceduralGpuFailure(brush, brush.renderer.legacyReason || 'GPU procedural-stamp renderer failed');
+    return false;
+  }
+  if (visibilityProbe && brush.renderer.activeKind !== 'canvas' && !stampBitmap && !_batchHasVisiblePixels(targetCtx, batch, brush.app.DPR || 1)) {
+    _noteProceduralGpuFailure(brush, 'GPU procedural-stamp visibility probe failed');
+    return false;
+  }
+  _resetProceduralGpuFailure(brush);
+  return true;
+}
+
 function _colorWithAlpha(color, alpha) {
   const a = _clamp(alpha, 0, 1);
   if (a <= 0) return 'rgba(0,0,0,0)';
@@ -1924,12 +2261,24 @@ export class BoidBrush {
 export class AntBrush {
   constructor(app) {
     this.app = app;
+    this.renderer = createBoidStampRenderer();
     this.sim = null;
     this._ready = false;
     this._lastStampX = [];
     this._lastStampY = [];
+    this._lastSpacingX = [];
+    this._lastSpacingY = [];
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
+    this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuFailureCount = 0;
+    this._gpuDisabledReason = '';
+    this._rendererInitPromise = null;
+    this._rendererChainPatched = false;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
     // Pheromone grid (JS-side, quarter-resolution like sensing)
     this._pheroW = 0;
     this._pheroH = 0;
@@ -1948,6 +2297,7 @@ export class AntBrush {
     this._preStrokeCanvas = null;
     this._preStrokeCtx = null;
     this._flatActive = false;
+    _ensureProceduralStampRendererInit(this);
   }
 
   async init({ force = false } = {}) {
@@ -1956,7 +2306,20 @@ export class AntBrush {
       this.sim = null;
       this._lastStampX = [];
       this._lastStampY = [];
+      this._lastSpacingX = [];
+      this._lastSpacingY = [];
+      this._renderBackend = 'legacy';
+      this._renderLegacyReason = 'compatibility check pending';
+      this._gpuFailureCount = 0;
+      this._gpuDisabledReason = '';
+      this._rendererInitPromise = null;
+      this._rendererChainPatched = false;
+      this._gpuPreviewActive = false;
+      this._gpuPreviewLayer = null;
+      this._gpuPreviewRenderer = null;
+      this.renderer.reset();
     }
+    _ensureProceduralStampRendererInit(this);
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
       this._ready = true;
@@ -1969,6 +2332,92 @@ export class AntBrush {
     } catch (e) {
       console.error('AntBrush: WASM init failed —', e);
     }
+  }
+
+  _buildRenderBatch(read, p, {
+    flat = this._flatActive,
+    pressure = this.app.pressure,
+    interpolate = true,
+    applySkip = true,
+    forceStamp = false,
+    taperCurve = 1,
+    taperSize = false,
+    taperOpacity = false,
+  } = {}) {
+    const { buffer, count, stride } = read;
+    const instances = new StampInstanceBuffer(Math.max(64, count));
+    const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
+    const baseHSL = hexToHSL(p.color);
+    const baseRGB = hexToRGB(p.color);
+
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+
+      let size = p.stampSize * sm;
+      let opacity = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
+      if (taperSize) size *= taperCurve;
+      if (taperOpacity) opacity *= taperCurve;
+      opacity = Math.min(opacity, 1);
+      if (opacity < 0.005 || size < 0.5) continue;
+
+      const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
+        ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
+        : baseRGB;
+
+      if (skipActive) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+        continue;
+      }
+
+      const prevStampX = this._lastSpacingX[i];
+      const prevStampY = this._lastSpacingY[i];
+      if (!interpolate || prevStampX === undefined || prevStampY === undefined) {
+        _emitBatchStampInstances(this.app, instances, p, ax, ay, size, color, opacity);
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+        continue;
+      }
+
+      const dx = ax - prevStampX;
+      const dy = ay - prevStampY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
+
+      if (dist >= step) {
+        const emitCount = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= emitCount; j++) {
+          const t = j / emitCount;
+          _emitBatchStampInstances(this.app, instances, p, prevStampX + dx * t, prevStampY + dy * t, size, color, opacity);
+        }
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+      } else if (forceStamp) {
+        _emitBatchStampInstances(this.app, instances, p, ax, ay, size, color, opacity);
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+      }
+    }
+
+    return {
+      instances: instances.finish(),
+      count: instances.count,
+    };
   }
 
   // ---- Pheromone grid management ----
@@ -2065,6 +2514,7 @@ export class AntBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'ant'
       ? (this.app._ensureSimulationSpawns('ant').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('ant')[0])
       : null;
@@ -2142,31 +2592,71 @@ export class AntBrush {
       }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
-        this._baseHSL = hexToHSL(p.color);
+        const batchSupport = _getProceduralBatchRendererSupport(this, p, false);
+        if (batchSupport.ok) {
+          const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
+            flat: false,
+            pressure,
+            interpolate: false,
+            applySkip: false,
+            forceStamp: true,
+          });
+          if (!_renderProceduralBatchToTarget(this, layer.ctx, batch, p, { allowAlphaLock: true })) {
+            this._baseHSL = hexToHSL(p.color);
+            for (let i = 0; i < count; i++) {
+              const base = i * stride;
+              const ax = buffer[base + 0];
+              const ay = buffer[base + 1];
+              const sm = buffer[base + 8];
+              const om = buffer[base + 9];
+              const agentHue = buffer[base + 20];
+              const agentSat = buffer[base + 21];
+              const agentLit = buffer[base + 22];
+              let sz = p.stampSize * sm;
+              let op = p.stampOpacity * om;
+              if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+              if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+              op = Math.min(op, 1);
+              let color = p.color;
+              if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+                const [bh, bs, bl] = this._baseHSL;
+                color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+              }
+              this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
+              this._lastStampX[i] = ax;
+              this._lastStampY[i] = ay;
+            }
+          }
+        } else {
+          _setProceduralRenderBackend(this, 'legacy', batchSupport.reason);
+          this._baseHSL = hexToHSL(p.color);
+          for (let i = 0; i < count; i++) {
+            const base = i * stride;
+            const ax = buffer[base + 0];
+            const ay = buffer[base + 1];
+            const sm = buffer[base + 8];
+            const om = buffer[base + 9];
+            const agentHue = buffer[base + 20];
+            const agentSat = buffer[base + 21];
+            const agentLit = buffer[base + 22];
+            let sz = p.stampSize * sm;
+            let op = p.stampOpacity * om;
+            if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+            if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+            op = Math.min(op, 1);
+            let color = p.color;
+            if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+              const [bh, bs, bl] = this._baseHSL;
+              color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+            }
+            this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
+            this._lastStampX[i] = ax;
+            this._lastStampY[i] = ay;
+          }
+        }
         for (let i = 0; i < count; i++) {
           const base = i * stride;
-          const ax = buffer[base + 0];
-          const ay = buffer[base + 1];
-          const sm = buffer[base + 8];
-          const om = buffer[base + 9];
-          const agentHue = buffer[base + 20];
-          const agentSat = buffer[base + 21];
-          const agentLit = buffer[base + 22];
-          let sz = p.stampSize * sm;
-          let op = p.stampOpacity * om;
-          if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-          if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
-          op = Math.min(op, 1);
-          let color = p.color;
-          if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-            const [bh, bs, bl] = this._baseHSL;
-            color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
-          }
-          this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
-          this._lastStampX[i] = ax;
-          this._lastStampY[i] = ay;
-          // Deposit initial pheromone
-          this._depositPheromone(ax, ay, p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
+          this._depositPheromone(buffer[base + 0], buffer[base + 1], p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
         }
         layer.dirty = true;
       }
@@ -2179,8 +2669,10 @@ export class AntBrush {
 
   onUp(x, y) {
     if (!this._flatActive) {
-      const layer = this.app.getActiveLayer();
-      if (layer.dirty) this.app.compositeAllLayers();
+      if (!_commitProceduralGpuPreviewToLayer(this)) {
+        const layer = this.app.getActiveLayer();
+        if (layer?.dirty) this.app.compositeAllLayers();
+      }
     }
     // Touch has no hover phase — clear ants on lift so they don't linger
     if (this.app.pointerType === 'touch') {
@@ -2249,6 +2741,42 @@ export class AntBrush {
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
     const skipN = p.skipStamps || 0;
     app.strokeFrame++;
+
+    const batchSupport = _getProceduralBatchRendererSupport(this, p, flat);
+    if (batchSupport.ok) {
+      for (let i = 0; i < count; i++) {
+        const base = i * stride;
+        this._depositPheromone(buffer[base + 0], buffer[base + 1], p.antPheromoneSize, p.antPheromoneRate * MAX_PHEROMONE);
+      }
+      const batch = this._buildRenderBatch(read, p, {
+        flat,
+        pressure: app.pressure,
+        interpolate: true,
+        applySkip: skipN > 0,
+        forceStamp: !!app.isDrawing || !!app.simulation?.running,
+      });
+      if (_renderProceduralBatchToTarget(this, stampCtx, batch, p, { allowAlphaLock: !flat })) {
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+        return;
+      }
+    }
+
+    _setProceduralRenderBackend(this, 'legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -2389,6 +2917,39 @@ export class AntBrush {
     const layer = app.getActiveLayer();
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
+
+    const batchSupport = _getProceduralBatchRendererSupport(this, p, flat);
+    if (batchSupport.ok) {
+      const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
+        flat,
+        interpolate: false,
+        applySkip: false,
+        taperCurve: curve,
+        taperSize: p.taperSize,
+        taperOpacity: p.taperOpacity,
+      });
+      if (_renderProceduralBatchToTarget(this, stampCtx, batch, p, { allowAlphaLock: !flat })) {
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.taperOpacity) masterOp *= curve;
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+        return;
+      }
+    }
+
+    _setProceduralRenderBackend(this, 'legacy', batchSupport.reason || this.renderer.legacyReason || this._renderLegacyReason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -2490,10 +3051,14 @@ export class AntBrush {
   getStatusInfo() {
     if (!this._ready) return 'WASM loading...';
     const { count } = this.sim.readAgents();
-    return `Ant | Agents: ${count}`;
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (_getProceduralBatchRendererSupport(this, this.app.getP(), this._flatActive).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Ant | Agents: ${count} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
   }
 
   deactivate() {
+    _clearProceduralGpuPreview(this, { composite: true });
     if (this.sim) this.sim.clearAgents();
     if (this._pheroData) this._pheroData.fill(0);
   }
@@ -2510,6 +3075,7 @@ export class AntBrush {
 export class BristleBrush {
   constructor(app) {
     this.app = app;
+    this.renderer = createBoidStampRenderer();
     // Bristle state arrays
     this._rootX = [];    // root (ferrule) x – follows cursor
     this._rootY = [];    // root (ferrule) y
@@ -2566,6 +3132,16 @@ export class BristleBrush {
     this._blurTmpCtx = null;
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
+    this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuFailureCount = 0;
+    this._gpuDisabledReason = '';
+    this._rendererInitPromise = null;
+    this._rendererChainPatched = false;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    _ensureProceduralStampRendererInit(this);
   }
 
   _isDeadHoverAngleSample() {
@@ -2879,6 +3455,60 @@ export class BristleBrush {
     return this._cachedColors[i];
   }
 
+  _buildRenderBatch(p, {
+    opScale = 1,
+    flat = this._flatActive,
+    pressure = this._smoothPressure,
+    taperCurve = 1,
+    taperSize = false,
+    taperOpacity = false,
+  } = {}) {
+    const instances = new StampInstanceBuffer(Math.max(64, this._count * 2));
+    for (let i = 0; i < this._count; i++) {
+      const tx = this._smoothX[i];
+      const ty = this._smoothY[i];
+      let sz = p.stampSize * this._varSize[i];
+      let op = flat
+        ? Math.min(opScale * this._varOpacity[i], 1)
+        : p.stampOpacity * opScale * this._varOpacity[i];
+      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (taperSize) sz *= taperCurve;
+      if (taperOpacity) op *= taperCurve;
+      op = Math.min(op, 1);
+      if (op < 0.005 || sz < 0.5) continue;
+
+      const color = hexToRGB(this._getColor(i, p.color));
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastStampX[i];
+      const prevY = this._lastStampY[i];
+
+      if (prevX !== undefined) {
+        const dx = tx - prevX;
+        const dy = ty - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < step) continue;
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const t = j / n;
+          _emitBatchStampInstances(this.app, instances, p, prevX + dx * t, prevY + dy * t, sz, color, op);
+        }
+      } else {
+        _emitBatchStampInstances(this.app, instances, p, tx, ty, sz, color, op);
+      }
+
+      this._lastStampX[i] = tx;
+      this._lastStampY[i] = ty;
+    }
+
+    return {
+      instances: instances.finish(),
+      count: instances.count,
+    };
+  }
+
   /** Stamp all bristle tips using EMA-smoothed positions */
   _stampBristles(stampCtx, p, opScale, flat = false, blurCtx = null) {
     const app = this.app;
@@ -3061,6 +3691,7 @@ export class BristleBrush {
 
   onDown(x, y, pressure) {
     const p = this.app.getP();
+    if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
     this._pressure = pressure;
     this._smoothPressure = pressure; // Initialize smoothed pressure at stroke start
     this._lastCursorX = x;
@@ -3168,7 +3799,9 @@ export class BristleBrush {
   }
 
   onUp(x, y) {
-    // Bristles continue via taper if configured
+    if (!this._flatActive) {
+      _commitProceduralGpuPreviewToLayer(this);
+    }
   }
 
   onFrame(elapsed) {
@@ -3206,6 +3839,36 @@ export class BristleBrush {
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
     const blurEnabled = p.trailBlur > 0;
+
+    const batchSupport = _getProceduralBatchRendererSupport(this, p, flat);
+    if (batchSupport.ok) {
+      const batch = this._buildRenderBatch(p, {
+        opScale: 1,
+        flat,
+        pressure: this._smoothPressure,
+      });
+      if (_renderProceduralBatchToTarget(this, stampCtx, batch, p, { allowAlphaLock: !flat })) {
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * this._smoothPressure);
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+        return;
+      }
+    }
+
+    _setProceduralRenderBackend(this, 'legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
 
     this._stampBristles(stampCtx, p, 1.0, flat, blurEnabled ? this._blurStrokeCtx : null);
 
@@ -3286,6 +3949,38 @@ export class BristleBrush {
     const layer = app.getActiveLayer();
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
+
+    const batchSupport = _getProceduralBatchRendererSupport(this, p, flat);
+    if (batchSupport.ok) {
+      const batch = this._buildRenderBatch(p, {
+        opScale: 1,
+        flat,
+        taperCurve: curve,
+        taperSize: p.taperSize,
+        taperOpacity: p.taperOpacity,
+      });
+      if (_renderProceduralBatchToTarget(this, stampCtx, batch, p, { allowAlphaLock: !flat })) {
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.taperOpacity) masterOp *= curve;
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+        return;
+      }
+    }
+
+    _setProceduralRenderBackend(this, 'legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
 
     // Stamp with fading opacity/size
     for (let i = 0; i < this._count; i++) {
@@ -3433,10 +4128,14 @@ export class BristleBrush {
   }
 
   getStatusInfo() {
-    return `Bristle | Tips: ${this._count}`;
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (_getProceduralBatchRendererSupport(this, this.app.getP(), this._flatActive).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Bristle | Tips: ${this._count} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
   }
 
   deactivate() {
+    _clearProceduralGpuPreview(this, { composite: true });
     this._count = 0;
     this._active = false;
     this._hoverActive = false;
@@ -3531,6 +4230,14 @@ export class SimpleBrush {
     return { ok: true, reason: '' };
   }
 
+  _getBatchCompositeOperation(p, layer) {
+    return layer.alphaLock ? 'source-atop' : 'source-over';
+  }
+
+  _getBatchStampColor(p) {
+    return p.color;
+  }
+
   _expandRenderPoints(points, stampSize, p) {
     if (!points?.length) return [];
     const expanded = [];
@@ -3554,7 +4261,7 @@ export class SimpleBrush {
   }
 
   _buildSimpleBatch(points, p, pressure) {
-    const color = hexToRGB(p.color);
+    const color = hexToRGB(this._getBatchStampColor?.(p) || p.color);
     const canvasTextureActive = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
     const instances = new StampInstanceBuffer(Math.max(16, points.length));
     for (const pt of points) {
@@ -3627,7 +4334,7 @@ export class SimpleBrush {
     const renderPoints = this._expandRenderPoints(points, stampSize, p);
     const batch = this._buildSimpleBatch(renderPoints, p, pressure);
     const stampBitmap = p.stampImageCanvas || null;
-    const compositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
+    const compositeOperation = this._getBatchCompositeOperation?.(p, layer) || 'source-over';
     if (batch.count <= 0) {
       const backend = this.renderer.getPreferredBatchRendererKind({ stampBitmap });
       this._setRenderBackend(backend);
@@ -4406,6 +5113,8 @@ export class EraserBrush {
   constructor(app) {
     this.app = app;
     this._inner = new SimpleBrush(app);
+    this._inner._getBatchCompositeOperation = () => 'destination-out';
+    this._inner._getBatchStampColor = () => '#000000';
     // Override stamp to use destination-out
     this._inner._stamp = (x, y, pressure) => {
       const p = this.app.getP();
@@ -4435,336 +5144,6 @@ export class EraserBrush {
   onFrame(e) { this._inner.onFrame(e); }
   taperFrame(t, p) { this._inner.taperFrame(t, p); }
   drawOverlay(ctx, p) { this._inner.drawOverlay(ctx, p); }
-  getStatusInfo() { return 'Eraser'; }
+  getStatusInfo() { return this._inner.getStatusInfo().replace(/^Simple/, 'Eraser'); }
   deactivate() { this._inner.deactivate(); }
-}
-
-// =============================================================================
-// AI DIFFUSION BRUSH — Captures canvas region, sends to SD server for inpainting
-//
-// Phase A: Stub implementation using placeholder stamps. Capture + mask pipeline
-// fully functional; server calls replaced with tinted preview.
-// =============================================================================
-
-export class AIDiffusionBrush {
-  constructor(app) {
-    this.app = app;
-    // Stamp queue for continuous mode
-    this._queue = [];
-    this._pending = []; // { x, y, promise, startTime }
-    this._maxPending = 3;
-    // Reusable 512×512 canvases for capture/mask
-    this._captureCanvas = document.createElement('canvas');
-    this._captureCanvas.width = 512;
-    this._captureCanvas.height = 512;
-    this._captureCtx = this._captureCanvas.getContext('2d');
-    this._maskCanvas = document.createElement('canvas');
-    this._maskCanvas.width = 512;
-    this._maskCanvas.height = 512;
-    this._maskCtx = this._maskCanvas.getContext('2d');
-    // Result temp canvas (sized to stamp)
-    this._resultCanvas = document.createElement('canvas');
-    this._resultCtx = this._resultCanvas.getContext('2d');
-    // Continuous mode timer
-    this._lastStampTime = 0;
-    this._lastStampX = null;
-    this._lastStampY = null;
-  }
-
-  /**
-   * Capture a square region from the canvas centered at (cx, cy), resized to 512×512.
-   * @param {number} cx - Center X in canvas coords
-   * @param {number} cy - Center Y in canvas coords
-   * @param {number} size - Region size in canvas pixels
-   * @param {string} source - 'visible' or 'active'
-   * @returns {HTMLCanvasElement} 512×512 captured image
-   */
-  captureRegion(cx, cy, size, source) {
-    const app = this.app;
-    const half = size / 2;
-    const sx = cx - half, sy = cy - half;
-    const ctx = this._captureCtx;
-    ctx.clearRect(0, 0, 512, 512);
-
-    if (source === 'active') {
-      const layer = app.getActiveLayer();
-      const dpr = app.DPR;
-      ctx.drawImage(layer.canvas,
-        sx * dpr, sy * dpr, size * dpr, size * dpr,
-        0, 0, 512, 512);
-    } else {
-      // Visible composite — use the composite display canvas
-      const dpr = app.DPR;
-      ctx.drawImage(app.compositeCanvas,
-        sx * dpr, sy * dpr, size * dpr, size * dpr,
-        0, 0, 512, 512);
-    }
-    return this._captureCanvas;
-  }
-
-  /**
-   * Build a 512×512 circular soft-edged mask (white = inpaint area).
-   * @param {number} feather - Feather width in 512-space pixels (0 = hard edge)
-   * @returns {HTMLCanvasElement} 512×512 mask
-   */
-  buildMask(feather) {
-    const ctx = this._maskCtx;
-    ctx.clearRect(0, 0, 512, 512);
-    const cx = 256, cy = 256;
-    const outerR = 220; // leave some border for context
-    const innerR = Math.max(0, outerR - feather);
-
-    if (feather > 0) {
-      const grad = ctx.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
-      grad.addColorStop(0, '#fff');
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 512, 512);
-      // Fill solid inner circle
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    return this._maskCanvas;
-  }
-
-  /**
-   * Stamp a result image onto the active layer at (cx, cy) with the given size.
-   * Uses the mask to blend edges via globalCompositeOperation.
-   */
-  stampResult(resultImg, cx, cy, targetSize) {
-    const app = this.app;
-    const layer = app.getActiveLayer();
-    const ctx = layer.ctx;
-    const half = targetSize / 2;
-
-    // Draw result image clipped by circular mask
-    const rc = this._resultCanvas;
-    const rctx = this._resultCtx;
-    rc.width = targetSize;
-    rc.height = targetSize;
-    rctx.clearRect(0, 0, targetSize, targetSize);
-
-    // Draw circular clip path
-    rctx.save();
-    rctx.beginPath();
-    rctx.arc(targetSize / 2, targetSize / 2, targetSize / 2, 0, Math.PI * 2);
-    rctx.clip();
-    rctx.drawImage(resultImg, 0, 0, targetSize, targetSize);
-    rctx.restore();
-
-    // Stamp onto layer (use symmetry if enabled)
-    const points = app.getSymmetryPoints(cx, cy);
-    for (const pt of points) {
-      ctx.drawImage(rc, pt.x - half, pt.y - half, targetSize, targetSize);
-      app._markLayerDirty(layer, {
-        x: pt.x - half - 2,
-        y: pt.y - half - 2,
-        w: targetSize + 4,
-        h: targetSize + 4,
-      });
-    }
-
-    layer.dirty = true;
-    app.compositeAllLayers();
-  }
-
-  /**
-   * Convert a canvas to a base64 data URL.
-   */
-  _canvasToB64(canvas) {
-    return canvas.toDataURL('image/png');
-  }
-
-  /**
-   * Request an AI-generated stamp from the server, or fall back to placeholder.
-   */
-  _requestStamp(cx, cy, p) {
-    const stampSize = p.aiStampSize || 80;
-    const feather = p.maskFeather || 20;
-    const source = p.aiInputSource || 'visible';
-    const server = this.app.aiServer;
-
-    // Capture + mask (always needed)
-    this.captureRegion(cx, cy, stampSize, source);
-    this.buildMask(feather);
-
-    if (!server || server.state !== 'connected') {
-      // Fallback: placeholder stamp
-      this._placeholderStamp(cx, cy, p);
-      return;
-    }
-
-    // Drop oldest pending if at cap
-    if (this._pending.length >= this._maxPending) {
-      this._pending.shift();
-    }
-
-    const imageB64 = this._canvasToB64(this._captureCanvas);
-    const maskB64 = this._canvasToB64(this._maskCanvas);
-
-    const seed = p.aiRandomSeed ? -1 : (p.aiSeed || 42);
-
-    const entry = {
-      x: cx, y: cy, stampSize,
-      startTime: performance.now(),
-      promise: server.inpaint({
-        imageBase64: imageB64,
-        maskBase64: maskB64,
-        prompt: p.aiPrompt || '',
-        negativePrompt: p.aiNegPrompt || '',
-        steps: p.aiSteps || 2,
-        strength: p.aiStrength ?? 0.8,
-        guidanceScale: p.aiGuidance ?? 7.5,
-        seed,
-      }).then(result => {
-        entry.result = result;
-      }).catch(err => {
-        entry.error = err;
-      }),
-      result: null,
-      error: null,
-    };
-    this._pending.push(entry);
-  }
-
-  /**
-   * Generate a placeholder stamp (no server / offline fallback).
-   */
-  _placeholderStamp(cx, cy, p) {
-    const stampSize = p.aiStampSize || 80;
-
-    // Create a visible placeholder: solid color fill + crosshatch
-    const tc = document.createElement('canvas');
-    tc.width = 512; tc.height = 512;
-    const tctx = tc.getContext('2d');
-
-    // Solid fill with primary color
-    tctx.globalAlpha = 0.35;
-    tctx.fillStyle = p.color || '#4a7af5';
-    tctx.fillRect(0, 0, 512, 512);
-
-    // Visible crosshatch pattern to indicate placeholder
-    tctx.globalAlpha = 0.5;
-    tctx.strokeStyle = '#ffffff';
-    tctx.lineWidth = 1.5;
-    for (let i = -512; i < 1024; i += 20) {
-      tctx.beginPath(); tctx.moveTo(i, 0); tctx.lineTo(i + 512, 512); tctx.stroke();
-      tctx.beginPath(); tctx.moveTo(i, 512); tctx.lineTo(i + 512, 0); tctx.stroke();
-    }
-    tctx.globalAlpha = 1;
-
-    this.stampResult(tc, cx, cy, stampSize);
-  }
-
-  onDown(x, y, pressure) {
-    const p = this.app.getP();
-
-    // Push undo
-    if (!this.app.undoPushedThisStroke) {
-      this.app.pushUndo();
-      this.app.undoPushedThisStroke = true;
-    }
-
-    // Stamp immediately
-    this._requestStamp(x, y, p);
-    this._lastStampX = x;
-    this._lastStampY = y;
-    this._lastStampTime = performance.now();
-  }
-
-  onMove(x, y, pressure) {
-    const p = this.app.getP();
-    const mode = p.aiMode || 'continuous';
-    if (mode !== 'continuous') return;
-
-    const dx = x - (this._lastStampX ?? x);
-    const dy = y - (this._lastStampY ?? y);
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    // Spacing slider controls % of stamp size between centres
-    const spacing = (p.aiStampSize || 80) * ((p.aiInterval || 30) / 100);
-
-    if (dist >= spacing) {
-      this._requestStamp(x, y, p);
-      this._lastStampX = x;
-      this._lastStampY = y;
-    }
-  }
-
-  onUp(x, y) {
-    this._lastStampX = null;
-    this._lastStampY = null;
-  }
-
-  onFrame(elapsed) {
-    // Process completed server responses
-    const done = [];
-    for (let i = this._pending.length - 1; i >= 0; i--) {
-      const entry = this._pending[i];
-      if (entry.result) {
-        // Decode and stamp the AI-generated image
-        const img = new Image();
-        img.onload = () => {
-          this.stampResult(img, entry.x, entry.y, entry.stampSize);
-        };
-        img.src = entry.result.imageBase64.startsWith('data:')
-          ? entry.result.imageBase64
-          : 'data:image/png;base64,' + entry.result.imageBase64;
-        done.push(i);
-      } else if (entry.error) {
-        // Log error via toast, remove entry
-        this.app.showToast('⚠ AI: ' + (entry.error.message || 'Generation failed'));
-        done.push(i);
-      }
-    }
-    // Remove processed entries (reverse order to keep indices valid)
-    for (const i of done) {
-      this._pending.splice(i, 1);
-    }
-  }
-
-  taperFrame(t, p) {
-    // AI brush doesn't support taper
-  }
-
-  drawOverlay(ctx, p) {
-    const app = this.app;
-    // Draw stamp preview circle at cursor
-    const stampSize = p.aiStampSize || 80;
-    ctx.strokeStyle = 'rgba(74,122,245,0.5)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.arc(app.leaderX, app.leaderY, stampSize / 2, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Draw pending stamp indicators
-    for (const pend of this._pending) {
-      const elapsed = performance.now() - pend.startTime;
-      const pulse = 0.3 + 0.3 * Math.sin(elapsed / 200);
-      ctx.fillStyle = `rgba(74,122,245,${pulse})`;
-      ctx.beginPath();
-      ctx.arc(pend.x, pend.y, 6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  getStatusInfo() {
-    const pending = this._pending.length;
-    return pending > 0 ? `AI | Pending: ${pending}` : 'AI | Ready';
-  }
-
-  deactivate() {
-    this._queue = [];
-    this._pending = [];
-    this._lastStampX = null;
-    this._lastStampY = null;
-  }
 }
