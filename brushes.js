@@ -1,6 +1,8 @@
 // =============================================================================
 // brushes.js — Ant, Boid, Bristle, Eraser, Fluid, and Simple brush engines
 //
+// The BlobAdvectBrush (grid-based Eulerian advection) lives in fluid_advect.js.
+//
 // Each brush implements: onDown(x,y,pressure), onMove(x,y,pressure),
 // onUp(x,y), onFrame(elapsed), taperFrame(t,p), drawOverlay(ctx,p),
 // getStatusInfo(), deactivate().

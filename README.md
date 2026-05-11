@@ -10,6 +10,7 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 
 - **Boid Brush** – A swarm of boids follows the cursor, each stamping paint as it moves. Flocking forces (cohesion, separation, alignment, wander, flow fields, etc.) shape the resulting stroke.
 - **Fluid Brush** – Wet paint droplets are deposited onto the canvas and keep flowing, letting the brush drag and reshape the fluid after it lands.
+- **Blob Advect Brush** – A lightweight grid-based Eulerian advection brush (no particles). Paint a blob mask over existing canvas pixels, then release: the pixels inside the blob are advected by pointer-driven impulses plus time-varying curl noise. Supports dye diffusion (wide range), viscosity, pressure projection for incompressibility, and configurable post-release run time. Implemented in `fluid_advect.js`.
 - **Simple Brush** – A single-stamp brush for direct painting without boid simulation.
 - **Brush Scale** – A proportional scale slider that adjusts stamp size, spawn radius, and spread together, keeping the overall look consistent at different sizes.
 - **Spawn Shapes** – Circle, ring, gaussian, line, ellipse, diamond, grid, sunburst, spiral, poisson, and cluster distributions for boid placement.
