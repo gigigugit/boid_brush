@@ -52,6 +52,24 @@ const STAMP_VISIBILITY_SAMPLE_COUNT = 12;
 // Disable GPU paths for the session after 2 consecutive probe/render failures.
 // This avoids repeated flicker/no-op draws on platforms with unstable interop.
 const GPU_RENDERER_FAILURE_LIMIT = 2;
+// iPad/iPhone WebKit can render the hidden WebGL boid surface, but drawing that
+// live WebGL canvas back through the compositor is unreliable. Keep using the
+// older direct-to-layer path there so the renderer can fall back to readPixels
+// or Canvas2D instead of showing an invisible preview.
+const DISABLE_BOID_GPU_PREVIEW_ON_APPLE_TOUCH_WEBKIT = (() => {
+  try {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
+    const isIPadOS = platform === 'MacIntel' && maxTouchPoints > 1;
+    const isAppleTouchDevice = /iPad|iPhone|iPod/i.test(ua) || isIPadOS;
+    const isWebKit = /AppleWebKit/i.test(ua);
+    return isAppleTouchDevice && isWebKit;
+  } catch {
+    return false;
+  }
+})();
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -815,6 +833,7 @@ export class BoidBrush {
   _canUseGpuPreview(targetCtx, p) {
     const layer = this.app.getActiveLayer();
     if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
+    if (DISABLE_BOID_GPU_PREVIEW_ON_APPLE_TOUCH_WEBKIT) return false;
     if (this._flatActive) return false;
     if (!this.renderer.webgl?.ready) return false;
     if (p?.stampImageCanvas) return false;
