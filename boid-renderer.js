@@ -367,6 +367,34 @@ class WebGLBoidStampRenderer {
     }
   }
 
+  clearSurface(widthPx, heightPx) {
+    if (!this.gl || !this.program || !this.instanceBuffer || !this.vao) {
+      return this._setRenderFailure('WebGL render state unavailable');
+    }
+    const width = Math.max(1, Math.round(widthPx));
+    const height = Math.max(1, Math.round(heightPx));
+    try {
+      this._ensureCanvas(width, height);
+      this.gl.clearColor(0, 0, 0, 0);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+      this.gl.flush();
+      this.lastRenderFailureReason = '';
+      return true;
+    } catch (error) {
+      return this._setRenderFailure(`WebGL clear failed: ${error?.message || error}`);
+    }
+  }
+
+  copyTo2D(targetCtx, widthPx, heightPx, compositeOperation = DEFAULT_COMPOSITE_OPERATION) {
+    if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
+    return this._copyViaReadPixels(
+      targetCtx,
+      Math.max(1, Math.round(widthPx)),
+      Math.max(1, Math.round(heightPx)),
+      compositeOperation,
+    );
+  }
+
   _ensureStampTexture(bitmap) {
     if (!bitmap) return true;
     if (!this._stampTexture) {
@@ -445,9 +473,9 @@ class WebGLBoidStampRenderer {
     return false;
   }
 
-  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1, allowBeforeReady = false, compositeOperation = DEFAULT_COMPOSITE_OPERATION }) {
+  render({ instances, count, targetCtx, targetWidthPx, targetHeightPx, dpr, stampBitmap = null, stampTint = true, stampRotation = 0, stampAspect = 1, allowBeforeReady = false, compositeOperation = DEFAULT_COMPOSITE_OPERATION, copyToTarget = true, clear = true }) {
     if (!allowBeforeReady && !this.ready) return this._setRenderFailure('WebGL renderer not ready');
-    if (!targetCtx) return this._setRenderFailure('2D target context unavailable');
+    if (copyToTarget && !targetCtx) return this._setRenderFailure('2D target context unavailable');
     if (!instances || count <= 0) return this._setRenderFailure('no stamp instances to draw');
     if (!this.gl || !this.program || !this.instanceBuffer || !this.vao) {
       return this._setRenderFailure('WebGL render state unavailable');
@@ -474,13 +502,20 @@ class WebGLBoidStampRenderer {
           return this._setRenderFailure('WebGL stamp texture unavailable');
         }
       }
-      this.gl.clearColor(0, 0, 0, 0);
-      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+      if (clear) {
+        this.gl.clearColor(0, 0, 0, 0);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+      }
       this.gl.drawArraysInstanced(this.gl.TRIANGLES, 0, 6, count);
       this.gl.bindVertexArray(null);
       this.gl.flush();
     } catch (error) {
       return this._setRenderFailure(`WebGL submit failed: ${error?.message || error}`);
+    }
+
+    if (!copyToTarget) {
+      this.lastRenderFailureReason = '';
+      return true;
     }
 
     let copied = false;

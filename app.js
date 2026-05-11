@@ -668,6 +668,7 @@ export class App {
       dirty: true,
       dirtyTiles: null,
       glTex: null,
+      gpuPreviewCanvas: null,
       alphaLock: false,
       ...props,
     };

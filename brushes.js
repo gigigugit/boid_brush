@@ -618,6 +618,8 @@ export class BoidBrush {
     this._renderLegacyReason = 'compatibility check pending';
     this._gpuBatchVisibilityVerified = false;
     this._rendererChainPatched = false;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
   }
 
   _patchRendererChain() {
@@ -639,6 +641,7 @@ export class BoidBrush {
 
   async init({ force = false } = {}) {
     if (force) {
+      this._clearGpuPreview();
       this._ready = false;
       this.sim = null;
       this.app.sharedMotionSim = null;
@@ -718,6 +721,7 @@ export class BoidBrush {
   _clearAgents() {
     if (!this.sim) return;
     this.sim.clearAgents();
+    this._clearGpuPreview({ composite: true });
     this._resetInterpolationState();
     this._boidsSpawned = false;
   }
@@ -806,6 +810,89 @@ export class BoidBrush {
   _formatLegacyFallbackReason(reason) {
     const coreReason = reason || 'GPU boid-stamp renderer failed';
     return `${coreReason}; using CPU fallback`;
+  }
+
+  _canUseGpuPreview(targetCtx, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
+    if (this._flatActive) return false;
+    if (!this.renderer.webgl?.ready) return false;
+    if (p?.stampImageCanvas) return false;
+    if (p?.sensingEnabled) return false;
+    if ((p?.taperLength || 0) > 0) return false;
+    if (layer.alphaLock) return false;
+    if (layer.blend !== 'source-over') return false;
+    if (Math.abs((layer.opacity ?? 1) - 1) > 1e-3) return false;
+    return true;
+  }
+
+  _clearGpuPreview({ composite = false } = {}) {
+    const layer = this._gpuPreviewLayer;
+    if (layer?.gpuPreviewCanvas === this.renderer.webgl?.canvas) {
+      layer.gpuPreviewCanvas = null;
+      layer.dirty = true;
+    }
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    if (composite && layer) this.app.compositeAllLayers();
+  }
+
+  _commitGpuPreviewToLayer() {
+    const layer = this._gpuPreviewLayer;
+    if (!layer || !this.renderer.webgl?.ready) {
+      this._clearGpuPreview();
+      return false;
+    }
+    const ok = this.renderer.webgl.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      layer.alphaLock ? 'source-atop' : 'source-over',
+    );
+    this.renderer.webgl.clearSurface(layer.canvas.width, layer.canvas.height);
+    layer.gpuPreviewCanvas = null;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    if (!ok) return false;
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+    return true;
+  }
+
+  _renderBatchToGpuPreview(batch, p) {
+    const layer = this.app.getActiveLayer();
+    const webgl = this.renderer.webgl;
+    if (!layer || !webgl?.ready) return false;
+    if (!this._gpuPreviewActive || this._gpuPreviewLayer !== layer) {
+      if (!webgl.clearSurface(layer.canvas.width, layer.canvas.height)) return false;
+      this._gpuPreviewActive = true;
+      this._gpuPreviewLayer = layer;
+      layer.gpuPreviewCanvas = webgl.canvas;
+    }
+    const stampBitmap = p?.stampImageCanvas || null;
+    const ok = webgl.render({
+      instances: batch.instances,
+      count: batch.count,
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      dpr: this.app.DPR,
+      stampBitmap,
+      stampTint: p?.stampImageTint !== false,
+      stampRotation: p?.stampImageRotation || 0,
+      stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+      copyToTarget: false,
+      clear: false,
+    });
+    if (!ok) {
+      this._commitGpuPreviewToLayer();
+      this._clearGpuPreview();
+      return false;
+    }
+    layer.gpuPreviewCanvas = webgl.canvas;
+    layer.dirty = true;
+    this._setRenderBackend(webgl.kind);
+    this._gpuBatchVisibilityVerified = true;
+    return true;
   }
 
   _resetInterpolationState() {
@@ -975,6 +1062,13 @@ export class BoidBrush {
   _renderBatchToTarget(targetCtx, batch, p, { allowAlphaLock = false } = {}) {
     const stampBitmap = p?.stampImageCanvas || null;
     const layer = this.app.getActiveLayer();
+    const previewAllowed = this._canUseGpuPreview(targetCtx, p);
+    if (this._gpuPreviewActive && !previewAllowed) {
+      this._commitGpuPreviewToLayer();
+    }
+    if (previewAllowed) {
+      return this._renderBatchToGpuPreview(batch, p);
+    }
     const ok = this.renderer.render({
       instances: batch.instances,
       count: batch.count,
@@ -1070,6 +1164,7 @@ export class BoidBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    if (this._gpuPreviewActive) this._clearGpuPreview({ composite: true });
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
       ? (this.app._ensureSimulationSpawns('boid').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('boid')[0])
       : null;
@@ -1185,8 +1280,10 @@ export class BoidBrush {
     // the next RAF frame fires. Only runs in non-flat mode — flat stroke
     // compositing lives in onFrame and the taper handles the final flush.
     if (!this._flatActive) {
-      const layer = this.app.getActiveLayer();
-      if (layer.dirty) this.app.compositeAllLayers();
+      if (!this._commitGpuPreviewToLayer()) {
+        const layer = this.app.getActiveLayer();
+        if (layer?.dirty) this.app.compositeAllLayers();
+      }
     }
     const p = this.app.getP();
     this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
@@ -1606,6 +1703,7 @@ export class BoidBrush {
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
+    this._clearGpuPreview({ composite: true });
     this._boidsSpawned = false;
     this._hoverSpawned = false;
   }
