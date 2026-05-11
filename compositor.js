@@ -154,6 +154,7 @@ export class Compositor {
     this._passProg = null;
     this._fbo = [null, null];
     this._fboTex = [null, null];
+    this._previewTex = null;
     this._vao = null;
     this._w = 0;
     this._h = 0;
@@ -210,6 +211,7 @@ export class Compositor {
       if (this._fbo[i]) gl.deleteFramebuffer(this._fbo[i]);
       if (this._fboTex[i]) gl.deleteTexture(this._fboTex[i]);
     }
+    if (this._previewTex) gl.deleteTexture(this._previewTex);
     this.ready = false;
     this.gl = null;
   }
@@ -283,6 +285,9 @@ export class Compositor {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[i]);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._fboTex[i], 0);
     }
+    this._previewTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this._previewTex);
+    this._initTex(gl);
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -380,6 +385,13 @@ export class Compositor {
     layer.dirtyTiles = null;
   }
 
+  _uploadPreviewTexture(gl, source) {
+    if (!this._previewTex || !source) return false;
+    gl.bindTexture(gl.TEXTURE_2D, this._previewTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    return true;
+  }
+
   // ---- GPU composite ----
 
   _compositeGL(layers, cssW, cssH, dirtyRects = null) {
@@ -422,6 +434,19 @@ export class Compositor {
         gl.uniform1i(uMode, BLEND_MODE_MAP[l.blend] || 0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         const tmp = src; src = dst; dst = tmp;
+        if (l.gpuPreviewCanvas && this._uploadPreviewTexture(gl, l.gpuPreviewCanvas)) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[dst]);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, this._fboTex[src]);
+          gl.uniform1i(uBase, 0);
+          gl.activeTexture(gl.TEXTURE1);
+          gl.bindTexture(gl.TEXTURE_2D, this._previewTex);
+          gl.uniform1i(uLayer, 1);
+          gl.uniform1f(uOpacity, 1);
+          gl.uniform1i(uMode, BLEND_MODE_MAP['source-over']);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          const tmp = src; src = dst; dst = tmp;
+        }
       }
 
       // Final blit to screen
@@ -477,6 +502,20 @@ export class Compositor {
       this._drawScissored(gl, dirtyRects, cssW, cssH, () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4));
       const tmp = src; src = dst; dst = tmp;
       drewVisibleLayer = true;
+      if (l.gpuPreviewCanvas && this._uploadPreviewTexture(gl, l.gpuPreviewCanvas)) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[dst]);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._fboTex[src]);
+        gl.uniform1i(uBase, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this._previewTex);
+        gl.uniform1i(uLayer, 1);
+        gl.uniform1f(uOpacity, 1);
+        gl.uniform1i(uMode, BLEND_MODE_MAP['source-over']);
+        this._drawScissored(gl, dirtyRects, cssW, cssH, () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4));
+        const tmp = src; src = dst; dst = tmp;
+        drewVisibleLayer = true;
+      }
     }
     if (!drewVisibleLayer) src = back;
 
@@ -518,6 +557,11 @@ export class Compositor {
         ctx.globalAlpha = l.opacity;
         ctx.globalCompositeOperation = l.blend;
         ctx.drawImage(l.canvas, 0, 0, l.canvas.width, l.canvas.height, 0, 0, cssW, cssH);
+        if (l.gpuPreviewCanvas) {
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(l.gpuPreviewCanvas, 0, 0, l.gpuPreviewCanvas.width, l.gpuPreviewCanvas.height, 0, 0, cssW, cssH);
+        }
       }
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';

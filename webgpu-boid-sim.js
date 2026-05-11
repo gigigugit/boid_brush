@@ -1,10 +1,12 @@
 import { BoidSim } from './wasm-bridge.js';
 
 const AGENT_STRIDE = 23;
-const PARAMS_LEN = 34;
+const PARAMS_LEN = 35;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
 const STAGING_BUFFER_COUNT = 2;
+const MAX_GPU_SIM_POINT_GUIDES = 32;
+const MAX_GPU_SIM_PATH_TARGETS = 16;
 
 function fillParamsArray(target, p, targetX, targetY, time) {
   target[0]  = p.seek ?? 0.4;
@@ -41,6 +43,7 @@ function fillParamsArray(target, p, targetX, targetY, time) {
   target[31] = p.satVar ?? 0;
   target[32] = p.litVar ?? 0;
   target[33] = p.simBoundsMargin ?? -1;
+  target[34] = p.simSpeed ?? 1;
 }
 
 function packMeta(agentCount, width, height) {
@@ -51,6 +54,17 @@ function packMeta(agentCount, width, height) {
   u32[1] = 0;
   f32[2] = width;
   f32[3] = height;
+  return raw;
+}
+
+function packGuideMeta(pointCount, pathTargetCount) {
+  const raw = new ArrayBuffer(16);
+  const u32 = new Uint32Array(raw);
+  u32[0] = pointCount >>> 0;
+  u32[1] = pathTargetCount >>> 0;
+  // Padding slots keep this packed buffer aligned with the WGSL GuideMeta struct.
+  u32[2] = 0;
+  u32[3] = 0;
   return raw;
 }
 
@@ -87,8 +101,15 @@ export class WebGPUBoidSim {
     this.pipeline = null;
     this.paramsBuffer = null;
     this.metaBuffer = null;
+    this.guideMetaBuffer = null;
+    this.pointGuideBuffer = null;
+    this.pathTargetBuffer = null;
     this.agentBuffers = [];
     this.bindGroups = [];
+    this._pointGuides = new Float32Array(MAX_GPU_SIM_POINT_GUIDES * 8);
+    this._pathTargets = new Float32Array(MAX_GPU_SIM_PATH_TARGETS * 4);
+    this._pointGuideCount = 0;
+    this._pathTargetCount = 0;
   }
 
   async init() {
@@ -118,6 +139,18 @@ export class WebGPUBoidSim {
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    this.guideMetaBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.pointGuideBuffer = this.device.createBuffer({
+      size: this._pointGuides.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.pathTargetBuffer = this.device.createBuffer({
+      size: this._pathTargets.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
     for (let i = 0; i < STAGING_BUFFER_COUNT; i++) {
       this._stagingSlots.push({
         buffer: this.device.createBuffer({
@@ -146,13 +179,16 @@ export class WebGPUBoidSim {
   _createBindGroup(inputIndex, outputIndex) {
     return this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.agentBuffers[inputIndex] } },
-        { binding: 1, resource: { buffer: this.agentBuffers[outputIndex] } },
-        { binding: 2, resource: { buffer: this.paramsBuffer } },
-        { binding: 3, resource: { buffer: this.metaBuffer } },
-      ],
-    });
+        entries: [
+          { binding: 0, resource: { buffer: this.agentBuffers[inputIndex] } },
+          { binding: 1, resource: { buffer: this.agentBuffers[outputIndex] } },
+          { binding: 2, resource: { buffer: this.paramsBuffer } },
+          { binding: 3, resource: { buffer: this.metaBuffer } },
+          { binding: 4, resource: { buffer: this.pointGuideBuffer } },
+          { binding: 5, resource: { buffer: this.pathTargetBuffer } },
+          { binding: 6, resource: { buffer: this.guideMetaBuffer } },
+        ],
+      });
   }
 
   _shaderCode() {
@@ -188,10 +224,29 @@ struct SimMeta {
   height : f32,
 }
 
+struct PointGuide {
+  posRadius : vec4f,
+  params : vec4f,
+}
+
+struct PathTarget {
+  data : vec4f,
+}
+
+struct GuideMeta {
+  pointCount : u32,
+  pathTargetCount : u32,
+  _pad0 : u32,
+  _pad1 : u32,
+}
+
 @group(0) @binding(0) var<storage, read> inAgents : array<f32>;
 @group(0) @binding(1) var<storage, read_write> outAgents : array<f32>;
 @group(0) @binding(2) var<storage, read> params : ParamsBuffer;
 @group(0) @binding(3) var<uniform> simMeta : SimMeta;
+@group(0) @binding(4) var<storage, read> pointGuides : array<PointGuide, ${MAX_GPU_SIM_POINT_GUIDES}>;
+@group(0) @binding(5) var<storage, read> pathTargets : array<PathTarget, ${MAX_GPU_SIM_PATH_TARGETS}>;
+@group(0) @binding(6) var<uniform> guideMeta : GuideMeta;
 
 fn agentIndex(agent : u32, field : u32) -> u32 {
   return agent * STRIDE + field;
@@ -273,6 +328,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let neighborRadius = max(params.values[24], 1.0);
   let separationRadius = max(params.values[25], 1.0);
   let boundsMargin = params.values[33];
+  let simSpeed = max(params.values[34], 0.0);
 
   let xi = agentValue(i, X);
   let yi = agentValue(i, Y);
@@ -324,6 +380,42 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let angle = valueNoise(samplePos) * TAU;
     ax = ax + cos(angle) * flowField * agentMaxSpeed;
     ay = ay + sin(angle) * flowField * agentMaxSpeed;
+  }
+
+  for (var pointIndex = 0u; pointIndex < guideMeta.pointCount; pointIndex = pointIndex + 1u) {
+    let guide = pointGuides[pointIndex];
+    let guidePos = guide.posRadius.xy;
+    let guideRadius = max(guide.posRadius.z, 0.0001);
+    let dx = guidePos.x - xi;
+    let dy = guidePos.y - yi;
+    let d = length(vec2f(dx, dy));
+    if (d <= 0.0001 || d > guideRadius) {
+      continue;
+    }
+    let falloff = 1.0 - d / guideRadius;
+    let guideSign = guide.params.y;
+    let guideHardness = max(guide.params.z, 0.1);
+    var shaped = falloff;
+    if (guideSign < 0.0) {
+      shaped = pow(falloff, guideHardness);
+    }
+    let push = guide.params.x * simSpeed * shaped * 0.85 * guideSign;
+    ax = ax + (dx / d) * push;
+    ay = ay + (dy / d) * push;
+  }
+
+  for (var pathIndex = 0u; pathIndex < guideMeta.pathTargetCount; pathIndex = pathIndex + 1u) {
+    let pathTargetData = pathTargets[pathIndex].data;
+    let dx = pathTargetData.x - xi;
+    let dy = pathTargetData.y - yi;
+    let d = length(vec2f(dx, dy));
+    if (d <= 0.0001 || d > pathTargetData.w) {
+      continue;
+    }
+    let falloff = 1.0 - d / pathTargetData.w;
+    let push = pathTargetData.z * simSpeed * falloff;
+    ax = ax + (dx / d) * push;
+    ay = ay + (dy / d) * push;
   }
 
   let nd2 = neighborRadius * neighborRadius;
@@ -485,6 +577,49 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     }
   }
 
+  setSimulationGuides(guides = {}) {
+    const points = Array.isArray(guides?.points) ? guides.points : [];
+    const pathTargets = Array.isArray(guides?.pathTargets) ? guides.pathTargets : [];
+    const supportsPoints = points.length <= MAX_GPU_SIM_POINT_GUIDES;
+    const supportsPathTargets = pathTargets.length <= MAX_GPU_SIM_PATH_TARGETS;
+
+    this._pointGuides.fill(0);
+    this._pathTargets.fill(0);
+    this._pointGuideCount = supportsPoints ? points.length : 0;
+    this._pathTargetCount = supportsPathTargets ? pathTargets.length : 0;
+
+    if (supportsPoints) {
+      for (let i = 0; i < points.length; i++) {
+        const guide = points[i];
+        const base = i * 8;
+        this._pointGuides[base + 0] = guide.x ?? 0;
+        this._pointGuides[base + 1] = guide.y ?? 0;
+        this._pointGuides[base + 2] = guide.radius ?? 0;
+        this._pointGuides[base + 3] = 0;
+        this._pointGuides[base + 4] = guide.strength ?? 0;
+        this._pointGuides[base + 5] = guide.type === 'repel' ? -1 : 1;
+        this._pointGuides[base + 6] = guide.hardness ?? 1;
+        this._pointGuides[base + 7] = 0;
+      }
+    }
+
+    if (supportsPathTargets) {
+      for (let i = 0; i < pathTargets.length; i++) {
+        const target = pathTargets[i];
+        const base = i * 4;
+        this._pathTargets[base + 0] = target.x ?? 0;
+        this._pathTargets[base + 1] = target.y ?? 0;
+        this._pathTargets[base + 2] = target.strength ?? 0;
+        this._pathTargets[base + 3] = target.radius ?? 0;
+      }
+    }
+
+    return {
+      points: supportsPoints,
+      pathTargets: supportsPathTargets,
+    };
+  }
+
   writeParams(p, targetX, targetY, time) {
     this._applyReadyResults();
     this._lastParamsObject = p;
@@ -528,6 +663,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
     this.device.queue.writeBuffer(this.paramsBuffer, 0, this._params.buffer, this._params.byteOffset, this._params.byteLength);
     this.device.queue.writeBuffer(this.metaBuffer, 0, packMeta(read.count, this.width, this.height));
+    this.device.queue.writeBuffer(this.guideMetaBuffer, 0, packGuideMeta(this._pointGuideCount, this._pathTargetCount));
+    if (this._pointGuideCount > 0) {
+      this.device.queue.writeBuffer(this.pointGuideBuffer, 0, this._pointGuides.buffer, this._pointGuides.byteOffset, this._pointGuideCount * 8 * BYTES_PER_F32);
+    }
+    if (this._pathTargetCount > 0) {
+      this.device.queue.writeBuffer(this.pathTargetBuffer, 0, this._pathTargets.buffer, this._pathTargets.byteOffset, this._pathTargetCount * 4 * BYTES_PER_F32);
+    }
 
     const outputIndex = 1 - this._activeBufferIndex;
     const encoder = this.device.createCommandEncoder();

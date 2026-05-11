@@ -406,9 +406,9 @@ export function buildSidebar(app) {
     <!-- Taper -->
     <div class="section-header" data-section="taper">Taper <span class="chevron">▼</span></div>
     <div class="section-body">
-      ${sliderRow('taperLength', 'Length', 0, 120, 0)}
+      ${sliderRow('taperLength', 'Length', 0, 120, 20, v => +v === 0 ? 'off' : v + ' frames')}
       ${sliderRow('taperCurve', 'Curve', 10, 300, 100, v => (v/100).toFixed(1))}
-      <label>Taper Size <input type="checkbox" id="taperSize"></label>
+      <label>Taper Size <input type="checkbox" id="taperSize" checked></label>
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
 
@@ -696,13 +696,9 @@ export function buildSidebar(app) {
   document.getElementById('btnResetPerfTelemetry')?.addEventListener('click', () => {
     app.resetPerformanceTelemetry();
   });
-  document.getElementById('btnResetDefaults')?.addEventListener('click', () => {
+  document.getElementById('btnResetDefaults')?.addEventListener('click', async () => {
     if (confirm('Reset all controls to factory defaults?')) {
-      localStorage.removeItem('bb_session_v1');
-      localStorage.removeItem('bb_autosave');
-      localStorage.removeItem('bb_perfTelemetry');
-      localStorage.removeItem('bb_perfWakeLock');
-      location.reload();
+      await app.reloadAppWithCacheBust({ wipeSession: true });
     }
   });
   // Auto-save toggle
@@ -1315,6 +1311,7 @@ const _sliderFormats = {
   canvasTextureEdgeBreakup: v => (v / 100).toFixed(2),
   canvasTextureSmudgeDrag: v => (v / 100).toFixed(2),
   canvasTexturePooling: v => (v / 100).toFixed(2),
+  taperLength: v => +v === 0 ? 'off' : v + ' frames',
   taperCurve: v => (v / 100).toFixed(1),
   sensingStrength: v => (v / 100).toFixed(2),
   sensingThreshold: v => (v / 100).toFixed(2),

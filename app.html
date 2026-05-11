@@ -279,8 +279,8 @@ html,body{overflow:hidden;width:100%;height:100%;
 .edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
 .edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
 .edge-slider-thumb{position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;left:50%;transform:translate(-50%,50%);box-shadow:0 1px 4px rgba(0,0,0,0.5);pointer-events:none;}
-.edge-slider-label{font-size:7px;color:var(--ink-3);text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;pointer-events:none;}
-.edge-slider-value{font-size:9px;color:var(--ink-2);font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;}
+.edge-slider-label{font-size:8px;color:var(--ink-2);text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;pointer-events:none;font-weight:600;}
+.edge-slider-value{font-size:10px;color:var(--ink-1);font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;font-weight:500;}
 
 /* Brush type dropdown */
 #brushBtnWrap{position:relative;}
@@ -366,6 +366,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="ellipseSelectBtn" title="Ellipse Select">⬭ Ellipse</button>
   <button id="lassoSelectBtn" title="Lasso Select (L)">⌇ Lasso</button>
   <button id="fillBtn" title="Fill Tool (G)">🪣 Fill</button>
+  <button id="eyedropperBtn" title="Eyedropper — pick color from canvas (E)">🔬 Pick</button>
   <button id="deselectBtn" title="Deselect (Esc)" style="display:none">✕ Desel</button>
   <button id="transformBtn" title="Transform (T)" style="display:none">⟷↔ Transform</button>
   <button id="simulationBtn" title="Simulation mode" style="display:none">◎ Simulation</button>
@@ -384,6 +385,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="canvasSizeBtn" title="Canvas Size (Ctrl+N)">📐 Size</button>
   <button id="clearBtn">🗑 Clear</button>
   <button id="saveBtn">💾 Save</button>
+  <button id="reloadAppBtn" title="Hard reload (clear browser caches/service workers and reload)">⟳ Reload</button>
   <button id="exportPsdBtn" title="Export as Photoshop PSD">📤 Export PSD</button>
   <button id="importPsdBtn" title="Import Photoshop PSD">📥 Import PSD</button>
   <button id="resetViewBtn" title="Reset zoom/pan/rotation">🔍 Reset View</button>
@@ -632,6 +634,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 import { App } from './app.js';
 const app = new App();
 window._app = app; // expose for debugging
+window.boidGpuDebug = () => window._app?.brushes?.boid?.getDebugState?.() || null;
+window.clearBoidGpuDebug = () => window._app?.brushes?.boid?.clearDebugState?.() || false;
 </script>
 </body>
 </html>

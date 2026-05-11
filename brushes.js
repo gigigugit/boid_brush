@@ -28,6 +28,9 @@ const MIN_TEXTURE_FLOW_SLOPE = 0.04;
 const TEXTURE_FLOW_BASE_TRANSFER = 0.12;
 const TEXTURE_FLOW_SLOPE_TRANSFER = 0.28;
 const TEXTURE_FLOW_MAX_TRANSFER = 0.4;
+const TEXTURE_EDGE_BREAKUP_MIN_SIZE = 0.7;
+const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
+const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
 const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
@@ -43,6 +46,28 @@ const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
 const BOID_GROUP_COLOR_LIGHTNESS = 68;
 const BOID_GROUP_HUE_WRAP_OFFSET = 17;
+// Probe up to 12 stamps per batch to confirm non-canvas backends copy visible
+// pixels to the 2D target without paying a full-batch readback cost.
+const STAMP_VISIBILITY_SAMPLE_COUNT = 12;
+// Disable GPU paths for the session after 2 consecutive probe/render failures.
+// This avoids repeated flicker/no-op draws on platforms with unstable interop.
+const GPU_RENDERER_FAILURE_LIMIT = 2;
+// Apple touch WebKit remains unreliable for boid GPU copy-out/compositing.
+// Route normal boid stamp rendering to the Canvas2D batch backend there.
+const DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT = (() => {
+  try {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
+    const isIPadOS = platform === 'MacIntel' && maxTouchPoints > 1;
+    const isAppleTouchDevice = /iPad|iPhone|iPod/i.test(ua) || isIPadOS;
+    const isWebKit = /AppleWebKit/i.test(ua);
+    return isAppleTouchDevice && isWebKit;
+  } catch {
+    return false;
+  }
+})();
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -416,24 +441,67 @@ function _textureDepositDensity(app, p, x, y) {
   return app.getTextureDepositDensity(x, y, p);
 }
 
-function _applySimulationGuides(brush, p, read) {
+function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return false;
+  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
   const data = sim.brushData[app.activeBrush];
-  if (!data) return false;
+  if (!data) return { points: [], pathTargets: [], edges: [] };
+  return {
+    points: Array.isArray(data.points)
+      ? data.points
+          .filter(point => point.enabled !== false)
+          .map(point => {
+            const config = app._resolveSimulationPointConfig(point, p);
+            return {
+              x: point.x,
+              y: point.y,
+              type: point.type === 'repel' ? 'repel' : 'attract',
+              strength: config.strength,
+              radius: config.radius,
+              hardness: config.hardness,
+            };
+          })
+      : [],
+    pathTargets: app.activeBrush === 'boid'
+      ? (data.paths || [])
+          .filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
+          .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
+          .filter(Boolean)
+          .map(target => ({
+            x: target.x,
+            y: target.y,
+            strength: target.config.strength,
+            radius: target.config.radius,
+          }))
+      : [],
+    edges: app.activeBrush === 'ant'
+      ? (data.edges || [])
+          .filter(edge => edge.enabled !== false && edge.points?.length >= 2)
+          .map(edge => {
+            const config = app._resolveSimulationEdgeConfig(edge, p);
+            return {
+              points: edge.points,
+              strength: config.strength,
+              radius: config.radius,
+            };
+          })
+      : [],
+  };
+}
+
+function _syncSimulationGuidesToGpu(brush, guideState) {
+  if (!brush.sim?.setSimulationGuides) return { points: false, pathTargets: false };
+  return brush.sim.setSimulationGuides(guideState) ?? { points: false, pathTargets: false };
+}
+
+function _applySimulationGuides(brush, p, read, guideState = _collectSimulationGuides(brush, p), gpuSupport = {}) {
+  const app = brush.app;
+  const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
+  const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
+  const edgeGuides = guideState.edges || [];
+  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
   const { buffer, count, stride } = read;
-  const animatedPathTargets = app.activeBrush === 'boid'
-    ? (data.paths || [])
-        .filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
-        .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
-        .filter(Boolean)
-    : [];
-  const hasPointGuides = Array.isArray(data.points) && data.points.some(point => point.enabled !== false);
-  const hasAntEdgeGuides = app.activeBrush === 'ant'
-    && Array.isArray(data.edges)
-    && data.edges.some(edge => edge.enabled !== false && edge.points?.length >= 2);
-  if (!hasPointGuides && !animatedPathTargets.length && !hasAntEdgeGuides) return false;
 
   for (let i = 0; i < count; i++) {
     const base = i * stride;
@@ -442,21 +510,19 @@ function _applySimulationGuides(brush, p, read) {
     let vx = buffer[base + AGENT_VX];
     let vy = buffer[base + AGENT_VY];
 
-    for (const point of data.points) {
-      if (point.enabled === false) continue;
-      const config = app._resolveSimulationPointConfig(point, p);
+    for (const point of pointGuides) {
       const dx = point.x - x;
       const dy = point.y - y;
       const d = Math.hypot(dx, dy);
-      if (d <= 0.0001 || d > config.radius) continue;
+      if (d <= 0.0001 || d > point.radius) continue;
       const sign = point.type === 'repel' ? -1 : 1;
-      const falloff = 1 - d / config.radius;
+      const falloff = 1 - d / point.radius;
       // Repel points use a hardness-shaped falloff so users can make repulsion
       // either soft/wide or tight/punchy; attract points stay linear.
       const shaped = point.type === 'repel'
-        ? Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, config.hardness))
+        ? Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, point.hardness))
         : falloff;
-      const push = config.strength * p.simSpeed * shaped * 0.85 * sign;
+      const push = point.strength * p.simSpeed * shaped * 0.85 * sign;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
     }
@@ -468,9 +534,9 @@ function _applySimulationGuides(brush, p, read) {
         const dx = target.x - x;
         const dy = target.y - y;
         const d = Math.hypot(dx, dy);
-        if (d <= 0.0001 || d > target.config.radius) continue;
-        const falloff = 1 - d / target.config.radius;
-        const push = target.config.strength * p.simSpeed * falloff;
+        if (d <= 0.0001 || d > target.radius) continue;
+        const falloff = 1 - d / target.radius;
+        const push = target.strength * p.simSpeed * falloff;
         sumX += (dx / d) * push;
         sumY += (dy / d) * push;
       }
@@ -478,12 +544,10 @@ function _applySimulationGuides(brush, p, read) {
       vy += sumY;
     }
 
-    if (app.activeBrush === 'ant' && data.edges?.length) {
+    if (app.activeBrush === 'ant' && edgeGuides.length) {
       const prevX = x - vx;
       const prevY = y - vy;
-      for (const edge of data.edges) {
-        if (edge.enabled === false) continue;
-        const config = app._resolveSimulationEdgeConfig(edge, p);
+      for (const edge of edgeGuides) {
         const pts = edge.points || [];
         for (let j = 1; j < pts.length; j++) {
           const a = pts[j - 1];
@@ -492,8 +556,8 @@ function _applySimulationGuides(brush, p, read) {
           const dx = x - closest.x;
           const dy = y - closest.y;
           const dist = Math.hypot(dx, dy);
-          if (config.radius > 0 && dist < config.radius && dist > 0.0001) {
-            const away = (1 - dist / config.radius) * config.strength * p.simSpeed;
+          if (edge.radius > 0 && dist < edge.radius && dist > 0.0001) {
+            const away = (1 - dist / edge.radius) * edge.strength * p.simSpeed;
             vx += (dx / dist) * away;
             vy += (dy / dist) * away;
           }
@@ -502,8 +566,8 @@ function _applySimulationGuides(brush, p, read) {
           if ((prevSide < 0 && curSide > 0) || (prevSide > 0 && curSide < 0)) {
             const nx = dy === 0 && dx === 0 ? 0 : dx / Math.max(dist, 1);
             const ny = dy === 0 && dx === 0 ? 0 : dy / Math.max(dist, 1);
-            x = closest.x + nx * Math.max(config.radius, 2);
-            y = closest.y + ny * Math.max(config.radius, 2);
+            x = closest.x + nx * Math.max(edge.radius, 2);
+            y = closest.y + ny * Math.max(edge.radius, 2);
             const dot = vx * nx + vy * ny;
             if (dot < 0) {
               vx -= 1.8 * dot * nx;
@@ -541,8 +605,7 @@ export class BoidBrush {
     this.sim = null;
     this.renderer = createBoidStampRenderer();
     this._ready = false;
-    this._lastStampX = [];
-    this._lastStampY = [];
+    this._resetInterpolationState();
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
     this._boidsSpawned = false;
@@ -568,34 +631,82 @@ export class BoidBrush {
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
     this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuBatchVisibilityVerified = false;
+    this._rendererChainPatched = false;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._debugMaxEvents = 120;
+  }
+
+  _patchRendererChain() {
+    if (this._rendererChainPatched) return;
+    this.renderer._getRendererChain = (renderState = {}) => {
+      if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT && !renderState.stampBitmap) {
+        return [this.renderer.canvas];
+      }
+      const chain = [];
+      if (renderState.stampBitmap) {
+        if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
+        chain.push(this.renderer.canvas);
+        return chain;
+      }
+      if (this.renderer.webgpu.ready) chain.push(this.renderer.webgpu);
+      if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
+      chain.push(this.renderer.canvas);
+      return chain;
+    };
+    this._rendererChainPatched = true;
   }
 
   async init({ force = false } = {}) {
     if (force) {
+      this._clearGpuPreview();
       this._ready = false;
       this.sim = null;
       this.app.sharedMotionSim = null;
-      this._lastStampX = [];
-      this._lastStampY = [];
+      this._resetInterpolationState();
       this._boidsSpawned = false;
       this._hoverSpawned = false;
       this.renderer.reset();
       this._renderBackend = 'legacy';
+      this._renderLegacyReason = 'compatibility check pending';
+      this._gpuBatchVisibilityVerified = false;
+      this._rendererChainPatched = false;
+      this._gpuPreviewRenderer = null;
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
       await this.renderer.init();
+      this._patchRendererChain();
+      this._syncRenderBackendStatus();
       this._ready = true;
       return this.sim;
     }
     await this.renderer.init();
+    this._patchRendererChain();
     try {
       this.sim = await _createSharedMotionSim(this.app);
       this.app.sharedMotionSim = this.sim;
+      this._syncRenderBackendStatus();
       this._ready = true;
     } catch (e) {
       console.error('BoidBrush: WASM init failed —', e);
     }
+  }
+
+  _syncRenderBackendStatus() {
+    const p = this.app.getP?.();
+    if (!p) return;
+    const support = this._getBatchRendererSupport(p, this._flatActive);
+    if (!support.ok) {
+      this._setRenderBackend('legacy', support.reason || 'compatibility check pending');
+      return;
+    }
+    this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
   }
 
   /** Capture canvas luminance and upload to WASM for pixel sensing */
@@ -647,6 +758,8 @@ export class BoidBrush {
   _clearAgents() {
     if (!this.sim) return;
     this.sim.clearAgents();
+    this._clearGpuPreview({ composite: true });
+    this._resetInterpolationState();
     this._boidsSpawned = false;
   }
 
@@ -707,16 +820,273 @@ export class BoidBrush {
   }
 
   _canUseBatchRenderer(p, flat = this._flatActive) {
+    return this._getBatchRendererSupport(p, flat).ok;
+  }
+
+  _getBatchRendererSupport(p, flat = this._flatActive) {
     const layer = this.app.getActiveLayer();
-    if (!layer || layer.alphaLock) return false;
-    if (this.app.tilingMode) return false;
-    if (p.symmetryEnabled || p.stampImageCanvas) return false;
-    if (p.canvasTextureEnabled) return false;
-    if (p.trailBlur > 0 || p.trailFlow > 0) return false;
-    if (p.smudge > 0 || p.smudgeOnly) return false;
-    if (p.kmMix && p.kmStrength > 0) return false;
-    if (p.impasto && p.impastoStrength > 0) return false;
+    if (!layer) return { ok: false, reason: 'no active layer' };
+    if (layer.alphaLock && flat) return { ok: false, reason: 'alpha lock enabled with flat stroke' };
+    if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
+    if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
+    if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
+    if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
+    if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
+    if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
+    if (!this.renderer.canRenderBatch({ stampBitmap: p.stampImageCanvas || null })) {
+      return { ok: false, reason: this.renderer.getUnavailableReason({ stampBitmap: p.stampImageCanvas || null }) };
+    }
+    return { ok: true, reason: '' };
+  }
+
+  _setRenderBackend(kind, reason = '') {
+    this._renderBackend = kind;
+    this._renderLegacyReason = kind === 'legacy' ? reason : '';
+    this._pushRenderDebug('set-render-backend', { kind, reason: this._renderLegacyReason || reason || '' });
+  }
+
+  _formatLegacyFallbackReason(reason) {
+    const coreReason = reason || 'GPU boid-stamp renderer failed';
+    return `${coreReason}; using CPU fallback`;
+  }
+
+  _pushRenderDebug(type, details = {}) {
+    const entry = {
+      seq: ++this._debugSeq,
+      type,
+      t: typeof performance !== 'undefined' && Number.isFinite(performance.now())
+        ? Number(performance.now().toFixed(2))
+        : Date.now(),
+      ...details,
+    };
+    this._debugEvents.push(entry);
+    if (this._debugEvents.length > this._debugMaxEvents) {
+      this._debugEvents.splice(0, this._debugEvents.length - this._debugMaxEvents);
+    }
+    return entry;
+  }
+
+  getDebugState() {
+    return {
+      ready: this._ready,
+      renderBackend: this._renderBackend,
+      renderLegacyReason: this._renderLegacyReason,
+      gpuPreviewActive: this._gpuPreviewActive,
+      gpuPreviewLayer: this._gpuPreviewLayer ? { width: this._gpuPreviewLayer.canvas?.width || 0, height: this._gpuPreviewLayer.canvas?.height || 0 } : null,
+      gpuPreviewRendererKind: this._gpuPreviewRenderer?.kind || null,
+      events: this._debugEvents.slice(),
+      webgpu: this.renderer?.webgpu?.getDebugState?.() || null,
+    };
+  }
+
+  clearDebugState() {
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this.renderer?.webgpu?.clearDebugState?.();
     return true;
+  }
+
+  _getGpuPreviewRenderer(p) {
+    if (p?.stampImageCanvas) return null;
+    if (this.renderer.webgpu?.ready) return this.renderer.webgpu;
+    if (this.renderer.webgl?.ready) return this.renderer.webgl;
+    return null;
+  }
+
+  _getGpuPreviewCanvas(renderer) {
+    if (!renderer) return null;
+    if (renderer.kind === 'webgpu') {
+      return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+    }
+    return renderer.previewCanvas || renderer.canvas || null;
+  }
+
+  _canUseGpuPreview(targetCtx, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
+    if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
+    if (this._flatActive) return false;
+    if (!this._getGpuPreviewRenderer(p)) return false;
+    if (p?.stampImageCanvas) return false;
+    if (p?.sensingEnabled) return false;
+    if ((p?.taperLength || 0) > 0 && !this.app.isDrawing && !this.app.simulation?.running) return false;
+    if (layer.alphaLock) return false;
+    if (layer.blend !== 'source-over') return false;
+    if (Math.abs((layer.opacity ?? 1) - 1) > 1e-3) return false;
+    return true;
+  }
+
+  _clearGpuPreview({ composite = false } = {}) {
+    const layer = this._gpuPreviewLayer;
+    const renderer = this._gpuPreviewRenderer;
+    this._pushRenderDebug('clear-gpu-preview', {
+      composite,
+      rendererKind: renderer?.kind || null,
+      hadPreviewLayer: !!layer,
+    });
+    const previewCanvas = this._getGpuPreviewCanvas(renderer);
+    if (renderer) renderer.onPreviewUpdated = null;
+    if (layer?.gpuPreviewCanvas && previewCanvas && layer.gpuPreviewCanvas === previewCanvas) {
+      layer.gpuPreviewCanvas = null;
+      layer.dirty = true;
+    }
+    if (renderer?.clearSurface && layer?.canvas?.width && layer?.canvas?.height) {
+      renderer.clearSurface(layer.canvas.width, layer.canvas.height);
+    }
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    if (composite && layer) this.app.compositeAllLayers();
+  }
+
+  _commitGpuPreviewToLayer() {
+    const layer = this._gpuPreviewLayer;
+    const renderer = this._gpuPreviewRenderer;
+    if (!layer || !renderer?.ready) {
+      this._pushRenderDebug('commit-gpu-preview-skipped', {
+        hasLayer: !!layer,
+        rendererKind: renderer?.kind || null,
+        rendererReady: !!renderer?.ready,
+      });
+      this._clearGpuPreview();
+      return false;
+    }
+    if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+      this._pushRenderDebug('commit-gpu-preview-deferred', {
+        rendererKind: renderer.kind,
+        previewSyncPending: !!renderer._previewSyncPending,
+        previewSyncQueued: !!renderer._previewSyncQueued,
+      });
+      renderer.onPreviewUpdated = (canvas) => {
+        if (!canvas) return;
+        if (!this._gpuPreviewActive || this._gpuPreviewLayer !== layer || this._gpuPreviewRenderer !== renderer) return;
+        this._pushRenderDebug('preview-updated', {
+          rendererKind: renderer.kind,
+          width: canvas.width,
+          height: canvas.height,
+          deferredCommit: true,
+        });
+        layer.gpuPreviewCanvas = canvas;
+        const ok = renderer.copyTo2D(
+          layer.ctx,
+          layer.canvas.width,
+          layer.canvas.height,
+          layer.alphaLock ? 'source-atop' : 'source-over',
+        );
+        renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+        layer.gpuPreviewCanvas = null;
+        this._gpuPreviewActive = false;
+        this._gpuPreviewLayer = null;
+        renderer.onPreviewUpdated = null;
+        this._gpuPreviewRenderer = null;
+        this._pushRenderDebug('commit-gpu-preview', {
+          ok,
+          rendererKind: renderer.kind,
+          copiedFromLivePreview: true,
+          deferred: true,
+        });
+        if (!ok) return;
+        layer.dirty = true;
+        this.app.compositeAllLayers();
+      };
+      return true;
+    }
+    const ok = renderer.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      layer.alphaLock ? 'source-atop' : 'source-over',
+    );
+    renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+    layer.gpuPreviewCanvas = null;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    renderer.onPreviewUpdated = null;
+    this._gpuPreviewRenderer = null;
+    this._pushRenderDebug('commit-gpu-preview', {
+      ok,
+      rendererKind: renderer.kind,
+      copiedFromLivePreview: renderer.kind === 'webgpu' ? !!renderer._hasLivePreviewFrame : true,
+    });
+    if (!ok) return false;
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+    return true;
+  }
+
+  _renderBatchToGpuPreview(batch, p) {
+    const layer = this.app.getActiveLayer();
+    const renderer = this._getGpuPreviewRenderer(p);
+    if (!layer || !renderer?.ready) return false;
+    const needsFreshSurface = !this._gpuPreviewActive || this._gpuPreviewLayer !== layer || this._gpuPreviewRenderer !== renderer;
+    renderer.onPreviewUpdated = (canvas) => {
+      if (!canvas) return;
+      if (!this._gpuPreviewActive || this._gpuPreviewLayer !== layer || this._gpuPreviewRenderer !== renderer) return;
+      this._pushRenderDebug('preview-updated', {
+        rendererKind: renderer.kind,
+        width: canvas.width,
+        height: canvas.height,
+      });
+      layer.gpuPreviewCanvas = canvas;
+      layer.dirty = true;
+      this.app.compositeAllLayers();
+    };
+    if (this._gpuPreviewActive && this._gpuPreviewRenderer && this._gpuPreviewRenderer !== renderer) {
+      this._commitGpuPreviewToLayer();
+    }
+    if (needsFreshSurface) {
+      if (renderer.kind === 'webgpu') {
+        renderer.invalidatePreview?.();
+      } else if (!renderer.clearSurface?.(layer.canvas.width, layer.canvas.height)) {
+        return false;
+      }
+      this._gpuPreviewActive = true;
+      this._gpuPreviewLayer = layer;
+      this._gpuPreviewRenderer = renderer;
+      layer.gpuPreviewCanvas = this._getGpuPreviewCanvas(renderer);
+    }
+    this._pushRenderDebug('render-gpu-preview', {
+      rendererKind: renderer.kind,
+      count: batch.count,
+      needsFreshSurface,
+      hadLivePreviewFrame: renderer.kind === 'webgpu' ? !!renderer._hasLivePreviewFrame : true,
+      layerWidth: layer.canvas.width,
+      layerHeight: layer.canvas.height,
+    });
+    const stampBitmap = p?.stampImageCanvas || null;
+    const ok = renderer.render({
+      instances: batch.instances,
+      count: batch.count,
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      dpr: this.app.DPR,
+      stampBitmap,
+      stampTint: p?.stampImageTint !== false,
+      stampRotation: p?.stampImageRotation || 0,
+      stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+      copyToTarget: false,
+      clear: needsFreshSurface,
+    });
+    if (!ok) {
+      this._pushRenderDebug('render-gpu-preview-failed', {
+        rendererKind: renderer.kind,
+        reason: renderer.lastRenderFailureReason || '',
+      });
+      this._commitGpuPreviewToLayer();
+      this._clearGpuPreview();
+      return false;
+    }
+    layer.gpuPreviewCanvas = this._getGpuPreviewCanvas(renderer);
+    layer.dirty = true;
+    this._setRenderBackend(renderer.kind);
+    return true;
+  }
+
+  _resetInterpolationState() {
+    this._lastStampX = [];
+    this._lastStampY = [];
+    this._lastSpacingX = [];
+    this._lastSpacingY = [];
   }
 
   _buildRenderBatch(read, p, {
@@ -724,6 +1094,7 @@ export class BoidBrush {
     pressure = this.app.pressure,
     interpolate = true,
     applySkip = true,
+    forceStamp = false,
     taperCurve = 1,
     taperSize = false,
     taperOpacity = false,
@@ -733,6 +1104,7 @@ export class BoidBrush {
     const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
     const baseHSL = hexToHSL(p.color);
     const baseRGB = hexToRGB(p.color);
+    const textureEnabled = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -756,37 +1128,83 @@ export class BoidBrush {
       const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
         ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
         : baseRGB;
+      const pushInstance = (x, y) => {
+        const renderPoints = p.symmetryEnabled
+          ? this.app.getSymmetryPoints(x, y)
+          : [{ x, y }];
+        const seen = new Set();
+        const emitInstance = (px, py) => {
+          const key = `${Math.round(px * 1000)}:${Math.round(py * 1000)}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          let instOpacity = opacity;
+          let instSize = size;
+          if (textureEnabled) {
+            instOpacity *= _textureDepositDensity(this.app, p, px, py);
+            const edgeBreakup = this.app.getTextureEdgeBreakup?.(px, py, p) || 0;
+            if (edgeBreakup > 0) {
+              const field = this.app.sampleTextureField?.(px, py, p);
+              instSize *= Math.max(
+                TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+                1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+              );
+            }
+          }
+          if (instOpacity < 0.005 || instSize < 0.5) return;
+          instances.push(px, py, instSize, color.r, color.g, color.b, instOpacity);
+        };
+        for (const point of renderPoints) {
+          emitInstance(point.x, point.y);
+          if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
+          const wraps = this.app._getStampWrapPoints(point.x, point.y, size);
+          for (const wrap of wraps) emitInstance(wrap.x, wrap.y);
+        }
+      };
 
       if (skipActive) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
         continue;
       }
 
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
-      if (!interpolate || prevX === undefined || prevY === undefined) {
-        instances.push(ax, ay, size, color.r, color.g, color.b, opacity);
+      const prevStampX = this._lastSpacingX[i];
+      const prevStampY = this._lastSpacingY[i];
+      if (!interpolate || prevStampX === undefined || prevStampY === undefined) {
+        pushInstance(ax, ay);
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
         continue;
       }
 
-      const dx = ax - prevX;
-      const dy = ay - prevY;
+      const dx = ax - prevStampX;
+      const dy = ay - prevStampY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const step = p.stampSeparation > 0 ? p.stampSeparation : Math.max(1, size * 0.25);
-      if (dist < step) continue;
-
-      // Cap interpolation work per agent so a single long jump cannot explode
-      // into an unbounded number of intermediate stamps in one frame.
-      const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-      for (let j = 1; j <= n; j++) {
-        const t = j / n;
-        instances.push(prevX + dx * t, prevY + dy * t, size, color.r, color.g, color.b, opacity);
+      if (dist >= step) {
+        // Match legacy interpolation behavior: accumulate distance from the last
+        // emitted stamp, not from the last agent sample, so slow motion in
+        // simulation mode still produces subsequent stamps once spacing is met.
+        const emitCount = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= emitCount; j++) {
+          const t = j / emitCount;
+          pushInstance(prevStampX + dx * t, prevStampY + dy * t);
+        }
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+      } else if (forceStamp) {
+        pushInstance(ax, ay);
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        // Keep the spacing anchor at the last spacing-qualified stamp so
+        // sub-threshold motion can accumulate across frames into additional
+        // emitted stamps instead of collapsing to exactly one stamp per agent.
       }
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
     }
 
     return {
@@ -795,7 +1213,49 @@ export class BoidBrush {
     };
   }
 
-  _renderBatchToTarget(targetCtx, batch) {
+  _batchHasVisiblePixels(targetCtx, batch) {
+    if (!targetCtx || !batch?.instances || batch.count <= 0) return false;
+    const canvas = targetCtx.canvas;
+    if (!canvas?.width || !canvas?.height) return false;
+    const instances = batch.instances;
+    const dpr = this.app.DPR || 1;
+    const sampleCount = Math.min(batch.count, STAMP_VISIBILITY_SAMPLE_COUNT);
+    const stride = 8;
+    try {
+      for (let i = 0; i < sampleCount; i++) {
+        const base = i * stride;
+        const size = Math.max(1, instances[base + 2] * dpr);
+        const cx = Math.round(instances[base + 0] * dpr);
+        const cy = Math.round(instances[base + 1] * dpr);
+        const offsets = [
+          [0, 0],
+          [Math.min(size * 0.25, 2), 0],
+          [-Math.min(size * 0.25, 2), 0],
+          [0, Math.min(size * 0.25, 2)],
+          [0, -Math.min(size * 0.25, 2)],
+        ];
+        for (const [ox, oy] of offsets) {
+          const x = Math.max(0, Math.min(canvas.width - 1, Math.round(cx + ox)));
+          const y = Math.max(0, Math.min(canvas.height - 1, Math.round(cy + oy)));
+          if (targetCtx.getImageData(x, y, 1, 1).data[3] > 0) return true;
+        }
+      }
+    } catch {
+      return true;
+    }
+    return false;
+  }
+
+  _renderBatchToTarget(targetCtx, batch, p, { allowAlphaLock = false } = {}) {
+    const stampBitmap = p?.stampImageCanvas || null;
+    const layer = this.app.getActiveLayer();
+    const previewAllowed = this._canUseGpuPreview(targetCtx, p);
+    if (this._gpuPreviewActive && !previewAllowed) {
+      this._commitGpuPreviewToLayer();
+    }
+    if (previewAllowed) {
+      return this._renderBatchToGpuPreview(batch, p);
+    }
     const ok = this.renderer.render({
       instances: batch.instances,
       count: batch.count,
@@ -803,9 +1263,58 @@ export class BoidBrush {
       targetWidthPx: targetCtx?.canvas?.width || 0,
       targetHeightPx: targetCtx?.canvas?.height || 0,
       dpr: this.app.DPR,
+      stampBitmap,
+      stampTint: p?.stampImageTint !== false,
+      stampRotation: p?.stampImageRotation || 0,
+      stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+      compositeOperation: allowAlphaLock && layer?.alphaLock ? 'source-atop' : 'source-over',
     });
-    this._renderBackend = ok ? this.renderer.activeKind : 'legacy';
+    this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
+    if (ok && this.renderer.activeKind !== 'canvas' && !stampBitmap && !this._gpuBatchVisibilityVerified) {
+      if (!this._batchHasVisiblePixels(targetCtx, batch)) {
+        this._setRenderBackend('legacy', 'GPU batch copy produced no visible pixels');
+        return false;
+      }
+      this._gpuBatchVisibilityVerified = true;
+    }
     return ok;
+  }
+
+  _renderAgentsLegacy(targetCtx, read, p, pressure, {
+    flat = this._flatActive,
+    taperCurve = 1,
+    taperSize = false,
+    taperOpacity = false,
+    reason = '',
+  } = {}) {
+    const { buffer, count, stride } = read;
+    this._setRenderBackend('legacy', reason || this._renderLegacyReason || this.renderer.legacyReason);
+    this._baseHSL = hexToHSL(p.color);
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+      let sz = p.stampSize * sm;
+      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (taperSize) sz *= taperCurve;
+      if (taperOpacity) op *= taperCurve;
+      op = Math.min(op, 1);
+      let color = p.color;
+      if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+        const [bh, bs, bl] = this._baseHSL;
+        color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+      }
+      this.app.symStamp(targetCtx, ax, ay, sz, color, op);
+      this._lastStampX[i] = ax;
+      this._lastStampY[i] = ay;
+    }
   }
 
   /** Hover: spawn boids once at hover position, then let onHoverFrame step
@@ -832,6 +1341,8 @@ export class BoidBrush {
   onHoverFrame(elapsed) {
     if (!this._ready || !this._hoverSpawned) return;
     const p = this.app.getP();
+    const guideState = _collectSimulationGuides(this, p);
+    _syncSimulationGuidesToGpu(this, guideState);
     // Write params with the current hover leader position so boids follow
     this.sim.writeParams(this._applySimVars(p), this.app.leaderX, this.app.leaderY, elapsed);
     this.sim.step(1 / 60);
@@ -840,6 +1351,14 @@ export class BoidBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    this._pushRenderDebug('pointer-down', {
+      x,
+      y,
+      pressure,
+      flatStroke: !!p.flatStroke,
+      taperLength: p.taperLength || 0,
+    });
+    if (this._gpuPreviewActive) this._clearGpuPreview({ composite: true });
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
       ? (this.app._ensureSimulationSpawns('boid').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('boid')[0])
       : null;
@@ -851,8 +1370,7 @@ export class BoidBrush {
     this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
     // Touch-down ends any prior hover preview; the stroke now owns agent motion.
     this._hoverSpawned = false;
-    this._lastStampX = [];
-    this._lastStampY = [];
+    this._resetInterpolationState();
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     this.app.strokeFrame = 0;
@@ -910,45 +1428,35 @@ export class BoidBrush {
     // paint is ever deposited. In flat-stroke mode the composite path in onFrame
     // is required, so this initial stamp is omitted there.
     if (!this._flatActive) {
+      const guideState = _collectSimulationGuides(this, p);
+      const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
       this.sim.writeParams(this._applySimVars(p), x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
+      if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
+        this.sim.markStateDirty?.();
+      }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
-        if (this._canUseBatchRenderer(p, false)) {
+        const batchSupport = this._getBatchRendererSupport(p, false);
+        if (batchSupport.ok) {
           const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
             flat: false,
             pressure,
             interpolate: false,
             applySkip: false,
           });
-          this._renderBatchToTarget(layer.ctx, batch);
-        } else {
-          this._renderBackend = 'legacy';
-          this._baseHSL = hexToHSL(p.color);
-          for (let i = 0; i < count; i++) {
-            const base = i * stride;
-            const ax = buffer[base + 0];
-            const ay = buffer[base + 1];
-            const sm = buffer[base + 8];
-            const om = buffer[base + 9];
-            const agentHue = buffer[base + 20];
-            const agentSat = buffer[base + 21];
-            const agentLit = buffer[base + 22];
-            let sz = p.stampSize * sm;
-            let op = p.stampOpacity * om;
-            if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-            if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
-            op = Math.min(op, 1);
-            let color = p.color;
-            if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-              const [bh, bs, bl] = this._baseHSL;
-              color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
-            }
-            this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
-            this._lastStampX[i] = ax;
-            this._lastStampY[i] = ay;
+          if (!this._renderBatchToTarget(layer.ctx, batch, p, { allowAlphaLock: true })) {
+            this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
+              flat: false,
+              reason: this.renderer.legacyReason,
+            });
           }
+        } else {
+          this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
+            flat: false,
+            reason: batchSupport.reason,
+          });
         }
         layer.dirty = true;
         this.app.compositeAllLayers();
@@ -961,13 +1469,22 @@ export class BoidBrush {
   }
 
   onUp(x, y) {
+    this._pushRenderDebug('pointer-up', {
+      x,
+      y,
+      flatStroke: this._flatActive,
+      gpuPreviewActive: this._gpuPreviewActive,
+      gpuPreviewRendererKind: this._gpuPreviewRenderer?.kind || null,
+    });
     // Flush paint that was deposited by the initial onDown stamp or by the last
     // onFrame call. Covers the quick-tap case where isDrawing goes false before
     // the next RAF frame fires. Only runs in non-flat mode — flat stroke
     // compositing lives in onFrame and the taper handles the final flush.
     if (!this._flatActive) {
-      const layer = this.app.getActiveLayer();
-      if (layer.dirty) this.app.compositeAllLayers();
+      if (!this._commitGpuPreviewToLayer()) {
+        const layer = this.app.getActiveLayer();
+        if (layer?.dirty) this.app.compositeAllLayers();
+      }
     }
     const p = this.app.getP();
     this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
@@ -1006,12 +1523,14 @@ export class BoidBrush {
     }
 
     // Write sim params and step
+    const guideState = _collectSimulationGuides(this, p);
+    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(this._applySimVars(p), app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
     // Read agents
     const read = this.sim.readAgents();
-    if (_applySimulationGuides(this, p, read)) this.sim.markStateDirty?.();
+    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
     const { buffer, count, stride } = read;
     if (count === 0) return;
 
@@ -1021,15 +1540,22 @@ export class BoidBrush {
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
     const skipN = p.skipStamps || 0;
     app.strokeFrame++;
-    if (this._canUseBatchRenderer(p, flat)) {
+    const batchSupport = this._getBatchRendererSupport(p, flat);
+    if (batchSupport.ok) {
       const batch = this._buildRenderBatch(read, p, {
         flat,
         pressure: app.pressure,
         interpolate: true,
         applySkip: skipN > 0,
+        // Ensure active draw mode never drops to "no visible stamps" when
+        // per-frame boid movement stays below spacing thresholds.
+        forceStamp: !!app.isDrawing || !!app.simulation?.running,
       });
-      if (batch.count > 0) {
-        this._renderBatchToTarget(stampCtx, batch);
+      if (batch.count === 0) {
+        this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
+        return;
+      }
+      if (this._renderBatchToTarget(stampCtx, batch, p, { allowAlphaLock: !flat })) {
         if (flat) {
           const w = layer.canvas.width, h = layer.canvas.height;
           const ctx = layer.ctx;
@@ -1046,10 +1572,10 @@ export class BoidBrush {
         }
         layer.dirty = true;
         app.compositeAllLayers();
+        return;
       }
-      return;
     }
-    this._renderBackend = 'legacy';
+    this._setRenderBackend('legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -1066,6 +1592,8 @@ export class BoidBrush {
       if (app.strokeFrame <= skipN) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
         continue;
       }
 
@@ -1088,15 +1616,31 @@ export class BoidBrush {
       const step = p.stampSeparation > 0
         ? p.stampSeparation
         : Math.max(1, sz * 0.25);
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
+      const prevX = this._lastSpacingX[i];
+      const prevY = this._lastSpacingY[i];
 
+      let advanceAnchor = true;
       if (prevX !== undefined) {
         const dx = ax - prevX;
         const dy = ay - prevY;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        if (dist < step) continue; // accumulate distance until next stamp
+        if (dist < step) {
+          // Keep draw mode responsive: when movement is below spacing, still
+          // emit one stamp per frame (matching batch forceStamp behavior).
+          if (!app.isDrawing && !app.simulation?.running) continue;
+          app.symStamp(stampCtx, ax, ay, sz, color, op);
+          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+            _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
+          }
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+          // Keep the spacing anchor at the last spacing-qualified stamp so
+          // slow motion can accumulate into future gap-fill stamps instead of
+          // resetting to one stamp per agent on every frame.
+          advanceAnchor = false;
+          continue;
+        }
 
         const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
         for (let j = 1; j <= n; j++) {
@@ -1112,10 +1656,16 @@ export class BoidBrush {
         if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
           _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
         }
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
       }
 
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      if (advanceAnchor) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+      }
     }
 
     // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
@@ -1192,45 +1742,59 @@ export class BoidBrush {
     const app = this.app;
     const curve = Math.pow(1 - t, p.taperCurve);
 
-    // Step sim without leader tracking (they drift)
-    this.sim.step(1 / 60);
+    // Freeze agent positions — do NOT step the simulation during taper.
+    // Advancing the sim causes boids to drift from the stroke endpoint and
+    // stamp at wrong locations with full size/opacity, which is the reported
+    // "large and opaque stamps" bug. Keeping positions frozen lets the taper
+    // fade them out cleanly in place.
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
     const layer = app.getActiveLayer();
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
-    if (this._canUseBatchRenderer(p, flat)) {
+    const batchSupport = this._getBatchRendererSupport(p, flat);
+    if (batchSupport.ok) {
       const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
         flat,
-        interpolate: true,
+        interpolate: false,  // stamp directly at frozen positions, no gap-fill
         applySkip: false,
         taperCurve: curve,
         taperSize: p.taperSize,
         taperOpacity: p.taperOpacity,
       });
-      if (batch.count > 0) {
-        this._renderBatchToTarget(stampCtx, batch);
-        if (flat) {
-          const w = layer.canvas.width, h = layer.canvas.height;
-          const ctx = layer.ctx;
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.clearRect(0, 0, w, h);
-          ctx.drawImage(this._preStrokeCanvas, 0, 0);
-          let masterOp = p.stampOpacity;
-          if (p.taperOpacity) masterOp *= curve;
-          ctx.globalAlpha = Math.min(masterOp, 1);
-          ctx.drawImage(this._strokeCanvas, 0, 0);
-          ctx.globalAlpha = 1;
-          ctx.restore();
-        }
-        layer.dirty = true;
-        app.compositeAllLayers();
+      if (batch.count === 0) {
+        this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
+        return;
       }
+      if (!this._renderBatchToTarget(stampCtx, batch, p, { allowAlphaLock: !flat })) {
+        this._renderAgentsLegacy(stampCtx, { buffer, count, stride }, p, app.pressure, {
+          flat,
+          taperCurve: curve,
+          taperSize: p.taperSize,
+          taperOpacity: p.taperOpacity,
+          reason: this.renderer.legacyReason,
+        });
+      }
+      if (flat) {
+        const w = layer.canvas.width, h = layer.canvas.height;
+        const ctx = layer.ctx;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(this._preStrokeCanvas, 0, 0);
+        let masterOp = p.stampOpacity;
+        if (p.taperOpacity) masterOp *= curve;
+        ctx.globalAlpha = Math.min(masterOp, 1);
+        ctx.drawImage(this._strokeCanvas, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+      layer.dirty = true;
+      app.compositeAllLayers();
       return;
     }
-    this._renderBackend = 'legacy';
+    this._setRenderBackend('legacy', batchSupport.reason);
     this._baseHSL = hexToHSL(p.color);
 
     for (let i = 0; i < count; i++) {
@@ -1256,31 +1820,9 @@ export class BoidBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      // Interpolation: fill gaps between previous and current position
-      const step = p.stampSeparation > 0
-        ? p.stampSeparation
-        : Math.max(1, sz * 0.25);
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
-
-      if (prevX !== undefined) {
-        const dx = ax - prevX;
-        const dy = ay - prevY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < step) continue; // accumulate distance
-
-        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        for (let j = 1; j <= n; j++) {
-          const tt = j / n;
-          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
-        }
-      } else {
-        app.symStamp(stampCtx, ax, ay, sz, color, op);
-      }
-
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      // Stamp directly at frozen position (skip distance interpolation to
+      // avoid accumulating paint when boids are stationary).
+      app.symStamp(stampCtx, ax, ay, sz, color, op);
     }
 
     if (flat) {
@@ -1354,11 +1896,15 @@ export class BoidBrush {
   getStatusInfo() {
     if (!this._ready) return 'WASM loading...';
     const { count } = this.sim.readAgents();
-    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}`;
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (this._getBatchRendererSupport(this.app.getP(), this._flatActive).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
   }
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
+    this._clearGpuPreview({ composite: true });
     this._boidsSpawned = false;
     this._hoverSpawned = false;
   }
@@ -1586,9 +2132,14 @@ export class AntBrush {
     if (!this._flatActive) {
       // Override: set sensing to attract mode for pheromone following
       const antP = this._buildAntParams(p);
+      const guideState = _collectSimulationGuides(this, p);
+      const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
       this.sim.writeParams(antP, x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
+      if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
+        this.sim.markStateDirty?.();
+      }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
         this._baseHSL = hexToHSL(p.color);
@@ -1681,12 +2232,14 @@ export class AntBrush {
 
     // Write params with ant-specific overrides and step sim
     const antP = this._buildAntParams(p);
+    const guideState = _collectSimulationGuides(this, p);
+    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
     // Read agents
     const read = this.sim.readAgents();
-    if (_applySimulationGuides(this, p, read)) this.sim.markStateDirty?.();
+    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
     const { buffer, count, stride } = read;
     if (count === 0) return;
 
@@ -1827,7 +2380,9 @@ export class AntBrush {
     const app = this.app;
     const curve = Math.pow(1 - t, p.taperCurve);
 
-    this.sim.step(1 / 60);
+    // Freeze agent positions — do NOT step the simulation during taper.
+    // Stepping causes ants to drift and stamp at unexpected locations with
+    // full size/opacity, producing the "large and opaque" taper bug.
     const { buffer, count, stride } = this.sim.readAgents();
     if (count === 0) return;
 
@@ -1859,28 +2414,8 @@ export class AntBrush {
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      const step = p.stampSeparation > 0
-        ? p.stampSeparation
-        : Math.max(1, sz * 0.25);
-      const prevX = this._lastStampX[i];
-      const prevY = this._lastStampY[i];
-
-      if (prevX !== undefined) {
-        const dx = ax - prevX;
-        const dy = ay - prevY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < step) continue;
-        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        for (let j = 1; j <= n; j++) {
-          const tt = j / n;
-          app.symStamp(stampCtx, prevX + dx * tt, prevY + dy * tt, sz, color, op);
-        }
-      } else {
-        app.symStamp(stampCtx, ax, ay, sz, color, op);
-      }
-
-      this._lastStampX[i] = ax;
-      this._lastStampY[i] = ay;
+      // Stamp directly at frozen position (no distance interpolation).
+      app.symStamp(stampCtx, ax, ay, sz, color, op);
     }
 
     if (flat) {
@@ -2918,10 +3453,17 @@ export class BristleBrush {
 export class SimpleBrush {
   constructor(app) {
     this.app = app;
+    this.renderer = createBoidStampRenderer();
     this._lastStampX = null;
     this._lastStampY = null;
     this._needsComposite = false;
     this._active = false;
+    this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuFailureCount = 0;
+    this._gpuDisabledReason = '';
+    this._rendererInitPromise = null;
+    this._rendererChainPatched = false;
     // Flat-stroke (wet buffer) canvases
     this._strokeCanvas = null;
     this._strokeCtx = null;
@@ -2935,6 +3477,216 @@ export class SimpleBrush {
     this._blurTmpCtx = null;
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
+    this._ensureRendererInit();
+  }
+
+  _ensureRendererInit() {
+    if (this._rendererInitPromise) return this._rendererInitPromise;
+    this._rendererInitPromise = this.renderer.init()
+      .then(() => {
+        if (this._rendererChainPatched) return;
+        // Temporary Simple-Brush-specific override: prefer procedural GPU paths
+        // (WebGPU/WebGL) with Canvas2D fallback while Boid keeps its own policy.
+        this.renderer._getRendererChain = (renderState = {}) => {
+          const chain = [];
+          if (this._gpuDisabledReason) {
+            chain.push(this.renderer.canvas);
+            return chain;
+          }
+          if (renderState.stampBitmap) {
+            if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
+            chain.push(this.renderer.canvas);
+            return chain;
+          }
+          if (this.renderer.webgpu.ready) chain.push(this.renderer.webgpu);
+          if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
+          chain.push(this.renderer.canvas);
+          return chain;
+        };
+        this._rendererChainPatched = true;
+      })
+      .catch(() => {});
+    return this._rendererInitPromise;
+  }
+
+  _setRenderBackend(kind, reason = '') {
+    this._renderBackend = kind;
+    this._renderLegacyReason = kind === 'legacy' ? reason : '';
+  }
+
+  _getBatchRendererSupport(p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer) return { ok: false, reason: 'no active layer' };
+    if (this._flatActive || p.flatStroke) return { ok: false, reason: 'flat stroke enabled' };
+    if (p.trailBlur > 0) return { ok: false, reason: 'trail blur enabled' };
+    if (p.trailFlow > 0) return { ok: false, reason: 'texture flow enabled' };
+    if (p.smudge > 0) return { ok: false, reason: 'smudge enabled' };
+    if (p.smudgeOnly) return { ok: false, reason: 'smudge only enabled' };
+    if (p.kmMix && p.kmStrength > 0) return { ok: false, reason: 'pigment mix enabled' };
+    if (p.impasto && p.impastoStrength > 0) return { ok: false, reason: 'impasto enabled' };
+    if (this._gpuDisabledReason) return { ok: false, reason: this._gpuDisabledReason };
+    if (!this.renderer.canRenderBatch({ stampBitmap: p.stampImageCanvas || null })) {
+      return { ok: false, reason: this.renderer.getUnavailableReason({ stampBitmap: p.stampImageCanvas || null }) };
+    }
+    return { ok: true, reason: '' };
+  }
+
+  _expandRenderPoints(points, stampSize, p) {
+    if (!points?.length) return [];
+    const expanded = [];
+    const seen = new Set();
+    const addPoint = (x, y) => {
+      const key = `${Math.round(x * 1000)}:${Math.round(y * 1000)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      expanded.push({ x, y });
+    };
+    for (const point of points) {
+      const symPoints = p.symmetryEnabled ? this.app.getSymmetryPoints(point.x, point.y) : [point];
+      for (const symPoint of symPoints) {
+        addPoint(symPoint.x, symPoint.y);
+        if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
+        const wraps = this.app._getStampWrapPoints(symPoint.x, symPoint.y, stampSize);
+        for (const wrap of wraps) addPoint(wrap.x, wrap.y);
+      }
+    }
+    return expanded;
+  }
+
+  _buildSimpleBatch(points, p, pressure) {
+    const color = hexToRGB(p.color);
+    const canvasTextureActive = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
+    const instances = new StampInstanceBuffer(Math.max(16, points.length));
+    for (const pt of points) {
+      let sz = p.stampSize;
+      if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      let op = p.stampOpacity;
+      if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (canvasTextureActive) {
+        op *= this.app.getTextureDepositDensity?.(pt.x, pt.y, p) ?? 1;
+        const edgeBreakup = this.app.getTextureEdgeBreakup?.(pt.x, pt.y, p) || 0;
+        if (edgeBreakup > 0) {
+          const field = this.app.sampleTextureField?.(pt.x, pt.y, p);
+          sz *= Math.max(
+            TEXTURE_EDGE_BREAKUP_MIN_SIZE,
+            1 - edgeBreakup * TEXTURE_EDGE_BREAKUP_SIZE_SCALE + ((field?.valley ?? 0.5) - 0.5) * edgeBreakup * TEXTURE_EDGE_BREAKUP_VALLEY_SCALE,
+          );
+        }
+      }
+      op = Math.min(op, 1);
+      if (sz < 0.5 || op < 0.005) continue;
+      instances.push(pt.x, pt.y, sz, color.r, color.g, color.b, op);
+    }
+    return { instances: instances.finish(), count: instances.count };
+  }
+
+  _batchHasVisiblePixels(targetCtx, batch) {
+    if (!targetCtx || !batch?.instances || batch.count <= 0) return false;
+    const canvas = targetCtx.canvas;
+    if (!canvas?.width || !canvas?.height) return false;
+    const instances = batch.instances;
+    const dpr = this.app.DPR || 1;
+    const sampleCount = Math.min(batch.count, STAMP_VISIBILITY_SAMPLE_COUNT);
+    const stride = 8;
+    try {
+      for (let i = 0; i < sampleCount; i++) {
+        const base = i * stride;
+        const size = Math.max(1, instances[base + 2] * dpr);
+        const cx = Math.round(instances[base + 0] * dpr);
+        const cy = Math.round(instances[base + 1] * dpr);
+        const x = Math.max(0, Math.min(canvas.width - 1, cx));
+        const y = Math.max(0, Math.min(canvas.height - 1, cy));
+        if (targetCtx.getImageData(x, y, 1, 1).data[3] > 0) return true;
+        const edge = Math.round(Math.min(size * 0.2, 2));
+        const ex = Math.max(0, Math.min(canvas.width - 1, x + edge));
+        if (targetCtx.getImageData(ex, y, 1, 1).data[3] > 0) return true;
+      }
+    } catch {
+      return true;
+    }
+    return false;
+  }
+
+  _renderPointBatch(points, pressure) {
+    const p = this.app.getP();
+    const support = this._getBatchRendererSupport(p);
+    const requestedStamps = points?.length || 0;
+    if (!support.ok) {
+      this._setRenderBackend('legacy', support.reason);
+      this.app.recordBrushRenderTelemetry?.({
+        backend: 'legacy',
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+        fallbackReason: support.reason,
+      });
+      return false;
+    }
+    this._ensureRendererInit();
+    const layer = this.app.getActiveLayer();
+    const stampSize = Math.max(1, p.pressureSize ? p.stampSize * (0.3 + 0.7 * pressure) : p.stampSize);
+    const renderPoints = this._expandRenderPoints(points, stampSize, p);
+    const batch = this._buildSimpleBatch(renderPoints, p, pressure);
+    const stampBitmap = p.stampImageCanvas || null;
+    const compositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
+    if (batch.count <= 0) {
+      const backend = this.renderer.getPreferredBatchRendererKind({ stampBitmap });
+      this._setRenderBackend(backend);
+      this.app.recordBrushRenderTelemetry?.({
+        backend,
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+      });
+      return true;
+    }
+    const ok = this.renderer.render({
+      instances: batch.instances,
+      count: batch.count,
+      targetCtx: layer.ctx,
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      dpr: this.app.DPR,
+      compositeOperation,
+      stampBitmap,
+      stampTint: p.stampImageTint !== false,
+      stampRotation: p.stampImageRotation || 0,
+      stampAspect: stampBitmap?.width > 0 && stampBitmap?.height > 0 ? stampBitmap.width / stampBitmap.height : 1,
+    });
+    this._setRenderBackend(ok ? this.renderer.activeKind : 'legacy', ok ? '' : this.renderer.legacyReason);
+    if (!ok) {
+      this._gpuFailureCount++;
+      if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
+        this._gpuDisabledReason = 'GPU simple-stamp renderer failed repeatedly';
+        this._setRenderBackend('legacy', this._formatLegacyFallbackReason(this._gpuDisabledReason));
+      }
+      this.app.recordBrushRenderTelemetry?.({
+        backend: 'legacy',
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+        fallbackReason: this._renderLegacyReason || this.renderer.legacyReason || 'GPU simple-stamp renderer failed',
+      });
+      return false;
+    }
+    if (this.renderer.activeKind !== 'canvas' && !this._batchHasVisiblePixels(layer.ctx, batch)) {
+      this._gpuFailureCount++;
+      if (this._gpuFailureCount >= GPU_RENDERER_FAILURE_LIMIT) {
+        this._gpuDisabledReason = 'GPU simple-stamp visibility probe failed';
+      }
+      this._setRenderBackend('legacy', this._formatLegacyFallbackReason(this._gpuDisabledReason || 'GPU simple-stamp visibility probe failed'));
+      this.app.recordBrushRenderTelemetry?.({
+        backend: 'legacy',
+        submittedStamps: requestedStamps,
+        renderedStampsEstimate: 0,
+        fallbackReason: this._renderLegacyReason || 'GPU simple-stamp visibility probe failed',
+      });
+      return false;
+    }
+    this._gpuFailureCount = 0;
+    this.app.recordBrushRenderTelemetry?.({
+      backend: this.renderer.activeKind || 'canvas',
+      submittedStamps: requestedStamps,
+      renderedStampsEstimate: batch.count,
+    });
+    return true;
   }
 
   onDown(x, y, pressure) {
@@ -2985,7 +3737,9 @@ export class SimpleBrush {
     this._lastStampY = y;
     this.app.strokeFrame = 0;
     this._active = true;
-    this._stamp(x, y, pressure);
+    if (!this._renderPointBatch([{ x, y }], pressure)) {
+      this._stamp(x, y, pressure);
+    }
     this._markDirty();
   }
 
@@ -3004,9 +3758,13 @@ export class SimpleBrush {
     if (dist < step) return; // accumulate distance until next stamp
 
     const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    const points = [];
     for (let j = 1; j <= n; j++) {
       const t = j / n;
-      this._stamp(this._lastStampX + dx * t, this._lastStampY + dy * t, pressure);
+      points.push({ x: this._lastStampX + dx * t, y: this._lastStampY + dy * t });
+    }
+    if (!this._renderPointBatch(points, pressure)) {
+      for (const pt of points) this._stamp(pt.x, pt.y, pressure);
     }
     this._lastStampX = x;
     this._lastStampY = y;
@@ -3116,8 +3874,18 @@ export class SimpleBrush {
   }
 
   drawOverlay() { /* nothing */ }
-  getStatusInfo() { return 'Simple'; }
-  deactivate() { this._active = false; this._flatActive = false; }
+  getStatusInfo() {
+    const p = this.app.getP();
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (this._getBatchRendererSupport(p).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Simple | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+  }
+  deactivate() {
+    this._active = false;
+    this._flatActive = false;
+    this._setRenderBackend('legacy', 'compatibility check pending');
+  }
 }
 
 // =============================================================================

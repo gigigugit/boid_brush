@@ -13,6 +13,8 @@ import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 
 const STORAGE_KEY = 'bb_session_v1';
+const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
+const APP_BUILD_ID = '2026-05-06-cache-check-1';
 const MAX_UNDO = 20;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -23,6 +25,7 @@ const WHEEL_ROTATION_DEG = 2;
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
 const DEFAULT_STAMP_IMAGE_PATH = './circle.png';
+const RETRYABLE_STARTUP_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const PAPER_TEXTURE_FLECK_SCALE = 3.2;
 const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
 const PAPER_TEXTURE_FLECK_INTENSITY = 170;
@@ -103,6 +106,34 @@ function _parseAngleDegrees(value) {
 
 function _deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function _sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function _fetchWithRetry(resource, {
+  attempts = 6,
+  delayMs = 400,
+  init,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(resource, init);
+      if (!RETRYABLE_STARTUP_FETCH_STATUSES.has(response.status) || attempt >= attempts) {
+        return response;
+      }
+      lastError = new Error(`Fetch failed (${response.status})`);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) throw error;
+    }
+    // Exponential back-off with jitter — gives TLS 0-RTT (HTTP 425) time to settle
+    const jitter = Math.random() * 100;
+    await _sleep(delayMs * attempt + jitter);
+  }
+  throw lastError || new Error('Fetch failed');
 }
 
 function _escapeHtml(str) {
@@ -374,7 +405,7 @@ export class App {
     this._toastTimer = null;
 
     // Kick off
-    this._init();
+    this._init().catch(error => this._handleInitError(error));
   }
 
   // ========================================================
@@ -435,6 +466,7 @@ export class App {
       this.compositeAllLayers();
     });
 
+    this._announceBuildLoad();
     this.setStatus('Ready');
   }
 
@@ -636,6 +668,7 @@ export class App {
       dirty: true,
       dirtyTiles: null,
       glTex: null,
+      gpuPreviewCanvas: null,
       alphaLock: false,
       ...props,
     };
@@ -786,6 +819,125 @@ export class App {
     return c;
   }
 
+  /** Linen canvas texture — coarse woven grid with thread noise. */
+  _buildBuiltinLinenTextureCanvas() {
+    const sz = 256;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    const THREAD = 9; // pixels per thread period
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const warpPhase = (x % THREAD) / THREAD * Math.PI * 2;
+        const weftPhase = (y % THREAD) / THREAD * Math.PI * 2;
+        const warp = Math.sin(warpPhase + _valueNoise2D(x, y, 5, 13) * 1.5) * 0.5 + 0.5;
+        const weft = Math.sin(weftPhase + _valueNoise2D(x, y, 5, 37) * 1.5) * 0.5 + 0.5;
+        const weave = Math.max(warp, weft);
+        const micro = _valueNoise2D(x, y, 2.5, 59) * 0.18;
+        const coarse = _valueNoise2D(x, y, 28, 7) * 0.06;
+        let grey = 168 + weave * 40 + micro * 20 + coarse * 20 - 25;
+        grey = Math.max(60, Math.min(230, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** Rough watercolor paper — pronounced tooth with soft pits. */
+  _buildBuiltinWatercolorTextureCanvas() {
+    const sz = 256;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const macro = _valueNoise2D(x, y, 52, 3);
+        const mid   = _valueNoise2D(x, y, 22, 17);
+        const fine  = _valueNoise2D(x, y, 8,  41);
+        const pit   = _valueNoise2D(x, y, 4.5, 83);
+        const fibre = Math.abs(Math.sin((x * 0.07 + y * 0.04) + mid * 5.5)) * 0.5 + 0.5;
+        let grey = 165
+          + (macro - 0.5) * 55
+          + (mid   - 0.5) * 32
+          + (fine  - 0.5) * 18
+          + (fibre - 0.5) * 10;
+        if (pit < 0.22) grey -= (0.22 - pit) * 140;
+        grey = Math.max(45, Math.min(228, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** Charcoal / drawing paper — fine consistent tooth with light directional grain. */
+  _buildBuiltinCharcoalTextureCanvas() {
+    const sz = 192;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const tooth  = _valueNoise2D(x, y, 4, 23);
+        const medium = _valueNoise2D(x, y, 12, 47);
+        const coarse = _valueNoise2D(x, y, 30, 5);
+        // Horizontal directional grain for drawing paper feel
+        const grain = Math.sin(y * 0.62 + _valueNoise2D(x, y, 8, 61) * 3.8) * 0.5 + 0.5;
+        let grey = 175
+          + (tooth  - 0.5) * 22
+          + (medium - 0.5) * 18
+          + (coarse - 0.5) * 14
+          + (grain  - 0.5) *  8;
+        grey = Math.max(80, Math.min(225, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** Smooth Bristol board — subtle micro-texture, nearly flat. */
+  _buildBuiltinBristolTextureCanvas() {
+    const sz = 128;
+    const c = document.createElement('canvas');
+    c.width = sz;
+    c.height = sz;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(sz, sz);
+    const d = img.data;
+    for (let y = 0; y < sz; y++) {
+      for (let x = 0; x < sz; x++) {
+        const micro  = _valueNoise2D(x, y, 2.2, 31);
+        const smooth = _valueNoise2D(x, y, 18,  19);
+        let grey = 195
+          + (micro  - 0.5) * 12
+          + (smooth - 0.5) *  6;
+        grey = Math.max(150, Math.min(238, Math.round(grey)));
+        const off = (y * sz + x) * 4;
+        d[off] = d[off + 1] = d[off + 2] = grey;
+        d[off + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
   _createCanvasTextureRecord({ id, name, sourceType, canvas, dataUrl = null, persistDataUrl = false }) {
     const width = canvas.width;
     const height = canvas.height;
@@ -845,15 +997,19 @@ export class App {
   }
 
   async _ensureBuiltinCanvasTexture() {
-    if (!this._builtinCanvasTextures.has(DEFAULT_CANVAS_TEXTURE_ID)) {
-      const canvas = this._buildBuiltinPaperTextureCanvas();
-      const texture = this._createCanvasTextureRecord({
-        id: DEFAULT_CANVAS_TEXTURE_ID,
-        name: 'Paper Grain',
-        sourceType: 'builtin',
-        canvas,
-      });
-      this._builtinCanvasTextures.set(texture.id, texture);
+    const BUILTINS = [
+      { id: DEFAULT_CANVAS_TEXTURE_ID,    name: 'Paper Grain',      build: () => this._buildBuiltinPaperTextureCanvas() },
+      { id: 'builtin-linen',              name: 'Linen Canvas',     build: () => this._buildBuiltinLinenTextureCanvas() },
+      { id: 'builtin-watercolor',         name: 'Watercolor Paper', build: () => this._buildBuiltinWatercolorTextureCanvas() },
+      { id: 'builtin-charcoal',           name: 'Charcoal Paper',   build: () => this._buildBuiltinCharcoalTextureCanvas() },
+      { id: 'builtin-bristol',            name: 'Bristol Board',    build: () => this._buildBuiltinBristolTextureCanvas() },
+    ];
+    for (const { id, name, build } of BUILTINS) {
+      if (!this._builtinCanvasTextures.has(id)) {
+        const canvas = build();
+        const texture = this._createCanvasTextureRecord({ id, name, sourceType: 'builtin', canvas });
+        this._builtinCanvasTextures.set(id, texture);
+      }
     }
     if (!this._canvasTexture) {
       this._setActiveCanvasTexture(this._builtinCanvasTextures.get(DEFAULT_CANVAS_TEXTURE_ID), { silent: true });
@@ -1004,10 +1160,18 @@ export class App {
     }
   }
 
-  async _loadDefaultStampImage({ enable = true } = {}) {
-    const response = await fetch(DEFAULT_STAMP_IMAGE_PATH);
+  async _loadDefaultStampImage({ enable = false } = {}) {
+    let response;
+    try {
+      response = await _fetchWithRetry(DEFAULT_STAMP_IMAGE_PATH);
+    } catch {
+      // Network unavailable or persistent 425 Too Early (TLS 0-RTT) — skip default stamp silently.
+      // The user can still load a custom stamp at any time.
+      return;
+    }
     if (!response.ok) {
-      throw new Error(`Default stamp image fetch failed (${response.status})`);
+      // Non-retryable error (e.g. 404 in local dev) — degrade gracefully.
+      return;
     }
     const blob = await response.blob();
     const dataUrl = await new Promise((resolve, reject) => {
@@ -3121,6 +3285,7 @@ export class App {
     document.getElementById('ellipseSelectBtn')?.classList.toggle('active', this.activeTool === 'ellipse-select');
     document.getElementById('lassoSelectBtn')?.classList.toggle('active', this.activeTool === 'lasso-select');
     document.getElementById('fillBtn')?.classList.toggle('active', this.activeTool === 'fill');
+    document.getElementById('eyedropperBtn')?.classList.toggle('active', this.activeTool === 'eyedropper');
     const deselectBtn = document.getElementById('deselectBtn');
     if (deselectBtn) deselectBtn.style.display = this.selectionMgr?.active ? '' : 'none';
     const transformBtn = document.getElementById('transformBtn');
@@ -3214,6 +3379,7 @@ export class App {
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('reloadAppBtn')?.addEventListener('click', () => this.reloadAppWithCacheBust());
     document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
     document.getElementById('resetViewBtn')?.addEventListener('click', () => this.resetView());
@@ -3245,6 +3411,7 @@ export class App {
     document.getElementById('ellipseSelectBtn')?.addEventListener('click', () => this.setTool('ellipse-select'));
     document.getElementById('lassoSelectBtn')?.addEventListener('click', () => this.setTool('lasso-select'));
     document.getElementById('fillBtn')?.addEventListener('click', () => this.setTool('fill'));
+    document.getElementById('eyedropperBtn')?.addEventListener('click', () => this.setTool('eyedropper'));
     document.getElementById('deselectBtn')?.addEventListener('click', () => this.deselect());
     // Transform tool
     document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
@@ -3577,6 +3744,11 @@ export class App {
       this._floodFill(x, y);
       return;
     }
+    // Eyedropper tool dispatch
+    if (this.activeTool === 'eyedropper') {
+      this._pickColor(x, y);
+      return;
+    }
     // Selection tool dispatch - click outside selection starts a new one
     if (this.activeTool !== 'brush') {
       this._commitFloatingPixels(); // stamp any floating pixels before new selection
@@ -3749,6 +3921,7 @@ export class App {
       if (e.key === 'm' || e.key === 'M') { this.setTool('rect-select'); return; }
       if (e.key === 'l' || e.key === 'L') { this.setTool('lasso-select'); return; }
       if (e.key === 'g' || e.key === 'G') { this.setTool('fill'); return; }
+      if (e.key === 'e' || e.key === 'E') { this.setTool('eyedropper'); return; }
       if (e.key === 't' || e.key === 'T') { this._toggleTransform(); return; }
     }
     // 0 = reset view
@@ -3936,6 +4109,11 @@ export class App {
       totalClearMs: 0,
       totalOverlayMs: 0,
       totalStatusMs: 0,
+      renderSubmittedStamps: 0,
+      renderEstimatedStamps: 0,
+      renderFallbackCount: 0,
+      renderBackendCounts: { webgpu: 0, webgl: 0, canvas: 0, legacy: 0 },
+      lastRenderFallbackReason: '',
       worstFrameMs: 0,
       worstFramePhase: 'none',
       maxBrushMs: 0,
@@ -3975,6 +4153,14 @@ export class App {
     t.totalClearMs = 0;
     t.totalOverlayMs = 0;
     t.totalStatusMs = 0;
+    t.renderSubmittedStamps = 0;
+    t.renderEstimatedStamps = 0;
+    t.renderFallbackCount = 0;
+    t.renderBackendCounts.webgpu = 0;
+    t.renderBackendCounts.webgl = 0;
+    t.renderBackendCounts.canvas = 0;
+    t.renderBackendCounts.legacy = 0;
+    t.lastRenderFallbackReason = '';
     t.worstFrameMs = 0;
     t.worstFramePhase = 'none';
     t.maxBrushMs = 0;
@@ -4203,6 +4389,23 @@ export class App {
     this._refreshPerformanceTelemetryUI();
   }
 
+  recordBrushRenderTelemetry({ backend = 'legacy', submittedStamps = 0, renderedStampsEstimate = 0, fallbackReason = '' } = {}) {
+    const t = this._performanceTelemetry;
+    if (!t.enabled) return;
+    const key = backend === 'webgpu' || backend === 'webgl' || backend === 'canvas' ? backend : 'legacy';
+    t.renderBackendCounts[key] = (t.renderBackendCounts[key] || 0) + 1;
+    t.renderSubmittedStamps += Math.max(0, submittedStamps | 0);
+    t.renderEstimatedStamps += Math.max(0, renderedStampsEstimate | 0);
+    if (fallbackReason) {
+      t.renderFallbackCount++;
+      if (fallbackReason !== t.lastRenderFallbackReason) {
+        t.lastRenderFallbackReason = fallbackReason;
+        this._notePerformanceEvent(`render fallback: ${fallbackReason}`);
+      }
+    }
+    this._refreshPerformanceTelemetryUI();
+  }
+
   _isPerformanceThrottleGap(frame) {
     const t = this._performanceTelemetry;
     return Number.isFinite(frame.deltaMs)
@@ -4238,6 +4441,7 @@ export class App {
       `State: ${t.visibilityState}${t.focused ? ' • focused' : ' • blurred'}${wakeLockState}`,
       `Frames: ${t.frameCount} • avg ${avgFrame.toFixed(1)}ms • ~${fps.toFixed(0)}fps • slow ${t.slowFrameCount}`,
       `Attribution: brush ${(t.totalBrushMs / frameCount).toFixed(1)} • overlay ${(t.totalOverlayMs / frameCount).toFixed(1)} • clear ${(t.totalClearMs / frameCount).toFixed(1)} • status ${(t.totalStatusMs / frameCount).toFixed(1)} ms/frame`,
+      `Render: submit ${t.renderSubmittedStamps} • est ${t.renderEstimatedStamps} • fb ${t.renderFallbackCount} • backends wg:${t.renderBackendCounts.webgpu} gl:${t.renderBackendCounts.webgl} c2d:${t.renderBackendCounts.canvas} cpu:${t.renderBackendCounts.legacy}`,
       `Worst: ${t.worstFrameMs.toFixed(1)}ms (${t.worstFramePhase}) • long tasks ${t.longTaskCount} (${t.longTaskTotalMs.toFixed(0)}ms) • raf gaps ${t.throttleGapCount}`,
       `Lifecycle: hidden ${(hiddenMs / 1000).toFixed(1)}s • vis ${t.visibilityChanges} • blur ${t.focusLostCount} • pagehide ${t.pageHideCount} • freeze ${t.freezeCount}`,
       `Device: ${t.hardwareConcurrency || '?'} cores • ${t.deviceMemoryGB || '?'}GB mem${t.memoryMB != null ? ` • heap ${t.memoryMB.toFixed(0)}MB` : ''}`,
@@ -4251,7 +4455,20 @@ export class App {
     if (!t.enabled || t.frameCount === 0) return '';
     const avgFrame = t.totalFrameMs / t.frameCount;
     const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
-    return `Perf ${fps.toFixed(0)}fps ${avgFrame.toFixed(1)}ms LT:${t.longTaskCount} Gap:${t.throttleGapCount}${t.wakeLockPreferred ? ` WL:${t.wakeLockActive ? 'on' : 'wait'}` : ''}`;
+    const activeSeconds = Math.max(0.001, t.totalFrameMs / 1000);
+    const stampRate = t.renderEstimatedStamps / activeSeconds;
+    const backendCounts = t.renderBackendCounts;
+    let backend = 'cpu';
+    if (backendCounts.webgpu >= backendCounts.webgl
+      && backendCounts.webgpu >= backendCounts.canvas
+      && backendCounts.webgpu >= backendCounts.legacy) {
+      backend = 'wgpu';
+    } else if (backendCounts.webgl >= backendCounts.canvas && backendCounts.webgl >= backendCounts.legacy) {
+      backend = 'webgl';
+    } else if (backendCounts.canvas >= backendCounts.legacy) {
+      backend = 'c2d';
+    }
+    return `Perf ${fps.toFixed(0)}fps ${avgFrame.toFixed(1)}ms St:${stampRate.toFixed(0)}/s B:${backend} Fb:${t.renderFallbackCount} LT:${t.longTaskCount} Gap:${t.throttleGapCount}${t.wakeLockPreferred ? ` WL:${t.wakeLockActive ? 'on' : 'wait'}` : ''}`;
   }
 
   _buildPerformanceTelemetrySnapshot() {
@@ -4269,6 +4486,11 @@ export class App {
       avgOverlayMs: +(t.totalOverlayMs / frameCount).toFixed(3),
       avgClearMs: +(t.totalClearMs / frameCount).toFixed(3),
       avgStatusMs: +(t.totalStatusMs / frameCount).toFixed(3),
+      renderSubmittedStamps: t.renderSubmittedStamps,
+      renderEstimatedStamps: t.renderEstimatedStamps,
+      renderFallbackCount: t.renderFallbackCount,
+      renderBackendCounts: t.renderBackendCounts,
+      lastRenderFallbackReason: t.lastRenderFallbackReason,
       slowFrames: t.slowFrameCount,
       worstFrameMs: +t.worstFrameMs.toFixed(3),
       worstFramePhase: t.worstFramePhase,
@@ -4706,6 +4928,40 @@ export class App {
    * Flood-fill a contiguous region of similar colour on the active layer.
    * Receives CSS-pixel coordinates and converts to device pixels internally.
    */
+  /**
+   * Sample the colour at (x, y) from the composited visible image and set it
+   * as the primary colour.  Switches back to the brush tool immediately after.
+   */
+  _pickColor(x, y) {
+    // Sample from the composite (flattened visible) canvas for a WYSIWYG pick
+    const src = this.compositeCanvas;
+    const dpr = this.DPR;
+    const px = Math.round(x * dpr);
+    const py = Math.round(y * dpr);
+    if (px < 0 || px >= src.width || py < 0 || py >= src.height) {
+      this.setTool('brush');
+      return;
+    }
+    // Reuse the 1×1 parse canvas to avoid creating a new context
+    const ctx = this._colorParseCtx;
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.drawImage(src, -px, -py);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    if (d[3] === 0) {
+      // Transparent pixel — sample background color instead
+      const bg = this.bgColorEl?.value || '#ffffff';
+      this.primaryEl.value = bg;
+    } else {
+      const toHex = v => v.toString(16).padStart(2, '0');
+      this.primaryEl.value = `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`;
+    }
+    this._recordColor(this.primaryEl.value);
+    this._paramsDirty = true;
+    this.showToast(`🔬 Picked ${this.primaryEl.value}`);
+    // Return to brush mode after picking
+    this.setTool('brush');
+  }
+
   _floodFill(x, y) {
     const layer = this.getActiveLayer();
     if (!layer) return;
@@ -5354,10 +5610,11 @@ export class App {
         return;
       }
       const controls = JSON.parse(raw);
+      const hasSavedStampImageState = Object.prototype.hasOwnProperty.call(controls, '_stampImageState');
       if (controls._canvasTextureState) {
         await this._restoreCanvasTextureState(controls._canvasTextureState);
       }
-      if (Object.prototype.hasOwnProperty.call(controls, '_stampImageState')) {
+      if (hasSavedStampImageState) {
         await this._restoreCustomStampImageState(controls._stampImageState);
       } else {
         await this._loadDefaultStampImage();
@@ -5413,6 +5670,10 @@ export class App {
         if (el.type === 'checkbox') el.checked = val;
         else el.value = val;
       }
+      if (!hasSavedStampImageState && this.activeBrush === 'boid') {
+        const stampImageToggle = document.getElementById('stampImageEnabled');
+        if (stampImageToggle?.checked) stampImageToggle.checked = false;
+      }
       this._paramsDirty = true;
       syncUI(this);
       this._normalizeSimulationData();
@@ -5435,7 +5696,82 @@ export class App {
     this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 1800);
   }
 
+  _handleInitError(error) {
+    console.error('App init failed:', error);
+    const message = error?.message || 'Unknown startup error';
+    this.setStatus(`Startup failed: ${message}`);
+    this.showToast('⚠ Startup failed');
+  }
+
+  async _clearReloadCaches() {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.allSettled(keys.map(key => caches.delete(key)));
+      }
+    } catch { /* ignore cache API failures */ }
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.allSettled(registrations.map(reg => reg.unregister()));
+      }
+    } catch { /* ignore SW failures */ }
+  }
+
+  _clearReloadStorageArtifacts({ wipeSession = false } = {}) {
+    try {
+      localStorage.removeItem(BUILD_ID_STORAGE_KEY);
+    } catch { /* ignore localStorage failures */ }
+
+    if (wipeSession) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore localStorage failures */ }
+      try { localStorage.removeItem('bb_autosave'); } catch { /* ignore localStorage failures */ }
+      try { localStorage.removeItem('bb_perfTelemetry'); } catch { /* ignore localStorage failures */ }
+      try { localStorage.removeItem('bb_perfWakeLock'); } catch { /* ignore localStorage failures */ }
+    }
+
+    try { sessionStorage.clear(); } catch { /* ignore sessionStorage failures */ }
+
+    // Best-effort cookie eviction for same-origin readable cookies.
+    try {
+      const cookieNames = document.cookie
+        .split(';')
+        .map(part => part.split('=')[0]?.trim())
+        .filter(Boolean);
+      for (const name of cookieNames) {
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;SameSite=Lax`;
+      }
+    } catch { /* ignore cookie failures */ }
+  }
+
+  async reloadAppWithCacheBust({ wipeSession = false } = {}) {
+    const btn = document.getElementById('reloadAppBtn');
+    if (btn) btn.disabled = true;
+    this.setStatus('Reloading app (clearing caches)…');
+    await this._clearReloadCaches();
+    this._clearReloadStorageArtifacts({ wipeSession });
+    const url = new URL(window.location.href);
+    url.searchParams.set('bb_reload', `${Date.now()}`);
+    window.location.replace(url.toString());
+  }
+
+  _announceBuildLoad() {
+    let previousBuildId = '';
+    try {
+      previousBuildId = localStorage.getItem(BUILD_ID_STORAGE_KEY) || '';
+      localStorage.setItem(BUILD_ID_STORAGE_KEY, APP_BUILD_ID);
+    } catch { /* ignore storage failures */ }
+    if (!previousBuildId) {
+      this.showToast(`Build ${APP_BUILD_ID} loaded`);
+      return;
+    }
+    if (previousBuildId !== APP_BUILD_ID) {
+      this.showToast(`Updated build: ${previousBuildId} → ${APP_BUILD_ID}`);
+    }
+  }
+
   setStatus(msg) {
-    this.statusEl.textContent = msg;
+    this.statusEl.textContent = `${msg} · Build ${APP_BUILD_ID}`;
   }
 }
