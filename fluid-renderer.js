@@ -296,6 +296,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
 
   _ensureAccumulationTexture(widthPx, heightPx) {
     if (this._accumulationTexture && this._accumulationWidth === widthPx && this._accumulationHeight === heightPx) return;
+    this._accumulationTexture?.destroy?.();
     this._accumulationTexture = this.device.createTexture({
       size: { width: widthPx, height: heightPx },
       format: this.presentationFormat,

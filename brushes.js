@@ -36,8 +36,7 @@ const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
 const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 const FLUID3D_MOVE_EMIT_RATIO = 0.5;
-const FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS = 360;
-const FLUID3D_FINAL_PASS_SETTLE_BUDGET = 48;
+const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -5160,7 +5159,7 @@ export class ThreeDFluidBrush {
     let guard = 0;
     // Keep the replay settle budget intentionally small so the final pass does not stall UI
     // responsiveness; if the cap is hit, the last rendered state is still committed to the layer.
-    while (this._finalSim.getParticleCount() > 0 && guard < Math.min(FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS, FLUID3D_FINAL_PASS_SETTLE_BUDGET)) {
+    while (this._finalSim.getParticleCount() > 0 && guard < FLUID3D_FINAL_PASS_SETTLING_STEPS) {
       this._finalSim.step(FLUID_TIMESTEP_60FPS);
       guard += 1;
     }

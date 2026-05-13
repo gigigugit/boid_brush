@@ -262,6 +262,15 @@ export class WebGPUFluidSim {
   }
 
   _rebuildResources() {
+    this._cellBuffers.forEach(buffer => buffer?.destroy?.());
+    this._maskBuffer?.destroy?.();
+    this._paramsBuffer?.destroy?.();
+    this._metaBuffer?.destroy?.();
+    this._emitterBuffer?.destroy?.();
+    this._influenceBuffer?.destroy?.();
+    this._scalarFieldBuffer?.destroy?.();
+    this._statsReadBuffer?.destroy?.();
+    this._cellBindGroups = [];
     const cellBytes = this._cellBufferByteLength();
     this._cellBuffers = [
       this.device.createBuffer({ size: cellBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC }),
