@@ -382,6 +382,11 @@ export class WebGPUFluidSim {
     this.clearInteractionState();
   }
 
+  /**
+   * Advance the simulation by one frame.
+   * Set captureStats=false for replay/settle passes where GPU readback would
+   * only add latency without affecting committed paint output.
+   */
   step(dt = 1 / 60, { captureStats = true } = {}) {
     if (!this.ready) return;
     const emitterPack = _packEmitters(this._pendingEmitters);

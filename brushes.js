@@ -39,6 +39,7 @@ const FLUID3D_MOVE_EMIT_RATIO = 0.5;
 const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
 const FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
 const FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
+const FLUID3D_FINAL_PASS_CAPTURE_STATS = false;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -4790,6 +4791,8 @@ export class ThreeDFluidBrush {
     this._replayInteractionEvents = [];
     this._replayStepHistory = [];
     this._replayTime = 0;
+    // Tracks the chunked post-stroke replay/settle job:
+    // { replayIndex, replayTime, eventIndex, settleRemaining, stage }.
     this._finalPassJob = null;
     this._previewBound = false;
     this._backend = 'webgpu';
@@ -5140,6 +5143,11 @@ export class ThreeDFluidBrush {
     this._strokeLayer = null;
   }
 
+  _commitAndFinishSettledStroke() {
+    this._commitPreviewToLayer({ composite: true });
+    this._finishSettledStroke();
+  }
+
   _flushFinalPassEvents(job) {
     while (job.eventIndex < this._replayInteractionEvents.length && this._replayInteractionEvents[job.eventIndex].time <= job.replayTime + 1e-6) {
       const event = this._replayInteractionEvents[job.eventIndex];
@@ -5175,13 +5183,13 @@ export class ThreeDFluidBrush {
     if (job.stage === 'committing') return true;
 
     if (job.stage === 'replay') {
-      let steps = 0;
-      while (job.replayIndex < this._replayStepHistory.length && steps < FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME) {
+      let replayStepsThisFrame = 0;
+      while (job.replayIndex < this._replayStepHistory.length && replayStepsThisFrame < FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME) {
         const dt = this._replayStepHistory[job.replayIndex];
-        this._finalSim.step(dt, { captureStats: false });
+        this._finalSim.step(dt, { captureStats: FLUID3D_FINAL_PASS_CAPTURE_STATS });
         job.replayTime += dt;
         job.replayIndex += 1;
-        steps += 1;
+        replayStepsThisFrame += 1;
         this._flushFinalPassEvents(job);
       }
       if (job.replayIndex < this._replayStepHistory.length) return true;
@@ -5189,11 +5197,11 @@ export class ThreeDFluidBrush {
     }
 
     if (job.stage === 'settle') {
-      let steps = 0;
-      while (job.settleRemaining > 0 && steps < FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME) {
-        this._finalSim.step(FLUID_TIMESTEP_60FPS, { captureStats: false });
+      let settleStepsThisFrame = 0;
+      while (job.settleRemaining > 0 && settleStepsThisFrame < FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME) {
+        this._finalSim.step(FLUID_TIMESTEP_60FPS, { captureStats: FLUID3D_FINAL_PASS_CAPTURE_STATS });
         job.settleRemaining -= 1;
-        steps += 1;
+        settleStepsThisFrame += 1;
       }
       if (job.settleRemaining > 0) return true;
       job.stage = 'render';
@@ -5208,16 +5216,13 @@ export class ThreeDFluidBrush {
       job.stage = 'committing';
       if (this.renderer.device?.queue?.onSubmittedWorkDone) {
         this.renderer.device.queue.onSubmittedWorkDone().then(() => {
-          this._commitPreviewToLayer({ composite: true });
-          this._finishSettledStroke();
+          this._commitAndFinishSettledStroke();
         }).catch(() => {
-          this._commitPreviewToLayer({ composite: true });
-          this._finishSettledStroke();
+          this._commitAndFinishSettledStroke();
         });
         return true;
       }
-      this._commitPreviewToLayer({ composite: true });
-      this._finishSettledStroke();
+      this._commitAndFinishSettledStroke();
       return true;
     }
 
