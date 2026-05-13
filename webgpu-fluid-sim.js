@@ -196,6 +196,7 @@ export class WebGPUFluidSim {
     this._activeBufferIndex = 0;
     this._statsEvery = DEFAULT_STATS_INTERVAL;
     this._statsCounter = 0;
+    this._statsReadbackPending = false;
     this._lastStats = { activeCells: 0, occupiedRatio: 0, maxPressure: 0, maxThickness: 0, averageVelocity: 0 };
     this._lastParticleView = [];
     this._renderModeIndex = 0;
@@ -375,12 +376,13 @@ export class WebGPUFluidSim {
     const zero = new Float32Array(this.internalWidth * this.internalHeight * CELL_STRIDE);
     this.device.queue.writeBuffer(this._cellBuffers[0], 0, zero.buffer, zero.byteOffset, zero.byteLength);
     this.device.queue.writeBuffer(this._cellBuffers[1], 0, zero.buffer, zero.byteOffset, zero.byteLength);
+    this._statsReadbackPending = false;
     this._lastStats = { activeCells: 0, occupiedRatio: 0, maxPressure: 0, maxThickness: 0, averageVelocity: 0 };
     this._lastParticleView = [];
     this.clearInteractionState();
   }
 
-  step(dt = 1 / 60) {
+  step(dt = 1 / 60, { captureStats = true } = {}) {
     if (!this.ready) return;
     const emitterPack = _packEmitters(this._pendingEmitters);
     const influencePack = _packInfluences(this._pendingInfluences);
@@ -427,7 +429,7 @@ export class WebGPUFluidSim {
     pass.end();
 
     const outputIndex = 1 - this._activeBufferIndex;
-    if ((this._statsCounter % this._statsEvery) === 0) {
+    if (captureStats && !this._statsReadbackPending && (this._statsCounter % this._statsEvery) === 0) {
       encoder.copyBufferToBuffer(this._cellBuffers[outputIndex], 0, this._statsReadBuffer, 0, this._cellBufferByteLength());
     }
     this.device.queue.submit([encoder.finish()]);
@@ -435,11 +437,12 @@ export class WebGPUFluidSim {
     this._frameIndex += 1;
     this._statsCounter += 1;
     this.clearInteractionState();
-    if ((this._statsCounter % this._statsEvery) === 1) this._scheduleStatsReadback();
+    if (captureStats && !this._statsReadbackPending && (this._statsCounter % this._statsEvery) === 1) this._scheduleStatsReadback();
   }
 
   _scheduleStatsReadback() {
-    if (!this._statsReadBuffer) return;
+    if (!this._statsReadBuffer || this._statsReadbackPending) return;
+    this._statsReadbackPending = true;
     this._statsReadBuffer.mapAsync(GPUMapMode.READ).then(() => {
       const view = new Float32Array(this._statsReadBuffer.getMappedRange());
       const stats = { activeCells: 0, occupiedRatio: 0, maxPressure: 0, maxThickness: 0, averageVelocity: 0 };
@@ -476,8 +479,10 @@ export class WebGPUFluidSim {
       this._lastStats = stats;
       this._lastParticleView = particles;
       this._statsReadBuffer.unmap();
+      this._statsReadbackPending = false;
     }).catch(() => {
       try { this._statsReadBuffer.unmap(); } catch {}
+      this._statsReadbackPending = false;
     });
   }
 
