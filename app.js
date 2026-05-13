@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
@@ -95,6 +95,30 @@ const FACTORY_DEFAULTS = Object.freeze({
   lbmPigmentRetention: 78,
   lbmResolutionScale: 100,
   lbmFluidScale: 115,
+  fluid3dBrushRadius: 42,
+  fluid3dEmitterCount: 8,
+  fluid3dEmissionRate: 72,
+  fluid3dEmitterStrength: 82,
+  fluid3dEmitterVelocity: 74,
+  fluid3dPressure: 62,
+  fluid3dMomentum: 88,
+  fluid3dVelocityDiffuse: 22,
+  fluid3dDrag: 18,
+  fluid3dThicknessDecay: 8,
+  fluid3dPigmentDiffusion: 28,
+  fluid3dPressureFade: 12,
+  fluid3dSettleThreshold: 4,
+  fluid3dTerrainWeight: 24,
+  fluid3dScalarFieldInfluence: 45,
+  fluid3dInfluenceStrength: 70,
+  fluid3dInfluenceRadius: 120,
+  fluid3dMaxVelocity: 18,
+  fluid3dThicknessFloor: 4,
+  fluid3dOpacityScale: 100,
+  fluid3dResolutionScale: 90,
+  fluid3dPreviewScale: 55,
+  fluid3dFluidScale: 115,
+  fluid3dOccupancyBias: 12,
   stampSize: 10,
   stampOpacity: 15,
   stampSeparation: 0,
@@ -145,6 +169,8 @@ const FACTORY_DEFAULTS = Object.freeze({
   showBristles: true,
   lbmFirstPassPreview: true,
   lbmShowFlow: true,
+  fluid3dAdaptiveQuality: true,
+  fluid3dShowField: false,
   smudgeOnly: false,
   pressureSize: true,
   pressureOpacity: true,
@@ -172,6 +198,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   boidUntouchAction: 'cull',
   boidUnhoverAction: 'cull',
   lbmRenderMode: 'hybrid',
+  fluid3dRenderMode: 'volume',
   canvasTexturePreset: 'builtin-paper-grain',
   sensingMode: 'avoid',
   sensingChannel: 'darkness',
@@ -561,6 +588,7 @@ export class App {
     // Color history
     this._colorHistory = [];
     this._maxColorHistory = 16;
+    this._fluidInteractionState = { emitters: [], influences: [], scalarFields: [] };
 
     // Frame loop
     this._rafId = null;
@@ -592,6 +620,7 @@ export class App {
     this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
     this.brushes.fluid = new FluidBrush(this);
+    this.brushes.fluid3d = new ThreeDFluidBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
@@ -599,6 +628,7 @@ export class App {
     await this.brushes.boid.init();
     await this.brushes.ant.init();
     await this.brushes.fluid.init();
+    await this.brushes.fluid3d.init();
 
     // Sidebar UI
     buildSidebar(this);
@@ -767,6 +797,7 @@ export class App {
       if (this.brushes.boid) await this.brushes.boid.init({ force: true });
       if (this.brushes.ant) await this.brushes.ant.init({ force: true });
       if (this.brushes.fluid) await this.brushes.fluid.init({ force: true });
+      if (this.brushes.fluid3d) await this.brushes.fluid3d.init({ force: true });
     } catch(e) { console.warn('WASM reinit failed:', e); }
 
     // Zoom to fit
@@ -1675,6 +1706,21 @@ export class App {
     }
   }
 
+  queueFluidInteractionInputs({ emitters = [], influences = [], scalarFields = [] } = {}) {
+    this._fluidInteractionState.emitters.push(...emitters.map(record => ({ ...record })));
+    this._fluidInteractionState.influences.push(...influences.map(record => ({ ...record })));
+    this._fluidInteractionState.scalarFields.push(...scalarFields.map(record => ({ ...record })));
+  }
+
+  consumeFluidInteractionInputs() {
+    const snapshot = {
+      emitters: this._fluidInteractionState.emitters.splice(0),
+      influences: this._fluidInteractionState.influences.splice(0),
+      scalarFields: this._fluidInteractionState.scalarFields.splice(0),
+    };
+    return snapshot;
+  }
+
   _syncLayerSwitcher() {
     const sel = document.getElementById('layerSwitcher');
     if (!sel) return;
@@ -1827,8 +1873,8 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
-      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && this.activeBrush !== 'fluid',
-      stampImageCanvas: chk('stampImageEnabled') && this.activeBrush !== 'fluid' ? this._customStampImage?.canvas || null : null,
+      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && this.activeBrush !== 'fluid' && this.activeBrush !== 'fluid3d',
+      stampImageCanvas: chk('stampImageEnabled') && this.activeBrush !== 'fluid' && this.activeBrush !== 'fluid3d' ? this._customStampImage?.canvas || null : null,
       stampImageTint: chk('stampImageTint'),
       stampImageRotation: (val('stampImageRotation') || 0) * Math.PI / 180,
       smudge: val('smudge') / 100,
@@ -1902,6 +1948,34 @@ export class App {
       lbmRenderMode: sel('lbmRenderMode') || 'hybrid',
       lbmFirstPassPreview: has('lbmFirstPassPreview') ? chk('lbmFirstPassPreview') : true,
       lbmShowFlow: chk('lbmShowFlow'),
+      fluid3dBrushRadius: Math.max(4, Math.round(numOr('fluid3dBrushRadius', 42) * scale)),
+      fluid3dEmitterCount: Math.max(1, Math.round(numOr('fluid3dEmitterCount', 8))),
+      fluid3dEmissionRate: numOr('fluid3dEmissionRate', 72) / 100,
+      fluid3dEmitterStrength: numOr('fluid3dEmitterStrength', 82) / 100,
+      fluid3dEmitterVelocity: numOr('fluid3dEmitterVelocity', 74) / 100,
+      fluid3dPressure: numOr('fluid3dPressure', 62) / 100,
+      fluid3dMomentum: numOr('fluid3dMomentum', 88) / 100,
+      fluid3dVelocityDiffuse: numOr('fluid3dVelocityDiffuse', 22) / 100,
+      fluid3dDrag: numOr('fluid3dDrag', 18) / 100,
+      fluid3dThicknessDecay: numOr('fluid3dThicknessDecay', 8) / 100,
+      fluid3dPigmentDiffusion: numOr('fluid3dPigmentDiffusion', 28) / 100,
+      fluid3dPressureFade: numOr('fluid3dPressureFade', 12) / 100,
+      fluid3dSettleThreshold: numOr('fluid3dSettleThreshold', 4) / 100,
+      fluid3dTerrainWeight: numOr('fluid3dTerrainWeight', 24) / 100,
+      fluid3dScalarFieldInfluence: numOr('fluid3dScalarFieldInfluence', 45) / 100,
+      fluid3dInfluenceStrength: numOr('fluid3dInfluenceStrength', 70) / 100,
+      fluid3dInfluenceRadius: numOr('fluid3dInfluenceRadius', 120),
+      fluid3dMaxVelocity: numOr('fluid3dMaxVelocity', 18) / 10,
+      fluid3dThicknessFloor: numOr('fluid3dThicknessFloor', 4) / 1000,
+      fluid3dOpacityScale: numOr('fluid3dOpacityScale', 100) / 100,
+      fluid3dResolutionScale: numOr('fluid3dResolutionScale', 90) / 100,
+      fluid3dPreviewScale: numOr('fluid3dPreviewScale', 55) / 100,
+      fluid3dFluidScale: numOr('fluid3dFluidScale', 115) / 100,
+      fluid3dOccupancyBias: numOr('fluid3dOccupancyBias', 12) / 100,
+      fluid3dAdaptiveQuality: has('fluid3dAdaptiveQuality') ? chk('fluid3dAdaptiveQuality') : true,
+      fluid3dShowField: chk('fluid3dShowField'),
+      fluid3dRenderMode: sel('fluid3dRenderMode') || 'volume',
+      fluid3dPigmentAlpha: numOr('stampOpacity', 15) / 100,
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
       bOpacityVar: val('bOpacityVar') / 100,
@@ -3374,7 +3448,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', fluid3d: '💧 3D Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;

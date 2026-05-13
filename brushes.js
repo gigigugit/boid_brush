@@ -9,6 +9,8 @@
 import { BoidSim, FluidSim } from './wasm-bridge.js';
 import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
+import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
+import { WebGPUFluidRenderer } from './fluid-renderer.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -33,6 +35,8 @@ const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
 const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
 const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
+const FLUID3D_MOVE_EMIT_RATIO = 0.5;
+const FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS = 360;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -4762,6 +4766,490 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
   }
 
   return particles;
+}
+
+
+export class ThreeDFluidBrush {
+  constructor(app) {
+    this.app = app;
+    this.sim = null;
+    this._finalSim = null;
+    this.renderer = new WebGPUFluidRenderer();
+    this._ready = false;
+    this._initPromise = null;
+    this._active = false;
+    this._lastPoint = null;
+    this._lastFrameElapsed = null;
+    this._strokeLayer = null;
+    this._strokeBaseCanvas = document.createElement('canvas');
+    this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
+    this._maskCanvas = document.createElement('canvas');
+    this._maskCtx = this._maskCanvas.getContext('2d', { willReadFrequently: true });
+    this._replayInteractionEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
+    this._previewBound = false;
+    this._backend = 'webgpu';
+    this._legacyFallback = null;
+  }
+
+  async init({ force = false } = {}) {
+    if (force) {
+      this.sim?.destroy?.();
+      this._finalSim?.destroy?.();
+      this.renderer?.reset?.();
+      this.sim = null;
+      this._finalSim = null;
+      this._ready = false;
+      this._initPromise = null;
+      this._active = false;
+      this._lastPoint = null;
+      this._lastFrameElapsed = null;
+      this._strokeLayer = null;
+      this._resetReplayCapture();
+      this._clearPreview({ composite: false });
+      this._legacyFallback?.deactivate?.();
+    }
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = (async () => {
+      const params = this._solverParams();
+      await this.renderer.init();
+      if (!this.renderer.ready) {
+        this._backend = 'legacy';
+        this._legacyFallback = this._legacyFallback || new FluidBrush(this.app);
+        await this._legacyFallback.init({ force });
+        return this._legacyFallback;
+      }
+      this.sim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, params);
+      this._finalSim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams('final'));
+      this._ready = true;
+      this._backend = 'webgpu';
+      this._syncMask();
+      this._bindPreviewUpdater();
+      return this.sim;
+    })().catch(async (error) => {
+      console.warn('ThreeDFluidBrush: WebGPU init failed, falling back to legacy fluid.', error);
+      this._backend = 'legacy';
+      this._legacyFallback = this._legacyFallback || new FluidBrush(this.app);
+      await this._legacyFallback.init({ force });
+      return this._legacyFallback;
+    });
+    return this._initPromise;
+  }
+
+  _usingLegacyFallback() {
+    return this._backend === 'legacy' && this._legacyFallback;
+  }
+
+  _bindPreviewUpdater() {
+    if (this._previewBound || !this.renderer) return;
+    this.renderer.onPreviewUpdated = (canvas) => {
+      const layer = this._strokeLayer;
+      if (!canvas || !layer || !this.app.layers.includes(layer)) return;
+      layer.gpuPreviewCanvas = canvas;
+      layer.dirty = true;
+      this.app.compositeAllLayers();
+    };
+    this._previewBound = true;
+  }
+
+  _previewResolutionScale(p) {
+    const finalScale = Number(p?.fluid3dResolutionScale) || 1;
+    const previewScale = Number(p?.fluid3dPreviewScale) || finalScale;
+    if (!p?.fluid3dAdaptiveQuality) return finalScale;
+    return Math.max(0.3, Math.min(finalScale, previewScale));
+  }
+
+  _usesAdaptiveReplay(p = this.app.getP()) {
+    return !!(p?.fluid3dAdaptiveQuality && this._previewResolutionScale(p) < ((Number(p?.fluid3dResolutionScale) || 1) - 0.05));
+  }
+
+  _solverParams(pass = 'preview', sourceParams = this.app.getP()) {
+    const p = sourceParams;
+    return {
+      resolutionScale: pass === 'final' ? p.fluid3dResolutionScale : this._previewResolutionScale(p),
+      fluidScale: p.fluid3dFluidScale,
+      emissionRate: p.fluid3dEmissionRate,
+      emitterStrength: p.fluid3dEmitterStrength,
+      emitterVelocity: p.fluid3dEmitterVelocity,
+      pressureResponse: p.fluid3dPressure,
+      momentumRetention: p.fluid3dMomentum,
+      velocityDiffuse: p.fluid3dVelocityDiffuse,
+      drag: p.fluid3dDrag,
+      thicknessDecay: p.fluid3dThicknessDecay,
+      pigmentDiffusion: p.fluid3dPigmentDiffusion,
+      pressureFade: p.fluid3dPressureFade,
+      settleThreshold: p.fluid3dSettleThreshold,
+      terrainWeight: p.fluid3dTerrainWeight,
+      scalarFieldInfluence: p.fluid3dScalarFieldInfluence,
+      influenceStrength: p.fluid3dInfluenceStrength,
+      influenceRadius: p.fluid3dInfluenceRadius,
+      maxVelocity: p.fluid3dMaxVelocity,
+      thicknessFloor: p.fluid3dThicknessFloor,
+      commitOpacityScale: p.fluid3dOpacityScale,
+      renderMode: p.fluid3dRenderMode,
+      previewBoost: pass === 'final' ? 1 : (p.fluid3dAdaptiveQuality ? 1.25 : 1),
+      occupancyBias: p.fluid3dOccupancyBias,
+    };
+  }
+
+  _updateSimulator(pass = 'preview', sourceParams = this.app.getP()) {
+    const sim = pass === 'final' ? this._finalSim : this.sim;
+    if (!sim) return false;
+    sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
+    sim.updateParams(this._solverParams(pass, sourceParams));
+    if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) this._syncMask();
+    return true;
+  }
+
+  _syncMask() {
+    if (!this.sim && !this._finalSim) return;
+    if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) {
+      this._maskCanvas.width = this.app.W;
+      this._maskCanvas.height = this.app.H;
+    }
+    this._maskCtx.clearRect(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    const mask = this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    this.sim?.setMask(mask);
+    this._finalSim?.setMask(mask);
+  }
+
+  _captureStrokeBase() {
+    const layer = this._strokeLayer;
+    if (!layer) return;
+    if (this._strokeBaseCanvas.width !== layer.canvas.width || this._strokeBaseCanvas.height !== layer.canvas.height) {
+      this._strokeBaseCanvas.width = layer.canvas.width;
+      this._strokeBaseCanvas.height = layer.canvas.height;
+    }
+    this._strokeBaseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._strokeBaseCtx.clearRect(0, 0, this._strokeBaseCanvas.width, this._strokeBaseCanvas.height);
+    this._strokeBaseCtx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height);
+  }
+
+  _resetReplayCapture() {
+    this._replayInteractionEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
+  }
+
+  _recordInteractionEvent(emitters = [], influences = [], scalarFields = []) {
+    if (!emitters.length && !influences.length && !scalarFields.length) return;
+    this._replayInteractionEvents.push({
+      time: this._replayTime,
+      emitters: emitters.map(record => ({ ...record })),
+      influences: influences.map(record => ({ ...record })),
+      scalarFields: scalarFields.map(record => ({ ...record })),
+    });
+  }
+
+  _createEmitterPayload(x, y, pressure, previousPoint, amount, p) {
+    const profile = _makeFluidSpawnProfile(x, y, previousPoint);
+    const color = hexToRGB(p.color);
+    const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * (0.45 + pressure * 0.55)));
+    const emitters = [];
+    const influences = [];
+    for (let index = 0; index < scaledCount; index += 1) {
+      const angle = (Math.PI * 2 * index) / scaledCount;
+      const radial = scaledRadius * (0.2 + Math.random() * 0.35);
+      const px = x + Math.cos(angle) * radial * 0.28 + profile.tangentX * radial * 0.12;
+      const py = y + Math.sin(angle) * radial * 0.28 + profile.tangentY * radial * 0.12;
+      const velocityScale = (0.25 + Math.random() * 0.35) * p.fluid3dEmitterVelocity;
+      const vx = (profile.tangentX * velocityScale + profile.normalX * (Math.random() - 0.5) * 0.15) * scaledRadius * 0.04;
+      const vy = (profile.tangentY * velocityScale + profile.normalY * (Math.random() - 0.5) * 0.15) * scaledRadius * 0.04;
+      emitters.push({
+        sourceType: 0,
+        x: px,
+        y: py,
+        vx,
+        vy,
+        radius: scaledRadius * (0.48 + Math.random() * 0.24),
+        strength: p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6),
+        alpha: p.fluid3dPigmentAlpha,
+        pigmentColor: color,
+        modeFlags: 1,
+      });
+      influences.push({
+        sourceType: 1,
+        x: px,
+        y: py,
+        vx,
+        vy,
+        radius: scaledRadius * (0.85 + Math.random() * 0.3),
+        strength: p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7),
+        alpha: p.fluid3dPigmentAlpha * 0.25,
+        pigmentColor: color,
+        modeFlags: 0,
+      });
+    }
+    return { emitters, influences, scalarFields: [] };
+  }
+
+  _consumeExternalInteractions() {
+    const payload = this.app.consumeFluidInteractionInputs?.() || {};
+    return {
+      emitters: Array.isArray(payload.emitters) ? payload.emitters : [],
+      influences: Array.isArray(payload.influences) ? payload.influences : [],
+      scalarFields: Array.isArray(payload.scalarFields) ? payload.scalarFields : [],
+    };
+  }
+
+  onDown(x, y, pressure) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onDown(x, y, pressure);
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    if (!this._ready || !this.sim) return;
+    const p = this.app.getP();
+    this._active = true;
+    this._strokeLayer = this.app.getActiveLayer();
+    this._captureStrokeBase();
+    this._clearPreview({ composite: false });
+    this.sim.clearState();
+    this._finalSim?.clearState?.();
+    this._resetReplayCapture();
+    this._lastPoint = { x, y };
+    this._lastFrameElapsed = null;
+    this._updateSimulator('preview', p);
+    const local = this._createEmitterPayload(x, y, pressure, null, Math.max(2, p.fluid3dEmitterCount), p);
+    this.sim.submitEmitters(local.emitters);
+    this.sim.submitInfluences(local.influences);
+    this.sim.submitScalarFields(local.scalarFields);
+    if (this._usesAdaptiveReplay(p)) this._recordInteractionEvent(local.emitters, local.influences, local.scalarFields);
+    this._step(0);
+  }
+
+  onMove(x, y, pressure) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onMove(x, y, pressure);
+    if (!this._active || !this.sim) return;
+    const previousPoint = this._lastPoint;
+    if (!previousPoint) {
+      this._lastPoint = { x, y };
+      return;
+    }
+    const p = this.app.getP();
+    const dx = x - previousPoint.x;
+    const dy = y - previousPoint.y;
+    const distance = Math.hypot(dx, dy);
+    const step = Math.max(2, p.fluid3dBrushRadius * 0.32);
+    const count = Math.max(1, Math.ceil(distance / step));
+    for (let index = 1; index <= count; index += 1) {
+      const t = index / count;
+      const px = previousPoint.x + dx * t;
+      const py = previousPoint.y + dy * t;
+      const prev = { x: previousPoint.x + dx * ((index - 1) / count), y: previousPoint.y + dy * ((index - 1) / count) };
+      const local = this._createEmitterPayload(px, py, pressure, prev, Math.max(2, Math.round(p.fluid3dEmitterCount * FLUID3D_MOVE_EMIT_RATIO)), p);
+      this.sim.submitEmitters(local.emitters);
+      this.sim.submitInfluences(local.influences);
+      this.sim.submitScalarFields(local.scalarFields);
+      if (this._usesAdaptiveReplay(p)) this._recordInteractionEvent(local.emitters, local.influences, local.scalarFields);
+    }
+    this._lastPoint = { x, y };
+  }
+
+  onUp(x, y) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onUp(x, y);
+    this._active = false;
+    this._lastPoint = null;
+  }
+
+  onFrame(elapsed) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onFrame(elapsed);
+    this._step(elapsed);
+  }
+
+  onHoverFrame(elapsed) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onHoverFrame?.(elapsed);
+    this._step(elapsed);
+  }
+
+  taperFrame() {}
+
+  _renderPreviewFromSim(sim) {
+    this._bindPreviewUpdater();
+    const layer = this._strokeLayer || this.app.getActiveLayer();
+    if (!layer || !this.renderer?.ready) return false;
+    const ok = this.renderer.render({
+      renderState: sim.getRenderState(),
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      clear: true,
+    });
+    if (!ok) return false;
+    layer.gpuPreviewCanvas = this.renderer.previewCanvas || this.renderer.canvas;
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+    return true;
+  }
+
+  _commitPreviewToLayer({ composite = true } = {}) {
+    const layer = this._strokeLayer;
+    if (!layer || !this.renderer?.ready) {
+      this._clearPreview({ composite });
+      return false;
+    }
+    const ok = this.renderer.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      layer.alphaLock ? 'source-atop' : 'source-over',
+    );
+    this.renderer.onPreviewUpdated = null;
+    this._previewBound = false;
+    this.renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+    layer.gpuPreviewCanvas = null;
+    if (!ok) return false;
+    layer.dirty = true;
+    if (composite) this.app.compositeAllLayers();
+    return true;
+  }
+
+  _clearPreview({ composite = false } = {}) {
+    const layer = this._strokeLayer;
+    if (layer?.gpuPreviewCanvas) {
+      layer.gpuPreviewCanvas = null;
+      layer.dirty = true;
+    }
+    if (this.renderer) {
+      this.renderer.onPreviewUpdated = null;
+      this._previewBound = false;
+    }
+    if (layer?.canvas && this.renderer?.ready) {
+      this.renderer.clearSurface(layer.canvas.width, layer.canvas.height);
+    }
+    if (composite && layer) this.app.compositeAllLayers();
+  }
+
+  _finishSettledStroke() {
+    this.sim?.clearState?.();
+    this._finalSim?.clearState?.();
+    this._resetReplayCapture();
+    this._active = false;
+    this._lastPoint = null;
+    this._lastFrameElapsed = null;
+    this._strokeLayer = null;
+  }
+
+  _renderFinalPass(sourceParams) {
+    if (!this._finalSim || !this._replayInteractionEvents.length || !this._replayStepHistory.length) {
+      const committed = this._commitPreviewToLayer({ composite: true });
+      this._finishSettledStroke();
+      return committed;
+    }
+    if (!this._updateSimulator('final', sourceParams)) return false;
+    this._finalSim.clearState();
+    let replayTime = 0;
+    let eventIndex = 0;
+    const flushEvents = () => {
+      while (eventIndex < this._replayInteractionEvents.length && this._replayInteractionEvents[eventIndex].time <= replayTime + 1e-6) {
+        const event = this._replayInteractionEvents[eventIndex];
+        this._finalSim.submitEmitters(event.emitters);
+        this._finalSim.submitInfluences(event.influences);
+        this._finalSim.submitScalarFields(event.scalarFields);
+        eventIndex += 1;
+      }
+    };
+    flushEvents();
+    for (const dt of this._replayStepHistory) {
+      this._finalSim.step(dt);
+      replayTime += dt;
+      flushEvents();
+    }
+    let guard = 0;
+    while (this._finalSim.getParticleCount() > 0 && guard < FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS) {
+      this._finalSim.step(FLUID_TIMESTEP_60FPS);
+      guard += 1;
+    }
+    const rendered = this._renderPreviewFromSim(this._finalSim);
+    if (!rendered) return false;
+    if (this.renderer.device?.queue?.onSubmittedWorkDone) {
+      this.renderer.device.queue.onSubmittedWorkDone().then(() => {
+        this._commitPreviewToLayer({ composite: true });
+        this._finishSettledStroke();
+      }).catch(() => {
+        this._finishSettledStroke();
+      });
+      return true;
+    }
+    const committed = this._commitPreviewToLayer({ composite: true });
+    this._finishSettledStroke();
+    return committed;
+  }
+
+  _step(elapsed) {
+    if (!this._ready || !this.sim) return;
+    const currentParams = this.app.getP();
+    if (!this._updateSimulator('preview', currentParams)) return;
+    const external = this._consumeExternalInteractions();
+    if (external.emitters.length) this.sim.submitEmitters(external.emitters);
+    if (external.influences.length) this.sim.submitInfluences(external.influences);
+    if (external.scalarFields.length) this.sim.submitScalarFields(external.scalarFields);
+    if (this._usesAdaptiveReplay(currentParams)) this._recordInteractionEvent(external.emitters, external.influences, external.scalarFields);
+    const prevCount = this.sim.getParticleCount();
+    if (!this._active && prevCount <= 0) {
+      this._lastFrameElapsed = elapsed;
+      return;
+    }
+    let dt = this._lastFrameElapsed == null ? FLUID_TIMESTEP_60FPS : elapsed - this._lastFrameElapsed;
+    this._lastFrameElapsed = elapsed;
+    if (!Number.isFinite(dt) || dt <= 0) dt = FLUID_TIMESTEP_60FPS;
+    dt = Math.min(dt, 0.05);
+    this.sim.step(dt);
+    const nextCount = this.sim.getParticleCount();
+    if (this._usesAdaptiveReplay(currentParams) && (this._active || prevCount > 0 || nextCount > 0)) {
+      this._replayStepHistory.push(dt);
+      this._replayTime += dt;
+    }
+    if (this._active || prevCount > 0 || nextCount > 0) {
+      this._renderPreviewFromSim(this.sim);
+    }
+    if (!this._active && prevCount > 0 && nextCount <= 0) {
+      if (this._usesAdaptiveReplay(currentParams)) this._renderFinalPass(currentParams);
+      else {
+        this._commitPreviewToLayer({ composite: true });
+        this._finishSettledStroke();
+      }
+    }
+  }
+
+  drawOverlay(ctx, p) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.drawOverlay?.(ctx, p);
+    if (!p.fluid3dShowField || !this.sim) return;
+    const particles = this.sim.getParticles();
+    ctx.save();
+    ctx.fillStyle = 'rgba(114, 196, 255, 0.38)';
+    for (const particle of particles.slice(0, 900)) {
+      ctx.globalAlpha = Math.max(0.08, Math.min(0.6, particle.thickness * 0.8 + particle.pressure * 0.25));
+      ctx.fillRect(particle.x - 1, particle.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(114, 196, 255, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(this.app.leaderX, this.app.leaderY, p.fluid3dBrushRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  getStatusInfo() {
+    if (this._usingLegacyFallback()) return `3D Fluid | fallback ${this._legacyFallback.getStatusInfo()}`;
+    const stats = this.sim?.getDebugState?.()?.stats || {};
+    return `3D Fluid | sim:webgpu render:${this.renderer?.ready ? 'webgpu' : 'legacy'} cells:${stats.activeCells ?? 0} occ:${((stats.occupiedRatio || 0) * 100).toFixed(1)}%`;
+  }
+
+  deactivate() {
+    if (this._usingLegacyFallback()) return this._legacyFallback.deactivate();
+    this._active = false;
+    this._lastPoint = null;
+    this._lastFrameElapsed = null;
+    this._commitPreviewToLayer({ composite: false });
+    this._clearPreview({ composite: true });
+    this._strokeLayer = null;
+    this.sim?.clearState?.();
+    this._finalSim?.clearState?.();
+    this._resetReplayCapture();
+  }
 }
 
 export class FluidBrush {

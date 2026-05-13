@@ -35,6 +35,7 @@ const BUILTIN_PRESETS = {
   'Mist': { count:60,seek:15,cohesion:5,separation:10,alignment:5,jitter:15,wander:40,wanderSpeed:60,maxSpeed:3,damping:85,stampSize:12,stampOpacity:4,stampSeparation:0,fov:360,flowField:10,flowScale:20,fleeRadius:0,individuality:40,spawnRadius:100,brushScale:100 },
   'Edge Seeker': { count:30,seek:50,cohesion:20,separation:40,alignment:25,jitter:5,wander:10,wanderSpeed:30,maxSpeed:8,damping:93,stampSize:5,stampOpacity:18,stampSeparation:2,fov:180,flowField:0,flowScale:10,fleeRadius:0,individuality:20,spawnRadius:40,brushScale:100 },
   'Diffuse Burst': { _activeBrush:'fluid', lbmBrushRadius:55, lbmSpawnCount:8, lbmParticleRadius:6, lbmStrokePull:55, lbmStrokeRake:28, lbmStrokeJitter:87, lbmInjectForce:300, lbmVortexStrength:38, lbmBurstStrength:100, lbmChevronStrength:100, lbmUndulateStrength:0 },
+  '3D Fluid Wake': { _activeBrush:'fluid3d', fluid3dBrushRadius:48, fluid3dEmitterCount:10, fluid3dEmissionRate:78, fluid3dEmitterStrength:86, fluid3dPressure:68, fluid3dMomentum:90, fluid3dDrag:16, fluid3dRenderMode:'volume' },
 };
 
 function loadUserPresets() {
@@ -328,6 +329,59 @@ export function buildSidebar(app) {
       ${sliderRow('lbmResolutionScale', 'Resolution', 50, 200, 100, v => v + '%', 'Internal lattice resolution relative to the canvas')}
       ${sliderRow('lbmFluidScale', 'Fluid Scale', 35, 200, 115, v => (v / 100).toFixed(2) + '×', 'Zoom the fluid grid independently of the canvas')}
       <label>Show Flow <input type="checkbox" id="lbmShowFlow" checked></label>
+    </div>
+
+
+
+    <!-- 3D Fluid Brush (fluid3d only) -->
+    <div class="section-header" data-brushes="fluid3d" data-section="fluid3dBrush">3D Fluid Brush <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid3d">
+      ${sliderRow('fluid3dBrushRadius', 'Brush Radius', 4, 240, 42, null, 'Emitter footprint for the heavier WebGPU fluid tool')}
+      ${sliderRow('fluid3dEmitterCount', 'Emitters', 1, 32, 8, null, 'Emitter records generated per pointer sample')}
+      ${sliderRow('fluid3dEmissionRate', 'Emission', 1, 100, 72, v => (v / 100).toFixed(2), 'How much thickness/volume is injected into the grid')}
+      ${sliderRow('fluid3dEmitterStrength', 'Strength', 1, 100, 82, v => (v / 100).toFixed(2), 'Impulse strength applied by direct brush emitters')}
+      ${sliderRow('fluid3dEmitterVelocity', 'Velocity', 1, 100, 74, v => (v / 100).toFixed(2), 'How strongly emitter velocity drives the fluid state')}
+    </div>
+
+    <!-- 3D Fluid Dynamics (fluid3d only) -->
+    <div class="section-header" data-brushes="fluid3d" data-section="fluid3dDynamics">3D Fluid Dynamics <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid3d">
+      ${sliderRow('fluid3dPressure', 'Pressure', 1, 100, 62, v => (v / 100).toFixed(2), 'Pressure response for thickness/volume changes')}
+      ${sliderRow('fluid3dMomentum', 'Momentum', 1, 100, 88, v => (v / 100).toFixed(2), 'Velocity retention between frames')}
+      ${sliderRow('fluid3dVelocityDiffuse', 'Vel Diffuse', 0, 100, 22, v => (v / 100).toFixed(2), 'Neighbor velocity blending for stable flow')}
+      ${sliderRow('fluid3dDrag', 'Drag', 0, 100, 18, v => (v / 100).toFixed(2), 'Global drag before scalar-field or terrain modifiers')}
+      ${sliderRow('fluid3dThicknessDecay', 'Decay', 0, 100, 8, v => (v / 100).toFixed(2), 'Thickness loss while the fluid settles')}
+      ${sliderRow('fluid3dPigmentDiffusion', 'Pigment', 0, 100, 28, v => (v / 100).toFixed(2), 'Pigment transport / blending strength')}
+      ${sliderRow('fluid3dPressureFade', 'Pressure Fade', 0, 100, 12, v => (v / 100).toFixed(2), 'Pressure dissipation after injection')}
+      ${sliderRow('fluid3dSettleThreshold', 'Settle', 0, 20, 4, v => (v / 100).toFixed(2), 'Rest threshold used for final commit timing')}
+      ${sliderRow('fluid3dMaxVelocity', 'Max Velocity', 1, 40, 18, v => (v / 10).toFixed(1), 'Velocity clamp for stability and responsiveness')}
+      ${sliderRow('fluid3dThicknessFloor', 'Thickness Floor', 1, 20, 4, v => (v / 1000).toFixed(3), 'Minimum thickness retained before a cell turns inactive')}
+      ${sliderRow('fluid3dOccupancyBias', 'Occupancy', 0, 100, 12, v => (v / 100).toFixed(2), 'How quickly occupancy ramps up for blob-ready state')}
+    </div>
+
+    <!-- 3D Fluid Interaction (fluid3d only) -->
+    <div class="section-header closed" data-brushes="fluid3d" data-section="fluid3dInteraction">3D Fluid Interaction <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="fluid3d">
+      ${sliderRow('fluid3dInfluenceStrength', 'Influence', 0, 100, 70, v => (v / 100).toFixed(2), 'Strength for external influence records and cursor side-forces')}
+      ${sliderRow('fluid3dInfluenceRadius', 'Influence R', 10, 240, 120, null, 'Radius used for generic influence inputs')}
+      ${sliderRow('fluid3dTerrainWeight', 'Terrain', 0, 100, 24, v => (v / 100).toFixed(2), 'Coupling from terrain/height into pressure and velocity')}
+      ${sliderRow('fluid3dScalarFieldInfluence', 'Scalar Fields', 0, 100, 45, v => (v / 100).toFixed(2), 'Strength of future drag/capacity/directional field inputs')}
+      ${sliderRow('fluid3dOpacityScale', 'Opacity', 1, 100, 100, v => (v / 100).toFixed(2), 'Commit opacity scale derived from simulated mass')}
+    </div>
+
+    <!-- 3D Fluid Rendering (fluid3d only) -->
+    <div class="section-header" data-brushes="fluid3d" data-section="fluid3dRendering">3D Fluid Rendering <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="fluid3d">
+      <label>Render <select id="fluid3dRenderMode">
+        <option value="volume">Volume</option>
+        <option value="pressure">Pressure</option>
+        <option value="pigment">Pigment</option>
+      </select></label>
+      <label>Adaptive Quality <input type="checkbox" id="fluid3dAdaptiveQuality" checked></label>
+      ${sliderRow('fluid3dResolutionScale', 'Resolution', 40, 150, 90, v => v + '%', 'Full-resolution simulation scale used for settle replay and final commit')}
+      ${sliderRow('fluid3dPreviewScale', 'Preview', 30, 120, 55, v => v + '%', 'Active-stroke preview scale used before final replay')}
+      ${sliderRow('fluid3dFluidScale', 'Fluid Scale', 40, 200, 115, v => (v / 100).toFixed(2) + '×', 'Independent scale of the simulation lattice relative to canvas size')}
+      <label>Show Field <input type="checkbox" id="fluid3dShowField"></label>
     </div>
 
     <!-- Stamp -->
@@ -1043,6 +1097,27 @@ const _sliderFormats = {
   lbmPigmentRetention: v => (v / 100).toFixed(2),
   lbmResolutionScale: v => v + '%',
   lbmFluidScale: v => (v / 100).toFixed(2) + '×',
+  fluid3dEmissionRate: v => (v / 100).toFixed(2),
+  fluid3dEmitterStrength: v => (v / 100).toFixed(2),
+  fluid3dEmitterVelocity: v => (v / 100).toFixed(2),
+  fluid3dPressure: v => (v / 100).toFixed(2),
+  fluid3dMomentum: v => (v / 100).toFixed(2),
+  fluid3dVelocityDiffuse: v => (v / 100).toFixed(2),
+  fluid3dDrag: v => (v / 100).toFixed(2),
+  fluid3dThicknessDecay: v => (v / 100).toFixed(2),
+  fluid3dPigmentDiffusion: v => (v / 100).toFixed(2),
+  fluid3dPressureFade: v => (v / 100).toFixed(2),
+  fluid3dSettleThreshold: v => (v / 100).toFixed(2),
+  fluid3dTerrainWeight: v => (v / 100).toFixed(2),
+  fluid3dScalarFieldInfluence: v => (v / 100).toFixed(2),
+  fluid3dInfluenceStrength: v => (v / 100).toFixed(2),
+  fluid3dMaxVelocity: v => (v / 10).toFixed(1),
+  fluid3dThicknessFloor: v => (v / 1000).toFixed(3),
+  fluid3dOpacityScale: v => (v / 100).toFixed(2),
+  fluid3dResolutionScale: v => v + '%',
+  fluid3dPreviewScale: v => v + '%',
+  fluid3dFluidScale: v => (v / 100).toFixed(2) + '×',
+  fluid3dOccupancyBias: v => (v / 100).toFixed(2),
   stampOpacity: v => (v / 100).toFixed(2),
   stampImageRotation: v => v + '°',
   smudge: v => (v / 100).toFixed(2),
