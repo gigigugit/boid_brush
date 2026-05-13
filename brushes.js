@@ -35,6 +35,8 @@ const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
 const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
 const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
+const FLUID_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
+const FLUID_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
 const FLUID3D_MOVE_EMIT_RATIO = 0.5;
 const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
 const FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
@@ -5330,6 +5332,7 @@ export class FluidBrush {
     this._strokeBaseCanvas = document.createElement('canvas');
     this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
     this._maskSynced = false;
+    this._finalPassJob = null;
     this._replaySeedEvents = [];
     this._replayStepHistory = [];
     this._replayTime = 0;
@@ -5348,6 +5351,7 @@ export class FluidBrush {
       this._lastFrameElapsed = null;
       this._strokeLayer = null;
       this._maskSynced = false;
+      this._finalPassJob = null;
       this._resetReplayCapture();
     }
     if (this._initPromise) return this._initPromise;
@@ -5383,6 +5387,11 @@ export class FluidBrush {
       this.app.undoPushedThisStroke = true;
     }
     if (!this._ready || !this.sim) return;
+    if (this._finalPassJob) {
+      this._finalPassJob = null;
+      this._resetSimulatorState(this._finalSim);
+      this._resetReplayCapture();
+    }
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
@@ -5504,6 +5513,13 @@ export class FluidBrush {
     });
   }
 
+  _flushFinalPassSeeds(job) {
+    while (job.seedIndex < this._replaySeedEvents.length && this._replaySeedEvents[job.seedIndex].time <= job.replayTime + 1e-6) {
+      this._finalSim.addParticles(this._replaySeedEvents[job.seedIndex].particles);
+      job.seedIndex += 1;
+    }
+  }
+
   _captureStrokeBase() {
     const layer = this._strokeLayer;
     if (!layer) return;
@@ -5536,6 +5552,13 @@ export class FluidBrush {
   }
 
   _step(elapsed) {
+    if (this._finalPassJob) {
+      this._advanceFinalPass();
+      if (!this._active) {
+        this._lastFrameElapsed = elapsed;
+        return;
+      }
+    }
     const currentParams = this.app.getP();
     if (!this._updateSimulator('preview', currentParams)) return;
     const prevCount = this.sim.getParticleCount();
@@ -5558,8 +5581,8 @@ export class FluidBrush {
     }
     if (!this._active && prevCount > 0 && nextCount <= 0) {
       if (this._usesFastFirstPass(currentParams)) this._renderFinalPass(currentParams);
+      else this._resetReplayCapture();
       this._resetSimulatorState();
-      this._resetReplayCapture();
     }
   }
 
@@ -5567,26 +5590,50 @@ export class FluidBrush {
     if (!this._finalSim || !this._replaySeedEvents.length || !this._replayStepHistory.length) return;
     if (!this._updateSimulator('final', sourceParams)) return;
     this._finalSim.clearParticles();
-    let replayTime = 0;
-    let seedIndex = 0;
-    const flushSeeds = () => {
-      while (seedIndex < this._replaySeedEvents.length && this._replaySeedEvents[seedIndex].time <= replayTime + 1e-6) {
-        this._finalSim.addParticles(this._replaySeedEvents[seedIndex].particles);
-        seedIndex += 1;
-      }
+    this._finalPassJob = {
+      replayIndex: 0,
+      replayTime: 0,
+      seedIndex: 0,
+      settleRemaining: FLUID_FINAL_PASS_MAX_SETTLING_STEPS,
+      stage: 'replay',
     };
-    flushSeeds();
-    for (const dt of this._replayStepHistory) {
-      this._finalSim.step(dt);
-      replayTime += dt;
-      flushSeeds();
+    this._flushFinalPassSeeds(this._finalPassJob);
+  }
+
+  _advanceFinalPass() {
+    const job = this._finalPassJob;
+    if (!job || !this._finalSim) return false;
+
+    if (job.stage === 'replay') {
+      let replayStepsThisFrame = 0;
+      while (job.replayIndex < this._replayStepHistory.length && replayStepsThisFrame < FLUID_FINAL_PASS_REPLAY_STEPS_PER_FRAME) {
+        const dt = this._replayStepHistory[job.replayIndex];
+        this._finalSim.step(dt);
+        job.replayTime += dt;
+        job.replayIndex += 1;
+        replayStepsThisFrame += 1;
+        this._flushFinalPassSeeds(job);
+      }
+      this._depositFrameFromSim(this._finalSim);
+      if (job.replayIndex < this._replayStepHistory.length) return true;
+      job.stage = 'settle';
     }
-    let guard = 0;
-    while (this._finalSim.getParticleCount() > 0 && guard < FLUID_FINAL_PASS_MAX_SETTLING_STEPS) {
-      this._finalSim.step(FLUID_TIMESTEP_60FPS);
-      guard += 1;
+
+    if (job.stage === 'settle') {
+      let settleStepsThisFrame = 0;
+      while (job.settleRemaining > 0 && this._finalSim.getParticleCount() > 0 && settleStepsThisFrame < FLUID_FINAL_PASS_SETTLE_STEPS_PER_FRAME) {
+        this._finalSim.step(FLUID_TIMESTEP_60FPS);
+        job.settleRemaining -= 1;
+        settleStepsThisFrame += 1;
+      }
+      this._depositFrameFromSim(this._finalSim);
+      if (job.settleRemaining > 0 && this._finalSim.getParticleCount() > 0) return true;
     }
-    this._depositFrameFromSim(this._finalSim);
+
+    this._finalPassJob = null;
+    this._resetSimulatorState(this._finalSim);
+    this._resetReplayCapture();
+    return true;
   }
 
   _depositFrameFromSim(sim) {
@@ -5647,6 +5694,7 @@ export class FluidBrush {
     this._active = false;
     this._lastPoint = null;
     this._lastFrameElapsed = null;
+    this._finalPassJob = null;
     this._strokeLayer = null;
     this._resetAllSimulatorStates();
     this._resetReplayCapture();

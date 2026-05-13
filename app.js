@@ -704,7 +704,7 @@ export class App {
         tmp.getContext('2d').drawImage(l.canvas, 0, 0);
         l.canvas.width = this.W * this.DPR;
         l.canvas.height = this.H * this.DPR;
-        l.ctx = l.canvas.getContext('2d', { desynchronized: true });
+        l.ctx = l.canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
         l.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
         l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, this.W, this.H);
       }
@@ -769,7 +769,7 @@ export class App {
       tmp.getContext('2d').drawImage(l.canvas, 0, 0);
       l.canvas.width = newW;
       l.canvas.height = newH;
-      l.ctx = l.canvas.getContext('2d', { desynchronized: true });
+      l.ctx = l.canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
       l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
       l.dirty = true;
       this.compositor?.deleteLayerTex(l);
@@ -847,7 +847,7 @@ export class App {
     const canvas = document.createElement('canvas');
     canvas.width = this.W * this.DPR;
     canvas.height = this.H * this.DPR;
-    const ctx = canvas.getContext('2d', { desynchronized: true });
+    const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
     ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     return { canvas, ctx };
   }

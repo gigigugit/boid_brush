@@ -80,7 +80,7 @@ export class BoidSim {
    */
   static async create(width, height, maxAgents, wasmPath = './wasm-sim/pkg/boid_sim.js') {
     const mod = await import(wasmPath);
-    const wasm = await mod.default(_fetchWithRetry(_resolveWasmBinaryUrl(wasmPath))); // init WASM — returns InitOutput with .memory
+    const wasm = await mod.default({ module_or_path: _fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)) }); // init WASM — returns InitOutput with .memory
     mod.sim_init(width, height, maxAgents);
 
     const instance = new BoidSim();
@@ -302,7 +302,7 @@ async function _getOrLoadFluidModule(wasmPath) {
     _fluidModulePath = wasmPath;
     _fluidModulePromise = (async () => {
       const mod = await import(wasmPath);
-      if (typeof mod.default === 'function') await mod.default(_fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)));
+      if (typeof mod.default === 'function') await mod.default({ module_or_path: _fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)) });
       if (typeof mod.fluid_create_simulator !== 'function') {
         throw new Error('Fluid exports are unavailable in the WASM module.');
       }
