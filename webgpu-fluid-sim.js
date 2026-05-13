@@ -1,3 +1,5 @@
+// These constants are baked into the WGSL source below; changing them requires
+// the compute pipelines and backing buffer sizes to stay in sync.
 const CELL_STRIDE = 14;
 const META_FLOATS = 16;
 const PARAM_FLOATS = 32;

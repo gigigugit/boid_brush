@@ -336,7 +336,7 @@ export function buildSidebar(app) {
     <!-- 3D Fluid Brush (fluid3d only) -->
     <div class="section-header" data-brushes="fluid3d" data-section="fluid3dBrush">3D Fluid Brush <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="fluid3d">
-      ${sliderRow('fluid3dBrushRadius', 'Brush Radius', 4, 240, 42, null, 'Emitter footprint for the heavier WebGPU fluid tool')}
+      ${sliderRow('fluid3dBrushRadius', 'Brush Radius', 4, 240, 42, null, 'Emitter footprint for the 3D Fluid brush')}
       ${sliderRow('fluid3dEmitterCount', 'Emitters', 1, 32, 8, null, 'Emitter records generated per pointer sample')}
       ${sliderRow('fluid3dEmissionRate', 'Emission', 1, 100, 72, v => (v / 100).toFixed(2), 'How much thickness/volume is injected into the grid')}
       ${sliderRow('fluid3dEmitterStrength', 'Strength', 1, 100, 82, v => (v / 100).toFixed(2), 'Impulse strength applied by direct brush emitters')}
@@ -366,6 +366,7 @@ export function buildSidebar(app) {
       ${sliderRow('fluid3dInfluenceRadius', 'Influence R', 10, 240, 120, null, 'Radius used for generic influence inputs')}
       ${sliderRow('fluid3dTerrainWeight', 'Terrain', 0, 100, 24, v => (v / 100).toFixed(2), 'Coupling from terrain/height into pressure and velocity')}
       ${sliderRow('fluid3dScalarFieldInfluence', 'Scalar Fields', 0, 100, 45, v => (v / 100).toFixed(2), 'Strength of future drag/capacity/directional field inputs')}
+      ${sliderRow('fluid3dOpacity', 'Pigment Alpha', 1, 100, 68, v => (v / 100).toFixed(2), 'Per-emitter pigment alpha for the 3D fluid brush')}
       ${sliderRow('fluid3dOpacityScale', 'Opacity', 1, 100, 100, v => (v / 100).toFixed(2), 'Commit opacity scale derived from simulated mass')}
     </div>
 
@@ -1113,6 +1114,7 @@ const _sliderFormats = {
   fluid3dInfluenceStrength: v => (v / 100).toFixed(2),
   fluid3dMaxVelocity: v => (v / 10).toFixed(1),
   fluid3dThicknessFloor: v => (v / 1000).toFixed(3),
+  fluid3dOpacity: v => (v / 100).toFixed(2),
   fluid3dOpacityScale: v => (v / 100).toFixed(2),
   fluid3dResolutionScale: v => v + '%',
   fluid3dPreviewScale: v => v + '%',

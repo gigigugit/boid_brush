@@ -583,6 +583,9 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._interopProbeCtx.restore();
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
     this._clearPreviewCanvas();
+    // The probe cell renders as a nearly opaque red-biased pixel via the volume mode shader,
+    // so require a modest red and alpha floor rather than exact 255 values to allow for
+    // implementation-dependent blending and color conversion.
     if (pixel[3] >= GPU_INTEROP_PROBE_ALPHA_MIN && pixel[0] >= GPU_INTEROP_PROBE_RED_MIN) return true;
     this.unavailableReason = '2D interop copy out unsupported';
     return false;

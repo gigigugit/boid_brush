@@ -114,6 +114,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   fluid3dInfluenceRadius: 120,
   fluid3dMaxVelocity: 18,
   fluid3dThicknessFloor: 4,
+  fluid3dOpacity: 68,
   fluid3dOpacityScale: 100,
   fluid3dResolutionScale: 90,
   fluid3dPreviewScale: 55,
@@ -267,6 +268,7 @@ const PERF_THROTTLE_GAP_MS = 250;
 const PERF_RECENT_EVENT_LIMIT = 10;
 const DIRTY_TILE_SIZE = 256;
 const DIRTY_TILE_MAX_COVERAGE = 0.45;
+const STAMP_IMAGE_DISABLED_BRUSHES = new Set(['fluid', 'fluid3d']);
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -1824,6 +1826,7 @@ export class App {
     };
 
     const scale = val('brushScale') / 100;
+    const stampImageAllowed = !STAMP_IMAGE_DISABLED_BRUSHES.has(this.activeBrush);
 
     this._cachedP = {
       // Brush scale
@@ -1873,8 +1876,8 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
-      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && this.activeBrush !== 'fluid' && this.activeBrush !== 'fluid3d',
-      stampImageCanvas: chk('stampImageEnabled') && this.activeBrush !== 'fluid' && this.activeBrush !== 'fluid3d' ? this._customStampImage?.canvas || null : null,
+      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && stampImageAllowed,
+      stampImageCanvas: chk('stampImageEnabled') && stampImageAllowed ? this._customStampImage?.canvas || null : null,
       stampImageTint: chk('stampImageTint'),
       stampImageRotation: (val('stampImageRotation') || 0) * Math.PI / 180,
       smudge: val('smudge') / 100,
@@ -1967,6 +1970,7 @@ export class App {
       fluid3dInfluenceRadius: numOr('fluid3dInfluenceRadius', 120),
       fluid3dMaxVelocity: numOr('fluid3dMaxVelocity', 18) / 10,
       fluid3dThicknessFloor: numOr('fluid3dThicknessFloor', 4) / 1000,
+      fluid3dOpacity: numOr('fluid3dOpacity', 68) / 100,
       fluid3dOpacityScale: numOr('fluid3dOpacityScale', 100) / 100,
       fluid3dResolutionScale: numOr('fluid3dResolutionScale', 90) / 100,
       fluid3dPreviewScale: numOr('fluid3dPreviewScale', 55) / 100,
@@ -1975,7 +1979,6 @@ export class App {
       fluid3dAdaptiveQuality: has('fluid3dAdaptiveQuality') ? chk('fluid3dAdaptiveQuality') : true,
       fluid3dShowField: chk('fluid3dShowField'),
       fluid3dRenderMode: sel('fluid3dRenderMode') || 'volume',
-      fluid3dPigmentAlpha: numOr('stampOpacity', 15) / 100,
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
       bOpacityVar: val('bOpacityVar') / 100,

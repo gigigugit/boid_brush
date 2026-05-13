@@ -37,6 +37,7 @@ const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 const FLUID3D_MOVE_EMIT_RATIO = 0.5;
 const FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS = 360;
+const FLUID3D_FINAL_PASS_SETTLE_BUDGET = 48;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -4818,21 +4819,20 @@ export class ThreeDFluidBrush {
         this._backend = 'legacy';
         this._legacyFallback = this._legacyFallback || new FluidBrush(this.app);
         await this._legacyFallback.init({ force });
-        return this._legacyFallback;
+        return this;
       }
       this.sim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, params);
       this._finalSim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams('final'));
       this._ready = true;
       this._backend = 'webgpu';
       this._syncMask();
-      this._bindPreviewUpdater();
-      return this.sim;
+      return this;
     })().catch(async (error) => {
       console.warn('ThreeDFluidBrush: WebGPU init failed, falling back to legacy fluid.', error);
       this._backend = 'legacy';
       this._legacyFallback = this._legacyFallback || new FluidBrush(this.app);
       await this._legacyFallback.init({ force });
-      return this._legacyFallback;
+      return this;
     });
     return this._initPromise;
   }
@@ -4841,11 +4841,10 @@ export class ThreeDFluidBrush {
     return this._backend === 'legacy' && this._legacyFallback;
   }
 
-  _bindPreviewUpdater() {
-    if (this._previewBound || !this.renderer) return;
+  _bindPreviewUpdater(layer = this._strokeLayer) {
+    if (!this.renderer || !layer) return;
     this.renderer.onPreviewUpdated = (canvas) => {
-      const layer = this._strokeLayer;
-      if (!canvas || !layer || !this.app.layers.includes(layer)) return;
+      if (!canvas || !layer || this._strokeLayer !== layer || !this.app.layers.includes(layer)) return;
       layer.gpuPreviewCanvas = canvas;
       layer.dirty = true;
       this.app.compositeAllLayers();
@@ -4943,6 +4942,8 @@ export class ThreeDFluidBrush {
   }
 
   _createEmitterPayload(x, y, pressure, previousPoint, amount, p) {
+    // Reuse the legacy fluid stroke-profile helper so cursor tangent/normal handling stays
+    // consistent between the lightweight LBM brush and the new 3D fluid brush.
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const color = hexToRGB(p.color);
     const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
@@ -4965,7 +4966,7 @@ export class ThreeDFluidBrush {
         vy,
         radius: scaledRadius * (0.48 + Math.random() * 0.24),
         strength: p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6),
-        alpha: p.fluid3dPigmentAlpha,
+        alpha: p.fluid3dOpacity,
         pigmentColor: color,
         modeFlags: 1,
       });
@@ -4977,7 +4978,7 @@ export class ThreeDFluidBrush {
         vy,
         radius: scaledRadius * (0.85 + Math.random() * 0.3),
         strength: p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7),
-        alpha: p.fluid3dPigmentAlpha * 0.25,
+        alpha: p.fluid3dOpacity * 0.25,
         pigmentColor: color,
         modeFlags: 0,
       });
@@ -5067,9 +5068,9 @@ export class ThreeDFluidBrush {
   taperFrame() {}
 
   _renderPreviewFromSim(sim) {
-    this._bindPreviewUpdater();
     const layer = this._strokeLayer || this.app.getActiveLayer();
     if (!layer || !this.renderer?.ready) return false;
+    this._bindPreviewUpdater(layer);
     const ok = this.renderer.render({
       renderState: sim.getRenderState(),
       targetWidthPx: layer.canvas.width,
@@ -5157,7 +5158,9 @@ export class ThreeDFluidBrush {
       flushEvents();
     }
     let guard = 0;
-    while (this._finalSim.getParticleCount() > 0 && guard < FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS) {
+    // Keep the replay settle budget intentionally small so the final pass does not stall UI
+    // responsiveness; if the cap is hit, the last rendered state is still committed to the layer.
+    while (this._finalSim.getParticleCount() > 0 && guard < Math.min(FLUID3D_FINAL_PASS_MAX_SETTLING_STEPS, FLUID3D_FINAL_PASS_SETTLE_BUDGET)) {
       this._finalSim.step(FLUID_TIMESTEP_60FPS);
       guard += 1;
     }
@@ -5168,6 +5171,7 @@ export class ThreeDFluidBrush {
         this._commitPreviewToLayer({ composite: true });
         this._finishSettledStroke();
       }).catch(() => {
+        this._commitPreviewToLayer({ composite: true });
         this._finishSettledStroke();
       });
       return true;
