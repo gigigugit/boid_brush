@@ -5879,3 +5879,352 @@ export class EraserBrush {
   getStatusInfo() { return this._inner.getStatusInfo().replace(/^Simple/, 'Eraser'); }
   deactivate() { this._inner.deactivate(); }
 }
+
+const MOTION_PATH_BRUSH_BASE_SPEED = 90;
+const MOTION_PATH_BRUSH_DELTA_CAP = 1 / 24;
+
+function _sampleCompiledMotionTrack(track, distanceAlongPath) {
+  if (!track?.points?.length) return null;
+  if (track.points.length === 1) {
+    return { x: track.points[0].x, y: track.points[0].y, angle: 0 };
+  }
+  const totalLength = Math.max(track.totalLength || 0, 1e-6);
+  const distance = track.closed
+    ? ((distanceAlongPath % totalLength) + totalLength) % totalLength
+    : _clamp(distanceAlongPath, 0, totalLength);
+  let remaining = distance;
+  for (let i = 1; i < track.points.length; i++) {
+    const length = track.segmentLengths?.[i - 1] || 0;
+    if (remaining <= length || i === track.points.length - 1) {
+      const a = track.points[i - 1];
+      const b = track.points[i];
+      const t = length <= 1e-6 ? 0 : remaining / length;
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        angle: Math.atan2(b.y - a.y, b.x - a.x),
+      };
+    }
+    remaining -= length;
+  }
+  const last = track.points[track.points.length - 1];
+  const prev = track.points[track.points.length - 2] || last;
+  return { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) };
+}
+
+function _advanceMotionTrackDistance(agent, track, deltaDistance) {
+  const totalLength = Math.max(track?.totalLength || 0, 1e-6);
+  const direction = agent.direction === -1 ? -1 : 1;
+  if (track?.closed) {
+    const nextDistance = agent.distance + (deltaDistance * direction);
+    agent.wrappedStep = nextDistance >= totalLength || nextDistance < 0;
+    agent.distance = ((nextDistance % totalLength) + totalLength) % totalLength;
+    agent.direction = direction;
+    agent.discontinuousStep = false;
+    agent.stopped = false;
+    return;
+  }
+  agent.wrappedStep = false;
+  const behavior = ['bounce', 'restart', 'random', 'stop', 'reverse'].includes(agent.endBehavior) ? agent.endBehavior : 'restart';
+  if (behavior === 'stop') {
+    const nextDistance = agent.distance + (deltaDistance * direction);
+    agent.distance = _clamp(nextDistance, 0, totalLength);
+    agent.direction = direction;
+    agent.stopped = nextDistance >= totalLength || nextDistance <= 0;
+    agent.discontinuousStep = false;
+    return;
+  }
+  if (behavior === 'reverse') {
+    const nextDistance = agent.distance + (deltaDistance * direction);
+    if (nextDistance > totalLength) {
+      agent.distance = totalLength;
+      agent.direction = -1;
+      agent.discontinuousStep = true;
+    } else if (nextDistance < 0) {
+      agent.distance = 0;
+      agent.direction = 1;
+      agent.discontinuousStep = true;
+    } else {
+      agent.distance = nextDistance;
+      agent.discontinuousStep = false;
+    }
+    agent.stopped = false;
+    return;
+  }
+  if (behavior === 'bounce') {
+    let distance = agent.distance + (deltaDistance * direction);
+    let nextDirection = direction;
+    while (distance < 0 || distance > totalLength) {
+      if (distance > totalLength) {
+        distance = totalLength - (distance - totalLength);
+        nextDirection = -1;
+      } else {
+        distance = -distance;
+        nextDirection = 1;
+      }
+    }
+    agent.distance = _clamp(distance, 0, totalLength);
+    agent.direction = nextDirection;
+    agent.discontinuousStep = false;
+    agent.stopped = false;
+    return;
+  }
+  const nextDistance = agent.distance + (deltaDistance * direction);
+  if (nextDistance > totalLength || nextDistance < 0) {
+    agent.discontinuousStep = true;
+    agent.distance = behavior === 'random'
+      ? Math.random() * totalLength
+      : ((nextDistance % totalLength) + totalLength) % totalLength;
+  } else {
+    agent.discontinuousStep = false;
+    agent.distance = nextDistance;
+  }
+  agent.direction = direction;
+  agent.stopped = false;
+}
+
+export class MotionPathBrush {
+  constructor(app) {
+    this.app = app;
+    this.renderer = createBoidStampRenderer();
+    this._active = false;
+    this._originX = 0;
+    this._originY = 0;
+    this._pressure = 1;
+    this._compiledGraph = null;
+    this._compiledGraphKey = '';
+    this._runtimeAgents = [];
+    this._lastElapsed = 0;
+    this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuFailureCount = 0;
+    this._gpuDisabledReason = '';
+    this._rendererInitPromise = null;
+    this._rendererChainPatched = false;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    this._overlayPoints = [];
+    _ensureProceduralStampRendererInit(this);
+  }
+
+  _resetRuntime(recompile = false) {
+    this._runtimeAgents = [];
+    this._overlayPoints = [];
+    this._lastElapsed = 0;
+    if (recompile) {
+      this._compiledGraph = null;
+      this._compiledGraphKey = '';
+    }
+  }
+
+  _ensureCompiledGraph(p) {
+    const compiled = this.app._compileActiveMotionPathGraph?.(p) || { documentId: null, updatedAt: 0, paths: [], agents: [] };
+    const key = `${compiled.documentId || 0}:${compiled.updatedAt || 0}:${p.motionPathAgentCount || 0}`;
+    if (this._compiledGraphKey === key && this._compiledGraph) return this._compiledGraph;
+    this._compiledGraphKey = key;
+    this._compiledGraph = compiled;
+    this._runtimeAgents = compiled.agents.map((agent, index, list) => ({
+      pathIndex: agent.pathIndex,
+      pathId: agent.pathId,
+      distance: agent.distance || 0,
+      speedMultiplier: agent.speedMultiplier || 1,
+      endBehavior: ['bounce', 'restart', 'random', 'stop', 'reverse'].includes(agent.endBehavior) ? agent.endBehavior : 'restart',
+      speed: 0,
+      direction: agent.direction === -1 ? -1 : 1,
+      stopped: false,
+      discontinuousStep: false,
+      wrappedStep: false,
+      lateralOffset: list.length <= 1 ? 0 : ((index / Math.max(1, list.length - 1)) - 0.5) * 2,
+      prevX: Number.NaN,
+      prevY: Number.NaN,
+    }));
+    this._overlayPoints = [];
+    return this._compiledGraph;
+  }
+
+  _cpuFallbackStamp(points, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer?.ctx) return;
+    let size = p.stampSize;
+    if (p.pressureSize) size *= (0.3 + 0.7 * this._pressure);
+    let opacity = p.stampOpacity;
+    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    opacity = Math.min(opacity, 1);
+    for (const point of points) {
+      this.app.symStamp(layer.ctx, point.x, point.y, size, p.color, opacity);
+    }
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+  }
+
+  onDown(x, y, pressure = 1) {
+    if (this._gpuPreviewActive) _commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true });
+    this._active = true;
+    this._originX = x;
+    this._originY = y;
+    this._pressure = pressure;
+    this._resetRuntime(true);
+    _ensureProceduralStampRendererInit(this);
+    this._ensureCompiledGraph(this.app.getP());
+  }
+
+  onMove(x, y, pressure = this._pressure) {
+    this._originX = x;
+    this._originY = y;
+    this._pressure = pressure;
+  }
+
+  onUp(x, y) {
+    this._originX = x;
+    this._originY = y;
+    if (this._gpuPreviewActive) {
+      if (!_commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true })) {
+        const layer = this.app.getActiveLayer();
+        if (layer?.dirty) this.app.compositeAllLayers();
+      }
+    }
+    this._active = false;
+    this._resetRuntime(false);
+  }
+
+  onFrame(elapsed) {
+    if (!this._active) return;
+    const p = this.app.getP();
+    const compiled = this._ensureCompiledGraph(p);
+    if (!compiled?.paths?.length || !this._runtimeAgents.length) return;
+    const delta = this._lastElapsed > 0
+      ? Math.min(MOTION_PATH_BRUSH_DELTA_CAP, Math.max(0, elapsed - this._lastElapsed))
+      : 1 / 60;
+    this._lastElapsed = elapsed;
+
+    const graphScale = Math.max(0.05, (p.brushScale || 1) * (p.motionPathScale || 1));
+    const targetSpeed = Math.max(0.05, p.motionPathSpeed || 1) * MOTION_PATH_BRUSH_BASE_SPEED;
+    const acceleration = _clamp((p.motionPathAcceleration || 0) * 3.5, 0.2, 8);
+    const pullStrength = _clamp((p.motionPathAttraction || 0) * 0.35, 0, 0.35);
+    const separation = Math.max(1, (p.stampSize || 1) * Math.max(0.08, p.stampSeparation || 0.15) * 0.5);
+    const support = _getProceduralBatchRendererSupport(this, p, false);
+    const color = hexToRGB(p.color);
+    const instances = new StampInstanceBuffer(Math.max(32, this._runtimeAgents.length * 6));
+    const cpuFallbackPoints = [];
+    this._overlayPoints = [];
+
+    let size = p.stampSize;
+    if (p.pressureSize) size *= (0.3 + 0.7 * this._pressure);
+    let opacity = p.stampOpacity;
+    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    opacity = Math.min(opacity, 1);
+
+    const emitSegmentStamps = (x0, y0, x1, y1) => {
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const travel = Math.hypot(dx, dy);
+      const steps = Math.max(1, Math.ceil(travel / separation));
+      for (let step = 1; step <= steps; step++) {
+        const t = step / steps;
+        const stampX = x0 + dx * t;
+        const stampY = y0 + dy * t;
+        if (support.ok) {
+          _emitBatchStampInstances(this.app, instances, p, stampX, stampY, size, color, opacity);
+        } else {
+          cpuFallbackPoints.push({ x: stampX, y: stampY });
+        }
+      }
+    };
+
+    const toWorldPoint = (sample, lateralPixels) => {
+      const nx = -Math.sin(sample.angle);
+      const ny = Math.cos(sample.angle);
+      let worldX = this._originX + sample.x * graphScale + nx * lateralPixels;
+      let worldY = this._originY + sample.y * graphScale + ny * lateralPixels;
+      if (pullStrength > 0) {
+        worldX += (this._originX - worldX) * pullStrength;
+        worldY += (this._originY - worldY) * pullStrength;
+      }
+      return { x: worldX, y: worldY };
+    };
+
+    for (const agent of this._runtimeAgents) {
+      const track = compiled.paths[agent.pathIndex];
+      if (!track) continue;
+      if (agent.stopped) continue;
+      const speedEase = _clamp(delta * acceleration, 0, 1);
+      agent.speed += ((targetSpeed * agent.speedMultiplier) - agent.speed) * speedEase;
+      _advanceMotionTrackDistance(agent, track, agent.speed * delta);
+      const sample = _sampleCompiledMotionTrack(track, agent.distance);
+      if (!sample) continue;
+      const lateralPixels = agent.lateralOffset * (p.motionPathAvoidance || 0) * 18 * graphScale;
+      const { x: worldX, y: worldY } = toWorldPoint(sample, lateralPixels);
+      this._overlayPoints.push({ x: worldX, y: worldY });
+      if (agent.discontinuousStep || !Number.isFinite(agent.prevX) || !Number.isFinite(agent.prevY)) {
+        agent.prevX = worldX;
+        agent.prevY = worldY;
+      }
+      if (track.closed && agent.wrappedStep) {
+        const seamEndSample = _sampleCompiledMotionTrack(track, Math.max(0, (track.totalLength || 0) - 1e-4));
+        const seamStartSample = _sampleCompiledMotionTrack(track, 0);
+        if (seamEndSample && seamStartSample) {
+          const seamEndWorld = toWorldPoint(seamEndSample, lateralPixels);
+          const seamStartWorld = toWorldPoint(seamStartSample, lateralPixels);
+          emitSegmentStamps(agent.prevX, agent.prevY, seamEndWorld.x, seamEndWorld.y);
+          agent.prevX = seamStartWorld.x;
+          agent.prevY = seamStartWorld.y;
+        }
+      }
+      emitSegmentStamps(agent.prevX, agent.prevY, worldX, worldY);
+      agent.prevX = worldX;
+      agent.prevY = worldY;
+    }
+
+    const layer = this.app.getActiveLayer();
+    if (!layer) return;
+    if (support.ok && instances.count > 0) {
+      const batch = { instances: instances.finish(), count: instances.count };
+      if (_renderProceduralBatchToTarget(this, layer.ctx, batch, p, { allowAlphaLock: true })) {
+        layer.dirty = true;
+        if (!this._gpuPreviewActive) this.app.compositeAllLayers();
+      } else {
+        this._cpuFallbackStamp(this._overlayPoints, p);
+      }
+    } else if (cpuFallbackPoints.length) {
+      _setProceduralRenderBackend(this, 'legacy', support.reason || 'GPU procedural-stamp renderer unavailable');
+      this._cpuFallbackStamp(cpuFallbackPoints, p);
+    }
+  }
+
+  drawOverlay(ctx) {
+    if (!this._active) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(91,138,240,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(this._originX, this._originY, 8, 0, Math.PI * 2);
+    ctx.moveTo(this._originX - 14, this._originY);
+    ctx.lineTo(this._originX + 14, this._originY);
+    ctx.moveTo(this._originX, this._originY - 14);
+    ctx.lineTo(this._originX, this._originY + 14);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,210,120,0.85)';
+    for (const point of this._overlayPoints) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  getStatusInfo() {
+    const doc = this.app._getActiveMotionPathDocument?.();
+    if (!doc) return 'Motion Path · no graph';
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (_getProceduralBatchRendererSupport(this, this.app.getP(), false).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Motion Path · ${doc.name} · ${doc.paths.length} paths · ${this._runtimeAgents.length || this.app.getP().motionPathAgentCount} agents · Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+  }
+
+  deactivate() {
+    if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
+    this._active = false;
+    this._resetRuntime(true);
+  }
+}

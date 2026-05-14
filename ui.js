@@ -187,6 +187,34 @@ export function buildSidebar(app) {
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
     </div>
 
+    <!-- Motion Path Graph -->
+    <div class="section-header" data-brushes="motionPath" data-section="motionPathGraph">Motion Graph <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="motionPath">
+      <label>Active Graph <select id="motionPathDocSelect"></select></label>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0;">
+        <button id="motionPathEditBtn" type="button">Edit Graph</button>
+        <button id="motionPathNewDocBtn" type="button">+ New</button>
+        <button id="motionPathRenameDocBtn" type="button">Rename</button>
+        <button id="motionPathDeleteDocBtn" type="button">Delete</button>
+      </div>
+      <div style="padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.04);">
+        <div id="motionPathDocName" style="font-weight:600;color:#eef3ff;">Motion Graph 1</div>
+        <div id="motionPathDocSummary" class="slider-desc" style="margin-top:4px;">0 paths · 0 agents</div>
+      </div>
+    </div>
+
+    <!-- Motion Path Runtime -->
+    <div class="section-header" data-brushes="motionPath" data-section="motionPathRuntime">Motion Runtime <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="motionPath">
+      ${sliderRow('motionPathAgentCount', 'Agents', 1, MAX_SWARM_COUNT, 12)}
+      ${sliderRow('motionPathScale', 'Scale', 10, 1000, 100, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionPathSpeed', 'Speed', 1, 1000, 100, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionPathAcceleration', 'Accel', 0, 200, 50, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionPathAvoidance', 'Avoid', 0, 100, 25, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionPathAttraction', 'Attract', 0, 100, 0, v => (v / 100).toFixed(2))}
+      <span class="slider-desc">Scale enlarges the authored graph on canvas. These are graph-wide defaults until per-agent motion overrides are added in the editor.</span>
+    </div>
+
     <!-- Bristle Shape (bristle only) -->
     <div class="section-header" data-brushes="bristle" data-section="bristleShape">Bristle Shape <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="bristle">
@@ -770,6 +798,7 @@ export function buildSidebar(app) {
 
   // Initial brush-specific visibility
   app._toggleBrushSections(app.activeBrush);
+  app._syncMotionPathUI?.();
 
   // ── Ant Math overlay panel ──
   _buildAntMathPanel(app);
@@ -1036,6 +1065,7 @@ export function syncUI(app) {
   syncTextureUI(app);
   syncStampImageUI(app);
   syncEdgeSliders();
+  app._syncMotionPathUI?.();
 }
 
 export function syncTextureUI(app) {
@@ -1124,6 +1154,11 @@ const _sliderFormats = {
   quorumCompositeStrength: v => (v / 100).toFixed(2),
   maxSpeed: v => (v / 2).toFixed(1),
   damping: v => (v / 100).toFixed(2),
+  motionPathScale: v => (v / 100).toFixed(2),
+  motionPathSpeed: v => (v / 100).toFixed(2),
+  motionPathAcceleration: v => (v / 100).toFixed(2),
+  motionPathAvoidance: v => (v / 100).toFixed(2),
+  motionPathAttraction: v => (v / 100).toFixed(2),
   lbmStrokePull: v => (v / 100).toFixed(2),
   lbmStrokeRake: v => (v / 100).toFixed(2),
   lbmStrokeJitter: v => (v / 100).toFixed(2),
@@ -1465,6 +1500,18 @@ function _applyPreset(app, values) {
     if (id === '_primaryColor') { app.primaryEl.value = val; continue; }
     if (id === '_secondaryColor') { app.secondaryEl.value = val; continue; }
     if (id === '_activeBrush') { app.setBrush(val); continue; }
+    if (id === '_motionPath') {
+      if (val && typeof val === 'object') {
+        app.motionPath = {
+          ...app.motionPath,
+          ...structuredClone(val),
+          editorOpen: false,
+          previousUiState: null,
+        };
+        app._normalizeMotionPathState?.();
+      }
+      continue;
+    }
     const el = document.getElementById(id);
     if (!el) continue;
     if (el.type === 'checkbox') el.checked = !!val;
@@ -1489,6 +1536,9 @@ function _captureCurrentPresetValues(app) {
   values._primaryColor = app.primaryEl.value;
   values._secondaryColor = app.secondaryEl.value;
   values._activeBrush = app.activeBrush;
+  if (app.activeBrush === 'motionPath' && app._serializeMotionPathState) {
+    values._motionPath = app._serializeMotionPathState();
+  }
   return values;
 }
 
