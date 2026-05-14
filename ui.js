@@ -437,6 +437,7 @@ export function buildSidebar(app) {
     <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
       <label>Enable <input type="checkbox" id="canvasTextureEnabled" checked></label>
+      <label>Show On Canvas <input type="checkbox" id="canvasTextureShowOnCanvas"></label>
       <label>Active <select id="canvasTexturePreset"></select></label>
       <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
         <canvas id="texturePreview" width="72" height="72" style="width:72px;height:72px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:#0d0d12;image-rendering:auto;"></canvas>
@@ -662,16 +663,42 @@ export function buildSidebar(app) {
     if (!file) return;
     await app.loadCanvasTexture(file);
     syncTextureUI(app);
+    app.compositeAllLayers({ forceFull: true });
     _texFileInput.value = '';
   });
   document.getElementById('btnUploadTexture')?.addEventListener('click', () => _texFileInput.click());
   document.getElementById('canvasTexturePreset')?.addEventListener('change', (e) => {
     app.setCanvasTextureById(e.target.value);
     syncTextureUI(app);
+    app.compositeAllLayers({ forceFull: true });
   });
   document.getElementById('btnClearTexture')?.addEventListener('click', () => {
     app.clearCanvasTexture();
     syncTextureUI(app);
+    app.compositeAllLayers({ forceFull: true });
+  });
+
+  const texturePreviewRefreshIds = [
+    'canvasTextureEnabled',
+    'canvasTextureShowOnCanvas',
+    'canvasTextureStrength',
+    'canvasTextureScale',
+    'canvasTextureOffsetX',
+    'canvasTextureOffsetY',
+    'canvasTextureRotation',
+    'canvasTextureInvert',
+    'canvasTextureDeposit',
+    'canvasTextureFlow',
+    'canvasTextureEdgeBreakup',
+    'canvasTextureSmudgeDrag',
+    'canvasTexturePooling',
+  ];
+  const refreshTexturePreview = () => app.compositeAllLayers({ forceFull: true });
+  texturePreviewRefreshIds.forEach(id => {
+    const control = document.getElementById(id);
+    if (!control) return;
+    control.addEventListener('input', refreshTexturePreview);
+    control.addEventListener('change', refreshTexturePreview);
   });
 
   // ── Stamp image upload ──

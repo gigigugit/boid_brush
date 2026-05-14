@@ -145,6 +145,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   canvasTextureEdgeBreakup: 35,
   canvasTextureSmudgeDrag: 30,
   canvasTexturePooling: 55,
+  canvasTextureShowOnCanvas: false,
   symmetryCount: 4,
   symmetryCenterX: 50,
   symmetryCenterY: 50,
@@ -1196,6 +1197,7 @@ export class App {
     if (chk && !chk.checked) chk.checked = true;
     this._paramsDirty = true;
     if (document.getElementById('sidebar')) syncUI(this);
+    if (this.compositeCanvas) this.compositeAllLayers({ forceFull: true });
     if (!silent && texture) this.showToast(`🖼 Texture: ${texture.name}`);
   }
 
@@ -1398,9 +1400,9 @@ export class App {
   /**
    * Sample the active texture at a canvas position.
    */
-  sampleTextureField(x, y, p = this._cachedP || this.getP()) {
+  _sampleTextureFieldInternal(x, y, p = this._cachedP || this.getP(), { ignoreToggle = false } = {}) {
     const tex = this._canvasTexture;
-    if (!tex?.heightData || !p?.canvasTextureEnabled) {
+    if (!tex?.heightData || (!ignoreToggle && !p?.canvasTextureEnabled)) {
       return { height: 0, valley: 1, flowX: 0, flowY: 0, slope: 0 };
     }
     const scale = Math.max(0.05, p.canvasTextureScale || 1);
@@ -1450,6 +1452,10 @@ export class App {
       flowY,
       slope,
     };
+  }
+
+  sampleTextureField(x, y, p = this._cachedP || this.getP()) {
+    return this._sampleTextureFieldInternal(x, y, p);
   }
 
   sampleTextureHeight(x, y, p = this._cachedP || this.getP()) {
@@ -1717,6 +1723,37 @@ export class App {
         }
       }
     }
+  }
+
+  _renderCanvasTexturePreview(p = this._cachedP || this.getP()) {
+    if (!this.liveCanvas || !this.lctx || !this.hasCanvasTexture()) return false;
+    const ctx = this.lctx;
+    if (!ctx) return false;
+    const width = this.W;
+    const height = this.H;
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+    const strength = _clamp01(typeof p?.canvasTextureStrength === 'number' ? p.canvasTextureStrength : 1);
+    const contrast = 0.2 + strength * 1.8;
+    for (let py = 0; py < height; py += 1) {
+      for (let px = 0; px < width; px += 1) {
+        const field = this._sampleTextureFieldInternal(px, py, p, { ignoreToggle: true });
+        const display = _clamp01(0.5 + (field.height - 0.5) * contrast);
+        const slopeBoost = field.slope * 24 * strength;
+        const shade = Math.max(0, Math.min(255, Math.round(display * 255 + slopeBoost)));
+        const off = (py * width + px) * 4;
+        data[off] = shade;
+        data[off + 1] = shade;
+        data[off + 2] = shade;
+        data[off + 3] = 255;
+      }
+    }
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'copy';
+    ctx.putImageData(imageData, 0, 0);
+    ctx.restore();
+    return true;
   }
 
   queueFluidInteractionInputs({ emitters = [], influences = [], scalarFields = [] } = {}) {
@@ -2008,6 +2045,7 @@ export class App {
       bHueVar: val('bHueVar') / 100,
       // Canvas texture
       canvasTextureEnabled: chk('canvasTextureEnabled'),
+      canvasTextureShowOnCanvas: chk('canvasTextureShowOnCanvas'),
       canvasTextureStrength: val('canvasTextureStrength') / 100,
       canvasTextureScale: val('canvasTextureScale') / 100 || 1,
       canvasTextureOffsetX: (val('canvasTextureOffsetX') || 0) / 10,
@@ -4824,9 +4862,14 @@ export class App {
     this.lctx.clearRect(0, 0, this.W, this.H);
     if (perf) clearMs = performance.now() - clearStart;
 
+    const showingCanvasTexturePreview = p.canvasTextureShowOnCanvas && this.hasCanvasTexture();
+    if (showingCanvasTexturePreview) {
+      this._renderCanvasTexturePreview(p);
+    }
+
     // Brush size cursor preview
     const overlayStart = perf ? performance.now() : 0;
-    if (this._cursorX >= 0 && this._cursorY >= 0) {
+    if (!showingCanvasTexturePreview && this._cursorX >= 0 && this._cursorY >= 0) {
       const canvasPos = this._screenToCanvas(this._cursorX, this._cursorY);
       const radius = p.stampSize / 2;
       this.lctx.save();
@@ -4838,19 +4881,19 @@ export class App {
       this.lctx.restore();
     }
 
-    if (brush && brush.drawOverlay) {
+    if (!showingCanvasTexturePreview && brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, p);
     }
-    this.drawSimulationOverlay(this.lctx);
+    if (!showingCanvasTexturePreview) this.drawSimulationOverlay(this.lctx);
     // Selection overlay (marching ants)
-    if (this.selectionMgr) this.selectionMgr.drawOverlay(this.lctx, elapsed);
+    if (!showingCanvasTexturePreview && this.selectionMgr) this.selectionMgr.drawOverlay(this.lctx, elapsed);
     // Floating pixel preview (during move/transform drag)
-    if (this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
+    if (!showingCanvasTexturePreview && this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
     // Transform handles
-    if (this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
+    if (!showingCanvasTexturePreview && this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
 
     // Tiling mode boundary indicator
-    if (this.tilingMode) {
+    if (!showingCanvasTexturePreview && this.tilingMode) {
       this.lctx.save();
       this.lctx.strokeStyle = 'rgba(255,200,50,0.3)';
       this.lctx.lineWidth = 1;

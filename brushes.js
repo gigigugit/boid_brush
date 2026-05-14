@@ -43,6 +43,9 @@ const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
 const FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
 const FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
 const FLUID3D_FINAL_PASS_CAPTURE_STATS = false;
+const FLUID3D_TEXTURE_GUIDE_MIN_SAMPLES = 3;
+const FLUID3D_TEXTURE_GUIDE_MAX_SAMPLES = 8;
+const FLUID3D_TEXTURE_GUIDE_FRAME_SAMPLES = 4;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -4963,6 +4966,77 @@ export class ThreeDFluidBrush {
     });
   }
 
+  _createTextureGuidancePayload(x, y, previousPoint, p, sampleCount = 0) {
+    const textureEnabled = !!(this.app.hasCanvasTexture?.() && p?.canvasTextureEnabled);
+    if (!textureEnabled) return { influences: [], scalarFields: [] };
+    const flowInfluence = this.app.getTextureInfluence?.(p, 'flow') || 0;
+    const terrainInfluence = Math.max(0, Number(p?.fluid3dTerrainWeight) || 0);
+    const scalarInfluence = Math.max(0, Number(p?.fluid3dScalarFieldInfluence) || 0);
+    if (flowInfluence <= 0 && terrainInfluence <= 0 && scalarInfluence <= 0) {
+      return { influences: [], scalarFields: [] };
+    }
+
+    const color = hexToRGB(p.color);
+    const baseRadius = Math.max(8, (Number(p?.fluid3dBrushRadius) || 0) * 0.58);
+    const desiredSamples = sampleCount > 0 ? sampleCount : Math.round(baseRadius / 10);
+    const samples = Math.max(FLUID3D_TEXTURE_GUIDE_MIN_SAMPLES, Math.min(FLUID3D_TEXTURE_GUIDE_MAX_SAMPLES, desiredSamples));
+    const profile = _makeFluidSpawnProfile(x, y, previousPoint);
+    const influences = [];
+    const scalarFields = [];
+    const anchorAngle = Math.atan2(profile.normalY || 0, profile.normalX || 1);
+
+    for (let index = 0; index < samples; index += 1) {
+      const t = (index + 0.5) / samples;
+      const angle = anchorAngle + index * 2.399963229728653;
+      const ringRadius = baseRadius * (0.18 + t * 0.5);
+      const px = x + Math.cos(angle) * ringRadius;
+      const py = y + Math.sin(angle) * ringRadius;
+      const field = this.app.sampleTextureField?.(px, py, p);
+      const flow = this.app.sampleTextureFlowVector?.(px, py, p);
+      if (!field || !flow) continue;
+      const slope = Math.max(0, Number(flow.slope ?? field.slope) || 0);
+      const valleyBoost = 0.35 + field.valley * 0.65;
+
+      if (flowInfluence > 0 && slope >= MIN_TEXTURE_FLOW_SLOPE) {
+        const flowVelocity = baseRadius
+          * (0.018 + slope * 0.075)
+          * flowInfluence
+          * (0.5 + (Number(p?.fluid3dEmitterVelocity) || 0) * 0.5);
+        influences.push({
+          sourceType: 1,
+          x: px,
+          y: py,
+          vx: flow.x * flowVelocity,
+          vy: flow.y * flowVelocity,
+          radius: baseRadius * (0.28 + field.valley * 0.22),
+          strength: flowInfluence * (0.35 + slope * 0.85) * valleyBoost / samples,
+          alpha: (Number(p?.fluid3dOpacity) || 0) * 0.08,
+          pigmentColor: color,
+          modeFlags: 2,
+        });
+      }
+
+      if (terrainInfluence > 0 || scalarInfluence > 0) {
+        scalarFields.push({
+          sourceType: 2,
+          x: px,
+          y: py,
+          radius: baseRadius * (0.24 + field.valley * 0.18),
+          strength: (Math.max(terrainInfluence, scalarInfluence) * (0.25 + slope * 0.75)) / samples,
+          alpha: 1,
+          value0: field.height * (0.25 + terrainInfluence * 0.75),
+          value1: flow.x * flowInfluence * (0.45 + slope * 0.65),
+          value2: flow.y * flowInfluence * (0.45 + slope * 0.65),
+          value3: field.valley * scalarInfluence,
+          modeFlags: 1,
+          falloff: 1.15 + slope * 0.55,
+        });
+      }
+    }
+
+    return { influences, scalarFields };
+  }
+
   _createEmitterPayload(x, y, pressure, previousPoint, amount, p) {
     // Reuse the legacy fluid stroke-profile helper so cursor tangent/normal handling stays
     // consistent between the lightweight LBM brush and the new 3D fluid brush.
@@ -5023,7 +5097,9 @@ export class ThreeDFluidBrush {
         modeFlags: 0,
       });
     }
-    return { emitters, influences, scalarFields: [] };
+    const textureGuidance = this._createTextureGuidancePayload(x, y, previousPoint, p, Math.max(2, Math.round(scaledCount * 0.35)));
+    if (textureGuidance.influences.length) influences.push(...textureGuidance.influences);
+    return { emitters, influences, scalarFields: textureGuidance.scalarFields };
   }
 
   _consumeExternalInteractions() {
@@ -5289,6 +5365,18 @@ export class ThreeDFluidBrush {
     if (external.influences.length) this.sim.submitInfluences(external.influences);
     if (external.scalarFields.length) this.sim.submitScalarFields(external.scalarFields);
     if (this._usesAdaptiveReplay(currentParams)) this._recordInteractionEvent(external.emitters, external.influences, external.scalarFields);
+    if (this._active && this._lastPoint) {
+      const textureGuidance = this._createTextureGuidancePayload(
+        this._lastPoint.x,
+        this._lastPoint.y,
+        null,
+        currentParams,
+        FLUID3D_TEXTURE_GUIDE_FRAME_SAMPLES,
+      );
+      if (textureGuidance.influences.length) this.sim.submitInfluences(textureGuidance.influences);
+      if (textureGuidance.scalarFields.length) this.sim.submitScalarFields(textureGuidance.scalarFields);
+      if (this._usesAdaptiveReplay(currentParams)) this._recordInteractionEvent([], textureGuidance.influences, textureGuidance.scalarFields);
+    }
     const prevCount = this.sim.getParticleCount();
     if (!this._active && prevCount <= 0) {
       this._lastFrameElapsed = elapsed;
