@@ -9,6 +9,8 @@
 import { BoidSim, FluidSim } from './wasm-bridge.js';
 import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
+import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
+import { WebGPUFluidRenderer } from './fluid-renderer.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -33,6 +35,17 @@ const TEXTURE_EDGE_BREAKUP_SIZE_SCALE = 0.18;
 const TEXTURE_EDGE_BREAKUP_VALLEY_SCALE = 0.14;
 const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
+const FLUID_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
+const FLUID_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
+const FLUID3D_MOVE_EMIT_RATIO = 0.5;
+const FLUID3D_ACTIVE_SUBSTEPS = 3;
+const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
+const FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
+const FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
+const FLUID3D_FINAL_PASS_CAPTURE_STATS = false;
+const FLUID3D_TEXTURE_GUIDE_MIN_SAMPLES = 3;
+const FLUID3D_TEXTURE_GUIDE_MAX_SAMPLES = 8;
+const FLUID3D_TEXTURE_GUIDE_FRAME_SAMPLES = 4;
 // Minimum deviation from vertical (π/2) in radians to consider tilt data meaningful.
 // Values closer to π/2 than this indicate the pen is essentially vertical or no tilt
 // data is available from the hardware.
@@ -4764,6 +4777,679 @@ function _makeFluidSeeds(x, y, amount, color, p, profile) {
   return particles;
 }
 
+
+export class ThreeDFluidBrush {
+  constructor(app) {
+    this.app = app;
+    this.sim = null;
+    this._finalSim = null;
+    this.renderer = new WebGPUFluidRenderer();
+    this._ready = false;
+    this._initPromise = null;
+    this._active = false;
+    this._lastPoint = null;
+    this._lastFrameElapsed = null;
+    this._strokeLayer = null;
+    this._strokeBaseCanvas = document.createElement('canvas');
+    this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
+    this._maskCanvas = document.createElement('canvas');
+    this._maskCtx = this._maskCanvas.getContext('2d', { willReadFrequently: true });
+    this._replayInteractionEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
+    // Tracks the chunked post-stroke replay/settle job:
+    // { replayIndex, replayTime, eventIndex, settleRemaining, stage }.
+    this._finalPassJob = null;
+    this._previewBound = false;
+    this._backend = 'webgpu';
+    this._legacyFallback = null;
+  }
+
+  async init({ force = false } = {}) {
+    if (force) {
+      this.sim?.destroy?.();
+      this._finalSim?.destroy?.();
+      this.renderer?.reset?.();
+      this.sim = null;
+      this._finalSim = null;
+      this._ready = false;
+      this._initPromise = null;
+      this._active = false;
+      this._lastPoint = null;
+      this._lastFrameElapsed = null;
+      this._strokeLayer = null;
+      this._resetReplayCapture();
+      this._finalPassJob = null;
+      this._clearPreview({ composite: false });
+      this._legacyFallback?.deactivate?.();
+    }
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = (async () => {
+      const params = this._solverParams();
+      await this.renderer.init();
+      if (!this.renderer.ready) {
+        this._backend = 'legacy';
+        this._legacyFallback = this._legacyFallback || new FluidBrush(this.app);
+        await this._legacyFallback.init({ force });
+        return this;
+      }
+      const gpuContext = {
+        adapter: this.renderer.adapter,
+        device: this.renderer.device,
+      };
+      this.sim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, params, gpuContext);
+      this._finalSim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams('final'), gpuContext);
+      this._ready = true;
+      this._backend = 'webgpu';
+      this._syncMask();
+      return this;
+    })().catch(async (error) => {
+      console.warn('ThreeDFluidBrush: WebGPU init failed, falling back to legacy fluid.', error);
+      this._backend = 'legacy';
+      this._legacyFallback = this._legacyFallback || new FluidBrush(this.app);
+      await this._legacyFallback.init({ force });
+      return this;
+    });
+    return this._initPromise;
+  }
+
+  _usingLegacyFallback() {
+    return this._backend === 'legacy' && this._legacyFallback;
+  }
+
+  _bindPreviewUpdater(layer = this._strokeLayer) {
+    if (!this.renderer || !layer) return;
+    this.renderer.onPreviewUpdated = (canvas) => {
+      if (!canvas || !layer || this._strokeLayer !== layer || !this.app.layers.includes(layer)) return;
+      layer.gpuPreviewCanvas = canvas;
+      layer.dirty = true;
+      this.app.compositeAllLayers();
+    };
+    this._previewBound = true;
+  }
+
+  _previewResolutionScale(p) {
+    const finalScale = Number(p?.fluid3dResolutionScale) || 1;
+    const previewScale = Number(p?.fluid3dPreviewScale) || finalScale;
+    if (!p?.fluid3dAdaptiveQuality) return finalScale;
+    return Math.max(0.3, Math.min(finalScale, previewScale));
+  }
+
+  _usesAdaptiveReplay(p = this.app.getP()) {
+    return !!(p?.fluid3dAdaptiveQuality && this._previewResolutionScale(p) < ((Number(p?.fluid3dResolutionScale) || 1) - 0.05));
+  }
+
+  _solverParams(pass = 'preview', sourceParams = this.app.getP()) {
+    const p = sourceParams;
+    return {
+      resolutionScale: pass === 'final' ? p.fluid3dResolutionScale : this._previewResolutionScale(p),
+      fluidScale: p.fluid3dFluidScale,
+      emissionRate: p.fluid3dEmissionRate,
+      emitterStrength: p.fluid3dEmitterStrength,
+      emitterVelocity: p.fluid3dEmitterVelocity,
+      pressureResponse: p.fluid3dPressure,
+      momentumRetention: p.fluid3dMomentum,
+      velocityDiffuse: p.fluid3dVelocityDiffuse,
+      drag: p.fluid3dDrag,
+      thicknessDecay: p.fluid3dThicknessDecay,
+      pigmentDiffusion: p.fluid3dPigmentDiffusion,
+      pressureFade: p.fluid3dPressureFade,
+      settleThreshold: p.fluid3dSettleThreshold,
+      terrainWeight: p.fluid3dTerrainWeight,
+      scalarFieldInfluence: p.fluid3dScalarFieldInfluence,
+      influenceStrength: p.fluid3dInfluenceStrength,
+      influenceRadius: p.fluid3dInfluenceRadius,
+      maxVelocity: p.fluid3dMaxVelocity,
+      thicknessFloor: p.fluid3dThicknessFloor,
+      commitOpacityScale: p.fluid3dOpacityScale,
+      renderMode: p.fluid3dRenderMode,
+      previewBoost: pass === 'final' ? 1 : (p.fluid3dAdaptiveQuality ? 1.25 : 1),
+      occupancyBias: p.fluid3dOccupancyBias,
+      spreadClamp: p.fluid3dSpreadClamp,
+      surfaceTension: p.fluid3dSurfaceTension,
+      edgeWidth: p.fluid3dEdgeWidth,
+      edgeDrag: p.fluid3dEdgeDrag,
+      injectorMode: p.fluid3dInjectorMode,
+      injectorMotionWeight: p.fluid3dInjectorMotion,
+      injectorPigmentMotion: p.fluid3dInjectorPigment,
+      injectorOccupancyMotion: p.fluid3dInjectorOccupancy,
+      injectorSwirl: p.fluid3dInjectorSwirl,
+    };
+  }
+
+  _updateSimulator(pass = 'preview', sourceParams = this.app.getP()) {
+    const sim = pass === 'final' ? this._finalSim : this.sim;
+    if (!sim) return false;
+    sim.setDisplaySize(this.app.W || 1, this.app.H || 1);
+    sim.updateParams(this._solverParams(pass, sourceParams));
+    if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) this._syncMask();
+    return true;
+  }
+
+  _syncMask() {
+    if (!this.sim && !this._finalSim) return;
+    if (this._maskCanvas.width !== this.app.W || this._maskCanvas.height !== this.app.H) {
+      this._maskCanvas.width = this.app.W;
+      this._maskCanvas.height = this.app.H;
+    }
+    this._maskCtx.clearRect(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    const mask = this._maskCtx.getImageData(0, 0, this._maskCanvas.width, this._maskCanvas.height);
+    this.sim?.setMask(mask);
+    this._finalSim?.setMask(mask);
+  }
+
+  _captureStrokeBase() {
+    const layer = this._strokeLayer;
+    if (!layer) return;
+    if (this._strokeBaseCanvas.width !== layer.canvas.width || this._strokeBaseCanvas.height !== layer.canvas.height) {
+      this._strokeBaseCanvas.width = layer.canvas.width;
+      this._strokeBaseCanvas.height = layer.canvas.height;
+    }
+    this._strokeBaseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._strokeBaseCtx.clearRect(0, 0, this._strokeBaseCanvas.width, this._strokeBaseCanvas.height);
+    this._strokeBaseCtx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height);
+  }
+
+  _resetReplayCapture() {
+    this._replayInteractionEvents = [];
+    this._replayStepHistory = [];
+    this._replayTime = 0;
+  }
+
+  _recordInteractionEvent(emitters = [], influences = [], scalarFields = []) {
+    if (!emitters.length && !influences.length && !scalarFields.length) return;
+    this._replayInteractionEvents.push({
+      time: this._replayTime,
+      emitters: emitters.map(record => ({ ...record })),
+      influences: influences.map(record => ({ ...record })),
+      scalarFields: scalarFields.map(record => ({ ...record })),
+    });
+  }
+
+  _createTextureGuidancePayload(x, y, previousPoint, p, sampleCount = 0) {
+    const textureEnabled = !!(this.app.hasCanvasTexture?.() && p?.canvasTextureEnabled);
+    if (!textureEnabled) return { influences: [], scalarFields: [] };
+    const flowInfluence = this.app.getTextureInfluence?.(p, 'flow') || 0;
+    const terrainInfluence = Math.max(0, Number(p?.fluid3dTerrainWeight) || 0);
+    const scalarInfluence = Math.max(0, Number(p?.fluid3dScalarFieldInfluence) || 0);
+    if (flowInfluence <= 0 && terrainInfluence <= 0 && scalarInfluence <= 0) {
+      return { influences: [], scalarFields: [] };
+    }
+
+    const color = hexToRGB(p.color);
+    const baseRadius = Math.max(8, (Number(p?.fluid3dBrushRadius) || 0) * 0.58);
+    const desiredSamples = sampleCount > 0 ? sampleCount : Math.round(baseRadius / 10);
+    const samples = Math.max(FLUID3D_TEXTURE_GUIDE_MIN_SAMPLES, Math.min(FLUID3D_TEXTURE_GUIDE_MAX_SAMPLES, desiredSamples));
+    const profile = _makeFluidSpawnProfile(x, y, previousPoint);
+    const influences = [];
+    const scalarFields = [];
+    const anchorAngle = Math.atan2(profile.normalY || 0, profile.normalX || 1);
+
+    for (let index = 0; index < samples; index += 1) {
+      const t = (index + 0.5) / samples;
+      const angle = anchorAngle + index * 2.399963229728653;
+      const ringRadius = baseRadius * (0.18 + t * 0.5);
+      const px = x + Math.cos(angle) * ringRadius;
+      const py = y + Math.sin(angle) * ringRadius;
+      const field = this.app.sampleTextureField?.(px, py, p);
+      const flow = this.app.sampleTextureFlowVector?.(px, py, p);
+      if (!field || !flow) continue;
+      const slope = Math.max(0, Number(flow.slope ?? field.slope) || 0);
+      const valleyBoost = 0.35 + field.valley * 0.65;
+
+      if (flowInfluence > 0 && slope >= MIN_TEXTURE_FLOW_SLOPE) {
+        const flowVelocity = baseRadius
+          * (0.018 + slope * 0.075)
+          * flowInfluence
+          * (0.5 + (Number(p?.fluid3dEmitterVelocity) || 0) * 0.5);
+        influences.push({
+          sourceType: 1,
+          x: px,
+          y: py,
+          vx: flow.x * flowVelocity,
+          vy: flow.y * flowVelocity,
+          radius: baseRadius * (0.28 + field.valley * 0.22),
+          strength: flowInfluence * (0.35 + slope * 0.85) * valleyBoost / samples,
+          alpha: (Number(p?.fluid3dOpacity) || 0) * 0.08,
+          pigmentColor: color,
+          modeFlags: 2,
+        });
+      }
+
+      if (terrainInfluence > 0 || scalarInfluence > 0) {
+        scalarFields.push({
+          sourceType: 2,
+          x: px,
+          y: py,
+          radius: baseRadius * (0.24 + field.valley * 0.18),
+          strength: (Math.max(terrainInfluence, scalarInfluence) * (0.25 + slope * 0.75)) / samples,
+          alpha: 1,
+          value0: field.height * (0.25 + terrainInfluence * 0.75),
+          value1: flow.x * flowInfluence * (0.45 + slope * 0.65),
+          value2: flow.y * flowInfluence * (0.45 + slope * 0.65),
+          value3: field.valley * scalarInfluence,
+          modeFlags: 1,
+          falloff: 1.15 + slope * 0.55,
+        });
+      }
+    }
+
+    return { influences, scalarFields };
+  }
+
+  _createEmitterPayload(x, y, pressure, previousPoint, amount, p) {
+    // Reuse the legacy fluid stroke-profile helper so cursor tangent/normal handling stays
+    // consistent between the lightweight LBM brush and the new 3D fluid brush.
+    const profile = _makeFluidSpawnProfile(x, y, previousPoint);
+    const color = hexToRGB(p.color);
+    const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * (0.45 + pressure * 0.55)));
+    const hasStrokeDirection = !!previousPoint && profile.distance > 1e-3;
+    const totalEmitterStrength = p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6);
+    const totalInfluenceStrength = p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7);
+    const emitterStrength = totalEmitterStrength / scaledCount;
+    const influenceStrength = totalInfluenceStrength / scaledCount;
+    const emitters = [];
+    const influences = [];
+    for (let index = 0; index < scaledCount; index += 1) {
+      const scatterAngle = Math.random() * Math.PI * 2;
+      const scatterRadius = Math.sqrt(Math.random()) * scaledRadius * (hasStrokeDirection ? 0.34 : 0.24);
+      const alongJitter = (Math.random() - 0.5) * scaledRadius * (hasStrokeDirection ? 0.24 : 0.08);
+      const acrossJitter = (Math.random() - 0.5) * scaledRadius * (hasStrokeDirection ? 0.42 : 0.26);
+      const radialX = Math.cos(scatterAngle);
+      const radialY = Math.sin(scatterAngle);
+      const px = x
+        + profile.tangentX * alongJitter
+        + profile.normalX * acrossJitter
+        + radialX * scatterRadius * 0.28;
+      const py = y
+        + profile.tangentY * alongJitter
+        + profile.normalY * acrossJitter
+        + radialY * scatterRadius * 0.28;
+      const velocityScale = (0.2 + Math.random() * 0.18) * p.fluid3dEmitterVelocity * scaledRadius * 0.035;
+      const tangentVelocity = hasStrokeDirection ? velocityScale : velocityScale * 0.08;
+      const radialVelocity = hasStrokeDirection ? velocityScale * 0.1 : velocityScale * (Math.random() - 0.5) * 0.05;
+      const normalVelocity = velocityScale * (Math.random() - 0.5) * (hasStrokeDirection ? 0.22 : 0.1);
+      const vx = profile.tangentX * tangentVelocity + profile.normalX * normalVelocity + radialX * radialVelocity;
+      const vy = profile.tangentY * tangentVelocity + profile.normalY * normalVelocity + radialY * radialVelocity;
+      emitters.push({
+        sourceType: 0,
+        x: px,
+        y: py,
+        vx,
+        vy,
+        radius: scaledRadius * (0.2 + Math.random() * 0.12),
+        strength: emitterStrength,
+        alpha: p.fluid3dOpacity,
+        pigmentColor: color,
+        modeFlags: 1,
+      });
+      influences.push({
+        sourceType: 1,
+        x: px,
+        y: py,
+        vx,
+        vy,
+        radius: scaledRadius * (0.34 + Math.random() * 0.18),
+        strength: influenceStrength,
+        alpha: p.fluid3dOpacity * 0.25,
+        pigmentColor: color,
+        modeFlags: 0,
+      });
+    }
+    const textureGuidance = this._createTextureGuidancePayload(x, y, previousPoint, p, Math.max(2, Math.round(scaledCount * 0.35)));
+    if (textureGuidance.influences.length) influences.push(...textureGuidance.influences);
+    return { emitters, influences, scalarFields: textureGuidance.scalarFields };
+  }
+
+  _consumeExternalInteractions() {
+    const payload = this.app.consumeFluidInteractionInputs?.() || {};
+    return {
+      emitters: Array.isArray(payload.emitters) ? payload.emitters : [],
+      influences: Array.isArray(payload.influences) ? payload.influences : [],
+      scalarFields: Array.isArray(payload.scalarFields) ? payload.scalarFields : [],
+    };
+  }
+
+  _hasVisiblePreview() {
+    const layer = this._strokeLayer;
+    return !!(layer?.gpuPreviewCanvas || this.renderer?.previewCanvas || this.renderer?.canvas);
+  }
+
+  onDown(x, y, pressure) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onDown(x, y, pressure);
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    if (!this._ready || !this.sim) return;
+    if (this._finalPassJob) {
+      this._commitPreviewToLayer({ composite: false });
+      this._finishSettledStroke();
+    } else if (!this._active && this._strokeLayer && this._hasVisiblePreview()) {
+      // Starting a new stroke should preserve the currently visible settled preview,
+      // even if the previous stroke has not yet entered the async final-pass path.
+      this._commitPreviewToLayer({ composite: false });
+      this._finishSettledStroke();
+    }
+    const p = this.app.getP();
+    this._active = true;
+    this._strokeLayer = this.app.getActiveLayer();
+    this._captureStrokeBase();
+    this._clearPreview({ composite: false });
+    this.sim.clearState();
+    this._finalSim?.clearState?.();
+    this._resetReplayCapture();
+    this._lastPoint = { x, y };
+    this._lastFrameElapsed = null;
+    this._updateSimulator('preview', p);
+    const local = this._createEmitterPayload(x, y, pressure, null, Math.max(2, p.fluid3dEmitterCount), p);
+    this.sim.submitEmitters(local.emitters);
+    this.sim.submitInfluences(local.influences);
+    this.sim.submitScalarFields(local.scalarFields);
+    if (this._usesAdaptiveReplay(p)) this._recordInteractionEvent(local.emitters, local.influences, local.scalarFields);
+    this._step(0);
+  }
+
+  onMove(x, y, pressure) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onMove(x, y, pressure);
+    if (!this._active || !this.sim) return;
+    const previousPoint = this._lastPoint;
+    if (!previousPoint) {
+      this._lastPoint = { x, y };
+      return;
+    }
+    const p = this.app.getP();
+    const dx = x - previousPoint.x;
+    const dy = y - previousPoint.y;
+    const distance = Math.hypot(dx, dy);
+    const step = Math.max(2, p.fluid3dBrushRadius * 0.32);
+    const count = Math.max(1, Math.ceil(distance / step));
+    for (let index = 1; index <= count; index += 1) {
+      const t = index / count;
+      const px = previousPoint.x + dx * t;
+      const py = previousPoint.y + dy * t;
+      const prev = { x: previousPoint.x + dx * ((index - 1) / count), y: previousPoint.y + dy * ((index - 1) / count) };
+      const local = this._createEmitterPayload(px, py, pressure, prev, Math.max(2, Math.round(p.fluid3dEmitterCount * FLUID3D_MOVE_EMIT_RATIO)), p);
+      this.sim.submitEmitters(local.emitters);
+      this.sim.submitInfluences(local.influences);
+      this.sim.submitScalarFields(local.scalarFields);
+      if (this._usesAdaptiveReplay(p)) this._recordInteractionEvent(local.emitters, local.influences, local.scalarFields);
+    }
+    this._lastPoint = { x, y };
+  }
+
+  onUp(x, y) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onUp(x, y);
+    this._active = false;
+    this._lastPoint = null;
+  }
+
+  onFrame(elapsed) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onFrame(elapsed);
+    this._step(elapsed);
+  }
+
+  onHoverFrame(elapsed) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.onHoverFrame?.(elapsed);
+    this._step(elapsed);
+  }
+
+  taperFrame() {}
+
+  _renderPreviewFromSim(sim) {
+    const layer = this._strokeLayer || this.app.getActiveLayer();
+    if (!layer || !this.renderer?.ready) return false;
+    this._bindPreviewUpdater(layer);
+    const ok = this.renderer.render({
+      renderState: sim.getRenderState(),
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      clear: true,
+    });
+    if (!ok) return false;
+    layer.gpuPreviewCanvas = this.renderer.previewCanvas || this.renderer.canvas;
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+    return true;
+  }
+
+  _commitPreviewToLayer({ composite = true } = {}) {
+    const layer = this._strokeLayer;
+    if (!layer || !this.renderer?.ready) {
+      this._clearPreview({ composite });
+      return false;
+    }
+    const ok = this.renderer.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      layer.alphaLock ? 'source-atop' : 'source-over',
+    );
+    this.renderer.onPreviewUpdated = null;
+    this._previewBound = false;
+    this.renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+    layer.gpuPreviewCanvas = null;
+    if (!ok) return false;
+    layer.dirty = true;
+    if (composite) this.app.compositeAllLayers();
+    return true;
+  }
+
+  _clearPreview({ composite = false } = {}) {
+    const layer = this._strokeLayer;
+    if (layer?.gpuPreviewCanvas) {
+      layer.gpuPreviewCanvas = null;
+      layer.dirty = true;
+    }
+    if (this.renderer) {
+      this.renderer.onPreviewUpdated = null;
+      this._previewBound = false;
+    }
+    if (layer?.canvas && this.renderer?.ready) {
+      this.renderer.clearSurface(layer.canvas.width, layer.canvas.height);
+    }
+    if (composite && layer) this.app.compositeAllLayers();
+  }
+
+  _finishSettledStroke() {
+    this.sim?.clearState?.();
+    this._finalSim?.clearState?.();
+    this._resetReplayCapture();
+    this._finalPassJob = null;
+    this._active = false;
+    this._lastPoint = null;
+    this._lastFrameElapsed = null;
+    this._strokeLayer = null;
+  }
+
+  _commitAndFinishSettledStroke() {
+    this._commitPreviewToLayer({ composite: true });
+    this._finishSettledStroke();
+  }
+
+  _flushFinalPassEvents(job) {
+    while (job.eventIndex < this._replayInteractionEvents.length && this._replayInteractionEvents[job.eventIndex].time <= job.replayTime + 1e-6) {
+      const event = this._replayInteractionEvents[job.eventIndex];
+      this._finalSim.submitEmitters(event.emitters);
+      this._finalSim.submitInfluences(event.influences);
+      this._finalSim.submitScalarFields(event.scalarFields);
+      job.eventIndex += 1;
+    }
+  }
+
+  _renderFinalPass(sourceParams) {
+    if (!this._finalSim || !this._replayInteractionEvents.length || !this._replayStepHistory.length) {
+      const committed = this._commitPreviewToLayer({ composite: true });
+      this._finishSettledStroke();
+      return committed;
+    }
+    if (!this._updateSimulator('final', sourceParams)) return false;
+    this._finalSim.clearState();
+    this._finalPassJob = {
+      replayIndex: 0,
+      replayTime: 0,
+      eventIndex: 0,
+      settleRemaining: FLUID3D_FINAL_PASS_SETTLING_STEPS,
+      stage: 'replay',
+    };
+    this._flushFinalPassEvents(this._finalPassJob);
+    return true;
+  }
+
+  _advanceFinalPass() {
+    const job = this._finalPassJob;
+    if (!job || !this._finalSim) return false;
+    if (job.stage === 'committing') return true;
+
+    if (job.stage === 'replay') {
+      let replayStepsThisFrame = 0;
+      while (job.replayIndex < this._replayStepHistory.length && replayStepsThisFrame < FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME) {
+        const dt = this._replayStepHistory[job.replayIndex];
+        this._finalSim.step(dt, { captureStats: FLUID3D_FINAL_PASS_CAPTURE_STATS });
+        job.replayTime += dt;
+        job.replayIndex += 1;
+        replayStepsThisFrame += 1;
+        this._flushFinalPassEvents(job);
+      }
+      if (job.replayIndex < this._replayStepHistory.length) return true;
+      job.stage = 'settle';
+    }
+
+    if (job.stage === 'settle') {
+      let settleStepsThisFrame = 0;
+      while (job.settleRemaining > 0 && settleStepsThisFrame < FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME) {
+        this._finalSim.step(FLUID_TIMESTEP_60FPS, { captureStats: FLUID3D_FINAL_PASS_CAPTURE_STATS });
+        job.settleRemaining -= 1;
+        settleStepsThisFrame += 1;
+      }
+      if (job.settleRemaining > 0) return true;
+      job.stage = 'render';
+    }
+
+    if (job.stage === 'render') {
+      const rendered = this._renderPreviewFromSim(this._finalSim);
+      if (!rendered) {
+        this._finishSettledStroke();
+        return false;
+      }
+      job.stage = 'committing';
+      if (this.renderer.device?.queue?.onSubmittedWorkDone) {
+        this.renderer.device.queue.onSubmittedWorkDone().then(() => {
+          this._commitAndFinishSettledStroke();
+        }).catch(() => {
+          this._commitAndFinishSettledStroke();
+        });
+        return true;
+      }
+      this._commitAndFinishSettledStroke();
+      return true;
+    }
+
+    return true;
+  }
+
+  _step(elapsed) {
+    if (!this._ready || !this.sim) return;
+    if (this._finalPassJob) {
+      this._advanceFinalPass();
+      if (!this._active) {
+        this._lastFrameElapsed = elapsed;
+        return;
+      }
+    }
+    const currentParams = this.app.getP();
+    if (!this._updateSimulator('preview', currentParams)) return;
+    const external = this._consumeExternalInteractions();
+    if (external.emitters.length) this.sim.submitEmitters(external.emitters);
+    if (external.influences.length) this.sim.submitInfluences(external.influences);
+    if (external.scalarFields.length) this.sim.submitScalarFields(external.scalarFields);
+    if (this._usesAdaptiveReplay(currentParams)) this._recordInteractionEvent(external.emitters, external.influences, external.scalarFields);
+    if (this._active && this._lastPoint) {
+      const textureGuidance = this._createTextureGuidancePayload(
+        this._lastPoint.x,
+        this._lastPoint.y,
+        null,
+        currentParams,
+        FLUID3D_TEXTURE_GUIDE_FRAME_SAMPLES,
+      );
+      if (textureGuidance.influences.length) this.sim.submitInfluences(textureGuidance.influences);
+      if (textureGuidance.scalarFields.length) this.sim.submitScalarFields(textureGuidance.scalarFields);
+      if (this._usesAdaptiveReplay(currentParams)) this._recordInteractionEvent([], textureGuidance.influences, textureGuidance.scalarFields);
+    }
+    const prevCount = this.sim.getParticleCount();
+    if (!this._active && prevCount <= 0) {
+      this._lastFrameElapsed = elapsed;
+      return;
+    }
+    let dt = this._lastFrameElapsed == null ? FLUID_TIMESTEP_60FPS : elapsed - this._lastFrameElapsed;
+    this._lastFrameElapsed = elapsed;
+    if (!Number.isFinite(dt) || dt <= 0) dt = FLUID_TIMESTEP_60FPS;
+    dt = Math.min(dt, 0.05);
+    const stepCount = this._active ? FLUID3D_ACTIVE_SUBSTEPS : 1;
+    const stepDt = dt / stepCount;
+    for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+      this.sim.step(stepDt);
+    }
+    const nextCount = this.sim.getParticleCount();
+    if (this._usesAdaptiveReplay(currentParams) && (this._active || prevCount > 0 || nextCount > 0)) {
+      for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+        this._replayStepHistory.push(stepDt);
+        this._replayTime += stepDt;
+      }
+    }
+    if (this._active || prevCount > 0 || nextCount > 0) {
+      this._renderPreviewFromSim(this.sim);
+    }
+    if (!this._active && prevCount > 0 && nextCount <= 0) {
+      if (this._usesAdaptiveReplay(currentParams)) this._renderFinalPass(currentParams);
+      else {
+        this._commitPreviewToLayer({ composite: true });
+        this._finishSettledStroke();
+      }
+    }
+  }
+
+  drawOverlay(ctx, p) {
+    if (this._usingLegacyFallback()) return this._legacyFallback.drawOverlay?.(ctx, p);
+    if (!p.fluid3dShowField || !this.sim) return;
+    const particles = this.sim.getParticles();
+    ctx.save();
+    ctx.fillStyle = 'rgba(114, 196, 255, 0.38)';
+    for (const particle of particles.slice(0, 900)) {
+      ctx.globalAlpha = Math.max(0.08, Math.min(0.6, particle.thickness * 0.8 + particle.pressure * 0.25));
+      ctx.fillRect(particle.x - 1, particle.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(114, 196, 255, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(this.app.leaderX, this.app.leaderY, p.fluid3dBrushRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  getStatusInfo() {
+    if (this._usingLegacyFallback()) return `3D Fluid | fallback ${this._legacyFallback.getStatusInfo()}`;
+    const stats = this.sim?.getDebugState?.()?.stats || {};
+    return `3D Fluid | sim:webgpu render:${this.renderer?.ready ? 'webgpu' : 'legacy'} cells:${stats.activeCells ?? 0} occ:${((stats.occupiedRatio || 0) * 100).toFixed(1)}%`;
+  }
+
+  deactivate() {
+    if (this._usingLegacyFallback()) return this._legacyFallback.deactivate();
+    this._active = false;
+    this._lastPoint = null;
+    this._lastFrameElapsed = null;
+    this._commitPreviewToLayer({ composite: false });
+    this._clearPreview({ composite: true });
+    this._strokeLayer = null;
+    this._finalPassJob = null;
+    this.sim?.clearState?.();
+    this._finalSim?.clearState?.();
+    this._resetReplayCapture();
+  }
+}
+
 export class FluidBrush {
   constructor(app) {
     this.app = app;
@@ -4782,6 +5468,7 @@ export class FluidBrush {
     this._strokeBaseCanvas = document.createElement('canvas');
     this._strokeBaseCtx = this._strokeBaseCanvas.getContext('2d', { willReadFrequently: true });
     this._maskSynced = false;
+    this._finalPassJob = null;
     this._replaySeedEvents = [];
     this._replayStepHistory = [];
     this._replayTime = 0;
@@ -4800,6 +5487,7 @@ export class FluidBrush {
       this._lastFrameElapsed = null;
       this._strokeLayer = null;
       this._maskSynced = false;
+      this._finalPassJob = null;
       this._resetReplayCapture();
     }
     if (this._initPromise) return this._initPromise;
@@ -4835,6 +5523,11 @@ export class FluidBrush {
       this.app.undoPushedThisStroke = true;
     }
     if (!this._ready || !this.sim) return;
+    if (this._finalPassJob) {
+      this._finalPassJob = null;
+      this._resetSimulatorState(this._finalSim);
+      this._resetReplayCapture();
+    }
     const p = this.app.getP();
     this._active = true;
     this._strokeLayer = this.app.getActiveLayer();
@@ -4956,6 +5649,13 @@ export class FluidBrush {
     });
   }
 
+  _flushFinalPassSeeds(job) {
+    while (job.seedIndex < this._replaySeedEvents.length && this._replaySeedEvents[job.seedIndex].time <= job.replayTime + 1e-6) {
+      this._finalSim.addParticles(this._replaySeedEvents[job.seedIndex].particles);
+      job.seedIndex += 1;
+    }
+  }
+
   _captureStrokeBase() {
     const layer = this._strokeLayer;
     if (!layer) return;
@@ -4988,6 +5688,13 @@ export class FluidBrush {
   }
 
   _step(elapsed) {
+    if (this._finalPassJob) {
+      this._advanceFinalPass();
+      if (!this._active) {
+        this._lastFrameElapsed = elapsed;
+        return;
+      }
+    }
     const currentParams = this.app.getP();
     if (!this._updateSimulator('preview', currentParams)) return;
     const prevCount = this.sim.getParticleCount();
@@ -5010,8 +5717,8 @@ export class FluidBrush {
     }
     if (!this._active && prevCount > 0 && nextCount <= 0) {
       if (this._usesFastFirstPass(currentParams)) this._renderFinalPass(currentParams);
+      else this._resetReplayCapture();
       this._resetSimulatorState();
-      this._resetReplayCapture();
     }
   }
 
@@ -5019,26 +5726,50 @@ export class FluidBrush {
     if (!this._finalSim || !this._replaySeedEvents.length || !this._replayStepHistory.length) return;
     if (!this._updateSimulator('final', sourceParams)) return;
     this._finalSim.clearParticles();
-    let replayTime = 0;
-    let seedIndex = 0;
-    const flushSeeds = () => {
-      while (seedIndex < this._replaySeedEvents.length && this._replaySeedEvents[seedIndex].time <= replayTime + 1e-6) {
-        this._finalSim.addParticles(this._replaySeedEvents[seedIndex].particles);
-        seedIndex += 1;
-      }
+    this._finalPassJob = {
+      replayIndex: 0,
+      replayTime: 0,
+      seedIndex: 0,
+      settleRemaining: FLUID_FINAL_PASS_MAX_SETTLING_STEPS,
+      stage: 'replay',
     };
-    flushSeeds();
-    for (const dt of this._replayStepHistory) {
-      this._finalSim.step(dt);
-      replayTime += dt;
-      flushSeeds();
+    this._flushFinalPassSeeds(this._finalPassJob);
+  }
+
+  _advanceFinalPass() {
+    const job = this._finalPassJob;
+    if (!job || !this._finalSim) return false;
+
+    if (job.stage === 'replay') {
+      let replayStepsThisFrame = 0;
+      while (job.replayIndex < this._replayStepHistory.length && replayStepsThisFrame < FLUID_FINAL_PASS_REPLAY_STEPS_PER_FRAME) {
+        const dt = this._replayStepHistory[job.replayIndex];
+        this._finalSim.step(dt);
+        job.replayTime += dt;
+        job.replayIndex += 1;
+        replayStepsThisFrame += 1;
+        this._flushFinalPassSeeds(job);
+      }
+      this._depositFrameFromSim(this._finalSim);
+      if (job.replayIndex < this._replayStepHistory.length) return true;
+      job.stage = 'settle';
     }
-    let guard = 0;
-    while (this._finalSim.getParticleCount() > 0 && guard < FLUID_FINAL_PASS_MAX_SETTLING_STEPS) {
-      this._finalSim.step(FLUID_TIMESTEP_60FPS);
-      guard += 1;
+
+    if (job.stage === 'settle') {
+      let settleStepsThisFrame = 0;
+      while (job.settleRemaining > 0 && this._finalSim.getParticleCount() > 0 && settleStepsThisFrame < FLUID_FINAL_PASS_SETTLE_STEPS_PER_FRAME) {
+        this._finalSim.step(FLUID_TIMESTEP_60FPS);
+        job.settleRemaining -= 1;
+        settleStepsThisFrame += 1;
+      }
+      this._depositFrameFromSim(this._finalSim);
+      if (job.settleRemaining > 0 && this._finalSim.getParticleCount() > 0) return true;
     }
-    this._depositFrameFromSim(this._finalSim);
+
+    this._finalPassJob = null;
+    this._resetSimulatorState(this._finalSim);
+    this._resetReplayCapture();
+    return true;
   }
 
   _depositFrameFromSim(sim) {
@@ -5099,6 +5830,7 @@ export class FluidBrush {
     this._active = false;
     this._lastPoint = null;
     this._lastFrameElapsed = null;
+    this._finalPassJob = null;
     this._strokeLayer = null;
     this._resetAllSimulatorStates();
     this._resetReplayCapture();
@@ -5146,4 +5878,353 @@ export class EraserBrush {
   drawOverlay(ctx, p) { this._inner.drawOverlay(ctx, p); }
   getStatusInfo() { return this._inner.getStatusInfo().replace(/^Simple/, 'Eraser'); }
   deactivate() { this._inner.deactivate(); }
+}
+
+const MOTION_PATH_BRUSH_BASE_SPEED = 90;
+const MOTION_PATH_BRUSH_DELTA_CAP = 1 / 24;
+
+function _sampleCompiledMotionTrack(track, distanceAlongPath) {
+  if (!track?.points?.length) return null;
+  if (track.points.length === 1) {
+    return { x: track.points[0].x, y: track.points[0].y, angle: 0 };
+  }
+  const totalLength = Math.max(track.totalLength || 0, 1e-6);
+  const distance = track.closed
+    ? ((distanceAlongPath % totalLength) + totalLength) % totalLength
+    : _clamp(distanceAlongPath, 0, totalLength);
+  let remaining = distance;
+  for (let i = 1; i < track.points.length; i++) {
+    const length = track.segmentLengths?.[i - 1] || 0;
+    if (remaining <= length || i === track.points.length - 1) {
+      const a = track.points[i - 1];
+      const b = track.points[i];
+      const t = length <= 1e-6 ? 0 : remaining / length;
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        angle: Math.atan2(b.y - a.y, b.x - a.x),
+      };
+    }
+    remaining -= length;
+  }
+  const last = track.points[track.points.length - 1];
+  const prev = track.points[track.points.length - 2] || last;
+  return { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) };
+}
+
+function _advanceMotionTrackDistance(agent, track, deltaDistance) {
+  const totalLength = Math.max(track?.totalLength || 0, 1e-6);
+  const direction = agent.direction === -1 ? -1 : 1;
+  if (track?.closed) {
+    const nextDistance = agent.distance + (deltaDistance * direction);
+    agent.wrappedStep = nextDistance >= totalLength || nextDistance < 0;
+    agent.distance = ((nextDistance % totalLength) + totalLength) % totalLength;
+    agent.direction = direction;
+    agent.discontinuousStep = false;
+    agent.stopped = false;
+    return;
+  }
+  agent.wrappedStep = false;
+  const behavior = ['bounce', 'restart', 'random', 'stop', 'reverse'].includes(agent.endBehavior) ? agent.endBehavior : 'restart';
+  if (behavior === 'stop') {
+    const nextDistance = agent.distance + (deltaDistance * direction);
+    agent.distance = _clamp(nextDistance, 0, totalLength);
+    agent.direction = direction;
+    agent.stopped = nextDistance >= totalLength || nextDistance <= 0;
+    agent.discontinuousStep = false;
+    return;
+  }
+  if (behavior === 'reverse') {
+    const nextDistance = agent.distance + (deltaDistance * direction);
+    if (nextDistance > totalLength) {
+      agent.distance = totalLength;
+      agent.direction = -1;
+      agent.discontinuousStep = true;
+    } else if (nextDistance < 0) {
+      agent.distance = 0;
+      agent.direction = 1;
+      agent.discontinuousStep = true;
+    } else {
+      agent.distance = nextDistance;
+      agent.discontinuousStep = false;
+    }
+    agent.stopped = false;
+    return;
+  }
+  if (behavior === 'bounce') {
+    let distance = agent.distance + (deltaDistance * direction);
+    let nextDirection = direction;
+    while (distance < 0 || distance > totalLength) {
+      if (distance > totalLength) {
+        distance = totalLength - (distance - totalLength);
+        nextDirection = -1;
+      } else {
+        distance = -distance;
+        nextDirection = 1;
+      }
+    }
+    agent.distance = _clamp(distance, 0, totalLength);
+    agent.direction = nextDirection;
+    agent.discontinuousStep = false;
+    agent.stopped = false;
+    return;
+  }
+  const nextDistance = agent.distance + (deltaDistance * direction);
+  if (nextDistance > totalLength || nextDistance < 0) {
+    agent.discontinuousStep = true;
+    agent.distance = behavior === 'random'
+      ? Math.random() * totalLength
+      : ((nextDistance % totalLength) + totalLength) % totalLength;
+  } else {
+    agent.discontinuousStep = false;
+    agent.distance = nextDistance;
+  }
+  agent.direction = direction;
+  agent.stopped = false;
+}
+
+export class MotionPathBrush {
+  constructor(app) {
+    this.app = app;
+    this.renderer = createBoidStampRenderer();
+    this._active = false;
+    this._originX = 0;
+    this._originY = 0;
+    this._pressure = 1;
+    this._compiledGraph = null;
+    this._compiledGraphKey = '';
+    this._runtimeAgents = [];
+    this._lastElapsed = 0;
+    this._renderBackend = 'legacy';
+    this._renderLegacyReason = 'compatibility check pending';
+    this._gpuFailureCount = 0;
+    this._gpuDisabledReason = '';
+    this._rendererInitPromise = null;
+    this._rendererChainPatched = false;
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    this._overlayPoints = [];
+    _ensureProceduralStampRendererInit(this);
+  }
+
+  _resetRuntime(recompile = false) {
+    this._runtimeAgents = [];
+    this._overlayPoints = [];
+    this._lastElapsed = 0;
+    if (recompile) {
+      this._compiledGraph = null;
+      this._compiledGraphKey = '';
+    }
+  }
+
+  _ensureCompiledGraph(p) {
+    const compiled = this.app._compileActiveMotionPathGraph?.(p) || { documentId: null, updatedAt: 0, paths: [], agents: [] };
+    const key = `${compiled.documentId || 0}:${compiled.updatedAt || 0}:${p.motionPathAgentCount || 0}`;
+    if (this._compiledGraphKey === key && this._compiledGraph) return this._compiledGraph;
+    this._compiledGraphKey = key;
+    this._compiledGraph = compiled;
+    this._runtimeAgents = compiled.agents.map((agent, index, list) => ({
+      pathIndex: agent.pathIndex,
+      pathId: agent.pathId,
+      distance: agent.distance || 0,
+      speedMultiplier: agent.speedMultiplier || 1,
+      endBehavior: ['bounce', 'restart', 'random', 'stop', 'reverse'].includes(agent.endBehavior) ? agent.endBehavior : 'restart',
+      speed: 0,
+      direction: agent.direction === -1 ? -1 : 1,
+      stopped: false,
+      discontinuousStep: false,
+      wrappedStep: false,
+      lateralOffset: list.length <= 1 ? 0 : ((index / Math.max(1, list.length - 1)) - 0.5) * 2,
+      prevX: Number.NaN,
+      prevY: Number.NaN,
+    }));
+    this._overlayPoints = [];
+    return this._compiledGraph;
+  }
+
+  _cpuFallbackStamp(points, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer?.ctx) return;
+    let size = p.stampSize;
+    if (p.pressureSize) size *= (0.3 + 0.7 * this._pressure);
+    let opacity = p.stampOpacity;
+    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    opacity = Math.min(opacity, 1);
+    for (const point of points) {
+      this.app.symStamp(layer.ctx, point.x, point.y, size, p.color, opacity);
+    }
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+  }
+
+  onDown(x, y, pressure = 1) {
+    if (this._gpuPreviewActive) _commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true });
+    this._active = true;
+    this._originX = x;
+    this._originY = y;
+    this._pressure = pressure;
+    this._resetRuntime(true);
+    _ensureProceduralStampRendererInit(this);
+    this._ensureCompiledGraph(this.app.getP());
+  }
+
+  onMove(x, y, pressure = this._pressure) {
+    this._originX = x;
+    this._originY = y;
+    this._pressure = pressure;
+  }
+
+  onUp(x, y) {
+    this._originX = x;
+    this._originY = y;
+    if (this._gpuPreviewActive) {
+      if (!_commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true })) {
+        const layer = this.app.getActiveLayer();
+        if (layer?.dirty) this.app.compositeAllLayers();
+      }
+    }
+    this._active = false;
+    this._resetRuntime(false);
+  }
+
+  onFrame(elapsed) {
+    if (!this._active) return;
+    const p = this.app.getP();
+    const compiled = this._ensureCompiledGraph(p);
+    if (!compiled?.paths?.length || !this._runtimeAgents.length) return;
+    const delta = this._lastElapsed > 0
+      ? Math.min(MOTION_PATH_BRUSH_DELTA_CAP, Math.max(0, elapsed - this._lastElapsed))
+      : 1 / 60;
+    this._lastElapsed = elapsed;
+
+    const graphScale = Math.max(0.05, (p.brushScale || 1) * (p.motionPathScale || 1));
+    const targetSpeed = Math.max(0.05, p.motionPathSpeed || 1) * MOTION_PATH_BRUSH_BASE_SPEED;
+    const acceleration = _clamp((p.motionPathAcceleration || 0) * 3.5, 0.2, 8);
+    const pullStrength = _clamp((p.motionPathAttraction || 0) * 0.35, 0, 0.35);
+    const separation = Math.max(1, (p.stampSize || 1) * Math.max(0.08, p.stampSeparation || 0.15) * 0.5);
+    const support = _getProceduralBatchRendererSupport(this, p, false);
+    const color = hexToRGB(p.color);
+    const instances = new StampInstanceBuffer(Math.max(32, this._runtimeAgents.length * 6));
+    const cpuFallbackPoints = [];
+    this._overlayPoints = [];
+
+    let size = p.stampSize;
+    if (p.pressureSize) size *= (0.3 + 0.7 * this._pressure);
+    let opacity = p.stampOpacity;
+    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    opacity = Math.min(opacity, 1);
+
+    const emitSegmentStamps = (x0, y0, x1, y1) => {
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const travel = Math.hypot(dx, dy);
+      const steps = Math.max(1, Math.ceil(travel / separation));
+      for (let step = 1; step <= steps; step++) {
+        const t = step / steps;
+        const stampX = x0 + dx * t;
+        const stampY = y0 + dy * t;
+        if (support.ok) {
+          _emitBatchStampInstances(this.app, instances, p, stampX, stampY, size, color, opacity);
+        } else {
+          cpuFallbackPoints.push({ x: stampX, y: stampY });
+        }
+      }
+    };
+
+    const toWorldPoint = (sample, lateralPixels) => {
+      const nx = -Math.sin(sample.angle);
+      const ny = Math.cos(sample.angle);
+      let worldX = this._originX + sample.x * graphScale + nx * lateralPixels;
+      let worldY = this._originY + sample.y * graphScale + ny * lateralPixels;
+      if (pullStrength > 0) {
+        worldX += (this._originX - worldX) * pullStrength;
+        worldY += (this._originY - worldY) * pullStrength;
+      }
+      return { x: worldX, y: worldY };
+    };
+
+    for (const agent of this._runtimeAgents) {
+      const track = compiled.paths[agent.pathIndex];
+      if (!track) continue;
+      if (agent.stopped) continue;
+      const speedEase = _clamp(delta * acceleration, 0, 1);
+      agent.speed += ((targetSpeed * agent.speedMultiplier) - agent.speed) * speedEase;
+      _advanceMotionTrackDistance(agent, track, agent.speed * delta);
+      const sample = _sampleCompiledMotionTrack(track, agent.distance);
+      if (!sample) continue;
+      const lateralPixels = agent.lateralOffset * (p.motionPathAvoidance || 0) * 18 * graphScale;
+      const { x: worldX, y: worldY } = toWorldPoint(sample, lateralPixels);
+      this._overlayPoints.push({ x: worldX, y: worldY });
+      if (agent.discontinuousStep || !Number.isFinite(agent.prevX) || !Number.isFinite(agent.prevY)) {
+        agent.prevX = worldX;
+        agent.prevY = worldY;
+      }
+      if (track.closed && agent.wrappedStep) {
+        const seamEndSample = _sampleCompiledMotionTrack(track, Math.max(0, (track.totalLength || 0) - 1e-4));
+        const seamStartSample = _sampleCompiledMotionTrack(track, 0);
+        if (seamEndSample && seamStartSample) {
+          const seamEndWorld = toWorldPoint(seamEndSample, lateralPixels);
+          const seamStartWorld = toWorldPoint(seamStartSample, lateralPixels);
+          emitSegmentStamps(agent.prevX, agent.prevY, seamEndWorld.x, seamEndWorld.y);
+          agent.prevX = seamStartWorld.x;
+          agent.prevY = seamStartWorld.y;
+        }
+      }
+      emitSegmentStamps(agent.prevX, agent.prevY, worldX, worldY);
+      agent.prevX = worldX;
+      agent.prevY = worldY;
+    }
+
+    const layer = this.app.getActiveLayer();
+    if (!layer) return;
+    if (support.ok && instances.count > 0) {
+      const batch = { instances: instances.finish(), count: instances.count };
+      if (_renderProceduralBatchToTarget(this, layer.ctx, batch, p, { allowAlphaLock: true })) {
+        layer.dirty = true;
+        if (!this._gpuPreviewActive) this.app.compositeAllLayers();
+      } else {
+        this._cpuFallbackStamp(this._overlayPoints, p);
+      }
+    } else if (cpuFallbackPoints.length) {
+      _setProceduralRenderBackend(this, 'legacy', support.reason || 'GPU procedural-stamp renderer unavailable');
+      this._cpuFallbackStamp(cpuFallbackPoints, p);
+    }
+  }
+
+  drawOverlay(ctx) {
+    if (!this._active) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(91,138,240,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(this._originX, this._originY, 8, 0, Math.PI * 2);
+    ctx.moveTo(this._originX - 14, this._originY);
+    ctx.lineTo(this._originX + 14, this._originY);
+    ctx.moveTo(this._originX, this._originY - 14);
+    ctx.lineTo(this._originX, this._originY + 14);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,210,120,0.85)';
+    for (const point of this._overlayPoints) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  getStatusInfo() {
+    const doc = this.app._getActiveMotionPathDocument?.();
+    if (!doc) return 'Motion Path · no graph';
+    const legacyReason = this._renderBackend === 'legacy'
+      ? (_getProceduralBatchRendererSupport(this, this.app.getP(), false).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      : '';
+    return `Motion Path · ${doc.name} · ${doc.paths.length} paths · ${this._runtimeAgents.length || this.app.getP().motionPathAgentCount} agents · Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+  }
+
+  deactivate() {
+    if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
+    this._active = false;
+    this._resetRuntime(true);
+  }
 }

@@ -6,6 +6,11 @@
 		}
 	],
 	"settings": {
-		"liveServer.settings.port": 5501
+		"liveServer.settings.port": 5501,
+		"piny.project_settings": {
+			"open-pages": [
+				"pinyfakepage.html"
+			]
+		}
 	}
 }

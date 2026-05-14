@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, FluidBrush, SimpleBrush, EraserBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
@@ -44,6 +44,12 @@ const FACTORY_DEFAULTS = Object.freeze({
   litVar: 0,
   maxSpeed: 22,
   damping: 95,
+  motionPathAgentCount: 12,
+  motionPathScale: 100,
+  motionPathSpeed: 100,
+  motionPathAcceleration: 50,
+  motionPathAvoidance: 25,
+  motionPathAttraction: 0,
   bristleCount: 30,
   bristleWidth: 30,
   bristleSpread: 10,
@@ -95,6 +101,39 @@ const FACTORY_DEFAULTS = Object.freeze({
   lbmPigmentRetention: 78,
   lbmResolutionScale: 100,
   lbmFluidScale: 115,
+  fluid3dBrushRadius: 40,
+  fluid3dEmitterCount: 5,
+  fluid3dEmissionRate: 38,
+  fluid3dEmitterStrength: 29,
+  fluid3dEmitterVelocity: 18,
+  fluid3dPressure: 44,
+  fluid3dMomentum: 80,
+  fluid3dVelocityDiffuse: 34,
+  fluid3dDrag: 29,
+  fluid3dThicknessDecay: 15,
+  fluid3dPigmentDiffusion: 24,
+  fluid3dPressureFade: 24,
+  fluid3dSettleThreshold: 4,
+  fluid3dTerrainWeight: 18,
+  fluid3dScalarFieldInfluence: 45,
+  fluid3dInfluenceStrength: 38,
+  fluid3dInfluenceRadius: 120,
+  fluid3dMaxVelocity: 12,
+  fluid3dThicknessFloor: 4,
+  fluid3dOpacity: 60,
+  fluid3dOpacityScale: 100,
+  fluid3dResolutionScale: 90,
+  fluid3dPreviewScale: 55,
+  fluid3dFluidScale: 120,
+  fluid3dOccupancyBias: 8,
+  fluid3dSpreadClamp: 82,
+  fluid3dSurfaceTension: 18,
+  fluid3dEdgeWidth: 42,
+  fluid3dEdgeDrag: 16,
+  fluid3dInjectorMotion: 70,
+  fluid3dInjectorPigment: 82,
+  fluid3dInjectorOccupancy: 74,
+  fluid3dInjectorSwirl: 36,
   stampSize: 10,
   stampOpacity: 15,
   stampSeparation: 0,
@@ -112,6 +151,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   canvasTextureEdgeBreakup: 35,
   canvasTextureSmudgeDrag: 30,
   canvasTexturePooling: 55,
+  canvasTextureShowOnCanvas: false,
   symmetryCount: 4,
   symmetryCenterX: 50,
   symmetryCenterY: 50,
@@ -145,6 +185,9 @@ const FACTORY_DEFAULTS = Object.freeze({
   showBristles: true,
   lbmFirstPassPreview: true,
   lbmShowFlow: true,
+  fluid3dAdaptiveQuality: true,
+  fluid3dShowField: false,
+  fluid3dInjectorMode: 'motion',
   smudgeOnly: false,
   pressureSize: true,
   pressureOpacity: true,
@@ -172,6 +215,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   boidUntouchAction: 'cull',
   boidUnhoverAction: 'cull',
   lbmRenderMode: 'hybrid',
+  fluid3dRenderMode: 'volume',
   canvasTexturePreset: 'builtin-paper-grain',
   sensingMode: 'avoid',
   sensingChannel: 'darkness',
@@ -232,6 +276,17 @@ const DEFAULT_PATH_RADIUS = 40;
 const PATH_DISTANCE_WRAP_THRESHOLD = 1000000;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
+const MOTION_PATH_HANDLE_RADIUS = 7;
+const MOTION_PATH_HIT_RADIUS = 12;
+const MOTION_PATH_RESAMPLE_STEP = 16;
+const MOTION_PATH_CURVE_SAMPLES = 48;
+const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
+const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
+const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
+const MOTION_PATH_DEFAULT_OFFSET = 22;
+const MOTION_PATH_RUNTIME_BASE_SPEED = 90;
+const MOTION_PATH_RUNTIME_DELTA_CAP = 1 / 24;
+const MOTION_PATH_RUNTIME_INTERACTION_RADIUS = 110;
 const PERF_TELEMETRY_KEY = 'bb_perfTelemetry';
 const PERF_WAKE_LOCK_KEY = 'bb_perfWakeLock';
 const PERF_UI_REFRESH_MS = 500;
@@ -240,6 +295,7 @@ const PERF_THROTTLE_GAP_MS = 250;
 const PERF_RECENT_EVENT_LIMIT = 10;
 const DIRTY_TILE_SIZE = 256;
 const DIRTY_TILE_MAX_COVERAGE = 0.45;
+const STAMP_IMAGE_DISABLED_BRUSHES = new Set(['fluid', 'fluid3d']);
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -247,6 +303,10 @@ function _clamp01(v) {
 
 function _lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+function _clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function _wrapIndex(v, size) {
@@ -315,11 +375,343 @@ function _closestPointOnSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
   const dy = by - ay;
   const len2 = dx * dx + dy * dy;
-  if (len2 <= 1e-6) return { x: ax, y: ay, distance: Math.hypot(px - ax, py - ay) };
+  if (len2 <= 1e-6) return { x: ax, y: ay, distance: Math.hypot(px - ax, py - ay), t: 0 };
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
   const x = ax + dx * t;
   const y = ay + dy * t;
-  return { x, y, distance: Math.hypot(px - x, py - y) };
+  return { x, y, distance: Math.hypot(px - x, py - y), t };
+}
+
+function _distanceSquared(ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  return dx * dx + dy * dy;
+}
+
+function _getMotionPathBounds(points) {
+  const valid = Array.isArray(points)
+    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+    : [];
+  if (!valid.length) return null;
+  let minX = valid[0].x;
+  let maxX = valid[0].x;
+  let minY = valid[0].y;
+  let maxY = valid[0].y;
+  for (const pt of valid) {
+    if (pt.x < minX) minX = pt.x;
+    if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y;
+    if (pt.y > maxY) maxY = pt.y;
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function _sampleCubicBezierPoint(points, t) {
+  const [p0, p1, p2, p3] = points;
+  const u = 1 - t;
+  const tt = t * t;
+  const uu = u * u;
+  const uuu = uu * u;
+  const ttt = tt * t;
+  return {
+    x: (uuu * p0.x) + (3 * uu * t * p1.x) + (3 * u * tt * p2.x) + (ttt * p3.x),
+    y: (uuu * p0.y) + (3 * uu * t * p1.y) + (3 * u * tt * p2.y) + (ttt * p3.y),
+  };
+}
+
+function _sampleCubicHermitePoint(p0, p1, m0, m1, t) {
+  const clamped = _clamp(t, 0, 1);
+  const t2 = clamped * clamped;
+  const t3 = t2 * clamped;
+  const h00 = (2 * t3) - (3 * t2) + 1;
+  const h10 = t3 - (2 * t2) + clamped;
+  const h01 = (-2 * t3) + (3 * t2);
+  const h11 = t3 - t2;
+  return {
+    x: (h00 * p0.x) + (h10 * m0.x) + (h01 * p1.x) + (h11 * m1.x),
+    y: (h00 * p0.y) + (h10 * m0.y) + (h01 * p1.y) + (h11 * m1.y),
+  };
+}
+
+function _normalizeMotionPathPoint(kind, point) {
+  if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null;
+  const normalized = { x: point.x, y: point.y };
+  if (kind === 'bezier') normalized.connector = point?.connector === 'sharp' ? 'sharp' : 'curve';
+  return normalized;
+}
+
+function _normalizeMotionPathPoints(kind, rawPoints, fallbackPoints = []) {
+  const valid = Array.isArray(rawPoints)
+    ? rawPoints.map(point => _normalizeMotionPathPoint(kind, point)).filter(Boolean)
+    : [];
+  const fallback = Array.isArray(fallbackPoints)
+    ? fallbackPoints.map(point => _normalizeMotionPathPoint(kind, point)).filter(Boolean)
+    : [];
+  if (kind !== 'bezier') return valid.length ? valid : fallback;
+  const hasConnectorMetadata = valid.some(point => point?.connector === 'sharp' || point?.connector === 'curve');
+  if (!hasConnectorMetadata && valid.length >= 4 && ((valid.length - 1) % 3 === 0)) {
+    const anchors = [];
+    for (let index = 0; index < valid.length; index += 3) {
+      const anchor = valid[index];
+      if (!anchor) continue;
+      anchors.push({ x: anchor.x, y: anchor.y, connector: 'curve' });
+    }
+    return anchors.length ? anchors : fallback;
+  }
+  return valid.length
+    ? valid.map(point => ({ x: point.x, y: point.y, connector: point.connector === 'sharp' ? 'sharp' : 'curve' }))
+    : fallback;
+}
+
+function _getMotionPathBezierTangents(points, index, closed = false) {
+  const count = Array.isArray(points) ? points.length : 0;
+  if (!count) return { incoming: { x: 0, y: 0 }, outgoing: { x: 0, y: 0 } };
+  const current = points[index];
+  const prev = index > 0 ? points[index - 1] : (closed ? points[count - 1] : null);
+  const next = index < count - 1 ? points[index + 1] : (closed ? points[0] : null);
+  const incoming = prev
+    ? { x: (current.x - prev.x) * 0.5, y: (current.y - prev.y) * 0.5 }
+    : next
+      ? { x: (next.x - current.x) * 0.5, y: (next.y - current.y) * 0.5 }
+      : { x: 0, y: 0 };
+  const outgoing = next
+    ? { x: (next.x - current.x) * 0.5, y: (next.y - current.y) * 0.5 }
+    : prev
+      ? { x: (current.x - prev.x) * 0.5, y: (current.y - prev.y) * 0.5 }
+      : { x: 0, y: 0 };
+  if (current?.connector === 'sharp') return { incoming, outgoing };
+  const smooth = prev && next
+    ? { x: (next.x - prev.x) * 0.35, y: (next.y - prev.y) * 0.35 }
+    : next
+      ? { x: (next.x - current.x) * 0.5, y: (next.y - current.y) * 0.5 }
+      : prev
+        ? { x: (current.x - prev.x) * 0.5, y: (current.y - prev.y) * 0.5 }
+        : { x: 0, y: 0 };
+  return { incoming: smooth, outgoing: smooth };
+}
+
+function _sampleMotionPathBezierSegment(points, startIndex, closed = false) {
+  const count = Array.isArray(points) ? points.length : 0;
+  if (count < 2) return [];
+  const endIndex = closed ? ((startIndex + 1) % count) : startIndex + 1;
+  const start = points[startIndex];
+  const end = points[endIndex];
+  if (!start || !end) return [];
+  const startTangents = _getMotionPathBezierTangents(points, startIndex, closed);
+  const endTangents = _getMotionPathBezierTangents(points, endIndex, closed);
+  const sampled = [];
+  for (let i = 0; i <= MOTION_PATH_CURVE_SAMPLES; i++) {
+    sampled.push(_sampleCubicHermitePoint(start, end, startTangents.outgoing, endTangents.incoming, i / MOTION_PATH_CURVE_SAMPLES));
+  }
+  return sampled;
+}
+
+function _findMotionPathBezierInsertIndex(points, localX, localY, closed = false) {
+  if (!Array.isArray(points) || points.length < 2) return points?.length || 0;
+  const segmentCount = closed ? points.length : points.length - 1;
+  let bestIndex = points.length;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+    const sampled = _sampleMotionPathBezierSegment(points, segmentIndex, closed);
+    for (let i = 1; i < sampled.length; i++) {
+      const hit = _closestPointOnSegment(localX, localY, sampled[i - 1].x, sampled[i - 1].y, sampled[i].x, sampled[i].y);
+      if (hit.distance < bestDistance) {
+        bestDistance = hit.distance;
+        bestIndex = segmentIndex + 1;
+      }
+    }
+  }
+  return Math.min(Math.max(bestIndex, 0), points.length);
+}
+
+function _normalizeMotionPathEndBehavior(value) {
+  return ['restart', 'bounce', 'random', 'stop', 'reverse'].includes(value) ? value : 'restart';
+}
+
+function _normalizeMotionPathDirectionMode(value) {
+  return ['forward', 'reverse', 'alternate', 'random'].includes(value) ? value : 'forward';
+}
+
+function _getMotionPathDirectionModeLabel(value) {
+  switch (_normalizeMotionPathDirectionMode(value)) {
+    case 'reverse': return 'Dir Rev';
+    case 'alternate': return 'Dir Alt';
+    case 'random': return 'Dir Rnd';
+    default: return 'Dir Fwd';
+  }
+}
+
+function _getMotionPathDirectionArrowAngle(mode, markerIndex, baseAngle) {
+  switch (_normalizeMotionPathDirectionMode(mode)) {
+    case 'reverse':
+      return baseAngle + Math.PI;
+    case 'alternate':
+      return markerIndex % 2 === 0 ? baseAngle : baseAngle + Math.PI;
+    case 'random':
+      return markerIndex % 3 === 1 ? baseAngle + Math.PI : baseAngle;
+    default:
+      return baseAngle;
+  }
+}
+
+function _getMotionPathEndBehaviorLabel(value) {
+  switch (_normalizeMotionPathEndBehavior(value)) {
+    case 'bounce': return 'Bounce';
+    case 'random': return 'Random';
+    case 'stop': return 'Stop';
+    case 'reverse': return 'Reverse';
+    default: return 'Restart';
+  }
+}
+
+function _getMotionPathEndBehaviorAccent(value) {
+  switch (_normalizeMotionPathEndBehavior(value)) {
+    case 'bounce': return 'rgba(255,196,92,0.95)';
+    case 'random': return 'rgba(185,122,255,0.95)';
+    case 'stop': return 'rgba(255,120,120,0.95)';
+    case 'reverse': return 'rgba(120,208,255,0.95)';
+    default: return 'rgba(118,214,152,0.95)';
+  }
+}
+
+function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, closed = false) {
+  const valid = Array.isArray(points)
+    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    : [];
+  if (valid.length < 2) return valid;
+  const output = [{ ...valid[0] }];
+  const appendSegment = (a, b) => {
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length <= 1e-6) return;
+    const steps = Math.max(1, Math.ceil(length / Math.max(1, step)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      output.push({ x: _lerp(a.x, b.x, t), y: _lerp(a.y, b.y, t) });
+    }
+  };
+  for (let i = 1; i < valid.length; i++) appendSegment(valid[i - 1], valid[i]);
+  if (closed) appendSegment(valid[valid.length - 1], valid[0]);
+  return output;
+}
+
+function _sampleMotionPathArrowMarkers(points, spacing = 72, startOffset = 26) {
+  const valid = Array.isArray(points)
+    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    : [];
+  if (valid.length < 2) return [];
+  const markers = [];
+  let distanceUntilNext = Math.max(1, startOffset);
+  for (let i = 1; i < valid.length; i++) {
+    const a = valid[i - 1];
+    const b = valid[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const segmentLength = Math.hypot(dx, dy);
+    if (segmentLength <= 1e-6) continue;
+    let consumed = 0;
+    while (consumed + distanceUntilNext <= segmentLength) {
+      const t = (consumed + distanceUntilNext) / segmentLength;
+      markers.push({
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+        angle: Math.atan2(dy, dx),
+      });
+      consumed += distanceUntilNext;
+      distanceUntilNext = Math.max(18, spacing);
+    }
+    distanceUntilNext -= (segmentLength - consumed);
+    if (distanceUntilNext <= 1e-6) distanceUntilNext = Math.max(18, spacing);
+  }
+  return markers;
+}
+
+function _sampleMotionPathPrimitive(pathItem, step = MOTION_PATH_RESAMPLE_STEP) {
+  const kind = pathItem?.kind || 'polyline';
+  const points = _normalizeMotionPathPoints(kind, pathItem?.points);
+  if (kind === 'rectangle' || kind === 'ellipse') {
+    if (points.length < 2) return [];
+    const a = points[0];
+    const b = points[1];
+    const left = Math.min(a.x, b.x);
+    const right = Math.max(a.x, b.x);
+    const top = Math.min(a.y, b.y);
+    const bottom = Math.max(a.y, b.y);
+    if (kind === 'rectangle') {
+      return _resampleMotionPathPoints([
+        { x: left, y: top },
+        { x: right, y: top },
+        { x: right, y: bottom },
+        { x: left, y: bottom },
+      ], step, true);
+    }
+    const rx = Math.max(1, (right - left) * 0.5);
+    const ry = Math.max(1, (bottom - top) * 0.5);
+    const cx = (left + right) * 0.5;
+    const cy = (top + bottom) * 0.5;
+    const circumference = Math.PI * (3 * (rx + ry) - Math.sqrt(Math.max(0, ((3 * rx) + ry) * (rx + (3 * ry)))));
+    const samples = Math.max(MOTION_PATH_ELLIPSE_MIN_SAMPLES, Math.ceil(circumference / Math.max(1, step)));
+    const ellipsePoints = [];
+    for (let i = 0; i <= samples; i++) {
+      const angle = (i / samples) * Math.PI * 2;
+      ellipsePoints.push({ x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry });
+    }
+    return ellipsePoints;
+  }
+  if (kind === 'bezier') {
+    if (points.length < 2) return points.map(point => ({ x: point.x, y: point.y }));
+    const sampled = [];
+    const segmentCount = !!pathItem?.closed ? points.length : points.length - 1;
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      const segmentPoints = _sampleMotionPathBezierSegment(points, segmentIndex, !!pathItem?.closed);
+      if (!segmentPoints.length) continue;
+      segmentPoints.forEach((point, index) => {
+        if (segmentIndex > 0 && index === 0) return;
+        sampled.push(point);
+      });
+    }
+    return _resampleMotionPathPoints(sampled, step, !!pathItem?.closed);
+  }
+  return _resampleMotionPathPoints(points, step, !!pathItem?.closed);
+}
+
+function _buildMotionPathTrack(points, closed = false) {
+  if (!Array.isArray(points) || points.length < 2) return null;
+  const segmentLengths = [];
+  let totalLength = 0;
+  for (let i = 1; i < points.length; i++) {
+    const length = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    segmentLengths.push(length);
+    totalLength += length;
+  }
+  if (totalLength <= 1e-6) return null;
+  return { points, segmentLengths, totalLength, closed };
+}
+
+function _sampleMotionPathTrack(track, distanceAlongPath) {
+  if (!track?.points?.length) return null;
+  if (track.points.length === 1) return { x: track.points[0].x, y: track.points[0].y, angle: 0 };
+  const total = Math.max(track.totalLength || 0, 1e-6);
+  const distance = track.closed
+    ? _wrapIndex(distanceAlongPath, total)
+    : _clamp(distanceAlongPath, 0, total);
+  let remaining = distance;
+  for (let i = 1; i < track.points.length; i++) {
+    const length = track.segmentLengths[i - 1] || 0;
+    if (remaining <= length || i === track.points.length - 1) {
+      const a = track.points[i - 1];
+      const b = track.points[i];
+      const t = length <= 1e-6 ? 0 : remaining / length;
+      return {
+        x: _lerp(a.x, b.x, t),
+        y: _lerp(a.y, b.y, t),
+        angle: Math.atan2(b.y - a.y, b.x - a.x),
+      };
+    }
+    remaining -= length;
+  }
+  const last = track.points[track.points.length - 1];
+  const prev = track.points[track.points.length - 2] || last;
+  return { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) };
 }
 
 /**
@@ -552,6 +944,8 @@ export class App {
       pathDistance: 0,
       nextId: 1,
     };
+    this.motionPath = this._createDefaultMotionPathState();
+    this.motionPathEditor = this._createMotionPathEditorState();
 
     // Color
     this.primaryEl = document.getElementById('primaryColor');
@@ -561,6 +955,7 @@ export class App {
     // Color history
     this._colorHistory = [];
     this._maxColorHistory = 16;
+    this._fluidInteractionState = { emitters: [], influences: [], scalarFields: [] };
 
     // Frame loop
     this._rafId = null;
@@ -591,7 +986,9 @@ export class App {
     this.brushes.boid = new BoidBrush(this);
     this.brushes.ant = new AntBrush(this);
     this.brushes.bristle = new BristleBrush(this);
+    this.brushes.motionPath = new MotionPathBrush(this);
     this.brushes.fluid = new FluidBrush(this);
+    this.brushes.fluid3d = new ThreeDFluidBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
@@ -599,6 +996,7 @@ export class App {
     await this.brushes.boid.init();
     await this.brushes.ant.init();
     await this.brushes.fluid.init();
+    await this.brushes.fluid3d.init();
 
     // Sidebar UI
     buildSidebar(this);
@@ -672,7 +1070,7 @@ export class App {
         tmp.getContext('2d').drawImage(l.canvas, 0, 0);
         l.canvas.width = this.W * this.DPR;
         l.canvas.height = this.H * this.DPR;
-        l.ctx = l.canvas.getContext('2d', { desynchronized: true });
+        l.ctx = l.canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
         l.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
         l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, this.W, this.H);
       }
@@ -737,7 +1135,7 @@ export class App {
       tmp.getContext('2d').drawImage(l.canvas, 0, 0);
       l.canvas.width = newW;
       l.canvas.height = newH;
-      l.ctx = l.canvas.getContext('2d', { desynchronized: true });
+      l.ctx = l.canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
       l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
       l.dirty = true;
       this.compositor?.deleteLayerTex(l);
@@ -767,6 +1165,7 @@ export class App {
       if (this.brushes.boid) await this.brushes.boid.init({ force: true });
       if (this.brushes.ant) await this.brushes.ant.init({ force: true });
       if (this.brushes.fluid) await this.brushes.fluid.init({ force: true });
+      if (this.brushes.fluid3d) await this.brushes.fluid3d.init({ force: true });
     } catch(e) { console.warn('WASM reinit failed:', e); }
 
     // Zoom to fit
@@ -814,7 +1213,7 @@ export class App {
     const canvas = document.createElement('canvas');
     canvas.width = this.W * this.DPR;
     canvas.height = this.H * this.DPR;
-    const ctx = canvas.getContext('2d', { desynchronized: true });
+    const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
     ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     return { canvas, ctx };
   }
@@ -1154,6 +1553,7 @@ export class App {
     if (chk && !chk.checked) chk.checked = true;
     this._paramsDirty = true;
     if (document.getElementById('sidebar')) syncUI(this);
+    if (this.compositeCanvas) this.compositeAllLayers({ forceFull: true });
     if (!silent && texture) this.showToast(`🖼 Texture: ${texture.name}`);
   }
 
@@ -1356,9 +1756,9 @@ export class App {
   /**
    * Sample the active texture at a canvas position.
    */
-  sampleTextureField(x, y, p = this._cachedP || this.getP()) {
+  _sampleTextureFieldInternal(x, y, p = this._cachedP || this.getP(), { ignoreToggle = false } = {}) {
     const tex = this._canvasTexture;
-    if (!tex?.heightData || !p?.canvasTextureEnabled) {
+    if (!tex?.heightData || (!ignoreToggle && !p?.canvasTextureEnabled)) {
       return { height: 0, valley: 1, flowX: 0, flowY: 0, slope: 0 };
     }
     const scale = Math.max(0.05, p.canvasTextureScale || 1);
@@ -1408,6 +1808,10 @@ export class App {
       flowY,
       slope,
     };
+  }
+
+  sampleTextureField(x, y, p = this._cachedP || this.getP()) {
+    return this._sampleTextureFieldInternal(x, y, p);
   }
 
   sampleTextureHeight(x, y, p = this._cachedP || this.getP()) {
@@ -1631,6 +2035,8 @@ export class App {
   clearActiveLayer() {
     const l = this.getActiveLayer();
     if (l.isBackground) { this.showToast('Use BG color picker to change background'); return; }
+    const brush = this.getCurrentBrush();
+    if (brush?.deactivate) brush.deactivate();
     this.pushUndo();
     l.ctx.save();
     l.ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1673,6 +2079,52 @@ export class App {
         }
       }
     }
+  }
+
+  _renderCanvasTexturePreview(p = this._cachedP || this.getP()) {
+    if (!this.liveCanvas || !this.lctx || !this.hasCanvasTexture()) return false;
+    const ctx = this.lctx;
+    if (!ctx) return false;
+    const width = this.W;
+    const height = this.H;
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+    const strength = _clamp01(typeof p?.canvasTextureStrength === 'number' ? p.canvasTextureStrength : 1);
+    const contrast = 0.2 + strength * 1.8;
+    for (let py = 0; py < height; py += 1) {
+      for (let px = 0; px < width; px += 1) {
+        const field = this._sampleTextureFieldInternal(px, py, p, { ignoreToggle: true });
+        const display = _clamp01(0.5 + (field.height - 0.5) * contrast);
+        const slopeBoost = field.slope * 24 * strength;
+        const shade = Math.max(0, Math.min(255, Math.round(display * 255 + slopeBoost)));
+        const off = (py * width + px) * 4;
+        data[off] = shade;
+        data[off + 1] = shade;
+        data[off + 2] = shade;
+        data[off + 3] = 255;
+      }
+    }
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'copy';
+    ctx.putImageData(imageData, 0, 0);
+    ctx.restore();
+    return true;
+  }
+
+  queueFluidInteractionInputs({ emitters = [], influences = [], scalarFields = [] } = {}) {
+    this._fluidInteractionState.emitters.push(...emitters.map(record => ({ ...record })));
+    this._fluidInteractionState.influences.push(...influences.map(record => ({ ...record })));
+    this._fluidInteractionState.scalarFields.push(...scalarFields.map(record => ({ ...record })));
+  }
+
+  consumeFluidInteractionInputs() {
+    const snapshot = {
+      emitters: this._fluidInteractionState.emitters.splice(0),
+      influences: this._fluidInteractionState.influences.splice(0),
+      scalarFields: this._fluidInteractionState.scalarFields.splice(0),
+    };
+    return snapshot;
   }
 
   _syncLayerSwitcher() {
@@ -1778,6 +2230,7 @@ export class App {
     };
 
     const scale = val('brushScale') / 100;
+    const stampImageAllowed = !STAMP_IMAGE_DISABLED_BRUSHES.has(this.activeBrush);
 
     this._cachedP = {
       // Brush scale
@@ -1820,6 +2273,12 @@ export class App {
       // Motion
       maxSpeed: val('maxSpeed') / 2,
       damping: val('damping') / 100,
+      motionPathAgentCount: Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(val('motionPathAgentCount') || 12))),
+      motionPathScale: (val('motionPathScale') || 100) / 100,
+      motionPathSpeed: (val('motionPathSpeed') || 100) / 100,
+      motionPathAcceleration: (val('motionPathAcceleration') || 50) / 100,
+      motionPathAvoidance: (val('motionPathAvoidance') || 25) / 100,
+      motionPathAttraction: (val('motionPathAttraction') || 0) / 100,
       // Stamp
       stampSize: Math.max(1, Math.round(val('stampSize') * scale)),
       stampOpacity: val('stampOpacity') / 100,
@@ -1827,8 +2286,8 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
-      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && this.activeBrush !== 'fluid',
-      stampImageCanvas: chk('stampImageEnabled') && this.activeBrush !== 'fluid' ? this._customStampImage?.canvas || null : null,
+      stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && stampImageAllowed,
+      stampImageCanvas: chk('stampImageEnabled') && stampImageAllowed ? this._customStampImage?.canvas || null : null,
       stampImageTint: chk('stampImageTint'),
       stampImageRotation: (val('stampImageRotation') || 0) * Math.PI / 180,
       smudge: val('smudge') / 100,
@@ -1902,6 +2361,43 @@ export class App {
       lbmRenderMode: sel('lbmRenderMode') || 'hybrid',
       lbmFirstPassPreview: has('lbmFirstPassPreview') ? chk('lbmFirstPassPreview') : true,
       lbmShowFlow: chk('lbmShowFlow'),
+      fluid3dBrushRadius: Math.max(4, Math.round(numOr('fluid3dBrushRadius', 42) * scale)),
+      fluid3dEmitterCount: Math.max(1, Math.round(numOr('fluid3dEmitterCount', 8))),
+      fluid3dEmissionRate: numOr('fluid3dEmissionRate', 72) / 100,
+      fluid3dEmitterStrength: numOr('fluid3dEmitterStrength', 82) / 100,
+      fluid3dEmitterVelocity: numOr('fluid3dEmitterVelocity', 74) / 100,
+      fluid3dPressure: numOr('fluid3dPressure', 62) / 100,
+      fluid3dMomentum: numOr('fluid3dMomentum', 88) / 100,
+      fluid3dVelocityDiffuse: numOr('fluid3dVelocityDiffuse', 22) / 100,
+      fluid3dDrag: numOr('fluid3dDrag', 18) / 100,
+      fluid3dThicknessDecay: numOr('fluid3dThicknessDecay', 8) / 100,
+      fluid3dPigmentDiffusion: numOr('fluid3dPigmentDiffusion', 28) / 100,
+      fluid3dPressureFade: numOr('fluid3dPressureFade', 12) / 100,
+      fluid3dSettleThreshold: numOr('fluid3dSettleThreshold', 4) / 100,
+      fluid3dTerrainWeight: numOr('fluid3dTerrainWeight', 24) / 100,
+      fluid3dScalarFieldInfluence: numOr('fluid3dScalarFieldInfluence', 45) / 100,
+      fluid3dInfluenceStrength: numOr('fluid3dInfluenceStrength', 70) / 100,
+      fluid3dInfluenceRadius: numOr('fluid3dInfluenceRadius', 120),
+      fluid3dMaxVelocity: numOr('fluid3dMaxVelocity', 18) / 10,
+      fluid3dThicknessFloor: numOr('fluid3dThicknessFloor', 4) / 1000,
+      fluid3dOpacity: numOr('fluid3dOpacity', 68) / 100,
+      fluid3dOpacityScale: numOr('fluid3dOpacityScale', 100) / 100,
+      fluid3dResolutionScale: numOr('fluid3dResolutionScale', 90) / 100,
+      fluid3dPreviewScale: numOr('fluid3dPreviewScale', 55) / 100,
+      fluid3dFluidScale: numOr('fluid3dFluidScale', 115) / 100,
+      fluid3dOccupancyBias: numOr('fluid3dOccupancyBias', 12) / 100,
+      fluid3dSpreadClamp: numOr('fluid3dSpreadClamp', 82) / 100,
+      fluid3dSurfaceTension: numOr('fluid3dSurfaceTension', 18) / 100,
+      fluid3dEdgeWidth: numOr('fluid3dEdgeWidth', 42) / 100,
+      fluid3dEdgeDrag: numOr('fluid3dEdgeDrag', 16) / 100,
+      fluid3dInjectorMotion: numOr('fluid3dInjectorMotion', 70) / 100,
+      fluid3dInjectorPigment: numOr('fluid3dInjectorPigment', 82) / 100,
+      fluid3dInjectorOccupancy: numOr('fluid3dInjectorOccupancy', 74) / 100,
+      fluid3dInjectorSwirl: numOr('fluid3dInjectorSwirl', 36) / 100,
+      fluid3dAdaptiveQuality: has('fluid3dAdaptiveQuality') ? chk('fluid3dAdaptiveQuality') : true,
+      fluid3dShowField: chk('fluid3dShowField'),
+      fluid3dInjectorMode: sel('fluid3dInjectorMode') || 'motion',
+      fluid3dRenderMode: sel('fluid3dRenderMode') || 'volume',
       // Bristle variance
       bSizeVar: val('bSizeVar') / 100,
       bOpacityVar: val('bOpacityVar') / 100,
@@ -1911,6 +2407,7 @@ export class App {
       bHueVar: val('bHueVar') / 100,
       // Canvas texture
       canvasTextureEnabled: chk('canvasTextureEnabled'),
+      canvasTextureShowOnCanvas: chk('canvasTextureShowOnCanvas'),
       canvasTextureStrength: val('canvasTextureStrength') / 100,
       canvasTextureScale: val('canvasTextureScale') / 100 || 1,
       canvasTextureOffsetX: (val('canvasTextureOffsetX') || 0) / 10,
@@ -3362,6 +3859,1411 @@ export class App {
   }
 
   // ========================================================
+  // MOTION PATH DOCUMENTS / EDITOR
+  // ========================================================
+
+  _createMotionPathEditorState() {
+    return {
+      canvas: null,
+      ctx: null,
+      selectedPathId: null,
+      selectedPathIds: [],
+      selectedHandleIndex: -1,
+      hoverPathId: null,
+      hoverHandleIndex: -1,
+      dragPathId: null,
+      dragMode: null,
+      dragHandleIndex: -1,
+      activeTool: 'select',
+      creationPathId: null,
+      clipboardPaths: [],
+      pasteCount: 0,
+      insertPointMode: false,
+      insertBetweenPoints: false,
+      pointerId: null,
+      lastLocalX: 0,
+      lastLocalY: 0,
+      lastScreenX: 0,
+      lastScreenY: 0,
+      needsRedraw: true,
+      canvasWidth: 0,
+      canvasHeight: 0,
+    };
+  }
+
+  _createMotionPathDocumentRecord(id, name = `Motion Graph ${id}`) {
+    return {
+      id,
+      name,
+      version: 1,
+      paths: [],
+      agents: [],
+      rules: [],
+      view: { zoom: 1, panX: 0, panY: 0 },
+      nextPathId: 1,
+      updatedAt: Date.now(),
+    };
+  }
+
+  _createDefaultMotionPathState() {
+    return {
+      documents: [this._createMotionPathDocumentRecord(1, 'Motion Graph 1')],
+      activeDocumentId: 1,
+      nextDocumentId: 2,
+      editorOpen: false,
+      previousUiState: null,
+    };
+  }
+
+  _normalizeMotionPathState() {
+    if (!this.motionPath || typeof this.motionPath !== 'object') {
+      this.motionPath = this._createDefaultMotionPathState();
+      return;
+    }
+    const rawDocs = Array.isArray(this.motionPath.documents) ? this.motionPath.documents : [];
+    const docs = rawDocs.map((doc, index) => {
+      const fallbackId = index + 1;
+      const id = Number.isFinite(doc?.id) ? Math.max(1, Math.round(doc.id)) : fallbackId;
+      const name = typeof doc?.name === 'string' && doc.name.trim() ? doc.name.trim().slice(0, 60) : `Motion Graph ${id}`;
+      const rawPaths = Array.isArray(doc?.paths) ? doc.paths : [];
+      let nextPathId = 1;
+      const paths = rawPaths.map((pathItem, pathIndex) => {
+        const pathId = Number.isFinite(pathItem?.id) ? Math.max(1, Math.round(pathItem.id)) : nextPathId;
+        nextPathId = Math.max(nextPathId, pathId + 1);
+        const kind = ['polyline', 'bezier', 'rectangle', 'ellipse'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
+        const fallbackPoints = kind === 'bezier'
+          ? [
+              { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT, connector: 'curve' },
+              { x: 0, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT, connector: 'curve' },
+              { x: MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT, connector: 'curve' },
+            ]
+          : kind === 'rectangle' || kind === 'ellipse'
+            ? [
+                { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT },
+                { x: MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
+              ]
+            : [
+                { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
+                { x: 0, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT },
+                { x: MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
+              ];
+        const rawPoints = Array.isArray(pathItem?.points) ? pathItem.points : fallbackPoints;
+        const points = _normalizeMotionPathPoints(kind, rawPoints, fallbackPoints);
+        return {
+          id: pathId,
+          name: typeof pathItem?.name === 'string' && pathItem.name.trim()
+            ? pathItem.name.trim().slice(0, 40)
+            : `${kind[0].toUpperCase()}${kind.slice(1)} ${pathIndex + 1}`,
+          kind,
+          closed: kind === 'rectangle' || kind === 'ellipse' ? true : !!pathItem?.closed,
+          endBehavior: _normalizeMotionPathEndBehavior(pathItem?.endBehavior),
+          directionMode: _normalizeMotionPathDirectionMode(pathItem?.directionMode),
+          agentCount: Number.isFinite(pathItem?.agentCount) ? Math.max(0, Math.round(pathItem.agentCount)) : 0,
+          speedMultiplier: Number.isFinite(pathItem?.speedMultiplier) ? Math.max(0.1, pathItem.speedMultiplier) : 1,
+          points: points.length ? points : _normalizeMotionPathPoints(kind, fallbackPoints, fallbackPoints),
+        };
+      });
+      return {
+        id,
+        name,
+        version: Number.isFinite(doc?.version) ? Math.max(1, Math.round(doc.version)) : 1,
+        paths,
+        agents: Array.isArray(doc?.agents) ? doc.agents : [],
+        rules: Array.isArray(doc?.rules) ? doc.rules : [],
+        view: {
+          zoom: Number.isFinite(doc?.view?.zoom) ? Math.max(0.1, doc.view.zoom) : 1,
+          panX: Number.isFinite(doc?.view?.panX) ? doc.view.panX : 0,
+          panY: Number.isFinite(doc?.view?.panY) ? doc.view.panY : 0,
+        },
+        nextPathId: Number.isFinite(doc?.nextPathId) ? Math.max(nextPathId, Math.round(doc.nextPathId)) : nextPathId,
+        updatedAt: Number.isFinite(doc?.updatedAt) ? doc.updatedAt : Date.now(),
+      };
+    });
+    if (!docs.length) docs.push(this._createMotionPathDocumentRecord(1, 'Motion Graph 1'));
+    const idSet = new Set();
+    for (const doc of docs) {
+      while (idSet.has(doc.id)) doc.id += 1;
+      idSet.add(doc.id);
+    }
+    const maxId = docs.reduce((best, doc) => Math.max(best, doc.id), 0);
+    const activeDocumentId = idSet.has(this.motionPath.activeDocumentId) ? this.motionPath.activeDocumentId : docs[0].id;
+    this.motionPath.documents = docs;
+    this.motionPath.activeDocumentId = activeDocumentId;
+    this.motionPath.nextDocumentId = Number.isFinite(this.motionPath.nextDocumentId)
+      ? Math.max(maxId + 1, Math.round(this.motionPath.nextDocumentId))
+      : maxId + 1;
+    this.motionPath.editorOpen = !!this.motionPath.editorOpen;
+    this.motionPath.previousUiState = null;
+    if (!this.motionPathEditor || typeof this.motionPathEditor !== 'object') {
+      this.motionPathEditor = this._createMotionPathEditorState();
+    }
+  }
+
+  _serializeMotionPathState() {
+    this._normalizeMotionPathState();
+    return {
+      documents: _deepClone(this.motionPath.documents),
+      activeDocumentId: this.motionPath.activeDocumentId,
+      nextDocumentId: this.motionPath.nextDocumentId,
+    };
+  }
+
+  _getMotionPathDocumentById(id) {
+    this._normalizeMotionPathState();
+    return this.motionPath.documents.find(doc => doc.id === id) || null;
+  }
+
+  _getActiveMotionPathDocument() {
+    this._normalizeMotionPathState();
+    return this._getMotionPathDocumentById(this.motionPath.activeDocumentId) || this.motionPath.documents[0] || null;
+  }
+
+  _getSelectedMotionPathPrimitive() {
+    const doc = this._getActiveMotionPathDocument();
+    const pathId = this.motionPathEditor?.selectedPathId;
+    if (!doc || !Number.isFinite(pathId)) return null;
+    return doc.paths.find(path => path.id === pathId) || null;
+  }
+
+  _getSelectedMotionPathPrimitiveIds() {
+    const ids = Array.isArray(this.motionPathEditor?.selectedPathIds)
+      ? this.motionPathEditor.selectedPathIds
+      : [];
+    return Array.from(new Set(ids.filter(Number.isFinite).map(id => Math.round(id))));
+  }
+
+  _getSelectedMotionPathPrimitives() {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return [];
+    const idSet = new Set(this._getSelectedMotionPathPrimitiveIds());
+    return doc.paths.filter(path => idSet.has(path.id));
+  }
+
+  _isMotionPathPrimitiveSelected(pathId) {
+    return this._getSelectedMotionPathPrimitiveIds().includes(pathId);
+  }
+
+  _getMotionPathEditorCreateKind(tool = this.motionPathEditor?.activeTool) {
+    return typeof tool === 'string' && tool.startsWith('create-')
+      ? tool.slice('create-'.length)
+      : null;
+  }
+
+  _isMotionPathPrimitiveComplete(path) {
+    if (!path) return false;
+    if (path.kind === 'rectangle' || path.kind === 'ellipse') return path.points.length >= 2;
+    if (path.kind === 'bezier') return path.points.length >= 2;
+    return path.points.length >= 2;
+  }
+
+  _removeMotionPathPrimitiveById(pathId) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc || !Number.isFinite(pathId)) return false;
+    const index = doc.paths.findIndex(path => path.id === pathId);
+    if (index === -1) return false;
+    doc.paths.splice(index, 1);
+    this._markMotionPathDocumentUpdated(doc);
+    return true;
+  }
+
+  _cleanupMotionPathCreation() {
+    const pathId = this.motionPathEditor.creationPathId;
+    if (!Number.isFinite(pathId)) return false;
+    const doc = this._getActiveMotionPathDocument();
+    const path = doc?.paths?.find(entry => entry.id === pathId) || null;
+    const shouldDiscard = !!path && !this._isMotionPathPrimitiveComplete(path);
+    if (shouldDiscard) {
+      this._removeMotionPathPrimitiveById(pathId);
+      if (this.motionPathEditor.selectedPathId === pathId) {
+        this._setSelectedMotionPathPrimitives([], null, -1);
+      }
+    }
+    this.motionPathEditor.creationPathId = null;
+    this.motionPathEditor.needsRedraw = true;
+    return shouldDiscard;
+  }
+
+  _setMotionPathEditorTool(tool = 'select') {
+    const allowedCreateKinds = new Set(['polyline', 'bezier', 'rectangle', 'ellipse']);
+    const previousKind = this._getMotionPathEditorCreateKind();
+    let nextTool = tool === 'delete' ? 'delete' : 'select';
+    if (typeof tool === 'string' && tool.startsWith('create-')) {
+      const kind = tool.slice('create-'.length);
+      if (allowedCreateKinds.has(kind)) nextTool = `create-${kind}`;
+    }
+    if (previousKind && nextTool !== this.motionPathEditor.activeTool) {
+      this._cleanupMotionPathCreation();
+    }
+    this.motionPathEditor.activeTool = nextTool;
+    if (nextTool !== 'select') this.motionPathEditor.insertPointMode = false;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _startMotionPathPrimitiveCreation(kind) {
+    if (!['polyline', 'bezier', 'rectangle', 'ellipse'].includes(kind)) return;
+    this._cleanupMotionPathCreation();
+    this._setMotionPathEditorTool(`create-${kind}`);
+    this.motionPathEditor.creationPathId = null;
+    this.showToast(`Click on the graph canvas to place ${kind === 'rectangle' || kind === 'ellipse' ? 'the first corner' : 'the first point'} for a ${kind}`);
+  }
+
+  _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1) {
+    const ids = Array.from(new Set((Array.isArray(pathIds) ? pathIds : [pathIds])
+      .filter(Number.isFinite)
+      .map(id => Math.round(id))));
+    const nextPrimary = ids.length
+      ? (Number.isFinite(primaryPathId) && ids.includes(Math.round(primaryPathId)) ? Math.round(primaryPathId) : ids[ids.length - 1])
+      : null;
+    this.motionPathEditor.selectedPathIds = ids;
+    this.motionPathEditor.selectedPathId = nextPrimary;
+    this.motionPathEditor.selectedHandleIndex = ids.length === 1 && Number.isFinite(handleIndex) ? handleIndex : -1;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _setSelectedMotionPathPrimitive(pathId = null, handleIndex = -1) {
+    this._setSelectedMotionPathPrimitives(Number.isFinite(pathId) ? [pathId] : [], pathId, handleIndex);
+  }
+
+  _toggleMotionPathPrimitiveSelection(pathId) {
+    if (!Number.isFinite(pathId)) return;
+    const ids = this._getSelectedMotionPathPrimitiveIds();
+    const existingIndex = ids.indexOf(pathId);
+    if (existingIndex >= 0) ids.splice(existingIndex, 1);
+    else ids.push(pathId);
+    this._setSelectedMotionPathPrimitives(ids, existingIndex >= 0 ? ids[ids.length - 1] : pathId, -1);
+  }
+
+  _selectAllMotionPathPrimitives() {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc?.paths?.length) return;
+    this._setSelectedMotionPathPrimitives(doc.paths.map(path => path.id), doc.paths[doc.paths.length - 1]?.id || null, -1);
+  }
+
+  _cloneMotionPathPrimitive(path, offsetX = 0, offsetY = 0, nameSuffix = ' Copy') {
+    const clone = _deepClone(path);
+    clone.id = 0;
+    clone.name = typeof clone.name === 'string' && clone.name.trim()
+      ? (clone.name.endsWith(nameSuffix) ? clone.name : `${clone.name}${nameSuffix}`)
+      : `Primitive${nameSuffix}`;
+    clone.points = Array.isArray(clone.points)
+      ? clone.points.map(pt => ({ ...pt, x: (pt?.x || 0) + offsetX, y: (pt?.y || 0) + offsetY }))
+      : [];
+    return clone;
+  }
+
+  _copySelectedMotionPathPrimitives() {
+    const selected = this._getSelectedMotionPathPrimitives();
+    if (!selected.length) {
+      this.showToast('Select one or more primitives to copy');
+      return false;
+    }
+    this.motionPathEditor.clipboardPaths = selected.map(path => _deepClone(path));
+    this.motionPathEditor.pasteCount = 0;
+    this._syncMotionPathUI();
+    this.showToast(`Copied ${selected.length} primitive${selected.length === 1 ? '' : 's'}`);
+    return true;
+  }
+
+  _pasteMotionPathPrimitives(sources = this.motionPathEditor.clipboardPaths, { updateClipboard = false, label = 'Pasted' } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    const items = Array.isArray(sources) ? sources : [];
+    if (!doc || !items.length) {
+      this.showToast('Nothing to paste');
+      return false;
+    }
+    this.motionPathEditor.pasteCount = (this.motionPathEditor.pasteCount || 0) + 1;
+    const offset = DUPLICATE_OFFSET * this.motionPathEditor.pasteCount;
+    const inserted = items.map(source => {
+      const clone = this._cloneMotionPathPrimitive(source, offset, offset);
+      clone.id = doc.nextPathId++;
+      return clone;
+    });
+    doc.paths.push(...inserted);
+    if (updateClipboard) {
+      this.motionPathEditor.clipboardPaths = inserted.map(path => _deepClone(path));
+    }
+    this._markMotionPathDocumentUpdated(doc);
+    this._setSelectedMotionPathPrimitives(inserted.map(path => path.id), inserted[inserted.length - 1]?.id || null, -1);
+    this._maybeAutoSaveSession();
+    this.showToast(`${label} ${inserted.length} primitive${inserted.length === 1 ? '' : 's'}`);
+    return true;
+  }
+
+  _duplicateSelectedMotionPathPrimitives() {
+    const selected = this._getSelectedMotionPathPrimitives();
+    if (!selected.length) {
+      this.showToast('Select one or more primitives to duplicate');
+      return false;
+    }
+    return this._pasteMotionPathPrimitives(selected, { updateClipboard: false, label: 'Duplicated' });
+  }
+
+  _markMotionPathDocumentUpdated(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    doc.updatedAt = Date.now();
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _getMotionPathEditorCanvas() {
+    return document.getElementById('motionPathEditorCanvas');
+  }
+
+  _getMotionPathEditorOverlayControls() {
+    return document.getElementById('motionPathEditorOverlayControls');
+  }
+
+  _getMotionPathOverlayEndBehaviorSelect() {
+    return document.getElementById('motionPathOverlayEndBehaviorSelect');
+  }
+
+  _hideMotionPathOverlayEndBehaviorSelect() {
+    const select = this._getMotionPathOverlayEndBehaviorSelect();
+    if (!select) return;
+    select.classList.remove('open');
+    delete select.dataset.pathId;
+    select.style.left = '-9999px';
+    select.style.top = '-9999px';
+  }
+
+  _openMotionPathOverlayEndBehaviorSelect(pathId, anchorX, anchorY) {
+    const doc = this._getActiveMotionPathDocument();
+    const numericPathId = Math.round(+pathId);
+    const path = doc?.paths?.find(entry => entry.id === numericPathId);
+    const select = this._getMotionPathOverlayEndBehaviorSelect();
+    if (!path || !select || path.closed) return;
+    select.dataset.pathId = String(numericPathId);
+    select.value = _normalizeMotionPathEndBehavior(path.endBehavior);
+    select.style.left = `${Math.round(anchorX)}px`;
+    select.style.top = `${Math.round(anchorY)}px`;
+    select.classList.add('open');
+    select.focus({ preventScroll: true });
+    try {
+      select.showPicker?.();
+    } catch {}
+  }
+
+  _cycleMotionPathDirectionMode(pathId) {
+    const doc = this._getActiveMotionPathDocument();
+    const numericPathId = Math.round(+pathId);
+    const path = doc?.paths?.find(entry => entry.id === numericPathId);
+    if (!path) return;
+    const order = ['forward', 'reverse', 'alternate', 'random'];
+    const current = _normalizeMotionPathDirectionMode(path.directionMode);
+    const next = order[(order.indexOf(current) + 1) % order.length];
+    path.directionMode = next;
+    this._markMotionPathDocumentUpdated(doc);
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`${path.name}: ${_getMotionPathDirectionModeLabel(next)}`);
+  }
+
+  _syncMotionPathOverlayControls(doc = this._getActiveMotionPathDocument()) {
+    const host = this._getMotionPathEditorOverlayControls();
+    if (!host) return;
+    if (!this.motionPath.editorOpen || !doc?.paths?.length) {
+      host.innerHTML = '';
+      this._hideMotionPathOverlayEndBehaviorSelect();
+      return;
+    }
+    const controls = [];
+    for (const path of doc.paths) {
+      const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
+      if (!sampled.length) continue;
+      const bounds = _getMotionPathBounds(sampled);
+      if (!bounds) continue;
+      const anchor = this._motionPathLocalToEditorPoint(bounds.maxX, bounds.minY, doc);
+      controls.push(`
+        <div class="motion-path-editor-pathControls" style="left:${anchor.x + 22}px;top:${anchor.y - 18}px;" data-path-id="${path.id}">
+          <button type="button" data-kind="direction" data-path-id="${path.id}" title="Cycle path direction mode">${_getMotionPathDirectionModeLabel(path.directionMode)}</button>
+          ${path.closed ? '' : `<button type="button" data-kind="behavior" data-path-id="${path.id}" title="Choose end behavior">${_getMotionPathEndBehaviorLabel(path.endBehavior)}</button>`}
+        </div>
+      `);
+    }
+    host.innerHTML = controls.join('');
+  }
+
+  _syncMotionPathEditorCanvasSize() {
+    const canvas = this._getMotionPathEditorCanvas();
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      this.motionPathEditor.needsRedraw = true;
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.motionPathEditor.canvas = canvas;
+    this.motionPathEditor.ctx = ctx;
+    this.motionPathEditor.canvasWidth = width;
+    this.motionPathEditor.canvasHeight = height;
+    return { canvas, ctx, width, height, dpr };
+  }
+
+  _getMotionPathEditorView(doc = this._getActiveMotionPathDocument()) {
+    const size = this._syncMotionPathEditorCanvasSize();
+    return {
+      width: size?.width || this.motionPathEditor.canvasWidth || 1,
+      height: size?.height || this.motionPathEditor.canvasHeight || 1,
+      zoom: Math.max(0.1, doc?.view?.zoom || 1),
+      centerX: ((size?.width || this.motionPathEditor.canvasWidth || 1) * 0.5) + (doc?.view?.panX || 0),
+      centerY: ((size?.height || this.motionPathEditor.canvasHeight || 1) * 0.5) + (doc?.view?.panY || 0),
+    };
+  }
+
+  _motionPathLocalToEditorPoint(x, y, doc = this._getActiveMotionPathDocument()) {
+    const view = this._getMotionPathEditorView(doc);
+    return {
+      x: view.centerX + x * view.zoom,
+      y: view.centerY + y * view.zoom,
+    };
+  }
+
+  _motionPathEditorToLocalPoint(screenX, screenY, doc = this._getActiveMotionPathDocument()) {
+    const view = this._getMotionPathEditorView(doc);
+    return {
+      x: (screenX - view.centerX) / view.zoom,
+      y: (screenY - view.centerY) / view.zoom,
+    };
+  }
+
+  _panMotionPathEditorView(deltaX, deltaY, doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    doc.view.panX = (doc.view.panX || 0) + deltaX;
+    doc.view.panY = (doc.view.panY || 0) + deltaY;
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _zoomMotionPathEditorAt(screenX, screenY, zoomFactor, doc = this._getActiveMotionPathDocument()) {
+    if (!doc || !Number.isFinite(zoomFactor) || zoomFactor <= 0) return;
+    const view = this._getMotionPathEditorView(doc);
+    const local = this._motionPathEditorToLocalPoint(screenX, screenY, doc);
+    const nextZoom = _clamp(view.zoom * zoomFactor, 0.1, 8);
+    doc.view.zoom = nextZoom;
+    doc.view.panX = screenX - (local.x * nextZoom) - (view.width * 0.5);
+    doc.view.panY = screenY - (local.y * nextZoom) - (view.height * 0.5);
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _setMotionPathInsertPointMode(active) {
+    this.motionPathEditor.insertPointMode = !!active;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _findMotionPathInsertIndex(points, closed, localX, localY, mode = 'append') {
+    if (!Array.isArray(points) || points.length < 2 || mode !== 'between') return points?.length || 0;
+    let bestIndex = points.length;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    const checkSegment = (startIndex, endIndex, insertIndex) => {
+      const a = points[startIndex];
+      const b = points[endIndex];
+      const hit = _closestPointOnSegment(localX, localY, a.x, a.y, b.x, b.y);
+      if (hit.distance < bestDistance) {
+        bestDistance = hit.distance;
+        bestIndex = insertIndex;
+      }
+    };
+    for (let i = 1; i < points.length; i++) checkSegment(i - 1, i, i);
+    if (closed) checkSegment(points.length - 1, 0, points.length);
+    return bestIndex;
+  }
+
+  _appendMotionPathBezierAnchor(path, localX, localY) {
+    if (!path) return -1;
+    path.points.push({ x: localX, y: localY, connector: 'curve' });
+    return path.points.length - 1;
+  }
+
+  _insertMotionPathBezierAnchor(path, localX, localY) {
+    if (!path || path.points.length < 2) return this._appendMotionPathBezierAnchor(path, localX, localY);
+    const insertIndex = _findMotionPathBezierInsertIndex(path.points, localX, localY, !!path.closed);
+    path.points.splice(insertIndex, 0, { x: localX, y: localY, connector: 'curve' });
+    return insertIndex;
+  }
+
+  _toggleMotionPathBezierConnector(pathId, handleIndex) {
+    const doc = this._getActiveMotionPathDocument();
+    const path = doc?.paths?.find(entry => entry.id === pathId);
+    const point = path?.points?.[handleIndex];
+    if (!path || path.kind !== 'bezier' || !point) return false;
+    point.connector = point.connector === 'sharp' ? 'curve' : 'sharp';
+    this._markMotionPathDocumentUpdated(doc);
+    this._setSelectedMotionPathPrimitive(path.id, handleIndex);
+    this._maybeAutoSaveSession();
+    this.showToast(`${point.connector === 'sharp' ? 'Sharp' : 'Curved'} connector on ${path.name}`);
+    return true;
+  }
+
+  _createMotionPathPrimitive(kind, { points = null, announce = true } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return null;
+    const id = doc.nextPathId++;
+    const primitive = {
+      id,
+      name: `${kind[0].toUpperCase()}${kind.slice(1)} ${id}`,
+      kind,
+      closed: kind === 'rectangle' || kind === 'ellipse',
+      endBehavior: 'restart',
+      directionMode: 'forward',
+      agentCount: 0,
+      speedMultiplier: 1,
+      points: _normalizeMotionPathPoints(kind, Array.isArray(points) ? points : []),
+    };
+    doc.paths.push(primitive);
+    this._markMotionPathDocumentUpdated(doc);
+    this._setSelectedMotionPathPrimitives([primitive.id], primitive.id, -1);
+    this._maybeAutoSaveSession();
+    if (announce) this.showToast(`Added ${primitive.kind}`);
+    return primitive;
+  }
+
+  _createMotionPathPrimitiveFromShape(path) {
+    if (!path) return null;
+    const sampled = _sampleMotionPathPrimitive(path, Math.max(MOTION_PATH_RESAMPLE_STEP * 1.5, 18));
+    if (!sampled.length) return null;
+    const points = [];
+    const targetCount = path.kind === 'ellipse' ? 8 : 4;
+    for (let i = 0; i < targetCount; i++) {
+      const index = Math.min(sampled.length - 1, Math.round((i / targetCount) * (sampled.length - 1)));
+      points.push({ x: sampled[index].x, y: sampled[index].y });
+    }
+    return {
+      ...path,
+      kind: 'polyline',
+      closed: true,
+      points,
+    };
+  }
+
+  _addPointToMotionPathPrimitive(localX = Number.NaN, localY = Number.NaN) {
+    const doc = this._getActiveMotionPathDocument();
+    const selected = this._getSelectedMotionPathPrimitive();
+    if (!doc || !selected) return;
+    if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+      this._setMotionPathInsertPointMode(!this.motionPathEditor.insertPointMode);
+      if (this.motionPathEditor.insertPointMode) this.showToast(`Click on the graph canvas to place a point on ${selected.name}`);
+      return;
+    }
+    if (selected.kind === 'rectangle' || selected.kind === 'ellipse') {
+      const replacement = this._createMotionPathPrimitiveFromShape(selected);
+      if (!replacement) return;
+      const index = doc.paths.findIndex(path => path.id === selected.id);
+      if (index === -1) return;
+      doc.paths[index] = replacement;
+      this._setSelectedMotionPathPrimitive(replacement.id, -1);
+      this._markMotionPathDocumentUpdated(doc);
+      this._syncMotionPathUI();
+      return this._addPointToMotionPathPrimitive(localX, localY);
+    }
+    if (selected.kind === 'bezier') {
+      this.motionPathEditor.selectedHandleIndex = this.motionPathEditor.insertBetweenPoints
+        ? this._insertMotionPathBezierAnchor(selected, localX, localY)
+        : this._appendMotionPathBezierAnchor(selected, localX, localY);
+      this._markMotionPathDocumentUpdated(doc);
+      this._syncMotionPathUI();
+      this._maybeAutoSaveSession();
+      this._setMotionPathInsertPointMode(false);
+      this.showToast(`Placed bezier anchor on ${selected.name}`);
+      return;
+    }
+    const pts = selected.points;
+    const insertIndex = this._findMotionPathInsertIndex(
+      pts,
+      !!selected.closed,
+      localX,
+      localY,
+      this.motionPathEditor.insertBetweenPoints ? 'between' : 'append',
+    );
+    pts.splice(insertIndex, 0, { x: localX, y: localY });
+    this.motionPathEditor.selectedHandleIndex = insertIndex;
+    this._markMotionPathDocumentUpdated(doc);
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this._setMotionPathInsertPointMode(false);
+    this.showToast(`Placed point on ${selected.name}`);
+  }
+
+  _placeMotionPathCreationPoint(kind, localX, localY, { finalize = false } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return;
+    let path = doc.paths.find(entry => entry.id === this.motionPathEditor.creationPathId && entry.kind === kind) || null;
+    if (!path) {
+      path = this._createMotionPathPrimitive(kind, { points: [{ x: localX, y: localY }], announce: false });
+      if (!path) return;
+      this.motionPathEditor.creationPathId = path.id;
+      this.motionPathEditor.selectedHandleIndex = 0;
+      this._syncMotionPathUI();
+      if (kind === 'rectangle' || kind === 'ellipse') {
+        this.showToast(`Click the opposite corner to finish the ${kind}`);
+      } else {
+        this.showToast(`Click to place the next ${kind === 'bezier' ? 'curve point' : 'point'}. Double-click or press Enter to finish.`);
+      }
+      return;
+    }
+
+    let selectedHandleIndex = path.points.length - 1;
+    if (kind === 'rectangle' || kind === 'ellipse') {
+      if (path.points.length === 1) path.points.push({ x: localX, y: localY });
+      else path.points[1] = { x: localX, y: localY };
+      selectedHandleIndex = 1;
+      this.motionPathEditor.creationPathId = null;
+    } else if (kind === 'bezier') {
+      selectedHandleIndex = this._appendMotionPathBezierAnchor(path, localX, localY);
+      if (finalize && this._isMotionPathPrimitiveComplete(path)) this.motionPathEditor.creationPathId = null;
+    } else {
+      path.points.push({ x: localX, y: localY });
+      selectedHandleIndex = path.points.length - 1;
+      if (finalize && this._isMotionPathPrimitiveComplete(path)) this.motionPathEditor.creationPathId = null;
+    }
+
+    this._markMotionPathDocumentUpdated(doc);
+    this._setSelectedMotionPathPrimitive(path.id, selectedHandleIndex);
+    this._maybeAutoSaveSession();
+  }
+
+  _deleteSelectedMotionPathPrimitive() {
+    const doc = this._getActiveMotionPathDocument();
+    const selectedIds = this._getSelectedMotionPathPrimitiveIds();
+    if (!doc || !selectedIds.length) {
+      this.showToast('Select one or more primitives to delete');
+      return false;
+    }
+    const idSet = new Set(selectedIds);
+    const firstIndex = doc.paths.findIndex(path => idSet.has(Number(path?.id)));
+    const removed = doc.paths.filter(path => idSet.has(Number(path?.id)));
+    if (!removed.length) {
+      this.showToast('Selected primitives could not be found');
+      this._setSelectedMotionPathPrimitives([], null, -1);
+      return false;
+    }
+    doc.paths = doc.paths.filter(path => !idSet.has(Number(path?.id)));
+    if (this.motionPathEditor.creationPathId && idSet.has(this.motionPathEditor.creationPathId)) {
+      this.motionPathEditor.creationPathId = null;
+    }
+    const fallback = doc.paths[Math.max(0, Math.min(firstIndex, doc.paths.length - 1))] || null;
+    this.motionPathEditor.hoverPathId = null;
+    this.motionPathEditor.hoverHandleIndex = -1;
+    this.motionPathEditor.dragPathId = null;
+    this.motionPathEditor.dragHandleIndex = -1;
+    this.motionPathEditor.dragMode = null;
+    this.motionPathEditor.insertPointMode = false;
+    this._markMotionPathDocumentUpdated(doc);
+    this._setSelectedMotionPathPrimitives(fallback ? [fallback.id] : [], fallback?.id || null, -1);
+    this._maybeAutoSaveSession();
+    this.showToast(`Deleted ${removed.length} primitive${removed.length === 1 ? '' : 's'}`);
+    return true;
+  }
+
+  _translateMotionPathPrimitive(path, dx, dy) {
+    if (!path?.points) return;
+    for (const pt of path.points) {
+      pt.x += dx;
+      pt.y += dy;
+    }
+  }
+
+  _translateSelectedMotionPathPrimitives(dx, dy) {
+    const selected = this._getSelectedMotionPathPrimitives();
+    for (const path of selected) this._translateMotionPathPrimitive(path, dx, dy);
+  }
+
+  _hitTestMotionPathPrimitive(localX, localY) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return null;
+    const zoom = Math.max(0.1, doc.view?.zoom || 1);
+    const handleRadius = MOTION_PATH_HIT_RADIUS / zoom;
+    for (let i = doc.paths.length - 1; i >= 0; i--) {
+      const path = doc.paths[i];
+      for (let handleIndex = 0; handleIndex < path.points.length; handleIndex++) {
+        const pt = path.points[handleIndex];
+        if (_distanceSquared(localX, localY, pt.x, pt.y) <= handleRadius * handleRadius) {
+          return { pathId: path.id, type: 'handle', handleIndex };
+        }
+      }
+      const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
+      for (let segmentIndex = 1; segmentIndex < sampled.length; segmentIndex++) {
+        const hit = _closestPointOnSegment(localX, localY, sampled[segmentIndex - 1].x, sampled[segmentIndex - 1].y, sampled[segmentIndex].x, sampled[segmentIndex].y);
+        if (hit.distance <= handleRadius) {
+          return { pathId: path.id, type: 'move', handleIndex: -1 };
+        }
+      }
+    }
+    return null;
+  }
+
+  _onMotionPathEditorPointerDown(e) {
+    if (!this.motionPath.editorOpen) return;
+    const canvas = this._getMotionPathEditorCanvas();
+    if (!canvas || e.target !== canvas) return;
+    this._hideMotionPathOverlayEndBehaviorSelect();
+    const rect = canvas.getBoundingClientRect();
+    const local = this._motionPathEditorToLocalPoint(e.clientX - rect.left, e.clientY - rect.top);
+    if (e.button === 1) {
+      this.motionPathEditor.pointerId = e.pointerId;
+      this.motionPathEditor.dragMode = 'pan';
+      this.motionPathEditor.lastScreenX = e.clientX;
+      this.motionPathEditor.lastScreenY = e.clientY;
+      canvas.setPointerCapture?.(e.pointerId);
+      this.motionPathEditor.needsRedraw = true;
+      e.preventDefault();
+      return;
+    }
+    const createKind = this._getMotionPathEditorCreateKind();
+    if (e.button === 0 && createKind) {
+      this._placeMotionPathCreationPoint(createKind, local.x, local.y, { finalize: e.detail >= 2 });
+      e.preventDefault();
+      return;
+    }
+    const hit = this._hitTestMotionPathPrimitive(local.x, local.y);
+    if (e.button === 0 && e.detail >= 2 && hit?.type === 'handle') {
+      const doc = this._getActiveMotionPathDocument();
+      const path = doc?.paths?.find(entry => entry.id === hit.pathId);
+      if (path?.kind === 'bezier') {
+        this._toggleMotionPathBezierConnector(path.id, hit.handleIndex);
+        e.preventDefault();
+        return;
+      }
+    }
+    if (e.button === 0 && this.motionPathEditor.insertPointMode && (!hit || hit.type !== 'handle')) {
+      this._addPointToMotionPathPrimitive(local.x, local.y);
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0 && this.motionPathEditor.activeTool === 'delete') {
+      if (hit?.pathId) {
+        this._setSelectedMotionPathPrimitives([hit.pathId], hit.pathId, -1);
+        this._deleteSelectedMotionPathPrimitive();
+      }
+      e.preventDefault();
+      return;
+    }
+    const toggleSelection = !!(e.shiftKey || e.ctrlKey || e.metaKey);
+    const selectedIds = this._getSelectedMotionPathPrimitiveIds();
+    const hitSelected = !!(hit?.pathId && selectedIds.includes(hit.pathId));
+    if (e.button === 0 && toggleSelection && hit?.pathId) {
+      this._toggleMotionPathPrimitiveSelection(hit.pathId);
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0 && !hit) {
+      this._setSelectedMotionPathPrimitives([], null, -1);
+      e.preventDefault();
+      return;
+    }
+    this.motionPathEditor.pointerId = e.pointerId;
+    this.motionPathEditor.lastLocalX = local.x;
+    this.motionPathEditor.lastLocalY = local.y;
+    this.motionPathEditor.lastScreenX = e.clientX;
+    this.motionPathEditor.lastScreenY = e.clientY;
+    this.motionPathEditor.dragPathId = hit?.pathId || null;
+    this.motionPathEditor.dragMode = hit?.type || null;
+    this.motionPathEditor.dragHandleIndex = hit?.handleIndex ?? -1;
+    canvas.setPointerCapture?.(e.pointerId);
+    if (hit?.type === 'handle' && selectedIds.length > 1) {
+      this._setSelectedMotionPathPrimitive(hit.pathId, hit.handleIndex);
+    } else if (hit?.pathId && hitSelected && selectedIds.length > 1) {
+      this._setSelectedMotionPathPrimitives(selectedIds, hit.pathId, -1);
+    } else {
+      this._setSelectedMotionPathPrimitive(hit?.pathId || null, hit?.type === 'handle' ? hit?.handleIndex : -1);
+    }
+    this.motionPathEditor.needsRedraw = true;
+    e.preventDefault();
+  }
+
+  _onMotionPathEditorPointerMove(e) {
+    if (!this.motionPath.editorOpen) return;
+    const canvas = this._getMotionPathEditorCanvas();
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const local = this._motionPathEditorToLocalPoint(e.clientX - rect.left, e.clientY - rect.top);
+    if (this.motionPathEditor.pointerId !== e.pointerId || !this.motionPathEditor.dragMode) {
+      const hover = this._hitTestMotionPathPrimitive(local.x, local.y);
+      this.motionPathEditor.hoverPathId = hover?.pathId || null;
+      this.motionPathEditor.hoverHandleIndex = hover?.handleIndex ?? -1;
+      this.motionPathEditor.needsRedraw = true;
+      return;
+    }
+    if (this.motionPathEditor.dragMode === 'pan') {
+      const dx = e.clientX - this.motionPathEditor.lastScreenX;
+      const dy = e.clientY - this.motionPathEditor.lastScreenY;
+      this._panMotionPathEditorView(dx, dy);
+      this.motionPathEditor.lastScreenX = e.clientX;
+      this.motionPathEditor.lastScreenY = e.clientY;
+      return;
+    }
+    const doc = this._getActiveMotionPathDocument();
+    const path = doc?.paths?.find(entry => entry.id === this.motionPathEditor.dragPathId);
+    if (!path) return;
+    const dx = local.x - this.motionPathEditor.lastLocalX;
+    const dy = local.y - this.motionPathEditor.lastLocalY;
+    if (this.motionPathEditor.dragMode === 'move') {
+      if (this._isMotionPathPrimitiveSelected(path.id) && this._getSelectedMotionPathPrimitiveIds().length > 1) {
+        this._translateSelectedMotionPathPrimitives(dx, dy);
+      } else {
+        this._translateMotionPathPrimitive(path, dx, dy);
+      }
+    } else if (this.motionPathEditor.dragMode === 'handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
+      path.points[this.motionPathEditor.dragHandleIndex].x = local.x;
+      path.points[this.motionPathEditor.dragHandleIndex].y = local.y;
+    }
+    this.motionPathEditor.lastLocalX = local.x;
+    this.motionPathEditor.lastLocalY = local.y;
+    this._markMotionPathDocumentUpdated(doc);
+    this._syncMotionPathUI();
+  }
+
+  _onMotionPathEditorPointerUp(e) {
+    if (this.motionPathEditor.pointerId !== e.pointerId) return;
+    this.motionPathEditor.pointerId = null;
+    this.motionPathEditor.dragMode = null;
+    this.motionPathEditor.dragPathId = null;
+    this.motionPathEditor.dragHandleIndex = -1;
+    this._maybeAutoSaveSession();
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _onMotionPathEditorWheel(e) {
+    if (!this.motionPath.editorOpen) return;
+    const canvas = this._getMotionPathEditorCanvas();
+    if (!canvas || e.target !== canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    if (e.ctrlKey || e.metaKey) {
+      this._zoomMotionPathEditorAt(screenX, screenY, Math.exp(-e.deltaY * 0.0015));
+    } else {
+      this._panMotionPathEditorView(-e.deltaX, -e.deltaY);
+    }
+    e.preventDefault();
+  }
+
+  _renderMotionPathEditorSurface() {
+    if (!this.motionPath.editorOpen) return;
+    const size = this._syncMotionPathEditorCanvasSize();
+    if (!size || !this.motionPathEditor.needsRedraw) return;
+    const { ctx, width, height } = size;
+    const doc = this._getActiveMotionPathDocument();
+    ctx.clearRect(0, 0, width, height);
+
+    const view = this._getMotionPathEditorView(doc);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(98,124,170,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, view.centerY);
+    ctx.lineTo(width, view.centerY);
+    ctx.moveTo(view.centerX, 0);
+    ctx.lineTo(view.centerX, height);
+    ctx.stroke();
+    ctx.restore();
+
+    const selectedIdSet = new Set(this._getSelectedMotionPathPrimitiveIds());
+    for (const path of doc?.paths || []) {
+      const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
+      if (!sampled.length) continue;
+      const selected = selectedIdSet.has(path.id);
+      const primary = path.id === this.motionPathEditor.selectedPathId;
+      const hovered = path.id === this.motionPathEditor.hoverPathId;
+      ctx.save();
+      ctx.strokeStyle = primary
+        ? 'rgba(91,138,240,0.98)'
+        : selected
+          ? 'rgba(114,174,255,0.92)'
+          : hovered
+            ? 'rgba(129,170,255,0.82)'
+            : 'rgba(211,226,255,0.76)';
+      ctx.lineWidth = primary ? 2.8 : selected ? 2.15 : 1.6;
+      ctx.beginPath();
+      sampled.forEach((pt, index) => {
+        const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
+        if (index === 0) ctx.moveTo(screen.x, screen.y);
+        else ctx.lineTo(screen.x, screen.y);
+      });
+      ctx.stroke();
+
+      if (path.kind === 'bezier' && path.points.length >= 2) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        path.points.forEach((pt, index) => {
+          const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
+          if (index === 0) ctx.moveTo(screen.x, screen.y);
+          else ctx.lineTo(screen.x, screen.y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      path.points.forEach((pt, handleIndex) => {
+        const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
+        const hot = primary && handleIndex === this.motionPathEditor.hoverHandleIndex && path.id === this.motionPathEditor.hoverPathId;
+        const fill = hot ? '#ffffff' : primary ? '#8bb3ff' : selected ? '#9ec4ff' : '#d7e5ff';
+        const isSharpBezierAnchor = path.kind === 'bezier' && pt?.connector === 'sharp';
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = 'rgba(12,16,24,0.85)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        if (isSharpBezierAnchor) {
+          ctx.moveTo(screen.x, screen.y - MOTION_PATH_HANDLE_RADIUS - 1);
+          ctx.lineTo(screen.x + MOTION_PATH_HANDLE_RADIUS + 1, screen.y);
+          ctx.lineTo(screen.x, screen.y + MOTION_PATH_HANDLE_RADIUS + 1);
+          ctx.lineTo(screen.x - MOTION_PATH_HANDLE_RADIUS - 1, screen.y);
+          ctx.closePath();
+        } else {
+          ctx.arc(screen.x, screen.y, MOTION_PATH_HANDLE_RADIUS, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+        if (path.kind === 'bezier') {
+          ctx.fillStyle = 'rgba(12,16,24,0.8)';
+          ctx.beginPath();
+          if (isSharpBezierAnchor) {
+            ctx.rect(screen.x - 2, screen.y - 2, 4, 4);
+          } else {
+            ctx.arc(screen.x, screen.y, 2.2, 0, Math.PI * 2);
+          }
+          ctx.fill();
+        }
+      });
+
+      if (sampled.length >= 2) {
+        const arrowMarkers = _sampleMotionPathArrowMarkers(sampled, 74, 28);
+        const drawArrowMarker = (marker, angle, color, scale = 1) => {
+          const length = 8 * scale;
+          const wing = 4 * scale;
+          ctx.save();
+          ctx.translate(this._motionPathLocalToEditorPoint(marker.x, marker.y, doc).x, this._motionPathLocalToEditorPoint(marker.x, marker.y, doc).y);
+          ctx.rotate(angle);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(-length, -wing);
+          ctx.lineTo(0, 0);
+          ctx.lineTo(-length, wing);
+          ctx.stroke();
+          ctx.restore();
+        };
+        const arrowColor = primary ? 'rgba(91,138,240,0.92)' : 'rgba(198,216,255,0.78)';
+        arrowMarkers.forEach((marker, markerIndex) => {
+          const angle = _getMotionPathDirectionArrowAngle(path.directionMode, markerIndex, marker.angle);
+          drawArrowMarker(marker, angle, arrowColor, 1);
+        });
+      }
+
+      if (!path.closed && sampled.length >= 2) {
+        const endBehavior = _normalizeMotionPathEndBehavior(path.endBehavior);
+        const startScreen = this._motionPathLocalToEditorPoint(sampled[0].x, sampled[0].y, doc);
+        const endScreen = this._motionPathLocalToEditorPoint(sampled[sampled.length - 1].x, sampled[sampled.length - 1].y, doc);
+        const endAccent = _getMotionPathEndBehaviorAccent(endBehavior);
+        const endLabel = _getMotionPathEndBehaviorLabel(endBehavior);
+
+        ctx.fillStyle = 'rgba(26,190,104,0.95)';
+        ctx.strokeStyle = 'rgba(12,16,24,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(startScreen.x, startScreen.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(12,16,24,0.9)';
+        ctx.font = '10px Segoe UI, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('S', startScreen.x, startScreen.y + 0.5);
+
+        ctx.fillStyle = endAccent;
+        ctx.strokeStyle = 'rgba(12,16,24,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.rect(endScreen.x - 8, endScreen.y - 6, 16, 12);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(12,16,24,0.92)';
+        ctx.font = '9px Segoe UI, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(endLabel[0], endScreen.x, endScreen.y + 0.5);
+
+        ctx.fillStyle = 'rgba(230,236,246,0.92)';
+        ctx.font = '10px Segoe UI, Arial, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(endLabel, endScreen.x + 12, endScreen.y - 10);
+      }
+      ctx.restore();
+    }
+
+    this._syncMotionPathOverlayControls(doc);
+
+    const preview = this._compileActiveMotionPathGraph(this.getP());
+    if (preview?.paths?.length && preview?.agents?.length) {
+      ctx.save();
+      for (const agent of preview.agents) {
+        const track = preview.paths[agent.pathIndex];
+        const pt = _sampleMotionPathTrack(track, agent.distance);
+        if (!pt) continue;
+        const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
+        ctx.fillStyle = 'rgba(255,210,120,0.9)';
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    this.motionPathEditor.needsRedraw = false;
+  }
+
+  _compileActiveMotionPathGraph(p = this.getP()) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return { documentId: null, updatedAt: 0, paths: [], agents: [] };
+    const compiledPaths = doc.paths
+      .map(path => {
+        const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
+        const track = _buildMotionPathTrack(sampled, path.closed);
+        return track ? { ...track, id: path.id, kind: path.kind, name: path.name, agentCount: path.agentCount || 0, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), directionMode: _normalizeMotionPathDirectionMode(path.directionMode) } : null;
+      })
+      .filter(Boolean);
+    const agents = [];
+    if (compiledPaths.length) {
+      const explicitTotal = compiledPaths.reduce((sum, path) => sum + (path.agentCount > 0 ? path.agentCount : 0), 0);
+      const usesExplicitCounts = explicitTotal > 0;
+      const totalAgents = Math.max(1, p.motionPathAgentCount || 1);
+      const unresolvedPaths = compiledPaths.filter(path => path.agentCount <= 0);
+      const remainingAgents = Math.max(0, totalAgents - explicitTotal);
+      compiledPaths.forEach((path, pathIndex) => {
+        let count = path.agentCount > 0 ? path.agentCount : 0;
+        if (!usesExplicitCounts) {
+          const base = Math.floor(totalAgents / compiledPaths.length);
+          const remainder = totalAgents % compiledPaths.length;
+          count = base + (pathIndex < remainder ? 1 : 0);
+        } else if (unresolvedPaths.length && count === 0) {
+          const unresolvedIndex = unresolvedPaths.findIndex(entry => entry.id === path.id);
+          const base = Math.floor(remainingAgents / unresolvedPaths.length);
+          const remainder = remainingAgents % unresolvedPaths.length;
+          count = base + (unresolvedIndex < remainder ? 1 : 0);
+        }
+        for (let agentIndex = 0; agentIndex < count; agentIndex++) {
+          const directionMode = _normalizeMotionPathDirectionMode(path.directionMode);
+          const direction = directionMode === 'reverse'
+            ? -1
+            : directionMode === 'alternate'
+              ? (agentIndex % 2 === 0 ? 1 : -1)
+              : directionMode === 'random'
+                ? (Math.random() < 0.5 ? -1 : 1)
+                : 1;
+          const baseDistance = count <= 1 ? 0 : (path.totalLength * agentIndex) / count;
+          const distance = !path.closed && direction === -1
+            ? Math.max(0, path.totalLength - baseDistance)
+            : baseDistance;
+          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction });
+        }
+      });
+      if (!agents.length) {
+        for (let i = 0; i < totalAgents; i++) {
+          const pathIndex = i % compiledPaths.length;
+          const path = compiledPaths[pathIndex];
+          const directionMode = _normalizeMotionPathDirectionMode(path.directionMode);
+          const direction = directionMode === 'reverse'
+            ? -1
+            : directionMode === 'alternate'
+              ? (i % 2 === 0 ? 1 : -1)
+              : directionMode === 'random'
+                ? (Math.random() < 0.5 ? -1 : 1)
+                : 1;
+          const distance = !path.closed && direction === -1 ? path.totalLength : 0;
+          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction });
+        }
+      }
+    }
+    return {
+      documentId: doc.id,
+      updatedAt: doc.updatedAt,
+      scale: p.brushScale,
+      paths: compiledPaths,
+      agents,
+    };
+  }
+
+  _setActiveMotionPathDocument(id) {
+    const next = this._getMotionPathDocumentById(Number(id));
+    if (!next) return;
+    this.motionPath.activeDocumentId = next.id;
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+  }
+
+  _createMotionPathDocument(name = null) {
+    this._normalizeMotionPathState();
+    const id = this.motionPath.nextDocumentId++;
+    const trimmed = typeof name === 'string' ? name.trim().slice(0, 60) : '';
+    const doc = this._createMotionPathDocumentRecord(id, trimmed || `Motion Graph ${id}`);
+    this.motionPath.documents.push(doc);
+    this.motionPath.activeDocumentId = doc.id;
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`Created ${doc.name}`);
+    return doc;
+  }
+
+  _renameActiveMotionPathDocument() {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return;
+    const rawName = window.prompt('Rename motion graph:', doc.name);
+    if (!rawName) return;
+    const name = rawName.trim().slice(0, 60);
+    if (!name) return;
+    doc.name = name;
+    doc.updatedAt = Date.now();
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`Renamed to ${name}`);
+  }
+
+  _duplicateActiveMotionPathDocument() {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return;
+    const id = this.motionPath.nextDocumentId++;
+    const clone = _deepClone(doc);
+    clone.id = id;
+    clone.name = `${doc.name} Copy`;
+    clone.updatedAt = Date.now();
+    this.motionPath.documents.push(clone);
+    this.motionPath.activeDocumentId = id;
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`Duplicated ${doc.name}`);
+  }
+
+  _deleteActiveMotionPathDocument() {
+    this._normalizeMotionPathState();
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc) return;
+    if (!window.confirm(`Delete motion graph "${doc.name}"?`)) return;
+
+    if (this.motionPath.documents.length <= 1) {
+      const replacement = this._createMotionPathDocumentRecord(doc.id, 'Motion Graph 1');
+      this.motionPath.documents = [replacement];
+      this.motionPath.activeDocumentId = replacement.id;
+      this.motionPath.nextDocumentId = Math.max(this.motionPath.nextDocumentId, replacement.id + 1);
+      this._syncMotionPathUI();
+      this._maybeAutoSaveSession();
+      this.showToast('Deleted graph and reset to a blank motion graph');
+      return;
+    }
+
+    const index = this.motionPath.documents.findIndex(entry => entry.id === doc.id);
+    if (index === -1) return;
+    this.motionPath.documents.splice(index, 1);
+    const fallback = this.motionPath.documents[Math.max(0, index - 1)] || this.motionPath.documents[0] || null;
+    this.motionPath.activeDocumentId = fallback?.id || this.motionPath.activeDocumentId;
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`Deleted ${doc.name}`);
+  }
+
+  _syncMotionPathUI() {
+    this._normalizeMotionPathState();
+    const doc = this._getActiveMotionPathDocument();
+    const docs = this.motionPath.documents;
+    const validPathIds = new Set((doc?.paths || []).map(path => path.id));
+    if (this.motionPathEditor.creationPathId && !validPathIds.has(this.motionPathEditor.creationPathId)) {
+      this.motionPathEditor.creationPathId = null;
+    }
+    const selectedIds = this._getSelectedMotionPathPrimitiveIds().filter(id => validPathIds.has(id));
+    if (selectedIds.length !== this._getSelectedMotionPathPrimitiveIds().length || (selectedIds.length && !selectedIds.includes(this.motionPathEditor.selectedPathId))) {
+      this.motionPathEditor.selectedPathIds = selectedIds;
+      this.motionPathEditor.selectedPathId = selectedIds.includes(this.motionPathEditor.selectedPathId)
+        ? this.motionPathEditor.selectedPathId
+        : (selectedIds[selectedIds.length - 1] || null);
+      this.motionPathEditor.selectedHandleIndex = selectedIds.length === 1 ? this.motionPathEditor.selectedHandleIndex : -1;
+    }
+    const optionsHtml = docs.map(entry => `<option value="${entry.id}">${entry.name}</option>`).join('');
+    for (const id of ['motionPathDocSelect', 'motionPathEditorSelect']) {
+      const select = document.getElementById(id);
+      if (!select) continue;
+      select.innerHTML = optionsHtml;
+      if (doc) select.value = String(doc.id);
+    }
+    const compiled = this._compileActiveMotionPathGraph(this.getP());
+    const summary = `${doc?.paths?.length || 0} path${(doc?.paths?.length || 0) === 1 ? '' : 's'} · ${compiled?.agents?.length || 0} agent${(compiled?.agents?.length || 0) === 1 ? '' : 's'}`;
+    const sidebarName = document.getElementById('motionPathDocName');
+    if (sidebarName) sidebarName.textContent = doc?.name || 'No graph';
+    const sidebarSummary = document.getElementById('motionPathDocSummary');
+    if (sidebarSummary) sidebarSummary.textContent = summary;
+    const editorName = document.getElementById('motionPathEditorDocName');
+    if (editorName) editorName.textContent = doc?.name || 'No graph selected';
+    const editorMeta = document.getElementById('motionPathEditorDocMeta');
+    if (editorMeta) editorMeta.textContent = summary;
+    const badge = document.getElementById('motionPathEditorStatus');
+    if (badge) {
+      const zoomLabel = `${Math.round((doc?.view?.zoom || 1) * 100)}%`;
+      const createKind = this._getMotionPathEditorCreateKind();
+      const toolLabel = createKind
+        ? `Create ${createKind[0].toUpperCase()}${createKind.slice(1)}`
+        : this.motionPathEditor.activeTool === 'delete'
+          ? 'Delete Tool'
+          : 'Select Tool';
+      badge.textContent = this.motionPathEditor.insertPointMode ? 'Click to Place Point' : `${toolLabel} · View ${zoomLabel}`;
+    }
+    const singleDoc = docs.length <= 1;
+    for (const id of ['motionPathDeleteDocBtn', 'motionPathEditorDelete']) {
+      const btn = document.getElementById(id);
+      if (!btn) continue;
+      btn.disabled = false;
+      btn.title = singleDoc
+        ? 'Delete the current graph and reset to a new blank graph'
+        : 'Delete the current motion graph';
+      btn.textContent = id === 'motionPathEditorDelete'
+        ? (singleDoc ? 'Reset Graph' : 'Delete')
+        : (singleDoc ? 'Reset' : 'Delete');
+    }
+    if (!selectedIds.length && doc?.paths?.length && Number.isFinite(this.motionPathEditor.selectedPathId) && !doc.paths.some(path => path.id === this.motionPathEditor.selectedPathId)) {
+      this.motionPathEditor.selectedPathId = null;
+      this.motionPathEditor.selectedHandleIndex = -1;
+    }
+    const selected = this._getSelectedMotionPathPrimitive();
+    const selectedCount = selectedIds.length;
+    const singleSelected = selectedCount === 1 ? selected : null;
+    const createKind = this._getMotionPathEditorCreateKind();
+    if (!singleSelected && this.motionPathEditor.insertPointMode) this.motionPathEditor.insertPointMode = false;
+    const selectionMeta = document.getElementById('motionPathEditorSelectionMeta');
+    if (selectionMeta) {
+      selectionMeta.textContent = singleSelected
+        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}`
+        : selectedCount > 1
+          ? `${selectedCount} primitives selected`
+          : 'No primitive selected';
+    }
+    const nameInput = document.getElementById('motionPathSelectedName');
+    if (nameInput) {
+      nameInput.disabled = !singleSelected;
+      nameInput.value = singleSelected?.name || '';
+    }
+    const agentInput = document.getElementById('motionPathSelectedAgentCount');
+    if (agentInput) {
+      agentInput.disabled = !singleSelected;
+      agentInput.value = String(singleSelected?.agentCount || 0);
+    }
+    const endBehaviorInput = document.getElementById('motionPathSelectedEndBehavior');
+    if (endBehaviorInput) {
+      endBehaviorInput.disabled = !singleSelected || !!singleSelected?.closed;
+      endBehaviorInput.value = _normalizeMotionPathEndBehavior(singleSelected?.endBehavior);
+    }
+    const closedInput = document.getElementById('motionPathSelectedClosed');
+    if (closedInput) {
+      closedInput.disabled = !singleSelected || (singleSelected?.kind !== 'polyline' && singleSelected?.kind !== 'bezier');
+      closedInput.checked = !!singleSelected?.closed;
+    }
+    const addPointBtn = document.getElementById('motionPathAddPoint');
+    if (addPointBtn) {
+      addPointBtn.disabled = !singleSelected || !!createKind;
+      addPointBtn.textContent = this.motionPathEditor.insertPointMode ? 'Cancel Point' : 'Add Point';
+    }
+    const insertBetweenToggle = document.getElementById('motionPathInsertBetweenToggle');
+    if (insertBetweenToggle) {
+      insertBetweenToggle.checked = !!this.motionPathEditor.insertBetweenPoints;
+      insertBetweenToggle.disabled = !singleSelected || !!createKind;
+    }
+    const deletePrimitiveBtn = document.getElementById('motionPathDeletePrimitive');
+    if (deletePrimitiveBtn) deletePrimitiveBtn.disabled = !selectedCount;
+    const toolbarStates = [
+      ['motionPathToolSelect', true, this.motionPathEditor.activeTool === 'select'],
+      ['motionPathToolDelete', true, this.motionPathEditor.activeTool === 'delete'],
+      ['motionPathToolbarCopy', !!selectedCount, false],
+      ['motionPathToolbarPaste', !!(this.motionPathEditor.clipboardPaths?.length), false],
+      ['motionPathToolbarDuplicate', !!selectedCount, false],
+      ['motionPathToolbarDeleteSelection', !!selectedCount, false],
+      ['motionPathToolbarAddPolyline', true, createKind === 'polyline'],
+      ['motionPathToolbarAddBezier', true, createKind === 'bezier'],
+      ['motionPathToolbarAddRect', true, createKind === 'rectangle'],
+      ['motionPathToolbarAddEllipse', true, createKind === 'ellipse'],
+      ['motionPathAddPolyline', true, createKind === 'polyline'],
+      ['motionPathAddBezier', true, createKind === 'bezier'],
+      ['motionPathAddRect', true, createKind === 'rectangle'],
+      ['motionPathAddEllipse', true, createKind === 'ellipse'],
+    ];
+    for (const [id, enabled, active] of toolbarStates) {
+      const button = document.getElementById(id);
+      if (!button) continue;
+      button.disabled = !enabled;
+      button.classList.toggle('active', !!active);
+    }
+    const empty = document.getElementById('motionPathEditorEmpty');
+    if (empty) empty.classList.toggle('hidden', !!doc?.paths?.length);
+    this._syncMotionPathOverlayControls(doc);
+    const canvas = this._getMotionPathEditorCanvas();
+    if (canvas) {
+      canvas.style.cursor = this.motionPathEditor.dragMode === 'pan'
+        ? 'grabbing'
+        : this.motionPathEditor.insertPointMode
+          ? 'copy'
+          : createKind
+            ? 'cell'
+          : this.motionPathEditor.activeTool === 'delete'
+            ? 'not-allowed'
+          : 'crosshair';
+    }
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _openMotionPathEditor() {
+    this._normalizeMotionPathState();
+    if (this.motionPath.editorOpen) return;
+    this.motionPath.previousUiState = {
+      sidebarOpen: !!document.getElementById('sidebar')?.classList.contains('open'),
+      layersOpen: !!document.getElementById('layersPanel')?.classList.contains('open'),
+    };
+    document.getElementById('sidebar')?.classList.remove('open');
+    document.getElementById('layersPanel')?.classList.remove('open');
+    document.getElementById('sidebarToggle')?.classList.remove('active');
+    document.getElementById('layersToggle')?.classList.remove('active');
+    document.getElementById('brushDropdown')?.classList.remove('open');
+    document.getElementById('motionPathEditor')?.classList.add('open');
+    this.motionPath.editorOpen = true;
+    this._syncMotionPathEditorCanvasSize();
+    this._syncMotionPathUI();
+    this._syncMotionPathOverlayControls();
+    this._renderMotionPathEditorSurface();
+    document.getElementById('motionPathEditorClose')?.focus();
+  }
+
+  _closeMotionPathEditor({ save = true } = {}) {
+    if (!this.motionPath.editorOpen) return;
+    this._cleanupMotionPathCreation();
+    this._hideMotionPathOverlayEndBehaviorSelect();
+    const overlayControls = this._getMotionPathEditorOverlayControls();
+    if (overlayControls) overlayControls.innerHTML = '';
+    document.getElementById('motionPathEditor')?.classList.remove('open');
+    this.motionPath.editorOpen = false;
+    this.motionPathEditor.pointerId = null;
+    this.motionPathEditor.dragMode = null;
+    this.motionPathEditor.dragPathId = null;
+    this.motionPathEditor.dragHandleIndex = -1;
+    this.motionPathEditor.selectedHandleIndex = -1;
+    this.motionPathEditor.creationPathId = null;
+    this.motionPathEditor.activeTool = 'select';
+    this.motionPathEditor.insertPointMode = false;
+    const previous = this.motionPath.previousUiState;
+    if (previous?.sidebarOpen) {
+      document.getElementById('sidebar')?.classList.add('open');
+      document.getElementById('sidebarToggle')?.classList.add('active');
+    }
+    if (previous?.layersOpen) {
+      document.getElementById('layersPanel')?.classList.add('open');
+      document.getElementById('layersToggle')?.classList.add('active');
+    }
+    this.motionPath.previousUiState = null;
+    this._syncMotionPathUI();
+    if (save) this.saveSession();
+  }
+
+  // ========================================================
   // BRUSH MANAGEMENT
   // ========================================================
 
@@ -3374,7 +5276,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', fluid: '🌊 LBM Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', motionPath: '🧭 Motion Path', fluid: '🌊 LBM Fluid', fluid3d: '💧 3D Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -3390,6 +5292,7 @@ export class App {
     if (!this._isMotionBrush(name)) this.simulation.enabled = false;
     this._ensureSimulationSpawns(name);
     this._syncSimulationUI();
+    this._syncMotionPathUI();
     this._paramsDirty = true;
   }
 
@@ -3615,6 +5518,114 @@ export class App {
       await this.resizeDocument(w, h, bg);
       this._hideCanvasSizeModal();
     });
+    document.getElementById('motionPathEditBtn')?.addEventListener('click', () => this._openMotionPathEditor());
+    document.getElementById('motionPathNewDocBtn')?.addEventListener('click', () => this._createMotionPathDocument());
+    document.getElementById('motionPathRenameDocBtn')?.addEventListener('click', () => this._renameActiveMotionPathDocument());
+    document.getElementById('motionPathDeleteDocBtn')?.addEventListener('click', () => this._deleteActiveMotionPathDocument());
+    document.getElementById('motionPathDocSelect')?.addEventListener('change', e => this._setActiveMotionPathDocument(e.target.value));
+    document.getElementById('motionPathEditorClose')?.addEventListener('click', () => this._closeMotionPathEditor());
+    document.getElementById('motionPathEditorBackdrop')?.addEventListener('click', () => this._closeMotionPathEditor({ save: false }));
+    document.getElementById('motionPathEditorCreate')?.addEventListener('click', () => this._createMotionPathDocument());
+    document.getElementById('motionPathEditorRename')?.addEventListener('click', () => this._renameActiveMotionPathDocument());
+    document.getElementById('motionPathEditorDuplicate')?.addEventListener('click', () => this._duplicateActiveMotionPathDocument());
+    document.getElementById('motionPathEditorDelete')?.addEventListener('click', () => this._deleteActiveMotionPathDocument());
+    document.getElementById('motionPathEditorSelect')?.addEventListener('change', e => this._setActiveMotionPathDocument(e.target.value));
+    document.getElementById('motionPathToolSelect')?.addEventListener('click', () => this._setMotionPathEditorTool('select'));
+    document.getElementById('motionPathToolDelete')?.addEventListener('click', () => this._setMotionPathEditorTool('delete'));
+    document.getElementById('motionPathToolbarCopy')?.addEventListener('click', () => this._copySelectedMotionPathPrimitives());
+    document.getElementById('motionPathToolbarPaste')?.addEventListener('click', () => this._pasteMotionPathPrimitives());
+    document.getElementById('motionPathToolbarDuplicate')?.addEventListener('click', () => this._duplicateSelectedMotionPathPrimitives());
+    document.getElementById('motionPathToolbarDeleteSelection')?.addEventListener('click', () => this._deleteSelectedMotionPathPrimitive());
+    document.getElementById('motionPathAddPolyline')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('polyline'));
+    document.getElementById('motionPathAddBezier')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('bezier'));
+    document.getElementById('motionPathAddRect')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('rectangle'));
+    document.getElementById('motionPathAddEllipse')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('ellipse'));
+    document.getElementById('motionPathToolbarAddPolyline')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('polyline'));
+    document.getElementById('motionPathToolbarAddBezier')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('bezier'));
+    document.getElementById('motionPathToolbarAddRect')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('rectangle'));
+    document.getElementById('motionPathToolbarAddEllipse')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('ellipse'));
+    document.getElementById('motionPathAddPoint')?.addEventListener('click', () => this._addPointToMotionPathPrimitive());
+    document.getElementById('motionPathInsertBetweenToggle')?.addEventListener('change', e => {
+      this.motionPathEditor.insertBetweenPoints = !!e.target.checked;
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathDeletePrimitive')?.addEventListener('pointerdown', e => e.stopPropagation());
+    document.getElementById('motionPathDeletePrimitive')?.addEventListener('click', () => this._deleteSelectedMotionPathPrimitive());
+    document.getElementById('motionPathSelectedName')?.addEventListener('input', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected) return;
+      selected.name = String(e.target.value || '').slice(0, 40);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedAgentCount')?.addEventListener('input', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected) return;
+      selected.agentCount = Math.max(0, Math.round(+e.target.value || 0));
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedEndBehavior')?.addEventListener('change', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected) return;
+      selected.endBehavior = _normalizeMotionPathEndBehavior(e.target.value);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedClosed')?.addEventListener('change', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected || (selected.kind !== 'polyline' && selected.kind !== 'bezier')) return;
+      selected.closed = !!e.target.checked;
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    const overlayControls = this._getMotionPathEditorOverlayControls();
+    overlayControls?.addEventListener('pointerdown', e => e.stopPropagation());
+    overlayControls?.addEventListener('click', e => {
+      const button = e.target instanceof HTMLElement ? e.target.closest('button[data-kind][data-path-id]') : null;
+      if (!button) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pathId = button.dataset.pathId;
+      if (!pathId) return;
+      if (button.dataset.kind === 'direction') {
+        this._cycleMotionPathDirectionMode(pathId);
+        return;
+      }
+      if (button.dataset.kind === 'behavior') {
+        const hostRect = overlayControls.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        this._openMotionPathOverlayEndBehaviorSelect(
+          pathId,
+          buttonRect.left - hostRect.left + (buttonRect.width * 0.5),
+          buttonRect.bottom - hostRect.top + 8,
+        );
+      }
+    });
+    const overlayEndBehaviorSelect = this._getMotionPathOverlayEndBehaviorSelect();
+    overlayEndBehaviorSelect?.addEventListener('pointerdown', e => e.stopPropagation());
+    overlayEndBehaviorSelect?.addEventListener('change', e => {
+      const select = e.currentTarget;
+      const pathId = Math.round(+(select?.dataset?.pathId || 0));
+      const doc = this._getActiveMotionPathDocument();
+      const path = doc?.paths?.find(entry => entry.id === pathId);
+      if (!path) return;
+      path.endBehavior = _normalizeMotionPathEndBehavior(select.value);
+      this._markMotionPathDocumentUpdated(doc);
+      this._syncMotionPathUI();
+      this._hideMotionPathOverlayEndBehaviorSelect();
+    });
+    overlayEndBehaviorSelect?.addEventListener('blur', () => {
+      this._hideMotionPathOverlayEndBehaviorSelect();
+    });
+    const motionPathCanvas = document.getElementById('motionPathEditorCanvas');
+    motionPathCanvas?.addEventListener('pointerdown', e => this._onMotionPathEditorPointerDown(e));
+    motionPathCanvas?.addEventListener('pointermove', e => this._onMotionPathEditorPointerMove(e));
+    motionPathCanvas?.addEventListener('pointerup', e => this._onMotionPathEditorPointerUp(e));
+    motionPathCanvas?.addEventListener('pointercancel', e => this._onMotionPathEditorPointerUp(e));
+    motionPathCanvas?.addEventListener('lostpointercapture', e => this._onMotionPathEditorPointerUp(e));
+    motionPathCanvas?.addEventListener('wheel', e => this._onMotionPathEditorWheel(e), { passive: false });
+    motionPathCanvas?.addEventListener('contextmenu', e => e.preventDefault());
   }
 
   _initTopbarOverflow() {
@@ -4048,6 +6059,45 @@ export class App {
       const tag = target.tagName;
       const isEditableField = !target.disabled && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
       if (target.isContentEditable || isEditableField) return;
+    }
+    if (this.motionPath?.editorOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (this.motionPathEditor?.insertPointMode) {
+          this._setMotionPathInsertPointMode(false);
+          return;
+        }
+        if (this._getMotionPathEditorCreateKind()) {
+          this._setMotionPathEditorTool('select');
+          return;
+        }
+        this._closeMotionPathEditor();
+      } else if (e.key === 'Enter' && this._getMotionPathEditorCreateKind()) {
+        e.preventDefault();
+        this._setMotionPathEditorTool('select');
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        this._copySelectedMotionPathPrimitives();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        this._pasteMotionPathPrimitives();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        this._duplicateSelectedMotionPathPrimitives();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        this._selectAllMotionPathPrimitives();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        this._deleteSelectedMotionPathPrimitive();
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        this._setMotionPathEditorTool('select');
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'x') {
+        e.preventDefault();
+        this._setMotionPathEditorTool('delete');
+      }
+      return;
     }
     // Ctrl+N = new canvas / canvas size
     if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
@@ -4727,9 +6777,14 @@ export class App {
     this.lctx.clearRect(0, 0, this.W, this.H);
     if (perf) clearMs = performance.now() - clearStart;
 
+    const showingCanvasTexturePreview = p.canvasTextureShowOnCanvas && this.hasCanvasTexture();
+    if (showingCanvasTexturePreview) {
+      this._renderCanvasTexturePreview(p);
+    }
+
     // Brush size cursor preview
     const overlayStart = perf ? performance.now() : 0;
-    if (this._cursorX >= 0 && this._cursorY >= 0) {
+    if (!showingCanvasTexturePreview && this._cursorX >= 0 && this._cursorY >= 0) {
       const canvasPos = this._screenToCanvas(this._cursorX, this._cursorY);
       const radius = p.stampSize / 2;
       this.lctx.save();
@@ -4741,25 +6796,28 @@ export class App {
       this.lctx.restore();
     }
 
-    if (brush && brush.drawOverlay) {
+    if (!showingCanvasTexturePreview && brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, p);
     }
-    this.drawSimulationOverlay(this.lctx);
+    if (!showingCanvasTexturePreview) this.drawSimulationOverlay(this.lctx);
     // Selection overlay (marching ants)
-    if (this.selectionMgr) this.selectionMgr.drawOverlay(this.lctx, elapsed);
+    if (!showingCanvasTexturePreview && this.selectionMgr) this.selectionMgr.drawOverlay(this.lctx, elapsed);
     // Floating pixel preview (during move/transform drag)
-    if (this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
+    if (!showingCanvasTexturePreview && this.selectionMgr) this.selectionMgr.drawFloatingPreview(this.lctx);
     // Transform handles
-    if (this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
+    if (!showingCanvasTexturePreview && this.selectionMgr?.transformActive) this.selectionMgr.drawTransformHandles(this.lctx);
 
     // Tiling mode boundary indicator
-    if (this.tilingMode) {
+    if (!showingCanvasTexturePreview && this.tilingMode) {
       this.lctx.save();
       this.lctx.strokeStyle = 'rgba(255,200,50,0.3)';
       this.lctx.lineWidth = 1;
       this.lctx.setLineDash([8, 4]);
       this.lctx.strokeRect(0, 0, this.W, this.H);
       this.lctx.restore();
+    }
+    if (this.motionPath?.editorOpen) {
+      this._renderMotionPathEditorSurface();
     }
     if (perf) overlayMs = performance.now() - overlayStart;
 
@@ -5737,6 +7795,7 @@ export class App {
         vars: this.simulation.vars,
         sessions: this.simulation.sessions,
       };
+      controls._motionPath = this._serializeMotionPathState();
       controls._canvasTextureState = this._serializeCanvasTextureState();
       controls._stampImageState = this._serializeCustomStampImageState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(controls));
@@ -5776,6 +7835,17 @@ export class App {
         if (Array.isArray(val?.sessions)) this.simulation.sessions = val.sessions;
         continue;
       }
+      if (id === '_motionPath') {
+        if (val && typeof val === 'object') {
+          this.motionPath = {
+            ...this.motionPath,
+            ..._deepClone(val),
+            editorOpen: false,
+            previousUiState: null,
+          };
+        }
+        continue;
+      }
       const el = document.getElementById(id);
       if (!el) continue;
       if (el.type === 'checkbox') el.checked = !!val;
@@ -5790,6 +7860,8 @@ export class App {
     syncUI(this);
     this._normalizeSimulationData();
     this._ensureSimulationSpawns();
+    this._normalizeMotionPathState();
+    this._syncMotionPathUI();
     this._syncSimulationUI();
   }
 
@@ -5820,6 +7892,8 @@ export class App {
       syncUI(this);
       this._normalizeSimulationData();
       this._ensureSimulationSpawns();
+      this._normalizeMotionPathState();
+      this._syncMotionPathUI();
       this._syncSimulationUI();
       if (controls._docSized && controls._docW && controls._docH) {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
