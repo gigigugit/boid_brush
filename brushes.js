@@ -38,6 +38,7 @@ const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 const FLUID_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
 const FLUID_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
 const FLUID3D_MOVE_EMIT_RATIO = 0.5;
+const FLUID3D_ACTIVE_SUBSTEPS = 3;
 const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
 const FLUID3D_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
 const FLUID3D_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
@@ -4829,8 +4830,12 @@ export class ThreeDFluidBrush {
         await this._legacyFallback.init({ force });
         return this;
       }
-      this.sim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, params);
-      this._finalSim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams('final'));
+      const gpuContext = {
+        adapter: this.renderer.adapter,
+        device: this.renderer.device,
+      };
+      this.sim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, params, gpuContext);
+      this._finalSim = await WebGPUFluidSim.create(this.app.W || 800, this.app.H || 600, this._solverParams('final'), gpuContext);
       this._ready = true;
       this._backend = 'webgpu';
       this._syncMask();
@@ -4897,6 +4902,15 @@ export class ThreeDFluidBrush {
       renderMode: p.fluid3dRenderMode,
       previewBoost: pass === 'final' ? 1 : (p.fluid3dAdaptiveQuality ? 1.25 : 1),
       occupancyBias: p.fluid3dOccupancyBias,
+      spreadClamp: p.fluid3dSpreadClamp,
+      surfaceTension: p.fluid3dSurfaceTension,
+      edgeWidth: p.fluid3dEdgeWidth,
+      edgeDrag: p.fluid3dEdgeDrag,
+      injectorMode: p.fluid3dInjectorMode,
+      injectorMotionWeight: p.fluid3dInjectorMotion,
+      injectorPigmentMotion: p.fluid3dInjectorPigment,
+      injectorOccupancyMotion: p.fluid3dInjectorOccupancy,
+      injectorSwirl: p.fluid3dInjectorSwirl,
     };
   }
 
@@ -4956,24 +4970,42 @@ export class ThreeDFluidBrush {
     const color = hexToRGB(p.color);
     const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
     const scaledCount = Math.max(1, Math.round(amount * (0.45 + pressure * 0.55)));
+    const hasStrokeDirection = !!previousPoint && profile.distance > 1e-3;
+    const totalEmitterStrength = p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6);
+    const totalInfluenceStrength = p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7);
+    const emitterStrength = totalEmitterStrength / scaledCount;
+    const influenceStrength = totalInfluenceStrength / scaledCount;
     const emitters = [];
     const influences = [];
     for (let index = 0; index < scaledCount; index += 1) {
-      const angle = (Math.PI * 2 * index) / scaledCount;
-      const radial = scaledRadius * (0.2 + Math.random() * 0.35);
-      const px = x + Math.cos(angle) * radial * 0.28 + profile.tangentX * radial * 0.12;
-      const py = y + Math.sin(angle) * radial * 0.28 + profile.tangentY * radial * 0.12;
-      const velocityScale = (0.25 + Math.random() * 0.35) * p.fluid3dEmitterVelocity;
-      const vx = (profile.tangentX * velocityScale + profile.normalX * (Math.random() - 0.5) * 0.15) * scaledRadius * 0.04;
-      const vy = (profile.tangentY * velocityScale + profile.normalY * (Math.random() - 0.5) * 0.15) * scaledRadius * 0.04;
+      const scatterAngle = Math.random() * Math.PI * 2;
+      const scatterRadius = Math.sqrt(Math.random()) * scaledRadius * (hasStrokeDirection ? 0.34 : 0.24);
+      const alongJitter = (Math.random() - 0.5) * scaledRadius * (hasStrokeDirection ? 0.24 : 0.08);
+      const acrossJitter = (Math.random() - 0.5) * scaledRadius * (hasStrokeDirection ? 0.42 : 0.26);
+      const radialX = Math.cos(scatterAngle);
+      const radialY = Math.sin(scatterAngle);
+      const px = x
+        + profile.tangentX * alongJitter
+        + profile.normalX * acrossJitter
+        + radialX * scatterRadius * 0.28;
+      const py = y
+        + profile.tangentY * alongJitter
+        + profile.normalY * acrossJitter
+        + radialY * scatterRadius * 0.28;
+      const velocityScale = (0.2 + Math.random() * 0.18) * p.fluid3dEmitterVelocity * scaledRadius * 0.035;
+      const tangentVelocity = hasStrokeDirection ? velocityScale : velocityScale * 0.08;
+      const radialVelocity = hasStrokeDirection ? velocityScale * 0.1 : velocityScale * (Math.random() - 0.5) * 0.05;
+      const normalVelocity = velocityScale * (Math.random() - 0.5) * (hasStrokeDirection ? 0.22 : 0.1);
+      const vx = profile.tangentX * tangentVelocity + profile.normalX * normalVelocity + radialX * radialVelocity;
+      const vy = profile.tangentY * tangentVelocity + profile.normalY * normalVelocity + radialY * radialVelocity;
       emitters.push({
         sourceType: 0,
         x: px,
         y: py,
         vx,
         vy,
-        radius: scaledRadius * (0.48 + Math.random() * 0.24),
-        strength: p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6),
+        radius: scaledRadius * (0.2 + Math.random() * 0.12),
+        strength: emitterStrength,
         alpha: p.fluid3dOpacity,
         pigmentColor: color,
         modeFlags: 1,
@@ -4984,8 +5016,8 @@ export class ThreeDFluidBrush {
         y: py,
         vx,
         vy,
-        radius: scaledRadius * (0.85 + Math.random() * 0.3),
-        strength: p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7),
+        radius: scaledRadius * (0.34 + Math.random() * 0.18),
+        strength: influenceStrength,
         alpha: p.fluid3dOpacity * 0.25,
         pigmentColor: color,
         modeFlags: 0,
@@ -5003,6 +5035,11 @@ export class ThreeDFluidBrush {
     };
   }
 
+  _hasVisiblePreview() {
+    const layer = this._strokeLayer;
+    return !!(layer?.gpuPreviewCanvas || this.renderer?.previewCanvas || this.renderer?.canvas);
+  }
+
   onDown(x, y, pressure) {
     if (this._usingLegacyFallback()) return this._legacyFallback.onDown(x, y, pressure);
     if (!this.app.undoPushedThisStroke) {
@@ -5011,6 +5048,11 @@ export class ThreeDFluidBrush {
     }
     if (!this._ready || !this.sim) return;
     if (this._finalPassJob) {
+      this._commitPreviewToLayer({ composite: false });
+      this._finishSettledStroke();
+    } else if (!this._active && this._strokeLayer && this._hasVisiblePreview()) {
+      // Starting a new stroke should preserve the currently visible settled preview,
+      // even if the previous stroke has not yet entered the async final-pass path.
       this._commitPreviewToLayer({ composite: false });
       this._finishSettledStroke();
     }
@@ -5256,11 +5298,17 @@ export class ThreeDFluidBrush {
     this._lastFrameElapsed = elapsed;
     if (!Number.isFinite(dt) || dt <= 0) dt = FLUID_TIMESTEP_60FPS;
     dt = Math.min(dt, 0.05);
-    this.sim.step(dt);
+    const stepCount = this._active ? FLUID3D_ACTIVE_SUBSTEPS : 1;
+    const stepDt = dt / stepCount;
+    for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+      this.sim.step(stepDt);
+    }
     const nextCount = this.sim.getParticleCount();
     if (this._usesAdaptiveReplay(currentParams) && (this._active || prevCount > 0 || nextCount > 0)) {
-      this._replayStepHistory.push(dt);
-      this._replayTime += dt;
+      for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+        this._replayStepHistory.push(stepDt);
+        this._replayTime += stepDt;
+      }
     }
     if (this._active || prevCount > 0 || nextCount > 0) {
       this._renderPreviewFromSim(this.sim);

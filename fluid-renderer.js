@@ -166,6 +166,26 @@ fn sampleCell(x : u32, y : u32, field : u32) -> f32 {
   return cells[idx(cy * u32(max(uniforms.gridSize.x, 1.0)) + cx, field)];
 }
 
+fn sampleCellLinear(uv : vec2f, field : u32) -> f32 {
+  let maxX = max(uniforms.gridSize.x - 1.0, 0.0);
+  let maxY = max(uniforms.gridSize.y - 1.0, 0.0);
+  let sx = clamp(uv.x * uniforms.gridSize.x - 0.5, 0.0, maxX);
+  let sy = clamp(uv.y * uniforms.gridSize.y - 0.5, 0.0, maxY);
+  let x0 = u32(floor(sx));
+  let y0 = u32(floor(sy));
+  let x1 = min(x0 + 1u, u32(max(uniforms.gridSize.x, 1.0)) - 1u);
+  let y1 = min(y0 + 1u, u32(max(uniforms.gridSize.y, 1.0)) - 1u);
+  let tx = sx - f32(x0);
+  let ty = sy - f32(y0);
+  let v00 = sampleCell(x0, y0, field);
+  let v10 = sampleCell(x1, y0, field);
+  let v01 = sampleCell(x0, y1, field);
+  let v11 = sampleCell(x1, y1, field);
+  let top = mix(v00, v10, tx);
+  let bottom = mix(v01, v11, tx);
+  return mix(top, bottom, ty);
+}
+
 @vertex
 fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
   var pos = array<vec2f, 6>(
@@ -185,20 +205,23 @@ fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
 
 @fragment
 fn fs_main(input : VertexOutput) -> @location(0) vec4f {
-  let gridX = clamp(u32(input.uv.x * uniforms.gridSize.x), 0u, u32(max(uniforms.gridSize.x, 1.0)) - 1u);
-  let gridY = clamp(u32(input.uv.y * uniforms.gridSize.y), 0u, u32(max(uniforms.gridSize.y, 1.0)) - 1u);
-  let thickness = sampleCell(gridX, gridY, 1u);
-  let pressure = sampleCell(gridX, gridY, 2u);
-  let vx = sampleCell(gridX, gridY, 3u);
-  let vy = sampleCell(gridX, gridY, 4u);
-  let pigment = vec3f(sampleCell(gridX, gridY, 5u), sampleCell(gridX, gridY, 6u), sampleCell(gridX, gridY, 7u));
-  let pigmentAlpha = sampleCell(gridX, gridY, 8u);
-  let occupancy = sampleCell(gridX, gridY, 9u);
-  let terrain = sampleCell(gridX, gridY, 10u);
+  let thickness = sampleCellLinear(input.uv, 1u);
+  let pressure = sampleCellLinear(input.uv, 2u);
+  let vx = sampleCellLinear(input.uv, 3u);
+  let vy = sampleCellLinear(input.uv, 4u);
+  let pigment = vec3f(sampleCellLinear(input.uv, 5u), sampleCellLinear(input.uv, 6u), sampleCellLinear(input.uv, 7u));
+  let pigmentAlpha = sampleCellLinear(input.uv, 8u);
+  let occupancy = sampleCellLinear(input.uv, 9u);
+  let terrain = sampleCellLinear(input.uv, 10u);
   let speed = length(vec2f(vx, vy));
+  let pigmentPeak = max(max(pigment.r, pigment.g), pigment.b);
+  let hasPigment = pigmentPeak > 0.0001;
+  let pigmentHue = select(vec3f(0.0), clamp(pigment / max(pigmentPeak, 0.0001), vec3f(0.0), vec3f(1.0)), hasPigment);
   let pressureTint = vec3f(0.22 + abs(pressure) * 1.2, 0.18 + speed * 0.8, 0.42 + terrain * 0.5);
-  let volumeColor = mix(vec3f(0.03, 0.05, 0.08), max(pigment, vec3f(0.14, 0.22, 0.34)), clamp(thickness * uniforms.thicknessScale + occupancy * 0.3, 0.0, 1.0));
-  let pigmentColor = mix(vec3f(0.0), pigment, clamp(pigmentAlpha + thickness * 0.4, 0.0, 1.0));
+  let volumeMix = clamp(thickness * uniforms.thicknessScale + occupancy * 0.3, 0.0, 1.0);
+  let volumeBase = select(vec3f(0.14, 0.22, 0.34), pigmentHue, hasPigment);
+  let volumeColor = mix(volumeBase * 0.35, volumeBase, volumeMix);
+  let pigmentColor = pigmentHue;
   var color = volumeColor;
   if (uniforms.mode > 1.5) {
     color = pigmentColor;
@@ -206,7 +229,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     color = pressureTint;
   }
   let alpha = clamp(max(thickness * uniforms.alphaScale, pigmentAlpha * 0.7 + occupancy * 0.4), 0.0, 1.0);
-  return vec4f(color, alpha);
+  return vec4f(color * alpha, alpha);
 }
 `,
     });
@@ -220,7 +243,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
         targets: [{
           format: this.presentationFormat,
           blend: {
-            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
             alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
           },
         }],
@@ -273,7 +296,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
         targets: [{
           format: this.presentationFormat,
           blend: {
-            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
             alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
           },
         }],
@@ -424,8 +447,8 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     }
   }
 
-  render({ renderState, targetWidthPx, targetHeightPx, clear = true }) {
-    if (!this.ready) return this._setRenderFailure('WebGPU fluid renderer not ready');
+  render({ renderState, targetWidthPx, targetHeightPx, clear = true, allowBeforeReady = false }) {
+    if (!this.ready && !allowBeforeReady) return this._setRenderFailure('WebGPU fluid renderer not ready');
     if (!renderState?.buffer) return this._setRenderFailure('WebGPU fluid render state unavailable');
     const widthPx = Math.max(1, Math.round(targetWidthPx || renderState.displayWidth || renderState.width));
     const heightPx = Math.max(1, Math.round(targetHeightPx || renderState.displayHeight || renderState.height));
@@ -573,7 +596,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     };
     const probeCell = new Float32Array([0, 1, 0.5, 0, 0, 1, 0.1, 0.1, 1, 1, 0, 0, 0, 0]);
     this.device.queue.writeBuffer(probeState.buffer, 0, probeCell.buffer, probeCell.byteOffset, probeCell.byteLength);
-    const drew = this.render({ renderState: probeState, targetWidthPx: 32, targetHeightPx: 32, clear: true });
+    const drew = this.render({ renderState: probeState, targetWidthPx: 32, targetHeightPx: 32, clear: true, allowBeforeReady: true });
     if (!drew) return false;
     if (this.device.queue.onSubmittedWorkDone) await this.device.queue.onSubmittedWorkDone();
     this._interopProbeCtx.save();
