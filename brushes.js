@@ -163,15 +163,15 @@ class StampInstanceBuffer {
     this._data = next;
   }
 
-  push(x, y, size, r, g, b, a) {
+  push(x, y, size, r, g, b, a, rotation = 0) {
     if (this.count >= this._capacity) this._grow();
     const base = this.count * this._stride;
     this._data[base + 0] = x;
     this._data[base + 1] = y;
     this._data[base + 2] = size;
-    // Padding slot keeps the packed instance data aligned with the renderer's
-    // 8-float / 32-byte instance stride.
-    this._data[base + 3] = 0;
+    // Store per-stamp rotation in the spare slot while preserving the
+    // renderer's 8-float / 32-byte instance stride.
+    this._data[base + 3] = rotation;
     this._data[base + 4] = r / 255;
     this._data[base + 5] = g / 255;
     this._data[base + 6] = b / 255;
@@ -288,7 +288,7 @@ function _batchHasVisiblePixels(targetCtx, batch, dpr = 1) {
   return false;
 }
 
-function _emitBatchStampInstances(app, instances, p, x, y, size, colorRGB, opacity) {
+function _emitBatchStampInstances(app, instances, p, x, y, size, colorRGB, opacity, rotation = 0) {
   const renderPoints = p.symmetryEnabled
     ? app.getSymmetryPoints(x, y)
     : [{ x, y }];
@@ -311,7 +311,7 @@ function _emitBatchStampInstances(app, instances, p, x, y, size, colorRGB, opaci
       }
     }
     if (instOpacity < 0.005 || instSize < 0.5) return;
-    instances.push(px, py, instSize, colorRGB.r, colorRGB.g, colorRGB.b, instOpacity);
+    instances.push(px, py, instSize, colorRGB.r, colorRGB.g, colorRGB.b, instOpacity, rotation);
   };
 
   for (const point of renderPoints) {
@@ -4189,6 +4189,7 @@ export class SimpleBrush {
     this._blurTmpCtx = null;
     this._blurStrokeCanvas = null;
     this._blurStrokeCtx = null;
+    this._lastStrokeAngle = 0;
     this._ensureRendererInit();
   }
 
@@ -4255,22 +4256,30 @@ export class SimpleBrush {
     if (!points?.length) return [];
     const expanded = [];
     const seen = new Set();
-    const addPoint = (x, y) => {
+    const addPoint = (x, y, rotation = 0) => {
       const key = `${Math.round(x * 1000)}:${Math.round(y * 1000)}`;
       if (seen.has(key)) return;
       seen.add(key);
-      expanded.push({ x, y });
+      expanded.push({ x, y, rotation });
     };
     for (const point of points) {
+      const rotation = Number.isFinite(point.rotation) ? point.rotation : 0;
       const symPoints = p.symmetryEnabled ? this.app.getSymmetryPoints(point.x, point.y) : [point];
       for (const symPoint of symPoints) {
-        addPoint(symPoint.x, symPoint.y);
+        addPoint(symPoint.x, symPoint.y, rotation);
         if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
         const wraps = this.app._getStampWrapPoints(symPoint.x, symPoint.y, stampSize);
-        for (const wrap of wraps) addPoint(wrap.x, wrap.y);
+        for (const wrap of wraps) addPoint(wrap.x, wrap.y, rotation);
       }
     }
     return expanded;
+  }
+
+  _resolveStrokeAngle(pathAngle, p, fallbackAngle = this._lastStrokeAngle) {
+    return this.app.resolveStrokeAngle(pathAngle, {
+      mode: p.strokeAngleMode,
+      fallbackAngle,
+    });
   }
 
   _buildSimpleBatch(points, p, pressure) {
@@ -4295,7 +4304,7 @@ export class SimpleBrush {
       }
       op = Math.min(op, 1);
       if (sz < 0.5 || op < 0.005) continue;
-      instances.push(pt.x, pt.y, sz, color.r, color.g, color.b, op);
+      instances.push(pt.x, pt.y, sz, color.r, color.g, color.b, op, pt.rotation || 0);
     }
     return { instances: instances.finish(), count: instances.count };
   }
@@ -4411,6 +4420,7 @@ export class SimpleBrush {
 
   onDown(x, y, pressure) {
     const p = this.app.getP();
+    const strokeAngle = this._resolveStrokeAngle(null, p, this._lastStrokeAngle);
     if (!this.app.undoPushedThisStroke) {
       this.app.pushUndo();
       this.app.undoPushedThisStroke = true;
@@ -4455,10 +4465,11 @@ export class SimpleBrush {
 
     this._lastStampX = x;
     this._lastStampY = y;
+    this._lastStrokeAngle = strokeAngle;
     this.app.strokeFrame = 0;
     this._active = true;
-    if (!this._renderPointBatch([{ x, y }], pressure)) {
-      this._stamp(x, y, pressure);
+    if (!this._renderPointBatch([{ x, y, rotation: strokeAngle }], pressure)) {
+      this._stamp(x, y, pressure, strokeAngle);
     }
     this._markDirty();
   }
@@ -4478,16 +4489,23 @@ export class SimpleBrush {
     if (dist < step) return; // accumulate distance until next stamp
 
     const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+    const pathAngle = dist > 0 ? Math.atan2(dy, dx) : this._lastStrokeAngle;
+    const strokeAngle = this._resolveStrokeAngle(pathAngle, p, this._lastStrokeAngle);
     const points = [];
     for (let j = 1; j <= n; j++) {
       const t = j / n;
-      points.push({ x: this._lastStampX + dx * t, y: this._lastStampY + dy * t });
+      points.push({
+        x: this._lastStampX + dx * t,
+        y: this._lastStampY + dy * t,
+        rotation: strokeAngle,
+      });
     }
     if (!this._renderPointBatch(points, pressure)) {
-      for (const pt of points) this._stamp(pt.x, pt.y, pressure);
+      for (const pt of points) this._stamp(pt.x, pt.y, pressure, pt.rotation);
     }
     this._lastStampX = x;
     this._lastStampY = y;
+    this._lastStrokeAngle = strokeAngle;
 
     this._markDirty();
   }
@@ -4576,7 +4594,7 @@ export class SimpleBrush {
     this._needsComposite = false;
   }
 
-  _stamp(x, y, pressure) {
+  _stamp(x, y, pressure, strokeAngle = this._lastStrokeAngle) {
     const p = this.app.getP();
     const flat = this._flatActive;
     const layer = this.app.getActiveLayer();
@@ -4588,7 +4606,9 @@ export class SimpleBrush {
     if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
     op = Math.min(op, 1);
 
-    this.app.symStamp(ctx, x, y, sz, p.color, op);
+    this.app.symStamp(ctx, x, y, sz, p.color, op, {
+      rotation: (p.stampImageRotation || 0) + strokeAngle,
+    });
     if (this._blurStrokeCtx) _stampToBlurAccum(this._blurStrokeCtx, this.app, x, y, sz, p.color, op);
     this.app.strokeFrame++;
   }
@@ -6005,13 +6025,68 @@ export class MotionPathBrush {
     this._gpuPreviewLayer = null;
     this._gpuPreviewRenderer = null;
     this._overlayPoints = [];
+    this._graphAngle = 0;
+    this._hasGraphAngle = false;
+    this._lastInputX = 0;
+    this._lastInputY = 0;
     _ensureProceduralStampRendererInit(this);
+  }
+
+  _updateGraphAngle(p, x = this._lastInputX, y = this._lastInputY, { hasPathSample = false, fallbackAngle = this._graphAngle } = {}) {
+    let pathAngle = null;
+    if (hasPathSample) {
+      const dx = x - this._lastInputX;
+      const dy = y - this._lastInputY;
+      if (Math.hypot(dx, dy) > 0.001) pathAngle = Math.atan2(dy, dx);
+    }
+    const targetAngle = this.app.resolveStrokeAngle(pathAngle, {
+      mode: p.strokeAngleMode,
+      fallbackAngle,
+    });
+    if (!this._hasGraphAngle) {
+      this._graphAngle = targetAngle;
+      this._hasGraphAngle = true;
+    } else {
+      const alpha = p.motionPathAngleSmoothing > 0
+        ? 1 - p.motionPathAngleSmoothing * MAX_SMOOTH_DAMP
+        : 1;
+      const diff = ((targetAngle - this._graphAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      this._graphAngle += diff * alpha;
+    }
+    this._lastInputX = x;
+    this._lastInputY = y;
+    return this._graphAngle;
+  }
+
+  _smoothAgentWorldPoint(agent, prevTargetX, prevTargetY, targetX, targetY, p) {
+    const smoothing = _clamp(p.motionPathMovementSmoothing || 0, 0, 1);
+    if (
+      !Number.isFinite(agent.smoothX)
+      || !Number.isFinite(agent.smoothY)
+      || !Number.isFinite(prevTargetX)
+      || !Number.isFinite(prevTargetY)
+      || smoothing <= 0
+      || agent.discontinuousStep
+      || agent.wrappedStep
+    ) {
+      agent.smoothX = targetX;
+      agent.smoothY = targetY;
+      return { x: targetX, y: targetY };
+    }
+    const alpha = 1 - smoothing * MAX_SMOOTH_DAMP;
+    const candidateX = agent.smoothX + (targetX - agent.smoothX) * alpha;
+    const candidateY = agent.smoothY + (targetY - agent.smoothY) * alpha;
+    const clamped = _closestPointOnSegment(candidateX, candidateY, prevTargetX, prevTargetY, targetX, targetY);
+    agent.smoothX = clamped.x;
+    agent.smoothY = clamped.y;
+    return { x: agent.smoothX, y: agent.smoothY };
   }
 
   _resetRuntime(recompile = false) {
     this._runtimeAgents = [];
     this._overlayPoints = [];
     this._lastElapsed = 0;
+    this._hasGraphAngle = false;
     if (recompile) {
       this._compiledGraph = null;
       this._compiledGraphKey = '';
@@ -6020,7 +6095,7 @@ export class MotionPathBrush {
 
   _ensureCompiledGraph(p) {
     const compiled = this.app._compileActiveMotionPathGraph?.(p) || { documentId: null, updatedAt: 0, paths: [], agents: [] };
-    const key = `${compiled.documentId || 0}:${compiled.updatedAt || 0}:${p.motionPathAgentCount || 0}`;
+    const key = `${compiled.documentId || 0}:${compiled.updatedAt || 0}:${p.motionPathAgentCount || 0}:${Math.round((p.motionPathPathSmoothing || 0) * 1000)}`;
     if (this._compiledGraphKey === key && this._compiledGraph) return this._compiledGraph;
     this._compiledGraphKey = key;
     this._compiledGraph = compiled;
@@ -6036,6 +6111,11 @@ export class MotionPathBrush {
       discontinuousStep: false,
       wrappedStep: false,
       lateralOffset: list.length <= 1 ? 0 : ((index / Math.max(1, list.length - 1)) - 0.5) * 2,
+      spacingDistance: Number.NaN,
+      spacingX: Number.NaN,
+      spacingY: Number.NaN,
+      smoothX: Number.NaN,
+      smoothY: Number.NaN,
       prevX: Number.NaN,
       prevY: Number.NaN,
     }));
@@ -6058,18 +6138,158 @@ export class MotionPathBrush {
     this.app.compositeAllLayers();
   }
 
+  _cpuRenderRibbonSegments(segments, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer?.ctx || !segments?.length) return;
+    const ctx = layer.ctx;
+    let width = p.stampSize;
+    if (p.pressureSize) width *= (0.3 + 0.7 * this._pressure);
+    width = Math.max(0.5, width);
+    let opacity = p.stampOpacity;
+    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    opacity = Math.min(opacity, 1);
+    const activeLayer = this.app.getActiveLayer();
+    const useAlphaLock = activeLayer && activeLayer.alphaLock;
+    const useStampImage = this.app.hasActiveStampImage?.(p);
+    const support = useStampImage ? _getProceduralBatchRendererSupport(this, p, false) : { ok: false, reason: '' };
+    const stampStep = Math.max(0.35, width * 0.18);
+    const offsets = this.app.tilingMode
+      ? [
+          [0, 0],
+          [this.app.W, 0],
+          [-this.app.W, 0],
+          [0, this.app.H],
+          [0, -this.app.H],
+          [this.app.W, this.app.H],
+          [this.app.W, -this.app.H],
+          [-this.app.W, this.app.H],
+          [-this.app.W, -this.app.H],
+        ]
+      : [[0, 0]];
+
+    if (useStampImage && support.ok) {
+      const color = hexToRGB(p.color);
+      const instances = new StampInstanceBuffer(Math.max(32, segments.length * 8));
+      for (const segment of segments) {
+        if (segment.kind === 'dot') {
+          _emitBatchStampInstances(this.app, instances, p, segment.x, segment.y, width, color, opacity, 0);
+          continue;
+        }
+
+        const dx = segment.x1 - segment.x0;
+        const dy = segment.y1 - segment.y0;
+        const travel = Math.hypot(dx, dy);
+        const rotation = Math.atan2(dy, dx);
+        const steps = Math.max(1, Math.ceil(travel / stampStep));
+        for (let step = 1; step <= steps; step++) {
+          const t = step / steps;
+          const x = segment.x0 + dx * t;
+          const y = segment.y0 + dy * t;
+          _emitBatchStampInstances(this.app, instances, p, x, y, width, color, opacity, rotation);
+        }
+      }
+
+      if (instances.count > 0) {
+        const batch = { instances: instances.finish(), count: instances.count };
+        if (_renderProceduralBatchToTarget(this, ctx, batch, p, { allowAlphaLock: true })) {
+          layer.dirty = true;
+          this.app.compositeAllLayers();
+          return;
+        }
+      }
+    }
+
+    if (useStampImage) {
+      for (const segment of segments) {
+        if (segment.kind === 'dot') {
+          this.app.symBitmapStamp(ctx, segment.x, segment.y, width, p.color, opacity, {
+            p,
+            markDirty: false,
+          });
+          continue;
+        }
+
+        const dx = segment.x1 - segment.x0;
+        const dy = segment.y1 - segment.y0;
+        const travel = Math.hypot(dx, dy);
+        const rotation = Math.atan2(dy, dx);
+        const steps = Math.max(1, Math.ceil(travel / stampStep));
+        for (let step = 1; step <= steps; step++) {
+          const t = step / steps;
+          const x = segment.x0 + dx * t;
+          const y = segment.y0 + dy * t;
+          this.app.symBitmapStamp(ctx, x, y, width, p.color, opacity, {
+            p,
+            rotation,
+            markDirty: false,
+          });
+        }
+      }
+      layer.dirty = true;
+      this.app.compositeAllLayers();
+      return;
+    }
+
+    ctx.save();
+    ctx.strokeStyle = p.color;
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = opacity;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
+    for (const segment of segments) {
+      if (segment.kind === 'dot') {
+        const points = this.app.getSymmetryPoints(segment.x, segment.y);
+        for (let i = 0; i < points.length; i++) {
+          const point = points[i];
+          for (const [ox, oy] of offsets) {
+            ctx.beginPath();
+            ctx.arc(point.x + ox, point.y + oy, width / 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        continue;
+      }
+      const startPoints = this.app.getSymmetryPoints(segment.x0, segment.y0);
+      const endPoints = this.app.getSymmetryPoints(segment.x1, segment.y1);
+      const pairCount = Math.min(startPoints.length, endPoints.length);
+      for (let i = 0; i < pairCount; i++) {
+        const start = startPoints[i];
+        const end = endPoints[i];
+        for (const [ox, oy] of offsets) {
+          ctx.beginPath();
+          ctx.moveTo(start.x + ox, start.y + oy);
+          ctx.lineTo(end.x + ox, end.y + oy);
+          ctx.stroke();
+        }
+      }
+    }
+    if (useAlphaLock) ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+  }
+
   onDown(x, y, pressure = 1) {
+    const p = this.app.getP();
     if (this._gpuPreviewActive) _commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true });
     this._active = true;
     this._originX = x;
     this._originY = y;
     this._pressure = pressure;
+    this._lastInputX = x;
+    this._lastInputY = y;
+    this._updateGraphAngle(p, x, y, { hasPathSample: false, fallbackAngle: 0 });
     this._resetRuntime(true);
     _ensureProceduralStampRendererInit(this);
-    this._ensureCompiledGraph(this.app.getP());
+    this._ensureCompiledGraph(p);
   }
 
   onMove(x, y, pressure = this._pressure) {
+    const p = this.app.getP();
+    this._updateGraphAngle(p, x, y, { hasPathSample: true });
     this._originX = x;
     this._originY = y;
     this._pressure = pressure;
@@ -6091,6 +6311,7 @@ export class MotionPathBrush {
   onFrame(elapsed) {
     if (!this._active) return;
     const p = this.app.getP();
+    this._updateGraphAngle(p, this._lastInputX, this._lastInputY, { hasPathSample: false });
     const compiled = this._ensureCompiledGraph(p);
     if (!compiled?.paths?.length || !this._runtimeAgents.length) return;
     const delta = this._lastElapsed > 0
@@ -6102,11 +6323,17 @@ export class MotionPathBrush {
     const targetSpeed = Math.max(0.05, p.motionPathSpeed || 1) * MOTION_PATH_BRUSH_BASE_SPEED;
     const acceleration = _clamp((p.motionPathAcceleration || 0) * 3.5, 0.2, 8);
     const pullStrength = _clamp((p.motionPathAttraction || 0) * 0.35, 0, 0.35);
-    const separation = Math.max(1, (p.stampSize || 1) * Math.max(0.08, p.stampSeparation || 0.15) * 0.5);
+    const baseSeparation = (p.stampSize || 1) * Math.max(0.08, p.stampSeparation || 0.15) * 0.5;
+    const separation = Math.max(0.2, baseSeparation * Math.max(0.05, p.motionPathSpacing || 0.35));
+    const useRibbon = (p.motionPathRenderMode || 'ribbon') === 'ribbon';
+    const graphAngle = this._graphAngle || 0;
+    const graphCos = Math.cos(graphAngle);
+    const graphSin = Math.sin(graphAngle);
     const support = _getProceduralBatchRendererSupport(this, p, false);
     const color = hexToRGB(p.color);
     const instances = new StampInstanceBuffer(Math.max(32, this._runtimeAgents.length * 6));
     const cpuFallbackPoints = [];
+    const ribbonSegments = [];
     this._overlayPoints = [];
 
     let size = p.stampSize;
@@ -6115,7 +6342,35 @@ export class MotionPathBrush {
     if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
     opacity = Math.min(opacity, 1);
 
+    if (useRibbon && this._gpuPreviewActive) {
+      _commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true });
+    }
+
+    const emitRibbonPoint = (x, y) => {
+      ribbonSegments.push({ kind: 'dot', x, y });
+    };
+
+    const emitRibbonSegment = (x0, y0, x1, y1) => {
+      ribbonSegments.push({ kind: 'segment', x0, y0, x1, y1 });
+    };
+
+    const emitPointStamp = (x, y) => {
+      if (useRibbon) {
+        emitRibbonPoint(x, y);
+        return;
+      }
+      if (support.ok) {
+        _emitBatchStampInstances(this.app, instances, p, x, y, size, color, opacity);
+      } else {
+        cpuFallbackPoints.push({ x, y });
+      }
+    };
+
     const emitSegmentStamps = (x0, y0, x1, y1) => {
+      if (useRibbon) {
+        emitRibbonSegment(x0, y0, x1, y1);
+        return;
+      }
       const dx = x1 - x0;
       const dy = y1 - y0;
       const travel = Math.hypot(dx, dy);
@@ -6124,19 +6379,20 @@ export class MotionPathBrush {
         const t = step / steps;
         const stampX = x0 + dx * t;
         const stampY = y0 + dy * t;
-        if (support.ok) {
-          _emitBatchStampInstances(this.app, instances, p, stampX, stampY, size, color, opacity);
-        } else {
-          cpuFallbackPoints.push({ x: stampX, y: stampY });
-        }
+        emitPointStamp(stampX, stampY);
       }
     };
 
     const toWorldPoint = (sample, lateralPixels) => {
-      const nx = -Math.sin(sample.angle);
-      const ny = Math.cos(sample.angle);
-      let worldX = this._originX + sample.x * graphScale + nx * lateralPixels;
-      let worldY = this._originY + sample.y * graphScale + ny * lateralPixels;
+      const rotatedAngle = sample.angle + graphAngle;
+      const nx = -Math.sin(rotatedAngle);
+      const ny = Math.cos(rotatedAngle);
+      const scaledX = sample.x * graphScale;
+      const scaledY = sample.y * graphScale;
+      const rotatedX = scaledX * graphCos - scaledY * graphSin;
+      const rotatedY = scaledX * graphSin + scaledY * graphCos;
+      let worldX = this._originX + rotatedX + nx * lateralPixels;
+      let worldY = this._originY + rotatedY + ny * lateralPixels;
       if (pullStrength > 0) {
         worldX += (this._originX - worldX) * pullStrength;
         worldY += (this._originY - worldY) * pullStrength;
@@ -6150,34 +6406,123 @@ export class MotionPathBrush {
       if (agent.stopped) continue;
       const speedEase = _clamp(delta * acceleration, 0, 1);
       agent.speed += ((targetSpeed * agent.speedMultiplier) - agent.speed) * speedEase;
+      const prevDistance = agent.distance;
       _advanceMotionTrackDistance(agent, track, agent.speed * delta);
+      const prevSample = _sampleCompiledMotionTrack(track, prevDistance);
       const sample = _sampleCompiledMotionTrack(track, agent.distance);
       if (!sample) continue;
       const lateralPixels = agent.lateralOffset * (p.motionPathAvoidance || 0) * 18 * graphScale;
-      const { x: worldX, y: worldY } = toWorldPoint(sample, lateralPixels);
+      const rawPrevWorld = prevSample ? toWorldPoint(prevSample, lateralPixels) : null;
+      const rawWorld = toWorldPoint(sample, lateralPixels);
+      const { x: worldX, y: worldY } = this._smoothAgentWorldPoint(
+        agent,
+        rawPrevWorld?.x ?? rawWorld.x,
+        rawPrevWorld?.y ?? rawWorld.y,
+        rawWorld.x,
+        rawWorld.y,
+        p,
+      );
       this._overlayPoints.push({ x: worldX, y: worldY });
-      if (agent.discontinuousStep || !Number.isFinite(agent.prevX) || !Number.isFinite(agent.prevY)) {
+
+      if (useRibbon) {
+        const hasPrevWorld = Number.isFinite(agent.prevX) && Number.isFinite(agent.prevY);
+        if (agent.discontinuousStep || !hasPrevWorld) {
+          emitRibbonPoint(worldX, worldY);
+          agent.prevX = worldX;
+          agent.prevY = worldY;
+          agent.spacingDistance = agent.distance;
+          agent.spacingX = worldX;
+          agent.spacingY = worldY;
+          continue;
+        }
+
+        if (track.closed && agent.wrappedStep) {
+          const seamEndSample = _sampleCompiledMotionTrack(track, Math.max(0, (track.totalLength || 0) - 1e-4));
+          const seamStartSample = _sampleCompiledMotionTrack(track, 0);
+          if (seamEndSample && seamStartSample) {
+            const seamEndWorld = toWorldPoint(seamEndSample, lateralPixels);
+            const seamStartWorld = toWorldPoint(seamStartSample, lateralPixels);
+            emitRibbonSegment(agent.prevX, agent.prevY, seamEndWorld.x, seamEndWorld.y);
+            emitRibbonSegment(seamStartWorld.x, seamStartWorld.y, worldX, worldY);
+            agent.prevX = worldX;
+            agent.prevY = worldY;
+            agent.spacingDistance = agent.distance;
+            agent.spacingX = worldX;
+            agent.spacingY = worldY;
+            continue;
+          }
+        }
+
+        emitRibbonSegment(agent.prevX, agent.prevY, worldX, worldY);
         agent.prevX = worldX;
         agent.prevY = worldY;
+        agent.spacingDistance = agent.distance;
+        agent.spacingX = worldX;
+        agent.spacingY = worldY;
+        continue;
       }
-      if (track.closed && agent.wrappedStep) {
+
+      const hasSpacingAnchor = Number.isFinite(agent.spacingDistance);
+      const spacingWorld = hasSpacingAnchor && Number.isFinite(agent.spacingX) && Number.isFinite(agent.spacingY)
+        ? { x: agent.spacingX, y: agent.spacingY }
+        : null;
+
+      if (agent.discontinuousStep || !spacingWorld) {
+        emitPointStamp(worldX, worldY);
+        agent.spacingDistance = agent.distance;
+        agent.spacingX = worldX;
+        agent.spacingY = worldY;
+        agent.prevX = worldX;
+        agent.prevY = worldY;
+        continue;
+      }
+
+      if (track.closed && agent.wrappedStep && agent.spacingDistance > agent.distance) {
         const seamEndSample = _sampleCompiledMotionTrack(track, Math.max(0, (track.totalLength || 0) - 1e-4));
         const seamStartSample = _sampleCompiledMotionTrack(track, 0);
         if (seamEndSample && seamStartSample) {
           const seamEndWorld = toWorldPoint(seamEndSample, lateralPixels);
           const seamStartWorld = toWorldPoint(seamStartSample, lateralPixels);
-          emitSegmentStamps(agent.prevX, agent.prevY, seamEndWorld.x, seamEndWorld.y);
-          agent.prevX = seamStartWorld.x;
-          agent.prevY = seamStartWorld.y;
+          emitSegmentStamps(spacingWorld.x, spacingWorld.y, seamEndWorld.x, seamEndWorld.y);
+          const wrapDx = worldX - seamStartWorld.x;
+          const wrapDy = worldY - seamStartWorld.y;
+          const wrapTravel = Math.hypot(wrapDx, wrapDy);
+          if (wrapTravel < separation) {
+            emitPointStamp(worldX, worldY);
+          } else {
+            emitSegmentStamps(seamStartWorld.x, seamStartWorld.y, worldX, worldY);
+            agent.spacingDistance = agent.distance;
+            agent.spacingX = worldX;
+            agent.spacingY = worldY;
+          }
+          agent.prevX = worldX;
+          agent.prevY = worldY;
+          continue;
         }
       }
-      emitSegmentStamps(agent.prevX, agent.prevY, worldX, worldY);
+
+      const dx = worldX - spacingWorld.x;
+      const dy = worldY - spacingWorld.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < separation) {
+        emitPointStamp(worldX, worldY);
+      } else {
+        emitSegmentStamps(spacingWorld.x, spacingWorld.y, worldX, worldY);
+        agent.spacingDistance = agent.distance;
+        agent.spacingX = worldX;
+        agent.spacingY = worldY;
+      }
       agent.prevX = worldX;
       agent.prevY = worldY;
     }
 
     const layer = this.app.getActiveLayer();
     if (!layer) return;
+    if (useRibbon && ribbonSegments.length) {
+      _setProceduralRenderBackend(this, 'ribbon');
+      this._cpuRenderRibbonSegments(ribbonSegments, p);
+      return;
+    }
     if (support.ok && instances.count > 0) {
       const batch = { instances: instances.finish(), count: instances.count };
       if (_renderProceduralBatchToTarget(this, layer.ctx, batch, p, { allowAlphaLock: true })) {

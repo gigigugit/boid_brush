@@ -189,7 +189,7 @@ class WebGLBoidStampRenderer {
       precision highp float;
       layout(location=0) in vec2 aCenter;
       layout(location=1) in float aSize;
-      layout(location=2) in float aPad;
+      layout(location=2) in float aRotation;
       layout(location=3) in vec4 aColor;
 
       uniform vec2 uCanvasPx;
@@ -213,9 +213,15 @@ class WebGLBoidStampRenderer {
       void main() {
         vec2 local = QUAD[gl_VertexID];
         vec2 scaledLocal = local * uStampScale;
+        float instanceCos = cos(aRotation);
+        float instanceSin = sin(aRotation);
+        vec2 instanceLocal = vec2(
+          scaledLocal.x * instanceCos - scaledLocal.y * instanceSin,
+          scaledLocal.x * instanceSin + scaledLocal.y * instanceCos
+        );
         vec2 rotatedLocal = vec2(
-          scaledLocal.x * uRotation.x - scaledLocal.y * uRotation.y,
-          scaledLocal.x * uRotation.y + scaledLocal.y * uRotation.x
+          instanceLocal.x * uRotation.x - instanceLocal.y * uRotation.y,
+          instanceLocal.x * uRotation.y + instanceLocal.y * uRotation.x
         );
         vec2 centerPx = aCenter * uDpr;
         vec2 posPx = centerPx + rotatedLocal * (aSize * uDpr * 0.5);
@@ -745,7 +751,7 @@ struct Uniforms {
 struct VertexInput {
   @location(0) center : vec2f,
   @location(1) size : f32,
-  @location(2) _pad0 : f32,
+  @location(2) rotation : f32,
   @location(3) color : vec4f,
 };
 
@@ -768,9 +774,15 @@ fn vs_main(input : VertexInput, @builtin(vertex_index) vertexIndex : u32) -> Ver
     vec2f( 1.0,  1.0)
   );
   let local = quad[vertexIndex];
+  let rotCos = cos(input.rotation);
+  let rotSin = sin(input.rotation);
+  let rotatedLocal = vec2f(
+    local.x * rotCos - local.y * rotSin,
+    local.x * rotSin + local.y * rotCos
+  );
   let centerPx = input.center * uniforms.dpr;
   let halfSizePx = (input.size * uniforms.dpr) * 0.5;
-  let posPx = centerPx + local * halfSizePx;
+  let posPx = centerPx + rotatedLocal * halfSizePx;
   let clipX = (posPx.x / uniforms.canvasPx.x) * 2.0 - 1.0;
   let clipY = 1.0 - (posPx.y / uniforms.canvasPx.y) * 2.0;
 
@@ -1233,7 +1245,7 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
       this.unavailableReason = '2D interop probe unavailable';
       return false;
     }
-    // Packed as [x, y, size, pad, r, g, b, a] to match the renderer's instance stride.
+    // Packed as [x, y, size, rotation, r, g, b, a] to match the renderer's instance stride.
     const probeInstances = new Float32Array([
       16, 16, 20, 0,
       1, 0.15, 0.15, 1,

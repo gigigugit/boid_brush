@@ -206,12 +206,20 @@ export function buildSidebar(app) {
     <!-- Motion Path Runtime -->
     <div class="section-header" data-brushes="motionPath" data-section="motionPathRuntime">Motion Runtime <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="motionPath">
+      <label>Render <select id="motionPathRenderMode">
+        <option value="ribbon" selected>Ribbon</option>
+        <option value="stamps">Stamps</option>
+      </select></label>
       ${sliderRow('motionPathAgentCount', 'Agents', 1, MAX_SWARM_COUNT, 12)}
       ${sliderRow('motionPathScale', 'Scale', 10, 1000, 100, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathSpeed', 'Speed', 1, 1000, 100, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathAcceleration', 'Accel', 0, 200, 50, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathAvoidance', 'Avoid', 0, 100, 25, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathAttraction', 'Attract', 0, 100, 0, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionPathSpacing', 'Spacing', 5, 100, 35, v => (v / 100).toFixed(2), 'Lower values pack stamps closer together for a more continuous line')}
+      ${sliderRow('motionPathPathSmoothing', 'Path Smooth', 0, 100, 35, v => (v / 100).toFixed(2), 'Rounds sharp corners in the authored motion path before agent movement is sampled')}
+      ${sliderRow('motionPathAngleSmoothing', 'Angle Smooth', 0, 100, 90, v => (v / 100).toFixed(2), 'Higher values damp graph rotation changes more strongly')}
+      ${sliderRow('motionPathMovementSmoothing', 'Move Smooth', 0, 100, 65, v => (v / 100).toFixed(2), 'Higher values low-pass each agent\'s resolved canvas movement after the graph motion is applied')}
       <span class="slider-desc">Scale enlarges the authored graph on canvas. These are graph-wide defaults until per-agent motion overrides are added in the editor.</span>
     </div>
 
@@ -241,12 +249,15 @@ export function buildSidebar(app) {
       ${sliderRow('bristleSmoothing', 'Smoothing', 0, 100, 50, v => (v/100).toFixed(2), 'Curve smoothing between tip positions')}
     </div>
 
-    <!-- Pencil / Hover (boid + bristle) -->
-    <div class="section-header" data-brushes="boid bristle" data-section="pencilHover">Pencil / Hover <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid bristle">
-      <label>Pencil Angle <input type="checkbox" id="pencilAngle" checked></label>
-      <span class="slider-desc">Use Apple Pencil tilt/azimuth for brush angle &amp; hover spawn</span>
-      ${sliderRow('pencilBlend', 'Pencil Blend', 0, 100, 80, v => (v/100).toFixed(2), 'Mix of pencil angle vs stroke direction (1 = all pencil)')}
+    <!-- Angle / Hover (simple + motionPath + boid + bristle) -->
+    <div class="section-header" data-brushes="simple motionPath boid bristle" data-section="pencilHover">Angle / Hover <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="simple motionPath boid bristle">
+      <label>Stroke Angle <select id="strokeAngleMode">
+        <option value="auto" selected>Auto</option>
+        <option value="path">Cursor Path</option>
+        <option value="pencil">Apple Pencil</option>
+      </select></label>
+      <span class="slider-desc">Choose whether stroke angle follows cursor direction or Apple Pencil angle when available. Motion Path rotates the authored graph with this angle.</span>
       <div data-brushes="boid">
         <label>On Hover <select id="boidHoverAction">
           <option value="spawn" selected>Spawn</option>
@@ -443,8 +454,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Stamp Image -->
-    <div class="section-header closed" data-brushes="boid ant bristle simple eraser" data-section="stampImage">Stamp Image <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid ant bristle simple eraser">
+    <div class="section-header closed" data-brushes="boid ant bristle simple eraser motionPath" data-section="stampImage">Stamp Image <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid ant bristle simple eraser motionPath">
       <label>Enable <input type="checkbox" id="stampImageEnabled"></label>
       <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
         <canvas id="stampImagePreview" width="72" height="72" style="width:72px;height:72px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:#0d0d12;image-rendering:auto;"></canvas>
@@ -1159,6 +1170,10 @@ const _sliderFormats = {
   motionPathAcceleration: v => (v / 100).toFixed(2),
   motionPathAvoidance: v => (v / 100).toFixed(2),
   motionPathAttraction: v => (v / 100).toFixed(2),
+  motionPathSpacing: v => (v / 100).toFixed(2),
+  motionPathPathSmoothing: v => (v / 100).toFixed(2),
+  motionPathAngleSmoothing: v => (v / 100).toFixed(2),
+  motionPathMovementSmoothing: v => (v / 100).toFixed(2),
   lbmStrokePull: v => (v / 100).toFixed(2),
   lbmStrokeRake: v => (v / 100).toFixed(2),
   lbmStrokeJitter: v => (v / 100).toFixed(2),

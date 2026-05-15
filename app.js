@@ -45,11 +45,17 @@ const FACTORY_DEFAULTS = Object.freeze({
   maxSpeed: 22,
   damping: 95,
   motionPathAgentCount: 12,
+  motionPathRenderMode: 'ribbon',
   motionPathScale: 100,
   motionPathSpeed: 100,
   motionPathAcceleration: 50,
   motionPathAvoidance: 25,
   motionPathAttraction: 0,
+  motionPathSpacing: 35,
+  motionPathAngleSmoothing: 90,
+  motionPathMovementSmoothing: 65,
+  motionPathPathSmoothing: 35,
+  strokeAngleMode: 'auto',
   bristleCount: 30,
   bristleWidth: 30,
   bristleSpread: 10,
@@ -592,6 +598,48 @@ function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, clo
   for (let i = 1; i < valid.length; i++) appendSegment(valid[i - 1], valid[i]);
   if (closed) appendSegment(valid[valid.length - 1], valid[0]);
   return output;
+}
+
+function _chaikinSmoothMotionPathPoints(points, closed = false) {
+  const valid = Array.isArray(points)
+    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    : [];
+  if (valid.length < 2) return valid;
+  if (closed) {
+    const output = [];
+    for (let i = 0; i < valid.length; i++) {
+      const a = valid[i];
+      const b = valid[(i + 1) % valid.length];
+      output.push(
+        { x: _lerp(a.x, b.x, 0.25), y: _lerp(a.y, b.y, 0.25) },
+        { x: _lerp(a.x, b.x, 0.75), y: _lerp(a.y, b.y, 0.75) },
+      );
+    }
+    return output;
+  }
+  const output = [{ ...valid[0] }];
+  for (let i = 0; i < valid.length - 1; i++) {
+    const a = valid[i];
+    const b = valid[i + 1];
+    output.push(
+      { x: _lerp(a.x, b.x, 0.25), y: _lerp(a.y, b.y, 0.25) },
+      { x: _lerp(a.x, b.x, 0.75), y: _lerp(a.y, b.y, 0.75) },
+    );
+  }
+  output.push({ ...valid[valid.length - 1] });
+  return output;
+}
+
+function _smoothMotionPathTrackPoints(points, amount = 0, closed = false, step = MOTION_PATH_RESAMPLE_STEP) {
+  const smoothing = _clamp01(amount);
+  let working = _resampleMotionPathPoints(points, step, closed);
+  if (smoothing <= 0 || working.length < 3) return working;
+  const passes = Math.max(1, Math.round(smoothing * 4));
+  for (let i = 0; i < passes; i++) {
+    working = _chaikinSmoothMotionPathPoints(working, closed);
+    working = _resampleMotionPathPoints(working, step, closed);
+  }
+  return working;
 }
 
 function _sampleMotionPathArrowMarkers(points, spacing = 72, startOffset = 26) {
@@ -2274,11 +2322,16 @@ export class App {
       maxSpeed: val('maxSpeed') / 2,
       damping: val('damping') / 100,
       motionPathAgentCount: Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(val('motionPathAgentCount') || 12))),
+      motionPathRenderMode: sel('motionPathRenderMode') || 'ribbon',
       motionPathScale: (val('motionPathScale') || 100) / 100,
       motionPathSpeed: (val('motionPathSpeed') || 100) / 100,
       motionPathAcceleration: (val('motionPathAcceleration') || 50) / 100,
       motionPathAvoidance: (val('motionPathAvoidance') || 25) / 100,
       motionPathAttraction: (val('motionPathAttraction') || 0) / 100,
+      motionPathSpacing: (val('motionPathSpacing') || 35) / 100,
+      motionPathAngleSmoothing: (val('motionPathAngleSmoothing') || 90) / 100,
+      motionPathMovementSmoothing: (val('motionPathMovementSmoothing') || 65) / 100,
+      motionPathPathSmoothing: (val('motionPathPathSmoothing') || 35) / 100,
       // Stamp
       stampSize: Math.max(1, Math.round(val('stampSize') * scale)),
       stampOpacity: val('stampOpacity') / 100,
@@ -2330,7 +2383,8 @@ export class App {
       bristleFan: (chk('bristleFanEnable') ? val('bristleFan') : 0) || 0,
       bristleFanAngle: (val('bristleFanAngle') || 90) * Math.PI / 180,
       bristleSmoothing: (val('bristleSmoothing') || 50) / 100,
-      pencilAngle: chk('pencilAngle'),
+      strokeAngleMode: sel('strokeAngleMode') || 'auto',
+      pencilAngle: (sel('strokeAngleMode') || 'auto') !== 'path',
       pencilBlend: (val('pencilBlend') || 0) / 100,
       showBristles: chk('showBristles'),
       // LBM fluid brush
@@ -4925,7 +4979,10 @@ export class App {
     const compiledPaths = doc.paths
       .map(path => {
         const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
-        const track = _buildMotionPathTrack(sampled, path.closed);
+        const smoothed = path.kind === 'bezier' || path.kind === 'ellipse'
+          ? sampled
+          : _smoothMotionPathTrackPoints(sampled, p.motionPathPathSmoothing || 0, !!path.closed, MOTION_PATH_RESAMPLE_STEP);
+        const track = _buildMotionPathTrack(smoothed, path.closed);
         return track ? { ...track, id: path.id, kind: path.kind, name: path.name, agentCount: path.agentCount || 0, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), directionMode: _normalizeMotionPathDirectionMode(path.directionMode) } : null;
       })
       .filter(Boolean);
@@ -5854,6 +5911,28 @@ export class App {
     if ((e.pointerType || '') !== 'pen') return;
     this.pointerType = 'pen';
     this._captureTilt(e);
+  }
+
+  getCurrentPenAngle() {
+    if (this.pointerType !== 'pen') return null;
+    if (!this.penAngleSampleValid || !Number.isFinite(this.azimuth)) return null;
+    return this.azimuth;
+  }
+
+  resolveStrokeAngle(pathAngle, options = {}) {
+    const fallbackAngle = Number.isFinite(options.fallbackAngle) ? options.fallbackAngle : 0;
+    const mode = options.mode || this._cachedP?.strokeAngleMode || this.getP().strokeAngleMode || 'auto';
+    const penAngle = this.getCurrentPenAngle();
+    if (mode === 'path') {
+      return Number.isFinite(pathAngle) ? pathAngle : fallbackAngle;
+    }
+    if (Number.isFinite(penAngle)) {
+      return penAngle;
+    }
+    if (Number.isFinite(pathAngle)) {
+      return pathAngle;
+    }
+    return fallbackAngle;
   }
 
   _onPointerDown(e) {
@@ -7456,10 +7535,10 @@ export class App {
     }
   }
 
-  symStamp(ctx, x, y, size, color, opacity) {
-    const p = this._cachedP || this.getP();
+  symStamp(ctx, x, y, size, color, opacity, options = {}) {
+    const p = options.p || this._cachedP || this.getP();
     if (p?.stampImageCanvas) {
-      this.symBitmapStamp(ctx, x, y, size, color, opacity, { p });
+      this.symBitmapStamp(ctx, x, y, size, color, opacity, { ...options, p });
       return;
     }
     this.symCircleStamp(ctx, x, y, size, color, opacity);
