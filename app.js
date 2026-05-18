@@ -146,6 +146,10 @@ const FACTORY_DEFAULTS = Object.freeze({
   smudge: 0,
   skipStamps: 0,
   stabilizer: 0,
+  strokeWaveType: 'none',
+  strokeWaveAmplitude: 0,
+  strokeWaveLength: 80,
+  strokeWavePhase: 0,
   stampImageRotation: 0,
   canvasTextureStrength: 60,
   canvasTextureScale: 100,
@@ -284,6 +288,18 @@ const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const MOTION_PATH_HANDLE_RADIUS = 7;
 const MOTION_PATH_HIT_RADIUS = 12;
+const MOTION_PATH_POINT_SIZE_MIN = 0.2;
+const MOTION_PATH_POINT_SIZE_MAX = 4;
+const MOTION_PATH_POINT_SIZE_STEP = 0.05;
+const MOTION_PATH_POINT_SPEED_MIN = 0;
+const MOTION_PATH_POINT_SPEED_MAX = 50;
+const MOTION_PATH_POINT_SPEED_STEP = 0.05;
+const MOTION_PATH_SIZE_HANDLE_RADIUS = 5;
+const MOTION_PATH_SIZE_HANDLE_BASE_OFFSET = 18;
+const MOTION_PATH_SIZE_HANDLE_SCALE_PIXELS = 14;
+const MOTION_PATH_SPEED_HANDLE_RADIUS = 5;
+const MOTION_PATH_SPEED_HANDLE_BASE_OFFSET = 18;
+const MOTION_PATH_SPEED_HANDLE_SCALE_PIXELS = 6;
 const MOTION_PATH_RESAMPLE_STEP = 16;
 const MOTION_PATH_CURVE_SAMPLES = 48;
 const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
@@ -436,12 +452,35 @@ function _sampleCubicHermitePoint(p0, p1, m0, m1, t) {
   return {
     x: (h00 * p0.x) + (h10 * m0.x) + (h01 * p1.x) + (h11 * m1.x),
     y: (h00 * p0.y) + (h10 * m0.y) + (h01 * p1.y) + (h11 * m1.y),
+    stampScale: _lerp(
+      Number.isFinite(p0?.stampScale) ? p0.stampScale : 1,
+      Number.isFinite(p1?.stampScale) ? p1.stampScale : 1,
+      clamped,
+    ),
+    speedScale: _lerp(
+      Number.isFinite(p0?.speedScale) ? p0.speedScale : 1,
+      Number.isFinite(p1?.speedScale) ? p1.speedScale : 1,
+      clamped,
+    ),
   };
 }
 
 function _normalizeMotionPathPoint(kind, point) {
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null;
-  const normalized = { x: point.x, y: point.y };
+  const normalized = {
+    x: point.x,
+    y: point.y,
+    stampScale: _clamp(
+      Number.isFinite(point?.stampScale) ? point.stampScale : 1,
+      MOTION_PATH_POINT_SIZE_MIN,
+      MOTION_PATH_POINT_SIZE_MAX,
+    ),
+    speedScale: _clamp(
+      Number.isFinite(point?.speedScale) ? point.speedScale : 1,
+      MOTION_PATH_POINT_SPEED_MIN,
+      MOTION_PATH_POINT_SPEED_MAX,
+    ),
+  };
   if (kind === 'bezier') normalized.connector = point?.connector === 'sharp' ? 'sharp' : 'curve';
   return normalized;
 }
@@ -460,13 +499,37 @@ function _normalizeMotionPathPoints(kind, rawPoints, fallbackPoints = []) {
     for (let index = 0; index < valid.length; index += 3) {
       const anchor = valid[index];
       if (!anchor) continue;
-      anchors.push({ x: anchor.x, y: anchor.y, connector: 'curve' });
+      anchors.push({ x: anchor.x, y: anchor.y, stampScale: anchor.stampScale, speedScale: anchor.speedScale, connector: 'curve' });
     }
     return anchors.length ? anchors : fallback;
   }
   return valid.length
-    ? valid.map(point => ({ x: point.x, y: point.y, connector: point.connector === 'sharp' ? 'sharp' : 'curve' }))
+    ? valid.map(point => ({
+        x: point.x,
+        y: point.y,
+        stampScale: point.stampScale,
+        speedScale: point.speedScale,
+        connector: point.connector === 'sharp' ? 'sharp' : 'curve',
+      }))
     : fallback;
+}
+
+function _roundMotionPathPointStampScale(value) {
+  const clamped = _clamp(
+    Number.isFinite(value) ? value : 1,
+    MOTION_PATH_POINT_SIZE_MIN,
+    MOTION_PATH_POINT_SIZE_MAX,
+  );
+  return Math.round(clamped / MOTION_PATH_POINT_SIZE_STEP) * MOTION_PATH_POINT_SIZE_STEP;
+}
+
+function _roundMotionPathPointSpeedScale(value) {
+  const clamped = _clamp(
+    Number.isFinite(value) ? value : 1,
+    MOTION_PATH_POINT_SPEED_MIN,
+    MOTION_PATH_POINT_SPEED_MAX,
+  );
+  return Math.round(clamped / MOTION_PATH_POINT_SPEED_STEP) * MOTION_PATH_POINT_SPEED_STEP;
 }
 
 function _getMotionPathBezierTangents(points, index, closed = false) {
@@ -498,7 +561,6 @@ function _getMotionPathBezierTangents(points, index, closed = false) {
 
 function _sampleMotionPathBezierSegment(points, startIndex, closed = false) {
   const count = Array.isArray(points) ? points.length : 0;
-  if (count < 2) return [];
   const endIndex = closed ? ((startIndex + 1) % count) : startIndex + 1;
   const start = points[startIndex];
   const end = points[endIndex];
@@ -536,6 +598,26 @@ function _normalizeMotionPathEndBehavior(value) {
 
 function _normalizeMotionPathDirectionMode(value) {
   return ['forward', 'reverse', 'alternate', 'random'].includes(value) ? value : 'forward';
+}
+
+function _normalizeMotionPathStartMode(value) {
+  return value === 'random' ? 'random' : 'spread';
+}
+
+function _getMotionPathStartModeLabel(value) {
+  return _normalizeMotionPathStartMode(value) === 'random' ? 'Random Start' : 'Even Start';
+}
+
+function _getMotionPathDeterministicStartUnit(documentId, updatedAt, pathId, agentIndex, totalAgents) {
+  const seed = (
+    (Number.isFinite(documentId) ? documentId : 0) * 73856093
+    + (Number.isFinite(pathId) ? pathId : 0) * 19349663
+    + Math.round((Number.isFinite(updatedAt) ? updatedAt : 0) % 2147483647)
+    + (agentIndex + 1) * 83492791
+    + (totalAgents + 1) * 2654435761
+  );
+  const raw = Math.sin(seed * 0.00000123791) * 43758.5453123;
+  return raw - Math.floor(raw);
 }
 
 function _getMotionPathDirectionModeLabel(value) {
@@ -582,7 +664,14 @@ function _getMotionPathEndBehaviorAccent(value) {
 
 function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, closed = false) {
   const valid = Array.isArray(points)
-    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    ? points
+        .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+        .map(pt => ({
+          x: pt.x,
+          y: pt.y,
+          stampScale: Number.isFinite(pt?.stampScale) ? pt.stampScale : 1,
+          speedScale: Number.isFinite(pt?.speedScale) ? pt.speedScale : 1,
+        }))
     : [];
   if (valid.length < 2) return valid;
   const output = [{ ...valid[0] }];
@@ -592,7 +681,20 @@ function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, clo
     const steps = Math.max(1, Math.ceil(length / Math.max(1, step)));
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      output.push({ x: _lerp(a.x, b.x, t), y: _lerp(a.y, b.y, t) });
+      output.push({
+        x: _lerp(a.x, b.x, t),
+        y: _lerp(a.y, b.y, t),
+        stampScale: _lerp(
+          Number.isFinite(a?.stampScale) ? a.stampScale : 1,
+          Number.isFinite(b?.stampScale) ? b.stampScale : 1,
+          t,
+        ),
+        speedScale: _lerp(
+          Number.isFinite(a?.speedScale) ? a.speedScale : 1,
+          Number.isFinite(b?.speedScale) ? b.speedScale : 1,
+          t,
+        ),
+      });
     }
   };
   for (let i = 1; i < valid.length; i++) appendSegment(valid[i - 1], valid[i]);
@@ -602,7 +704,14 @@ function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, clo
 
 function _chaikinSmoothMotionPathPoints(points, closed = false) {
   const valid = Array.isArray(points)
-    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    ? points
+        .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+        .map(pt => ({
+          x: pt.x,
+          y: pt.y,
+          stampScale: Number.isFinite(pt?.stampScale) ? pt.stampScale : 1,
+          speedScale: Number.isFinite(pt?.speedScale) ? pt.speedScale : 1,
+        }))
     : [];
   if (valid.length < 2) return valid;
   if (closed) {
@@ -611,8 +720,18 @@ function _chaikinSmoothMotionPathPoints(points, closed = false) {
       const a = valid[i];
       const b = valid[(i + 1) % valid.length];
       output.push(
-        { x: _lerp(a.x, b.x, 0.25), y: _lerp(a.y, b.y, 0.25) },
-        { x: _lerp(a.x, b.x, 0.75), y: _lerp(a.y, b.y, 0.75) },
+        {
+          x: _lerp(a.x, b.x, 0.25),
+          y: _lerp(a.y, b.y, 0.25),
+          stampScale: _lerp(a.stampScale, b.stampScale, 0.25),
+          speedScale: _lerp(a.speedScale, b.speedScale, 0.25),
+        },
+        {
+          x: _lerp(a.x, b.x, 0.75),
+          y: _lerp(a.y, b.y, 0.75),
+          stampScale: _lerp(a.stampScale, b.stampScale, 0.75),
+          speedScale: _lerp(a.speedScale, b.speedScale, 0.75),
+        },
       );
     }
     return output;
@@ -622,8 +741,18 @@ function _chaikinSmoothMotionPathPoints(points, closed = false) {
     const a = valid[i];
     const b = valid[i + 1];
     output.push(
-      { x: _lerp(a.x, b.x, 0.25), y: _lerp(a.y, b.y, 0.25) },
-      { x: _lerp(a.x, b.x, 0.75), y: _lerp(a.y, b.y, 0.75) },
+      {
+        x: _lerp(a.x, b.x, 0.25),
+        y: _lerp(a.y, b.y, 0.25),
+        stampScale: _lerp(a.stampScale, b.stampScale, 0.25),
+        speedScale: _lerp(a.speedScale, b.speedScale, 0.25),
+      },
+      {
+        x: _lerp(a.x, b.x, 0.75),
+        y: _lerp(a.y, b.y, 0.75),
+        stampScale: _lerp(a.stampScale, b.stampScale, 0.75),
+        speedScale: _lerp(a.speedScale, b.speedScale, 0.75),
+      },
     );
   }
   output.push({ ...valid[valid.length - 1] });
@@ -737,7 +866,15 @@ function _buildMotionPathTrack(points, closed = false) {
 
 function _sampleMotionPathTrack(track, distanceAlongPath) {
   if (!track?.points?.length) return null;
-  if (track.points.length === 1) return { x: track.points[0].x, y: track.points[0].y, angle: 0 };
+  if (track.points.length === 1) {
+    return {
+      x: track.points[0].x,
+      y: track.points[0].y,
+      angle: 0,
+      stampScale: Number.isFinite(track.points[0]?.stampScale) ? track.points[0].stampScale : 1,
+      speedScale: Number.isFinite(track.points[0]?.speedScale) ? track.points[0].speedScale : 1,
+    };
+  }
   const total = Math.max(track.totalLength || 0, 1e-6);
   const distance = track.closed
     ? _wrapIndex(distanceAlongPath, total)
@@ -753,13 +890,29 @@ function _sampleMotionPathTrack(track, distanceAlongPath) {
         x: _lerp(a.x, b.x, t),
         y: _lerp(a.y, b.y, t),
         angle: Math.atan2(b.y - a.y, b.x - a.x),
+        stampScale: _lerp(
+          Number.isFinite(a?.stampScale) ? a.stampScale : 1,
+          Number.isFinite(b?.stampScale) ? b.stampScale : 1,
+          t,
+        ),
+        speedScale: _lerp(
+          Number.isFinite(a?.speedScale) ? a.speedScale : 1,
+          Number.isFinite(b?.speedScale) ? b.speedScale : 1,
+          t,
+        ),
       };
     }
     remaining -= length;
   }
   const last = track.points[track.points.length - 1];
   const prev = track.points[track.points.length - 2] || last;
-  return { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) };
+  return {
+    x: last.x,
+    y: last.y,
+    angle: Math.atan2(last.y - prev.y, last.x - prev.x),
+    stampScale: Number.isFinite(last?.stampScale) ? last.stampScale : 1,
+    speedScale: Number.isFinite(last?.speedScale) ? last.speedScale : 1,
+  };
 }
 
 /**
@@ -898,6 +1051,14 @@ export class App {
     // Stabilizer (lazy mouse)
     this._stabX = 0;
     this._stabY = 0;
+    this._strokeWave = {
+      active: false,
+      lastBaseX: Number.NaN,
+      lastBaseY: Number.NaN,
+      distance: 0,
+      tangentX: 1,
+      tangentY: 0,
+    };
 
     // View transform (pinch zoom/rotate/pan)
     this.viewZoom = 1;
@@ -2324,7 +2485,7 @@ export class App {
       motionPathAgentCount: Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(val('motionPathAgentCount') || 12))),
       motionPathRenderMode: sel('motionPathRenderMode') || 'ribbon',
       motionPathScale: (val('motionPathScale') || 100) / 100,
-      motionPathSpeed: (val('motionPathSpeed') || 100) / 100,
+      motionPathSpeed: numOr('motionPathSpeed', 100) / 100,
       motionPathAcceleration: (val('motionPathAcceleration') || 50) / 100,
       motionPathAvoidance: (val('motionPathAvoidance') || 25) / 100,
       motionPathAttraction: (val('motionPathAttraction') || 0) / 100,
@@ -2347,6 +2508,10 @@ export class App {
       smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
       stabilizer: val('stabilizer') / 100,
+      strokeWaveType: sel('strokeWaveType') || 'none',
+      strokeWaveAmplitude: Math.max(0, val('strokeWaveAmplitude') || 0),
+      strokeWaveLength: Math.max(1, val('strokeWaveLength') || 80),
+      strokeWavePhase: ((val('strokeWavePhase') || 0) * Math.PI) / 180,
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
       symmetryCount: val('symmetryCount') || 4,
@@ -3920,11 +4085,15 @@ export class App {
     return {
       canvas: null,
       ctx: null,
+      activePanel: null,
+      helpOpen: false,
       selectedPathId: null,
       selectedPathIds: [],
       selectedHandleIndex: -1,
+      selectedHandleType: null,
       hoverPathId: null,
       hoverHandleIndex: -1,
+      hoverHandleType: null,
       dragPathId: null,
       dragMode: null,
       dragHandleIndex: -1,
@@ -3935,6 +4104,11 @@ export class App {
       insertPointMode: false,
       insertBetweenPoints: false,
       pointerId: null,
+      touchPoints: {},
+      touchGestureActive: false,
+      touchGestureDistance: 0,
+      touchGestureCenterX: 0,
+      touchGestureCenterY: 0,
       lastLocalX: 0,
       lastLocalY: 0,
       lastScreenX: 0,
@@ -4012,6 +4186,7 @@ export class App {
           closed: kind === 'rectangle' || kind === 'ellipse' ? true : !!pathItem?.closed,
           endBehavior: _normalizeMotionPathEndBehavior(pathItem?.endBehavior),
           directionMode: _normalizeMotionPathDirectionMode(pathItem?.directionMode),
+          startMode: _normalizeMotionPathStartMode(pathItem?.startMode),
           agentCount: Number.isFinite(pathItem?.agentCount) ? Math.max(0, Math.round(pathItem.agentCount)) : 0,
           speedMultiplier: Number.isFinite(pathItem?.speedMultiplier) ? Math.max(0.1, pathItem.speedMultiplier) : 1,
           points: points.length ? points : _normalizeMotionPathPoints(kind, fallbackPoints, fallbackPoints),
@@ -4093,6 +4268,14 @@ export class App {
     return doc.paths.filter(path => idSet.has(path.id));
   }
 
+  _getSelectedMotionPathPoint() {
+    const path = this._getSelectedMotionPathPrimitive();
+    const handleIndex = Number.isFinite(this.motionPathEditor?.selectedHandleIndex)
+      ? this.motionPathEditor.selectedHandleIndex
+      : -1;
+    return path?.points?.[handleIndex] || null;
+  }
+
   _isMotionPathPrimitiveSelected(pathId) {
     return this._getSelectedMotionPathPrimitiveIds().includes(pathId);
   }
@@ -4140,7 +4323,11 @@ export class App {
   _setMotionPathEditorTool(tool = 'select') {
     const allowedCreateKinds = new Set(['polyline', 'bezier', 'rectangle', 'ellipse']);
     const previousKind = this._getMotionPathEditorCreateKind();
-    let nextTool = tool === 'delete' ? 'delete' : 'select';
+    let nextTool = tool === 'delete'
+      ? 'delete'
+      : tool === 'pan'
+        ? 'pan'
+        : 'select';
     if (typeof tool === 'string' && tool.startsWith('create-')) {
       const kind = tool.slice('create-'.length);
       if (allowedCreateKinds.has(kind)) nextTool = `create-${kind}`;
@@ -4162,7 +4349,7 @@ export class App {
     this.showToast(`Click on the graph canvas to place ${kind === 'rectangle' || kind === 'ellipse' ? 'the first corner' : 'the first point'} for a ${kind}`);
   }
 
-  _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1) {
+  _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1, handleType = null) {
     const ids = Array.from(new Set((Array.isArray(pathIds) ? pathIds : [pathIds])
       .filter(Number.isFinite)
       .map(id => Math.round(id))));
@@ -4172,12 +4359,15 @@ export class App {
     this.motionPathEditor.selectedPathIds = ids;
     this.motionPathEditor.selectedPathId = nextPrimary;
     this.motionPathEditor.selectedHandleIndex = ids.length === 1 && Number.isFinite(handleIndex) ? handleIndex : -1;
+    this.motionPathEditor.selectedHandleType = ids.length === 1 && Number.isFinite(handleIndex)
+      ? (handleType === 'size-handle' ? 'size-handle' : 'handle')
+      : null;
     this.motionPathEditor.needsRedraw = true;
     this._syncMotionPathUI();
   }
 
-  _setSelectedMotionPathPrimitive(pathId = null, handleIndex = -1) {
-    this._setSelectedMotionPathPrimitives(Number.isFinite(pathId) ? [pathId] : [], pathId, handleIndex);
+  _setSelectedMotionPathPrimitive(pathId = null, handleIndex = -1, handleType = null) {
+    this._setSelectedMotionPathPrimitives(Number.isFinite(pathId) ? [pathId] : [], pathId, handleIndex, handleType);
   }
 
   _toggleMotionPathPrimitiveSelection(pathId) {
@@ -4331,6 +4521,7 @@ export class App {
       controls.push(`
         <div class="motion-path-editor-pathControls" style="left:${anchor.x + 22}px;top:${anchor.y - 18}px;" data-path-id="${path.id}">
           <button type="button" data-kind="direction" data-path-id="${path.id}" title="Cycle path direction mode">${_getMotionPathDirectionModeLabel(path.directionMode)}</button>
+          <button type="button" data-kind="start" data-path-id="${path.id}" title="Toggle initial start placement">${_normalizeMotionPathStartMode(path.startMode) === 'random' ? 'Random' : 'Even'}</button>
           ${path.closed ? '' : `<button type="button" data-kind="behavior" data-path-id="${path.id}" title="Choose end behavior">${_getMotionPathEndBehaviorLabel(path.endBehavior)}</button>`}
         </div>
       `);
@@ -4404,6 +4595,152 @@ export class App {
     this.motionPathEditor.needsRedraw = true;
   }
 
+  _resetMotionPathEditorView(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    doc.view.zoom = 1;
+    doc.view.panX = 0;
+    doc.view.panY = 0;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _resetMotionPathEditorZoom(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    const canvas = this._getMotionPathEditorCanvas();
+    const width = this.motionPathEditor.canvasWidth || canvas?.clientWidth || 1;
+    const height = this.motionPathEditor.canvasHeight || canvas?.clientHeight || 1;
+    const centerX = width * 0.5;
+    const centerY = height * 0.5;
+    const currentZoom = Math.max(0.1, doc.view?.zoom || 1);
+    this._zoomMotionPathEditorAt(centerX, centerY, 1 / currentZoom, doc);
+    this._syncMotionPathUI();
+  }
+
+  _centerMotionPathEditorView(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    doc.view.panX = 0;
+    doc.view.panY = 0;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _setMotionPathEditorPanel(panel = null) {
+    const allowed = panel === 'graph' || panel === 'selection' || panel === 'edit';
+    const nextPanel = allowed ? panel : null;
+    if (nextPanel === null) {
+      if (this.motionPathEditor.activePanel === null) return;
+      this.motionPathEditor.activePanel = null;
+    } else {
+      this.motionPathEditor.activePanel = this.motionPathEditor.activePanel === nextPanel ? null : nextPanel;
+    }
+    this._syncMotionPathUI();
+  }
+
+  _setMotionPathEditorHelp(open = null) {
+    const next = open === null ? !this.motionPathEditor.helpOpen : !!open;
+    if (this.motionPathEditor.helpOpen === next) return;
+    this.motionPathEditor.helpOpen = next;
+    this._syncMotionPathUI();
+  }
+
+  _positionMotionPathEditorPopover(buttonId, popupId, { alignRight = false } = {}) {
+    const button = document.getElementById(buttonId);
+    const popup = document.getElementById(popupId);
+    const host = document.querySelector('#motionPathEditor .motion-path-editor-main');
+    if (!button || !popup || !host) return;
+    const hostRect = host.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    const maxLeft = Math.max(0, hostRect.width - popupRect.width - 8);
+    const rawLeft = alignRight
+      ? buttonRect.right - hostRect.left - popupRect.width
+      : buttonRect.left - hostRect.left;
+    const left = _clamp(rawLeft, 8, maxLeft);
+    const top = Math.max(8, (buttonRect.bottom - hostRect.top) + 8);
+    popup.style.left = `${Math.round(left)}px`;
+    popup.style.top = `${Math.round(top)}px`;
+  }
+
+  _cycleMotionPathStartMode(pathId) {
+    const doc = this._getActiveMotionPathDocument();
+    const numericPathId = Math.round(+pathId);
+    const path = doc?.paths?.find(entry => entry.id === numericPathId);
+    if (!path) return;
+    path.startMode = _normalizeMotionPathStartMode(path.startMode) === 'random' ? 'spread' : 'random';
+    this._markMotionPathDocumentUpdated(doc);
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`${path.name}: ${_getMotionPathStartModeLabel(path.startMode)}`);
+  }
+
+  _updateMotionPathEditorTouchPoint(pointerId, clientX, clientY) {
+    this.motionPathEditor.touchPoints[pointerId] = { clientX, clientY };
+  }
+
+  _removeMotionPathEditorTouchPoint(pointerId) {
+    delete this.motionPathEditor.touchPoints[pointerId];
+  }
+
+  _getMotionPathEditorTouchPoints() {
+    return Object.values(this.motionPathEditor.touchPoints || {});
+  }
+
+  _cancelMotionPathEditorDrag() {
+    this.motionPathEditor.pointerId = null;
+    this.motionPathEditor.dragMode = null;
+    this.motionPathEditor.dragPathId = null;
+    this.motionPathEditor.dragHandleIndex = -1;
+  }
+
+  _endMotionPathEditorTouchGesture() {
+    this.motionPathEditor.touchGestureActive = false;
+    this.motionPathEditor.touchGestureDistance = 0;
+    this.motionPathEditor.touchGestureCenterX = 0;
+    this.motionPathEditor.touchGestureCenterY = 0;
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _beginMotionPathEditorTouchGesture(canvas) {
+    const points = this._getMotionPathEditorTouchPoints();
+    if (!canvas || points.length < 2) return false;
+    const rect = canvas.getBoundingClientRect();
+    const [first, second] = points;
+    this._cancelMotionPathEditorDrag();
+    this.motionPathEditor.touchGestureActive = true;
+    this.motionPathEditor.touchGestureDistance = Math.max(1, Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY));
+    this.motionPathEditor.touchGestureCenterX = ((first.clientX + second.clientX) * 0.5) - rect.left;
+    this.motionPathEditor.touchGestureCenterY = ((first.clientY + second.clientY) * 0.5) - rect.top;
+    this.motionPathEditor.needsRedraw = true;
+    return true;
+  }
+
+  _updateMotionPathEditorTouchGesture(canvas) {
+    if (!canvas || !this.motionPathEditor.touchGestureActive) return false;
+    const points = this._getMotionPathEditorTouchPoints();
+    if (points.length < 2) {
+      this._endMotionPathEditorTouchGesture();
+      return false;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const [first, second] = points;
+    const centerX = ((first.clientX + second.clientX) * 0.5) - rect.left;
+    const centerY = ((first.clientY + second.clientY) * 0.5) - rect.top;
+    const distance = Math.max(1, Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY));
+    const previousDistance = this.motionPathEditor.touchGestureDistance || distance;
+    const deltaX = centerX - this.motionPathEditor.touchGestureCenterX;
+    const deltaY = centerY - this.motionPathEditor.touchGestureCenterY;
+    if (distance > 0 && previousDistance > 0) {
+      this._zoomMotionPathEditorAt(centerX, centerY, distance / previousDistance);
+    }
+    if (deltaX || deltaY) {
+      this._panMotionPathEditorView(deltaX, deltaY);
+    }
+    this.motionPathEditor.touchGestureDistance = distance;
+    this.motionPathEditor.touchGestureCenterX = centerX;
+    this.motionPathEditor.touchGestureCenterY = centerY;
+    return true;
+  }
+
   _setMotionPathInsertPointMode(active) {
     this.motionPathEditor.insertPointMode = !!active;
     this.motionPathEditor.needsRedraw = true;
@@ -4428,16 +4765,58 @@ export class App {
     return bestIndex;
   }
 
+  _getMotionPathInsertedPointStampScale(points, insertIndex, closed = false) {
+    const items = Array.isArray(points) ? points : [];
+    if (!items.length) return 1;
+    const prev = insertIndex > 0
+      ? items[insertIndex - 1]
+      : (closed ? items[items.length - 1] : items[0]);
+    const next = insertIndex < items.length
+      ? items[insertIndex]
+      : (closed ? items[0] : items[items.length - 1]);
+    if (prev && next) {
+      return _roundMotionPathPointStampScale(((prev.stampScale || 1) + (next.stampScale || 1)) * 0.5);
+    }
+    return _roundMotionPathPointStampScale(prev?.stampScale ?? next?.stampScale ?? 1);
+  }
+
+  _getMotionPathInsertedPointSpeedScale(points, insertIndex, closed = false) {
+    const items = Array.isArray(points) ? points : [];
+    if (!items.length) return 1;
+    const prev = insertIndex > 0
+      ? items[insertIndex - 1]
+      : (closed ? items[items.length - 1] : items[0]);
+    const next = insertIndex < items.length
+      ? items[insertIndex]
+      : (closed ? items[0] : items[items.length - 1]);
+    if (prev && next) {
+      return _roundMotionPathPointSpeedScale(((prev.speedScale || 1) + (next.speedScale || 1)) * 0.5);
+    }
+    return _roundMotionPathPointSpeedScale(prev?.speedScale ?? next?.speedScale ?? 1);
+  }
+
   _appendMotionPathBezierAnchor(path, localX, localY) {
     if (!path) return -1;
-    path.points.push({ x: localX, y: localY, connector: 'curve' });
+    path.points.push({
+      x: localX,
+      y: localY,
+      stampScale: _roundMotionPathPointStampScale(path.points[path.points.length - 1]?.stampScale ?? 1),
+      speedScale: _roundMotionPathPointSpeedScale(path.points[path.points.length - 1]?.speedScale ?? 1),
+      connector: 'curve',
+    });
     return path.points.length - 1;
   }
 
   _insertMotionPathBezierAnchor(path, localX, localY) {
     if (!path || path.points.length < 2) return this._appendMotionPathBezierAnchor(path, localX, localY);
     const insertIndex = _findMotionPathBezierInsertIndex(path.points, localX, localY, !!path.closed);
-    path.points.splice(insertIndex, 0, { x: localX, y: localY, connector: 'curve' });
+    path.points.splice(insertIndex, 0, {
+      x: localX,
+      y: localY,
+      stampScale: this._getMotionPathInsertedPointStampScale(path.points, insertIndex, !!path.closed),
+      speedScale: this._getMotionPathInsertedPointSpeedScale(path.points, insertIndex, !!path.closed),
+      connector: 'curve',
+    });
     return insertIndex;
   }
 
@@ -4465,6 +4844,7 @@ export class App {
       closed: kind === 'rectangle' || kind === 'ellipse',
       endBehavior: 'restart',
       directionMode: 'forward',
+      startMode: 'spread',
       agentCount: 0,
       speedMultiplier: 1,
       points: _normalizeMotionPathPoints(kind, Array.isArray(points) ? points : []),
@@ -4534,7 +4914,12 @@ export class App {
       localY,
       this.motionPathEditor.insertBetweenPoints ? 'between' : 'append',
     );
-    pts.splice(insertIndex, 0, { x: localX, y: localY });
+    pts.splice(insertIndex, 0, {
+      x: localX,
+      y: localY,
+      stampScale: this._getMotionPathInsertedPointStampScale(pts, insertIndex, !!selected.closed),
+      speedScale: this._getMotionPathInsertedPointSpeedScale(pts, insertIndex, !!selected.closed),
+    });
     this.motionPathEditor.selectedHandleIndex = insertIndex;
     this._markMotionPathDocumentUpdated(doc);
     this._syncMotionPathUI();
@@ -4548,7 +4933,7 @@ export class App {
     if (!doc) return;
     let path = doc.paths.find(entry => entry.id === this.motionPathEditor.creationPathId && entry.kind === kind) || null;
     if (!path) {
-      path = this._createMotionPathPrimitive(kind, { points: [{ x: localX, y: localY }], announce: false });
+      path = this._createMotionPathPrimitive(kind, { points: [{ x: localX, y: localY, stampScale: 1, speedScale: 1 }], announce: false });
       if (!path) return;
       this.motionPathEditor.creationPathId = path.id;
       this.motionPathEditor.selectedHandleIndex = 0;
@@ -4563,15 +4948,15 @@ export class App {
 
     let selectedHandleIndex = path.points.length - 1;
     if (kind === 'rectangle' || kind === 'ellipse') {
-      if (path.points.length === 1) path.points.push({ x: localX, y: localY });
-      else path.points[1] = { x: localX, y: localY };
+      if (path.points.length === 1) path.points.push({ x: localX, y: localY, stampScale: 1, speedScale: 1 });
+      else path.points[1] = { x: localX, y: localY, stampScale: 1, speedScale: 1 };
       selectedHandleIndex = 1;
       this.motionPathEditor.creationPathId = null;
     } else if (kind === 'bezier') {
       selectedHandleIndex = this._appendMotionPathBezierAnchor(path, localX, localY);
       if (finalize && this._isMotionPathPrimitiveComplete(path)) this.motionPathEditor.creationPathId = null;
     } else {
-      path.points.push({ x: localX, y: localY });
+      path.points.push({ x: localX, y: localY, stampScale: 1, speedScale: 1 });
       selectedHandleIndex = path.points.length - 1;
       if (finalize && this._isMotionPathPrimitiveComplete(path)) this.motionPathEditor.creationPathId = null;
     }
@@ -4627,15 +5012,63 @@ export class App {
     for (const path of selected) this._translateMotionPathPrimitive(path, dx, dy);
   }
 
-  _hitTestMotionPathPrimitive(localX, localY) {
+  _getMotionPathPointSizeHandleOffset(stampScale = 1) {
+    return MOTION_PATH_SIZE_HANDLE_BASE_OFFSET + (_roundMotionPathPointStampScale(stampScale) * MOTION_PATH_SIZE_HANDLE_SCALE_PIXELS);
+  }
+
+  _getMotionPathPointSpeedHandleOffset(speedScale = 1) {
+    return MOTION_PATH_SPEED_HANDLE_BASE_OFFSET + (_roundMotionPathPointSpeedScale(speedScale) * MOTION_PATH_SPEED_HANDLE_SCALE_PIXELS);
+  }
+
+  _getMotionPathPointSizeHandleScreenPoint(point, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    return {
+      x: anchor.x,
+      y: anchor.y - this._getMotionPathPointSizeHandleOffset(point?.stampScale),
+    };
+  }
+
+  _getMotionPathPointSpeedHandleScreenPoint(point, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    return {
+      x: anchor.x + this._getMotionPathPointSpeedHandleOffset(point?.speedScale),
+      y: anchor.y,
+    };
+  }
+
+  _getMotionPathPointStampScaleFromScreen(point, screenX, screenY, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    const radialDistance = Math.max(0, Math.hypot(screenX - anchor.x, screenY - anchor.y));
+    return _roundMotionPathPointStampScale((radialDistance - MOTION_PATH_SIZE_HANDLE_BASE_OFFSET) / MOTION_PATH_SIZE_HANDLE_SCALE_PIXELS);
+  }
+
+  _getMotionPathPointSpeedScaleFromScreen(point, screenX, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    const distance = Math.max(0, screenX - anchor.x);
+    return _roundMotionPathPointSpeedScale((distance - MOTION_PATH_SPEED_HANDLE_BASE_OFFSET) / MOTION_PATH_SPEED_HANDLE_SCALE_PIXELS);
+  }
+
+  _hitTestMotionPathPrimitive(localX, localY, screenX = Number.NaN, screenY = Number.NaN) {
     const doc = this._getActiveMotionPathDocument();
     if (!doc) return null;
     const zoom = Math.max(0.1, doc.view?.zoom || 1);
     const handleRadius = MOTION_PATH_HIT_RADIUS / zoom;
+    const sizeHandleRadius = MOTION_PATH_SIZE_HANDLE_RADIUS + 4;
+    const speedHandleRadius = MOTION_PATH_SPEED_HANDLE_RADIUS + 4;
     for (let i = doc.paths.length - 1; i >= 0; i--) {
       const path = doc.paths[i];
       for (let handleIndex = 0; handleIndex < path.points.length; handleIndex++) {
         const pt = path.points[handleIndex];
+        if (Number.isFinite(screenX) && Number.isFinite(screenY)) {
+          const sizeHandle = this._getMotionPathPointSizeHandleScreenPoint(pt, doc);
+          if (_distanceSquared(screenX, screenY, sizeHandle.x, sizeHandle.y) <= sizeHandleRadius * sizeHandleRadius) {
+            return { pathId: path.id, type: 'size-handle', handleIndex };
+          }
+          const speedHandle = this._getMotionPathPointSpeedHandleScreenPoint(pt, doc);
+          if (_distanceSquared(screenX, screenY, speedHandle.x, speedHandle.y) <= speedHandleRadius * speedHandleRadius) {
+            return { pathId: path.id, type: 'speed-handle', handleIndex };
+          }
+        }
         if (_distanceSquared(localX, localY, pt.x, pt.y) <= handleRadius * handleRadius) {
           return { pathId: path.id, type: 'handle', handleIndex };
         }
@@ -4656,9 +5089,29 @@ export class App {
     const canvas = this._getMotionPathEditorCanvas();
     if (!canvas || e.target !== canvas) return;
     this._hideMotionPathOverlayEndBehaviorSelect();
+    if (e.pointerType === 'touch') {
+      this._updateMotionPathEditorTouchPoint(e.pointerId, e.clientX, e.clientY);
+      canvas.setPointerCapture?.(e.pointerId);
+      if (this._beginMotionPathEditorTouchGesture(canvas)) {
+        e.preventDefault();
+        return;
+      }
+    }
     const rect = canvas.getBoundingClientRect();
-    const local = this._motionPathEditorToLocalPoint(e.clientX - rect.left, e.clientY - rect.top);
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const local = this._motionPathEditorToLocalPoint(screenX, screenY);
     if (e.button === 1) {
+      this.motionPathEditor.pointerId = e.pointerId;
+      this.motionPathEditor.dragMode = 'pan';
+      this.motionPathEditor.lastScreenX = e.clientX;
+      this.motionPathEditor.lastScreenY = e.clientY;
+      canvas.setPointerCapture?.(e.pointerId);
+      this.motionPathEditor.needsRedraw = true;
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0 && this.motionPathEditor.activeTool === 'pan') {
       this.motionPathEditor.pointerId = e.pointerId;
       this.motionPathEditor.dragMode = 'pan';
       this.motionPathEditor.lastScreenX = e.clientX;
@@ -4674,7 +5127,7 @@ export class App {
       e.preventDefault();
       return;
     }
-    const hit = this._hitTestMotionPathPrimitive(local.x, local.y);
+    const hit = this._hitTestMotionPathPrimitive(local.x, local.y, screenX, screenY);
     if (e.button === 0 && e.detail >= 2 && hit?.type === 'handle') {
       const doc = this._getActiveMotionPathDocument();
       const path = doc?.paths?.find(entry => entry.id === hit.pathId);
@@ -4719,12 +5172,16 @@ export class App {
     this.motionPathEditor.dragMode = hit?.type || null;
     this.motionPathEditor.dragHandleIndex = hit?.handleIndex ?? -1;
     canvas.setPointerCapture?.(e.pointerId);
-    if (hit?.type === 'handle' && selectedIds.length > 1) {
-      this._setSelectedMotionPathPrimitive(hit.pathId, hit.handleIndex);
+    if ((hit?.type === 'handle' || hit?.type === 'size-handle' || hit?.type === 'speed-handle') && selectedIds.length > 1) {
+      this._setSelectedMotionPathPrimitive(hit.pathId, hit.handleIndex, hit.type);
     } else if (hit?.pathId && hitSelected && selectedIds.length > 1) {
       this._setSelectedMotionPathPrimitives(selectedIds, hit.pathId, -1);
     } else {
-      this._setSelectedMotionPathPrimitive(hit?.pathId || null, hit?.type === 'handle' ? hit?.handleIndex : -1);
+      this._setSelectedMotionPathPrimitive(
+        hit?.pathId || null,
+        hit?.type === 'handle' || hit?.type === 'size-handle' || hit?.type === 'speed-handle' ? hit?.handleIndex : -1,
+        hit?.type,
+      );
     }
     this.motionPathEditor.needsRedraw = true;
     e.preventDefault();
@@ -4734,12 +5191,30 @@ export class App {
     if (!this.motionPath.editorOpen) return;
     const canvas = this._getMotionPathEditorCanvas();
     if (!canvas) return;
+    if (e.pointerType === 'touch' && this.motionPathEditor.touchPoints[e.pointerId]) {
+      this._updateMotionPathEditorTouchPoint(e.pointerId, e.clientX, e.clientY);
+      if (this.motionPathEditor.touchGestureActive || this._getMotionPathEditorTouchPoints().length >= 2) {
+        this._beginMotionPathEditorTouchGesture(canvas);
+        this._updateMotionPathEditorTouchGesture(canvas);
+        e.preventDefault();
+        return;
+      }
+    }
     const rect = canvas.getBoundingClientRect();
-    const local = this._motionPathEditorToLocalPoint(e.clientX - rect.left, e.clientY - rect.top);
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const local = this._motionPathEditorToLocalPoint(screenX, screenY);
     if (this.motionPathEditor.pointerId !== e.pointerId || !this.motionPathEditor.dragMode) {
-      const hover = this._hitTestMotionPathPrimitive(local.x, local.y);
+      const hover = this._hitTestMotionPathPrimitive(local.x, local.y, screenX, screenY);
       this.motionPathEditor.hoverPathId = hover?.pathId || null;
       this.motionPathEditor.hoverHandleIndex = hover?.handleIndex ?? -1;
+      this.motionPathEditor.hoverHandleType = hover?.type === 'size-handle'
+        ? 'size-handle'
+        : hover?.type === 'speed-handle'
+          ? 'speed-handle'
+          : hover?.type === 'handle'
+            ? 'handle'
+            : null;
       this.motionPathEditor.needsRedraw = true;
       return;
     }
@@ -4762,6 +5237,19 @@ export class App {
       } else {
         this._translateMotionPathPrimitive(path, dx, dy);
       }
+    } else if (this.motionPathEditor.dragMode === 'size-handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
+      path.points[this.motionPathEditor.dragHandleIndex].stampScale = this._getMotionPathPointStampScaleFromScreen(
+        path.points[this.motionPathEditor.dragHandleIndex],
+        screenX,
+        screenY,
+        doc,
+      );
+    } else if (this.motionPathEditor.dragMode === 'speed-handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
+      path.points[this.motionPathEditor.dragHandleIndex].speedScale = this._getMotionPathPointSpeedScaleFromScreen(
+        path.points[this.motionPathEditor.dragHandleIndex],
+        screenX,
+        doc,
+      );
     } else if (this.motionPathEditor.dragMode === 'handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
       path.points[this.motionPathEditor.dragHandleIndex].x = local.x;
       path.points[this.motionPathEditor.dragHandleIndex].y = local.y;
@@ -4773,6 +5261,17 @@ export class App {
   }
 
   _onMotionPathEditorPointerUp(e) {
+    if (e.pointerType === 'touch' && this.motionPathEditor.touchPoints[e.pointerId]) {
+      this._removeMotionPathEditorTouchPoint(e.pointerId);
+      if (this.motionPathEditor.touchGestureActive) {
+        if (this._getMotionPathEditorTouchPoints().length < 2) {
+          this._endMotionPathEditorTouchGesture();
+        }
+        this._cancelMotionPathEditorDrag();
+        e.preventDefault();
+        return;
+      }
+    }
     if (this.motionPathEditor.pointerId !== e.pointerId) return;
     this.motionPathEditor.pointerId = null;
     this.motionPathEditor.dragMode = null;
@@ -4841,6 +5340,21 @@ export class App {
       });
       ctx.stroke();
 
+      if (_normalizeMotionPathStartMode(path.startMode) === 'random') {
+        ctx.save();
+        ctx.strokeStyle = primary ? 'rgba(120,236,178,0.92)' : 'rgba(120,236,178,0.62)';
+        ctx.lineWidth = primary ? 1.7 : 1.2;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath();
+        sampled.forEach((pt, index) => {
+          const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
+          if (index === 0) ctx.moveTo(screen.x, screen.y);
+          else ctx.lineTo(screen.x, screen.y);
+        });
+        ctx.stroke();
+        ctx.restore();
+      }
+
       if (path.kind === 'bezier' && path.points.length >= 2) {
         ctx.strokeStyle = 'rgba(255,255,255,0.18)';
         ctx.setLineDash([5, 5]);
@@ -4856,9 +5370,84 @@ export class App {
 
       path.points.forEach((pt, handleIndex) => {
         const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
-        const hot = primary && handleIndex === this.motionPathEditor.hoverHandleIndex && path.id === this.motionPathEditor.hoverPathId;
+        const hot = primary
+          && handleIndex === this.motionPathEditor.hoverHandleIndex
+          && path.id === this.motionPathEditor.hoverPathId
+          && this.motionPathEditor.hoverHandleType === 'handle';
+        const hotSizeHandle = primary
+          && handleIndex === this.motionPathEditor.hoverHandleIndex
+          && path.id === this.motionPathEditor.hoverPathId
+          && this.motionPathEditor.hoverHandleType === 'size-handle';
+        const hotSpeedHandle = primary
+          && handleIndex === this.motionPathEditor.hoverHandleIndex
+          && path.id === this.motionPathEditor.hoverPathId
+          && this.motionPathEditor.hoverHandleType === 'speed-handle';
+        const selectedSizeHandle = primary
+          && handleIndex === this.motionPathEditor.selectedHandleIndex
+          && this.motionPathEditor.selectedHandleType === 'size-handle';
+        const selectedSpeedHandle = primary
+          && handleIndex === this.motionPathEditor.selectedHandleIndex
+          && this.motionPathEditor.selectedHandleType === 'speed-handle';
         const fill = hot ? '#ffffff' : primary ? '#8bb3ff' : selected ? '#9ec4ff' : '#d7e5ff';
         const isSharpBezierAnchor = path.kind === 'bezier' && pt?.connector === 'sharp';
+        const sizeHandle = this._getMotionPathPointSizeHandleScreenPoint(pt, doc);
+        const speedHandle = this._getMotionPathPointSpeedHandleScreenPoint(pt, doc);
+        ctx.strokeStyle = selectedSizeHandle
+          ? 'rgba(255,210,120,0.96)'
+          : hotSizeHandle
+            ? 'rgba(255,236,196,0.96)'
+            : 'rgba(255,210,120,0.52)';
+        ctx.lineWidth = selectedSizeHandle ? 2 : 1.3;
+        ctx.beginPath();
+        ctx.moveTo(screen.x, screen.y);
+        ctx.lineTo(sizeHandle.x, sizeHandle.y);
+        ctx.stroke();
+        ctx.fillStyle = selectedSizeHandle
+          ? 'rgba(255,210,120,0.98)'
+          : hotSizeHandle
+            ? 'rgba(255,236,196,0.98)'
+            : 'rgba(255,210,120,0.86)';
+        ctx.strokeStyle = 'rgba(12,16,24,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(sizeHandle.x, sizeHandle.y, MOTION_PATH_SIZE_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (selectedSizeHandle || hotSizeHandle) {
+          ctx.fillStyle = 'rgba(245,248,255,0.95)';
+          ctx.font = '10px Segoe UI, Arial, sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${pt.stampScale.toFixed(2)}x`, sizeHandle.x + 10, sizeHandle.y);
+        }
+        ctx.strokeStyle = selectedSpeedHandle
+          ? 'rgba(120,236,178,0.96)'
+          : hotSpeedHandle
+            ? 'rgba(210,255,233,0.98)'
+            : 'rgba(120,236,178,0.52)';
+        ctx.lineWidth = selectedSpeedHandle ? 2 : 1.3;
+        ctx.beginPath();
+        ctx.moveTo(screen.x, screen.y);
+        ctx.lineTo(speedHandle.x, speedHandle.y);
+        ctx.stroke();
+        ctx.fillStyle = selectedSpeedHandle
+          ? 'rgba(120,236,178,0.98)'
+          : hotSpeedHandle
+            ? 'rgba(210,255,233,0.98)'
+            : 'rgba(120,236,178,0.88)';
+        ctx.strokeStyle = 'rgba(12,16,24,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(speedHandle.x, speedHandle.y, MOTION_PATH_SPEED_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (selectedSpeedHandle || hotSpeedHandle) {
+          ctx.fillStyle = 'rgba(245,248,255,0.95)';
+          ctx.font = '10px Segoe UI, Arial, sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${pt.speedScale.toFixed(2)}x`, speedHandle.x + 10, speedHandle.y);
+        }
         ctx.fillStyle = fill;
         ctx.strokeStyle = 'rgba(12,16,24,0.85)';
         ctx.lineWidth = 1.5;
@@ -4964,7 +5553,7 @@ export class App {
         const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
         ctx.fillStyle = 'rgba(255,210,120,0.9)';
         ctx.beginPath();
-        ctx.arc(screen.x, screen.y, 3.5, 0, Math.PI * 2);
+        ctx.arc(screen.x, screen.y, 2.5 + ((pt.stampScale || 1) * 1.2), 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -4983,7 +5572,19 @@ export class App {
           ? sampled
           : _smoothMotionPathTrackPoints(sampled, p.motionPathPathSmoothing || 0, !!path.closed, MOTION_PATH_RESAMPLE_STEP);
         const track = _buildMotionPathTrack(smoothed, path.closed);
-        return track ? { ...track, id: path.id, kind: path.kind, name: path.name, agentCount: path.agentCount || 0, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), directionMode: _normalizeMotionPathDirectionMode(path.directionMode) } : null;
+        return track
+          ? {
+              ...track,
+              id: path.id,
+              kind: path.kind,
+              name: path.name,
+              agentCount: path.agentCount || 0,
+              speedMultiplier: path.speedMultiplier || 1,
+              endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior),
+              directionMode: _normalizeMotionPathDirectionMode(path.directionMode),
+              startMode: _normalizeMotionPathStartMode(path.startMode),
+            }
+          : null;
       })
       .filter(Boolean);
     const agents = [];
@@ -5014,11 +5615,14 @@ export class App {
               : directionMode === 'random'
                 ? (Math.random() < 0.5 ? -1 : 1)
                 : 1;
-          const baseDistance = count <= 1 ? 0 : (path.totalLength * agentIndex) / count;
+          const startMode = _normalizeMotionPathStartMode(path.startMode);
+          const baseDistance = startMode === 'random'
+            ? _getMotionPathDeterministicStartUnit(doc.id, doc.updatedAt, path.id, agentIndex, count) * path.totalLength
+            : (count <= 1 ? 0 : (path.totalLength * agentIndex) / count);
           const distance = !path.closed && direction === -1
             ? Math.max(0, path.totalLength - baseDistance)
             : baseDistance;
-          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction });
+          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction, startMode });
         }
       });
       if (!agents.length) {
@@ -5033,8 +5637,11 @@ export class App {
               : directionMode === 'random'
                 ? (Math.random() < 0.5 ? -1 : 1)
                 : 1;
-          const distance = !path.closed && direction === -1 ? path.totalLength : 0;
-          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction });
+          const baseDistance = _normalizeMotionPathStartMode(path.startMode) === 'random'
+            ? _getMotionPathDeterministicStartUnit(doc.id, doc.updatedAt, path.id, i, totalAgents) * path.totalLength
+            : 0;
+          const distance = !path.closed && direction === -1 ? Math.max(0, path.totalLength - baseDistance) : baseDistance;
+          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction, startMode: _normalizeMotionPathStartMode(path.startMode) });
         }
       }
     }
@@ -5139,6 +5746,7 @@ export class App {
         ? this.motionPathEditor.selectedPathId
         : (selectedIds[selectedIds.length - 1] || null);
       this.motionPathEditor.selectedHandleIndex = selectedIds.length === 1 ? this.motionPathEditor.selectedHandleIndex : -1;
+      this.motionPathEditor.selectedHandleType = selectedIds.length === 1 ? this.motionPathEditor.selectedHandleType : null;
     }
     const optionsHtml = docs.map(entry => `<option value="${entry.id}">${entry.name}</option>`).join('');
     for (const id of ['motionPathDocSelect', 'motionPathEditorSelect']) {
@@ -5163,11 +5771,15 @@ export class App {
       const createKind = this._getMotionPathEditorCreateKind();
       const toolLabel = createKind
         ? `Create ${createKind[0].toUpperCase()}${createKind.slice(1)}`
+        : this.motionPathEditor.activeTool === 'pan'
+          ? 'Pan Tool'
         : this.motionPathEditor.activeTool === 'delete'
           ? 'Delete Tool'
           : 'Select Tool';
       badge.textContent = this.motionPathEditor.insertPointMode ? 'Click to Place Point' : `${toolLabel} · View ${zoomLabel}`;
     }
+    const zoomBadge = document.getElementById('motionPathToolbarZoomLabel');
+    if (zoomBadge) zoomBadge.textContent = `${Math.round((doc?.view?.zoom || 1) * 100)}%`;
     const singleDoc = docs.length <= 1;
     for (const id of ['motionPathDeleteDocBtn', 'motionPathEditorDelete']) {
       const btn = document.getElementById(id);
@@ -5183,16 +5795,18 @@ export class App {
     if (!selectedIds.length && doc?.paths?.length && Number.isFinite(this.motionPathEditor.selectedPathId) && !doc.paths.some(path => path.id === this.motionPathEditor.selectedPathId)) {
       this.motionPathEditor.selectedPathId = null;
       this.motionPathEditor.selectedHandleIndex = -1;
+      this.motionPathEditor.selectedHandleType = null;
     }
     const selected = this._getSelectedMotionPathPrimitive();
     const selectedCount = selectedIds.length;
     const singleSelected = selectedCount === 1 ? selected : null;
+    const selectedPoint = singleSelected?.points?.[this.motionPathEditor.selectedHandleIndex] || null;
     const createKind = this._getMotionPathEditorCreateKind();
     if (!singleSelected && this.motionPathEditor.insertPointMode) this.motionPathEditor.insertPointMode = false;
     const selectionMeta = document.getElementById('motionPathEditorSelectionMeta');
     if (selectionMeta) {
       selectionMeta.textContent = singleSelected
-        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}`
+        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} · ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` · node size ${selectedPoint.stampScale.toFixed(2)}x · node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
         : selectedCount > 1
           ? `${selectedCount} primitives selected`
           : 'No primitive selected';
@@ -5207,10 +5821,25 @@ export class App {
       agentInput.disabled = !singleSelected;
       agentInput.value = String(singleSelected?.agentCount || 0);
     }
+    const pointStampScaleInput = document.getElementById('motionPathSelectedPointStampScale');
+    if (pointStampScaleInput) {
+      pointStampScaleInput.disabled = !selectedPoint;
+      pointStampScaleInput.value = selectedPoint ? selectedPoint.stampScale.toFixed(2) : '1.00';
+    }
+    const pointSpeedScaleInput = document.getElementById('motionPathSelectedPointSpeedScale');
+    if (pointSpeedScaleInput) {
+      pointSpeedScaleInput.disabled = !selectedPoint;
+      pointSpeedScaleInput.value = selectedPoint ? selectedPoint.speedScale.toFixed(2) : '1.00';
+    }
     const endBehaviorInput = document.getElementById('motionPathSelectedEndBehavior');
     if (endBehaviorInput) {
       endBehaviorInput.disabled = !singleSelected || !!singleSelected?.closed;
       endBehaviorInput.value = _normalizeMotionPathEndBehavior(singleSelected?.endBehavior);
+    }
+    const startModeInput = document.getElementById('motionPathSelectedStartMode');
+    if (startModeInput) {
+      startModeInput.disabled = !singleSelected;
+      startModeInput.value = _normalizeMotionPathStartMode(singleSelected?.startMode);
     }
     const closedInput = document.getElementById('motionPathSelectedClosed');
     if (closedInput) {
@@ -5231,6 +5860,7 @@ export class App {
     if (deletePrimitiveBtn) deletePrimitiveBtn.disabled = !selectedCount;
     const toolbarStates = [
       ['motionPathToolSelect', true, this.motionPathEditor.activeTool === 'select'],
+      ['motionPathToolPan', true, this.motionPathEditor.activeTool === 'pan'],
       ['motionPathToolDelete', true, this.motionPathEditor.activeTool === 'delete'],
       ['motionPathToolbarCopy', !!selectedCount, false],
       ['motionPathToolbarPaste', !!(this.motionPathEditor.clipboardPaths?.length), false],
@@ -5240,10 +5870,14 @@ export class App {
       ['motionPathToolbarAddBezier', true, createKind === 'bezier'],
       ['motionPathToolbarAddRect', true, createKind === 'rectangle'],
       ['motionPathToolbarAddEllipse', true, createKind === 'ellipse'],
-      ['motionPathAddPolyline', true, createKind === 'polyline'],
-      ['motionPathAddBezier', true, createKind === 'bezier'],
-      ['motionPathAddRect', true, createKind === 'rectangle'],
-      ['motionPathAddEllipse', true, createKind === 'ellipse'],
+      ['motionPathToolbarPanelGraph', true, this.motionPathEditor.activePanel === 'graph'],
+      ['motionPathToolbarPanelSelection', true, this.motionPathEditor.activePanel === 'selection'],
+      ['motionPathToolbarPanelEdit', true, this.motionPathEditor.activePanel === 'edit'],
+      ['motionPathToolbarHelp', true, !!this.motionPathEditor.helpOpen],
+      ['motionPathToolbarZoomOut', true, false],
+      ['motionPathToolbarZoomReset', true, false],
+      ['motionPathToolbarZoomIn', true, false],
+      ['motionPathToolbarCenterView', true, false],
     ];
     for (const [id, enabled, active] of toolbarStates) {
       const button = document.getElementById(id);
@@ -5253,11 +5887,36 @@ export class App {
     }
     const empty = document.getElementById('motionPathEditorEmpty');
     if (empty) empty.classList.toggle('hidden', !!doc?.paths?.length);
+    const drawer = document.getElementById('motionPathEditorDrawer');
+    if (drawer) {
+      drawer.classList.toggle('open', !!this.motionPathEditor.activePanel);
+      if (this.motionPathEditor.activePanel === 'graph') this._positionMotionPathEditorPopover('motionPathToolbarPanelGraph', 'motionPathEditorDrawer');
+      else if (this.motionPathEditor.activePanel === 'selection') this._positionMotionPathEditorPopover('motionPathToolbarPanelSelection', 'motionPathEditorDrawer');
+      else if (this.motionPathEditor.activePanel === 'edit') this._positionMotionPathEditorPopover('motionPathToolbarPanelEdit', 'motionPathEditorDrawer');
+    }
+    const panelMap = [
+      ['motionPathEditorGraphPanel', 'graph'],
+      ['motionPathEditorSelectionPanel', 'selection'],
+      ['motionPathEditorEditPanel', 'edit'],
+    ];
+    for (const [id, panel] of panelMap) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('is-open', this.motionPathEditor.activePanel === panel);
+    }
+    const helpCard = document.getElementById('motionPathEditorHelpCard');
+    if (helpCard) {
+      helpCard.classList.toggle('open', !!this.motionPathEditor.helpOpen);
+      if (this.motionPathEditor.helpOpen) {
+        this._positionMotionPathEditorPopover('motionPathToolbarHelp', 'motionPathEditorHelpCard', { alignRight: true });
+      }
+    }
     this._syncMotionPathOverlayControls(doc);
     const canvas = this._getMotionPathEditorCanvas();
     if (canvas) {
       canvas.style.cursor = this.motionPathEditor.dragMode === 'pan'
         ? 'grabbing'
+        : this.motionPathEditor.activeTool === 'pan'
+          ? 'grab'
         : this.motionPathEditor.insertPointMode
           ? 'copy'
           : createKind
@@ -5283,6 +5942,9 @@ export class App {
     document.getElementById('brushDropdown')?.classList.remove('open');
     document.getElementById('motionPathEditor')?.classList.add('open');
     this.motionPath.editorOpen = true;
+    this.motionPathEditor.activePanel = null;
+    this.motionPathEditor.touchPoints = {};
+    this._endMotionPathEditorTouchGesture();
     this._syncMotionPathEditorCanvasSize();
     this._syncMotionPathUI();
     this._syncMotionPathOverlayControls();
@@ -5302,7 +5964,12 @@ export class App {
     this.motionPathEditor.dragMode = null;
     this.motionPathEditor.dragPathId = null;
     this.motionPathEditor.dragHandleIndex = -1;
+    this.motionPathEditor.activePanel = null;
+    this.motionPathEditor.touchPoints = {};
+    this._endMotionPathEditorTouchGesture();
     this.motionPathEditor.selectedHandleIndex = -1;
+    this.motionPathEditor.selectedHandleType = null;
+    this.motionPathEditor.hoverHandleType = null;
     this.motionPathEditor.creationPathId = null;
     this.motionPathEditor.activeTool = 'select';
     this.motionPathEditor.insertPointMode = false;
@@ -5588,7 +6255,28 @@ export class App {
     document.getElementById('motionPathEditorDelete')?.addEventListener('click', () => this._deleteActiveMotionPathDocument());
     document.getElementById('motionPathEditorSelect')?.addEventListener('change', e => this._setActiveMotionPathDocument(e.target.value));
     document.getElementById('motionPathToolSelect')?.addEventListener('click', () => this._setMotionPathEditorTool('select'));
+    document.getElementById('motionPathToolPan')?.addEventListener('click', () => this._setMotionPathEditorTool('pan'));
     document.getElementById('motionPathToolDelete')?.addEventListener('click', () => this._setMotionPathEditorTool('delete'));
+    document.getElementById('motionPathToolbarZoomOut')?.addEventListener('click', () => {
+      const canvas = this._getMotionPathEditorCanvas();
+      const width = this.motionPathEditor.canvasWidth || canvas?.clientWidth || 1;
+      const height = this.motionPathEditor.canvasHeight || canvas?.clientHeight || 1;
+      this._zoomMotionPathEditorAt(width * 0.5, height * 0.5, 1 / 1.2);
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathToolbarZoomReset')?.addEventListener('click', () => this._resetMotionPathEditorZoom());
+    document.getElementById('motionPathToolbarZoomIn')?.addEventListener('click', () => {
+      const canvas = this._getMotionPathEditorCanvas();
+      const width = this.motionPathEditor.canvasWidth || canvas?.clientWidth || 1;
+      const height = this.motionPathEditor.canvasHeight || canvas?.clientHeight || 1;
+      this._zoomMotionPathEditorAt(width * 0.5, height * 0.5, 1.2);
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathToolbarCenterView')?.addEventListener('click', () => this._centerMotionPathEditorView());
+    document.getElementById('motionPathToolbarPanelGraph')?.addEventListener('click', () => this._setMotionPathEditorPanel('graph'));
+    document.getElementById('motionPathToolbarPanelSelection')?.addEventListener('click', () => this._setMotionPathEditorPanel('selection'));
+    document.getElementById('motionPathToolbarPanelEdit')?.addEventListener('click', () => this._setMotionPathEditorPanel('edit'));
+    document.getElementById('motionPathToolbarHelp')?.addEventListener('click', () => this._setMotionPathEditorHelp());
     document.getElementById('motionPathToolbarCopy')?.addEventListener('click', () => this._copySelectedMotionPathPrimitives());
     document.getElementById('motionPathToolbarPaste')?.addEventListener('click', () => this._pasteMotionPathPrimitives());
     document.getElementById('motionPathToolbarDuplicate')?.addEventListener('click', () => this._duplicateSelectedMotionPathPrimitives());
@@ -5622,10 +6310,31 @@ export class App {
       this._markMotionPathDocumentUpdated();
       this._syncMotionPathUI();
     });
+    document.getElementById('motionPathSelectedPointStampScale')?.addEventListener('input', e => {
+      const point = this._getSelectedMotionPathPoint();
+      if (!point) return;
+      point.stampScale = _roundMotionPathPointStampScale(+e.target.value || 1);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedPointSpeedScale')?.addEventListener('input', e => {
+      const point = this._getSelectedMotionPathPoint();
+      if (!point) return;
+      point.speedScale = _roundMotionPathPointSpeedScale(Number(e.target.value));
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
     document.getElementById('motionPathSelectedEndBehavior')?.addEventListener('change', e => {
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected) return;
       selected.endBehavior = _normalizeMotionPathEndBehavior(e.target.value);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedStartMode')?.addEventListener('change', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected) return;
+      selected.startMode = _normalizeMotionPathStartMode(e.target.value);
       this._markMotionPathDocumentUpdated();
       this._syncMotionPathUI();
     });
@@ -5647,6 +6356,10 @@ export class App {
       if (!pathId) return;
       if (button.dataset.kind === 'direction') {
         this._cycleMotionPathDirectionMode(pathId);
+        return;
+      }
+      if (button.dataset.kind === 'start') {
+        this._cycleMotionPathStartMode(pathId);
         return;
       }
       if (button.dataset.kind === 'behavior') {
@@ -5996,17 +6709,20 @@ export class App {
     // Reset EMA pressure at stroke start for immediate response
     this._rawPressure = e.pressure || 0.5;
     this.pressure = this._rawPressure;
-    this.leaderX = x;
-    this.leaderY = y;
     this._stabX = x;
     this._stabY = y;
     this.isDrawing = true;
     this.undoPushedThisStroke = false;
     this.isTapering = false;
     this.strokeFrame = 0;
+    const p = this.getP();
+    this._resetStrokeWaveState();
+    const waveStart = this._applyStrokeWavePoint(x, y, p, { reset: true });
+    this.leaderX = waveStart.x;
+    this.leaderY = waveStart.y;
 
     const brush = this.getCurrentBrush();
-    if (brush) brush.onDown(x, y, this.pressure);
+    if (brush) brush.onDown(this.leaderX, this.leaderY, this.pressure);
   }
 
   _onPointerMove(e) {
@@ -6072,13 +6788,15 @@ export class App {
         const alpha = 1 - stab * 0.95; // keeps min 5% responsiveness at max stabilizer
         this._stabX += (x - this._stabX) * alpha;
         this._stabY += (y - this._stabY) * alpha;
-        this.leaderX = this._stabX;
-        this.leaderY = this._stabY;
-        if (brush) brush.onMove(this._stabX, this._stabY, this.pressure);
+        const wavePoint = this._applyStrokeWavePoint(this._stabX, this._stabY, p);
+        this.leaderX = wavePoint.x;
+        this.leaderY = wavePoint.y;
+        if (brush) brush.onMove(this.leaderX, this.leaderY, this.pressure);
       } else {
-        this.leaderX = x;
-        this.leaderY = y;
-        if (brush) brush.onMove(x, y, this.pressure);
+        const wavePoint = this._applyStrokeWavePoint(x, y, p);
+        this.leaderX = wavePoint.x;
+        this.leaderY = wavePoint.y;
+        if (brush) brush.onMove(this.leaderX, this.leaderY, this.pressure);
       }
     }
   }
@@ -6109,12 +6827,31 @@ export class App {
     const { x, y } = this._getEventCoords(e);
 
     const brush = this.getCurrentBrush();
-    if (brush) brush.onUp(x, y);
+    const p = this.getP();
+    const waveActive = (p.strokeWaveType || 'none') !== 'none' && (p.strokeWaveAmplitude || 0) > 0;
+    if (waveActive) {
+      const stab = p.stabilizer || 0;
+      let baseX = x;
+      let baseY = y;
+      if (stab > 0) {
+        const alpha = 1 - stab * 0.95;
+        this._stabX += (x - this._stabX) * alpha;
+        this._stabY += (y - this._stabY) * alpha;
+        baseX = this._stabX;
+        baseY = this._stabY;
+      }
+      const wavePoint = this._applyStrokeWavePoint(baseX, baseY, p);
+      this.leaderX = wavePoint.x;
+      this.leaderY = wavePoint.y;
+      if (brush) brush.onUp(this.leaderX, this.leaderY);
+    } else if (brush) {
+      brush.onUp(x, y);
+    }
+    this._resetStrokeWaveState();
 
     this._recordColor(this.primaryEl.value);
 
     // Start taper if configured
-    const p = this.getP();
     if (p.taperLength > 0) {
       this.isTapering = true;
       this.taperFrame = 0;
@@ -6130,6 +6867,68 @@ export class App {
     if ((e.pointerType || this.pointerType) === 'touch') return;
     const brush = this.getCurrentBrush();
     if (brush && brush.onHoverEnd) brush.onHoverEnd();
+  }
+
+  _resetStrokeWaveState() {
+    this._strokeWave.active = false;
+    this._strokeWave.lastBaseX = Number.NaN;
+    this._strokeWave.lastBaseY = Number.NaN;
+    this._strokeWave.distance = 0;
+    this._strokeWave.tangentX = 1;
+    this._strokeWave.tangentY = 0;
+  }
+
+  _applyStrokeWavePoint(baseX, baseY, p = this.getP(), { reset = false } = {}) {
+    const state = this._strokeWave;
+    if (!state) return { x: baseX, y: baseY };
+
+    if (reset || !state.active) {
+      state.active = true;
+      state.lastBaseX = baseX;
+      state.lastBaseY = baseY;
+      state.distance = 0;
+      state.tangentX = 1;
+      state.tangentY = 0;
+    } else {
+      const dx = baseX - state.lastBaseX;
+      const dy = baseY - state.lastBaseY;
+      const stepDistance = Math.hypot(dx, dy);
+      if (stepDistance > 1e-3) {
+        state.distance += stepDistance;
+        state.tangentX = dx / stepDistance;
+        state.tangentY = dy / stepDistance;
+      }
+      state.lastBaseX = baseX;
+      state.lastBaseY = baseY;
+    }
+
+    const waveType = String(p?.strokeWaveType || 'none');
+    const amplitude = Math.max(0, Number(p?.strokeWaveAmplitude) || 0);
+    if (waveType === 'none' || amplitude <= 0) {
+      return { x: baseX, y: baseY, baseX, baseY, tangentX: state.tangentX, tangentY: state.tangentY, normalX: -state.tangentY, normalY: state.tangentX };
+    }
+
+    const wavelength = Math.max(1, Number(p?.strokeWaveLength) || 1);
+    const phase = (state.distance / wavelength) * Math.PI * 2 + (Number(p?.strokeWavePhase) || 0);
+    let waveValue = 0;
+    switch (waveType) {
+      case 'sine':
+      default:
+        waveValue = Math.sin(phase);
+        break;
+    }
+    const normalX = -state.tangentY;
+    const normalY = state.tangentX;
+    return {
+      x: baseX + normalX * waveValue * amplitude,
+      y: baseY + normalY * waveValue * amplitude,
+      baseX,
+      baseY,
+      tangentX: state.tangentX,
+      tangentY: state.tangentY,
+      normalX,
+      normalY,
+    };
   }
 
   _onKeyDown(e) {

@@ -212,7 +212,7 @@ export function buildSidebar(app) {
       </select></label>
       ${sliderRow('motionPathAgentCount', 'Agents', 1, MAX_SWARM_COUNT, 12)}
       ${sliderRow('motionPathScale', 'Scale', 10, 1000, 100, v => (v / 100).toFixed(2))}
-      ${sliderRow('motionPathSpeed', 'Speed', 1, 1000, 100, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionPathSpeed', 'Speed Mult', 0, 5000, 100, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathAcceleration', 'Accel', 0, 200, 50, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathAvoidance', 'Avoid', 0, 100, 25, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathAttraction', 'Attract', 0, 100, 0, v => (v / 100).toFixed(2))}
@@ -451,6 +451,13 @@ export function buildSidebar(app) {
       <label>Press→Opac <input type="checkbox" id="pressureOpacity" checked></label>
       <label>Flat Stroke <input type="checkbox" id="flatStroke"></label>
       ${sliderRow('stabilizer', 'Stabilizer', 0, 100, 0)}
+      <label>Wave <select id="strokeWaveType">
+        <option value="none">Off</option>
+        <option value="sine">Sine</option>
+      </select></label>
+      ${sliderRow('strokeWaveAmplitude', 'Wave Amp', 0, 200, 0, v => v + ' px', 'Offsets the stroke normal to the drawn path')}
+      ${sliderRow('strokeWaveLength', 'Wave Length', 4, 400, 80, v => v + ' px', 'Distance along the stroke for one full wave cycle')}
+      ${sliderRow('strokeWavePhase', 'Wave Phase', 0, 360, 0, v => v + '°', 'Phase offset applied at stroke start')}
     </div>
 
     <!-- Stamp Image -->
@@ -1220,6 +1227,9 @@ const _sliderFormats = {
   fluid3dInjectorOccupancy: v => (v / 100).toFixed(2),
   fluid3dInjectorSwirl: v => (v / 100).toFixed(2),
   stampOpacity: v => (v / 100).toFixed(2),
+  strokeWaveAmplitude: v => v + ' px',
+  strokeWaveLength: v => v + ' px',
+  strokeWavePhase: v => v + '°',
   stampImageRotation: v => v + '°',
   smudge: v => (v / 100).toFixed(2),
   canvasTextureStrength: v => (v / 100).toFixed(2),

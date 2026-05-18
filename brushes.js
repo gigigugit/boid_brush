@@ -5906,7 +5906,13 @@ const MOTION_PATH_BRUSH_DELTA_CAP = 1 / 24;
 function _sampleCompiledMotionTrack(track, distanceAlongPath) {
   if (!track?.points?.length) return null;
   if (track.points.length === 1) {
-    return { x: track.points[0].x, y: track.points[0].y, angle: 0 };
+    return {
+      x: track.points[0].x,
+      y: track.points[0].y,
+      angle: 0,
+      stampScale: Number.isFinite(track.points[0]?.stampScale) ? track.points[0].stampScale : 1,
+      speedScale: Number.isFinite(track.points[0]?.speedScale) ? track.points[0].speedScale : 1,
+    };
   }
   const totalLength = Math.max(track.totalLength || 0, 1e-6);
   const distance = track.closed
@@ -5923,13 +5929,23 @@ function _sampleCompiledMotionTrack(track, distanceAlongPath) {
         x: a.x + (b.x - a.x) * t,
         y: a.y + (b.y - a.y) * t,
         angle: Math.atan2(b.y - a.y, b.x - a.x),
+        stampScale: (Number.isFinite(a?.stampScale) ? a.stampScale : 1)
+          + (((Number.isFinite(b?.stampScale) ? b.stampScale : 1) - (Number.isFinite(a?.stampScale) ? a.stampScale : 1)) * t),
+        speedScale: (Number.isFinite(a?.speedScale) ? a.speedScale : 1)
+          + (((Number.isFinite(b?.speedScale) ? b.speedScale : 1) - (Number.isFinite(a?.speedScale) ? a.speedScale : 1)) * t),
       };
     }
     remaining -= length;
   }
   const last = track.points[track.points.length - 1];
   const prev = track.points[track.points.length - 2] || last;
-  return { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) };
+  return {
+    x: last.x,
+    y: last.y,
+    angle: Math.atan2(last.y - prev.y, last.x - prev.x),
+    stampScale: Number.isFinite(last?.stampScale) ? last.stampScale : 1,
+    speedScale: Number.isFinite(last?.speedScale) ? last.speedScale : 1,
+  };
 }
 
 function _advanceMotionTrackDistance(agent, track, deltaDistance) {
@@ -5941,6 +5957,8 @@ function _advanceMotionTrackDistance(agent, track, deltaDistance) {
     agent.distance = ((nextDistance % totalLength) + totalLength) % totalLength;
     agent.direction = direction;
     agent.discontinuousStep = false;
+    agent.respawnSnapToTrack = false;
+    if (!Number.isFinite(agent.respawnOffsetBlend)) agent.respawnOffsetBlend = 1;
     agent.stopped = false;
     return;
   }
@@ -5952,6 +5970,8 @@ function _advanceMotionTrackDistance(agent, track, deltaDistance) {
     agent.direction = direction;
     agent.stopped = nextDistance >= totalLength || nextDistance <= 0;
     agent.discontinuousStep = false;
+    agent.respawnSnapToTrack = false;
+    if (!Number.isFinite(agent.respawnOffsetBlend)) agent.respawnOffsetBlend = 1;
     return;
   }
   if (behavior === 'reverse') {
@@ -5960,13 +5980,19 @@ function _advanceMotionTrackDistance(agent, track, deltaDistance) {
       agent.distance = totalLength;
       agent.direction = -1;
       agent.discontinuousStep = true;
+      agent.respawnSnapToTrack = true;
+      agent.respawnOffsetBlend = 0;
     } else if (nextDistance < 0) {
       agent.distance = 0;
       agent.direction = 1;
       agent.discontinuousStep = true;
+      agent.respawnSnapToTrack = true;
+      agent.respawnOffsetBlend = 0;
     } else {
       agent.distance = nextDistance;
       agent.discontinuousStep = false;
+      agent.respawnSnapToTrack = false;
+      if (!Number.isFinite(agent.respawnOffsetBlend)) agent.respawnOffsetBlend = 1;
     }
     agent.stopped = false;
     return;
@@ -5986,17 +6012,23 @@ function _advanceMotionTrackDistance(agent, track, deltaDistance) {
     agent.distance = _clamp(distance, 0, totalLength);
     agent.direction = nextDirection;
     agent.discontinuousStep = false;
+    agent.respawnSnapToTrack = false;
+    if (!Number.isFinite(agent.respawnOffsetBlend)) agent.respawnOffsetBlend = 1;
     agent.stopped = false;
     return;
   }
   const nextDistance = agent.distance + (deltaDistance * direction);
   if (nextDistance > totalLength || nextDistance < 0) {
     agent.discontinuousStep = true;
+    agent.respawnSnapToTrack = true;
+    agent.respawnOffsetBlend = 0;
     agent.distance = behavior === 'random'
       ? Math.random() * totalLength
       : ((nextDistance % totalLength) + totalLength) % totalLength;
   } else {
     agent.discontinuousStep = false;
+    agent.respawnSnapToTrack = false;
+    if (!Number.isFinite(agent.respawnOffsetBlend)) agent.respawnOffsetBlend = 1;
     agent.distance = nextDistance;
   }
   agent.direction = direction;
@@ -6104,35 +6136,69 @@ export class MotionPathBrush {
       pathId: agent.pathId,
       distance: agent.distance || 0,
       speedMultiplier: agent.speedMultiplier || 1,
+      startMode: agent.startMode === 'random' ? 'random' : 'spread',
       endBehavior: ['bounce', 'restart', 'random', 'stop', 'reverse'].includes(agent.endBehavior) ? agent.endBehavior : 'restart',
       speed: 0,
       direction: agent.direction === -1 ? -1 : 1,
       stopped: false,
       discontinuousStep: false,
       wrappedStep: false,
+      respawnSnapToTrack: false,
+      respawnOffsetBlend: 1,
       lateralOffset: list.length <= 1 ? 0 : ((index / Math.max(1, list.length - 1)) - 0.5) * 2,
       spacingDistance: Number.NaN,
       spacingX: Number.NaN,
       spacingY: Number.NaN,
+      spacingSize: Number.NaN,
       smoothX: Number.NaN,
       smoothY: Number.NaN,
       prevX: Number.NaN,
       prevY: Number.NaN,
+      prevSize: Number.NaN,
     }));
     this._overlayPoints = [];
     return this._compiledGraph;
   }
 
+  _rerollRandomStartAgents(compiled = this._compiledGraph) {
+    if (!compiled?.paths?.length || !this._runtimeAgents.length) return;
+    for (const agent of this._runtimeAgents) {
+      if (agent.startMode !== 'random') continue;
+      const path = compiled.paths[agent.pathIndex];
+      if (!path) continue;
+      const totalLength = Math.max(0, path.totalLength || 0);
+      const baseDistance = totalLength > 0 ? Math.random() * totalLength : 0;
+      agent.distance = !path.closed && agent.direction === -1
+        ? Math.max(0, totalLength - baseDistance)
+        : baseDistance;
+      agent.speed = 0;
+      agent.stopped = false;
+      agent.discontinuousStep = false;
+      agent.wrappedStep = false;
+      agent.respawnSnapToTrack = true;
+      agent.respawnOffsetBlend = 0;
+      agent.spacingDistance = Number.NaN;
+      agent.spacingX = Number.NaN;
+      agent.spacingY = Number.NaN;
+      agent.spacingSize = Number.NaN;
+      agent.smoothX = Number.NaN;
+      agent.smoothY = Number.NaN;
+      agent.prevX = Number.NaN;
+      agent.prevY = Number.NaN;
+      agent.prevSize = Number.NaN;
+    }
+  }
+
   _cpuFallbackStamp(points, p) {
     const layer = this.app.getActiveLayer();
     if (!layer?.ctx) return;
-    let size = p.stampSize;
-    if (p.pressureSize) size *= (0.3 + 0.7 * this._pressure);
+    let baseSize = p.stampSize;
+    if (p.pressureSize) baseSize *= (0.3 + 0.7 * this._pressure);
     let opacity = p.stampOpacity;
     if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
     opacity = Math.min(opacity, 1);
     for (const point of points) {
-      this.app.symStamp(layer.ctx, point.x, point.y, size, p.color, opacity);
+      this.app.symStamp(layer.ctx, point.x, point.y, point.size || baseSize, p.color, opacity);
     }
     layer.dirty = true;
     this.app.compositeAllLayers();
@@ -6152,7 +6218,6 @@ export class MotionPathBrush {
     const useAlphaLock = activeLayer && activeLayer.alphaLock;
     const useStampImage = this.app.hasActiveStampImage?.(p);
     const support = useStampImage ? _getProceduralBatchRendererSupport(this, p, false) : { ok: false, reason: '' };
-    const stampStep = Math.max(0.35, width * 0.18);
     const offsets = this.app.tilingMode
       ? [
           [0, 0],
@@ -6172,7 +6237,7 @@ export class MotionPathBrush {
       const instances = new StampInstanceBuffer(Math.max(32, segments.length * 8));
       for (const segment of segments) {
         if (segment.kind === 'dot') {
-          _emitBatchStampInstances(this.app, instances, p, segment.x, segment.y, width, color, opacity, 0);
+          _emitBatchStampInstances(this.app, instances, p, segment.x, segment.y, segment.size || width, color, opacity, 0);
           continue;
         }
 
@@ -6180,12 +6245,16 @@ export class MotionPathBrush {
         const dy = segment.y1 - segment.y0;
         const travel = Math.hypot(dx, dy);
         const rotation = Math.atan2(dy, dx);
+        const startSize = segment.size0 || width;
+        const endSize = segment.size1 || startSize;
+        const stampStep = Math.max(0.35, Math.max(startSize, endSize) * 0.18);
         const steps = Math.max(1, Math.ceil(travel / stampStep));
         for (let step = 1; step <= steps; step++) {
           const t = step / steps;
           const x = segment.x0 + dx * t;
           const y = segment.y0 + dy * t;
-          _emitBatchStampInstances(this.app, instances, p, x, y, width, color, opacity, rotation);
+          const size = startSize + ((endSize - startSize) * t);
+          _emitBatchStampInstances(this.app, instances, p, x, y, size, color, opacity, rotation);
         }
       }
 
@@ -6202,7 +6271,7 @@ export class MotionPathBrush {
     if (useStampImage) {
       for (const segment of segments) {
         if (segment.kind === 'dot') {
-          this.app.symBitmapStamp(ctx, segment.x, segment.y, width, p.color, opacity, {
+          this.app.symBitmapStamp(ctx, segment.x, segment.y, segment.size || width, p.color, opacity, {
             p,
             markDirty: false,
           });
@@ -6213,12 +6282,16 @@ export class MotionPathBrush {
         const dy = segment.y1 - segment.y0;
         const travel = Math.hypot(dx, dy);
         const rotation = Math.atan2(dy, dx);
+        const startSize = segment.size0 || width;
+        const endSize = segment.size1 || startSize;
+        const stampStep = Math.max(0.35, Math.max(startSize, endSize) * 0.18);
         const steps = Math.max(1, Math.ceil(travel / stampStep));
         for (let step = 1; step <= steps; step++) {
           const t = step / steps;
           const x = segment.x0 + dx * t;
           const y = segment.y0 + dy * t;
-          this.app.symBitmapStamp(ctx, x, y, width, p.color, opacity, {
+          const size = startSize + ((endSize - startSize) * t);
+          this.app.symBitmapStamp(ctx, x, y, size, p.color, opacity, {
             p,
             rotation,
             markDirty: false,
@@ -6234,23 +6307,24 @@ export class MotionPathBrush {
     ctx.strokeStyle = p.color;
     ctx.fillStyle = p.color;
     ctx.globalAlpha = opacity;
-    ctx.lineWidth = width;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (useAlphaLock) ctx.globalCompositeOperation = 'source-atop';
     for (const segment of segments) {
       if (segment.kind === 'dot') {
+        const dotSize = segment.size || width;
         const points = this.app.getSymmetryPoints(segment.x, segment.y);
         for (let i = 0; i < points.length; i++) {
           const point = points[i];
           for (const [ox, oy] of offsets) {
             ctx.beginPath();
-            ctx.arc(point.x + ox, point.y + oy, width / 2, 0, Math.PI * 2);
+            ctx.arc(point.x + ox, point.y + oy, dotSize / 2, 0, Math.PI * 2);
             ctx.fill();
           }
         }
         continue;
       }
+      ctx.lineWidth = Math.max(0.5, ((segment.size0 || width) + (segment.size1 || segment.size0 || width)) * 0.5);
       const startPoints = this.app.getSymmetryPoints(segment.x0, segment.y0);
       const endPoints = this.app.getSymmetryPoints(segment.x1, segment.y1);
       const pairCount = Math.min(startPoints.length, endPoints.length);
@@ -6284,7 +6358,8 @@ export class MotionPathBrush {
     this._updateGraphAngle(p, x, y, { hasPathSample: false, fallbackAngle: 0 });
     this._resetRuntime(true);
     _ensureProceduralStampRendererInit(this);
-    this._ensureCompiledGraph(p);
+    const compiled = this._ensureCompiledGraph(p);
+    this._rerollRandomStartAgents(compiled);
   }
 
   onMove(x, y, pressure = this._pressure) {
@@ -6320,7 +6395,7 @@ export class MotionPathBrush {
     this._lastElapsed = elapsed;
 
     const graphScale = Math.max(0.05, (p.brushScale || 1) * (p.motionPathScale || 1));
-    const targetSpeed = Math.max(0.05, p.motionPathSpeed || 1) * MOTION_PATH_BRUSH_BASE_SPEED;
+    const targetSpeed = Math.max(0, Number.isFinite(p.motionPathSpeed) ? p.motionPathSpeed : 1) * MOTION_PATH_BRUSH_BASE_SPEED;
     const acceleration = _clamp((p.motionPathAcceleration || 0) * 3.5, 0.2, 8);
     const pullStrength = _clamp((p.motionPathAttraction || 0) * 0.35, 0, 0.35);
     const baseSeparation = (p.stampSize || 1) * Math.max(0.08, p.stampSeparation || 0.15) * 0.5;
@@ -6336,8 +6411,8 @@ export class MotionPathBrush {
     const ribbonSegments = [];
     this._overlayPoints = [];
 
-    let size = p.stampSize;
-    if (p.pressureSize) size *= (0.3 + 0.7 * this._pressure);
+    let baseSize = p.stampSize;
+    if (p.pressureSize) baseSize *= (0.3 + 0.7 * this._pressure);
     let opacity = p.stampOpacity;
     if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
     opacity = Math.min(opacity, 1);
@@ -6346,40 +6421,42 @@ export class MotionPathBrush {
       _commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true });
     }
 
-    const emitRibbonPoint = (x, y) => {
-      ribbonSegments.push({ kind: 'dot', x, y });
+    const emitRibbonPoint = (x, y, stampSize) => {
+      ribbonSegments.push({ kind: 'dot', x, y, size: stampSize });
     };
 
-    const emitRibbonSegment = (x0, y0, x1, y1) => {
-      ribbonSegments.push({ kind: 'segment', x0, y0, x1, y1 });
+    const emitRibbonSegment = (x0, y0, size0, x1, y1, size1) => {
+      ribbonSegments.push({ kind: 'segment', x0, y0, size0, x1, y1, size1 });
     };
 
-    const emitPointStamp = (x, y) => {
+    const emitPointStamp = (x, y, stampSize) => {
       if (useRibbon) {
-        emitRibbonPoint(x, y);
+        emitRibbonPoint(x, y, stampSize);
         return;
       }
       if (support.ok) {
-        _emitBatchStampInstances(this.app, instances, p, x, y, size, color, opacity);
+        _emitBatchStampInstances(this.app, instances, p, x, y, stampSize, color, opacity);
       } else {
-        cpuFallbackPoints.push({ x, y });
+        cpuFallbackPoints.push({ x, y, size: stampSize });
       }
     };
 
-    const emitSegmentStamps = (x0, y0, x1, y1) => {
+    const emitSegmentStamps = (x0, y0, size0, x1, y1, size1) => {
       if (useRibbon) {
-        emitRibbonSegment(x0, y0, x1, y1);
+        emitRibbonSegment(x0, y0, size0, x1, y1, size1);
         return;
       }
       const dx = x1 - x0;
       const dy = y1 - y0;
       const travel = Math.hypot(dx, dy);
-      const steps = Math.max(1, Math.ceil(travel / separation));
+      const stampSpacing = Math.max(0.2, separation * Math.max(0.25, ((size0 + size1) * 0.5) / Math.max(baseSize, 0.001)));
+      const steps = Math.max(1, Math.ceil(travel / stampSpacing));
       for (let step = 1; step <= steps; step++) {
         const t = step / steps;
         const stampX = x0 + dx * t;
         const stampY = y0 + dy * t;
-        emitPointStamp(stampX, stampY);
+        const stampSize = size0 + ((size1 - size0) * t);
+        emitPointStamp(stampX, stampY, stampSize);
       }
     };
 
@@ -6404,16 +6481,23 @@ export class MotionPathBrush {
       const track = compiled.paths[agent.pathIndex];
       if (!track) continue;
       if (agent.stopped) continue;
+      const speedSample = _sampleCompiledMotionTrack(track, agent.distance);
+      const nodeSpeedScale = Math.max(0, Number.isFinite(speedSample?.speedScale) ? speedSample.speedScale : 1);
       const speedEase = _clamp(delta * acceleration, 0, 1);
-      agent.speed += ((targetSpeed * agent.speedMultiplier) - agent.speed) * speedEase;
+      agent.speed += ((targetSpeed * agent.speedMultiplier * nodeSpeedScale) - agent.speed) * speedEase;
       const prevDistance = agent.distance;
       _advanceMotionTrackDistance(agent, track, agent.speed * delta);
       const prevSample = _sampleCompiledMotionTrack(track, prevDistance);
       const sample = _sampleCompiledMotionTrack(track, agent.distance);
       if (!sample) continue;
-      const lateralPixels = agent.lateralOffset * (p.motionPathAvoidance || 0) * 18 * graphScale;
+      const avoidanceBlend = agent.respawnSnapToTrack
+        ? 0
+        : _clamp(Number.isFinite(agent.respawnOffsetBlend) ? agent.respawnOffsetBlend : 1, 0, 1);
+      const lateralPixels = agent.lateralOffset * (p.motionPathAvoidance || 0) * 18 * graphScale * avoidanceBlend;
       const rawPrevWorld = prevSample ? toWorldPoint(prevSample, lateralPixels) : null;
       const rawWorld = toWorldPoint(sample, lateralPixels);
+      const prevStampSize = Math.max(0.5, baseSize * Math.max(0.05, prevSample?.stampScale || sample.stampScale || 1));
+      const stampSize = Math.max(0.5, baseSize * Math.max(0.05, sample.stampScale || 1));
       const { x: worldX, y: worldY } = this._smoothAgentWorldPoint(
         agent,
         rawPrevWorld?.x ?? rawWorld.x,
@@ -6422,17 +6506,19 @@ export class MotionPathBrush {
         rawWorld.y,
         p,
       );
-      this._overlayPoints.push({ x: worldX, y: worldY });
+      this._overlayPoints.push({ x: worldX, y: worldY, size: stampSize });
 
       if (useRibbon) {
         const hasPrevWorld = Number.isFinite(agent.prevX) && Number.isFinite(agent.prevY);
         if (agent.discontinuousStep || !hasPrevWorld) {
-          emitRibbonPoint(worldX, worldY);
+          emitRibbonPoint(worldX, worldY, stampSize);
           agent.prevX = worldX;
           agent.prevY = worldY;
+          agent.prevSize = stampSize;
           agent.spacingDistance = agent.distance;
           agent.spacingX = worldX;
           agent.spacingY = worldY;
+          agent.spacingSize = stampSize;
           continue;
         }
 
@@ -6442,23 +6528,29 @@ export class MotionPathBrush {
           if (seamEndSample && seamStartSample) {
             const seamEndWorld = toWorldPoint(seamEndSample, lateralPixels);
             const seamStartWorld = toWorldPoint(seamStartSample, lateralPixels);
-            emitRibbonSegment(agent.prevX, agent.prevY, seamEndWorld.x, seamEndWorld.y);
-            emitRibbonSegment(seamStartWorld.x, seamStartWorld.y, worldX, worldY);
+            const seamEndSize = Math.max(0.5, baseSize * Math.max(0.05, seamEndSample.stampScale || 1));
+            const seamStartSize = Math.max(0.5, baseSize * Math.max(0.05, seamStartSample.stampScale || 1));
+            emitRibbonSegment(agent.prevX, agent.prevY, agent.prevSize || prevStampSize, seamEndWorld.x, seamEndWorld.y, seamEndSize);
+            emitRibbonSegment(seamStartWorld.x, seamStartWorld.y, seamStartSize, worldX, worldY, stampSize);
             agent.prevX = worldX;
             agent.prevY = worldY;
+            agent.prevSize = stampSize;
             agent.spacingDistance = agent.distance;
             agent.spacingX = worldX;
             agent.spacingY = worldY;
+            agent.spacingSize = stampSize;
             continue;
           }
         }
 
-        emitRibbonSegment(agent.prevX, agent.prevY, worldX, worldY);
+        emitRibbonSegment(agent.prevX, agent.prevY, agent.prevSize || prevStampSize, worldX, worldY, stampSize);
         agent.prevX = worldX;
         agent.prevY = worldY;
+        agent.prevSize = stampSize;
         agent.spacingDistance = agent.distance;
         agent.spacingX = worldX;
         agent.spacingY = worldY;
+        agent.spacingSize = stampSize;
         continue;
       }
 
@@ -6466,14 +6558,17 @@ export class MotionPathBrush {
       const spacingWorld = hasSpacingAnchor && Number.isFinite(agent.spacingX) && Number.isFinite(agent.spacingY)
         ? { x: agent.spacingX, y: agent.spacingY }
         : null;
+      const spacingSize = Number.isFinite(agent.spacingSize) ? agent.spacingSize : prevStampSize;
 
       if (agent.discontinuousStep || !spacingWorld) {
-        emitPointStamp(worldX, worldY);
+        emitPointStamp(worldX, worldY, stampSize);
         agent.spacingDistance = agent.distance;
         agent.spacingX = worldX;
         agent.spacingY = worldY;
+        agent.spacingSize = stampSize;
         agent.prevX = worldX;
         agent.prevY = worldY;
+        agent.prevSize = stampSize;
         continue;
       }
 
@@ -6483,20 +6578,24 @@ export class MotionPathBrush {
         if (seamEndSample && seamStartSample) {
           const seamEndWorld = toWorldPoint(seamEndSample, lateralPixels);
           const seamStartWorld = toWorldPoint(seamStartSample, lateralPixels);
-          emitSegmentStamps(spacingWorld.x, spacingWorld.y, seamEndWorld.x, seamEndWorld.y);
+          const seamEndSize = Math.max(0.5, baseSize * Math.max(0.05, seamEndSample.stampScale || 1));
+          const seamStartSize = Math.max(0.5, baseSize * Math.max(0.05, seamStartSample.stampScale || 1));
+          emitSegmentStamps(spacingWorld.x, spacingWorld.y, spacingSize, seamEndWorld.x, seamEndWorld.y, seamEndSize);
           const wrapDx = worldX - seamStartWorld.x;
           const wrapDy = worldY - seamStartWorld.y;
           const wrapTravel = Math.hypot(wrapDx, wrapDy);
           if (wrapTravel < separation) {
-            emitPointStamp(worldX, worldY);
+            emitPointStamp(worldX, worldY, stampSize);
           } else {
-            emitSegmentStamps(seamStartWorld.x, seamStartWorld.y, worldX, worldY);
+            emitSegmentStamps(seamStartWorld.x, seamStartWorld.y, seamStartSize, worldX, worldY, stampSize);
             agent.spacingDistance = agent.distance;
             agent.spacingX = worldX;
             agent.spacingY = worldY;
+            agent.spacingSize = stampSize;
           }
           agent.prevX = worldX;
           agent.prevY = worldY;
+          agent.prevSize = stampSize;
           continue;
         }
       }
@@ -6504,16 +6603,21 @@ export class MotionPathBrush {
       const dx = worldX - spacingWorld.x;
       const dy = worldY - spacingWorld.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < separation) {
-        emitPointStamp(worldX, worldY);
+      const currentSeparation = Math.max(0.2, separation * Math.max(0.25, stampSize / Math.max(baseSize, 0.001)));
+      if (dist < currentSeparation) {
+        emitPointStamp(worldX, worldY, stampSize);
       } else {
-        emitSegmentStamps(spacingWorld.x, spacingWorld.y, worldX, worldY);
+        emitSegmentStamps(spacingWorld.x, spacingWorld.y, spacingSize, worldX, worldY, stampSize);
         agent.spacingDistance = agent.distance;
         agent.spacingX = worldX;
         agent.spacingY = worldY;
+        agent.spacingSize = stampSize;
       }
       agent.prevX = worldX;
       agent.prevY = worldY;
+      agent.prevSize = stampSize;
+      agent.respawnSnapToTrack = false;
+      agent.respawnOffsetBlend = Math.min(1, (Number.isFinite(agent.respawnOffsetBlend) ? agent.respawnOffsetBlend : 1) + (delta * 7));
     }
 
     const layer = this.app.getActiveLayer();
