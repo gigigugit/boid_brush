@@ -5087,6 +5087,7 @@ export class App {
     const centerPoint = first.points?.[0];
     const spokeHandle = first.points?.[1];
     if (!centerPoint || !spokeHandle) return members;
+    // Group edits keep radial metadata synchronized, so the first member is the canonical source for shared defaults.
     const count = _normalizeMotionPathRadialCount(radialCount ?? first.radialCount);
     const spread = _normalizeMotionPathRadialSpread(radialSpread ?? first.radialSpread);
     const resolvedGroupName = _normalizeMotionPathGroupName(groupName, first.groupName || `Radial ${groupId}`);
@@ -6142,7 +6143,8 @@ export class App {
     const nameInput = document.getElementById('motionPathSelectedName');
     if (nameInput) {
       nameInput.disabled = !singleSelected && !radialGroup;
-      nameInput.value = radialGroup?.groupName || singleSelected?.name || '';
+      if (radialGroup) nameInput.value = radialGroup.groupName || '';
+      else nameInput.value = singleSelected?.name || '';
     }
     const agentInput = document.getElementById('motionPathSelectedAgentCount');
     if (agentInput) {
@@ -6176,13 +6178,13 @@ export class App {
     }
     const radialCountInput = document.getElementById('motionPathSelectedRadialCount');
     if (radialCountInput) {
-      radialCountInput.disabled = !radialGroup && (!singleSelected || singleSelected?.kind !== 'radial');
-      radialCountInput.value = String(radialCount || _normalizeMotionPathRadialCount(singleSelected?.radialCount));
+      radialCountInput.disabled = !radialGroup && singleSelected?.kind !== 'radial';
+      radialCountInput.value = String(radialCount);
     }
     const radialSpreadInput = document.getElementById('motionPathSelectedRadialSpread');
     if (radialSpreadInput) {
-      radialSpreadInput.disabled = !radialGroup && (!singleSelected || singleSelected?.kind !== 'radial');
-      radialSpreadInput.value = String(radialSpread || Math.round(_normalizeMotionPathRadialSpread(singleSelected?.radialSpread)));
+      radialSpreadInput.disabled = !radialGroup && singleSelected?.kind !== 'radial';
+      radialSpreadInput.value = String(radialSpread);
     }
     const addPointBtn = document.getElementById('motionPathAddPoint');
     if (addPointBtn) {
@@ -6641,7 +6643,7 @@ export class App {
       const selectedGroup = this._getSelectedMotionPathGroup();
       if (selectedGroup?.groupKind === 'radial') {
         const name = _normalizeMotionPathGroupName(e.target.value, `Radial ${selectedGroup.groupId}`);
-        selectedGroup.paths.forEach((path, index) => {
+        this._getMotionPathGroupMembers(selectedGroup.groupId).forEach((path, index) => {
           path.groupName = name;
           path.name = `${name} · Line ${index + 1}`;
         });
