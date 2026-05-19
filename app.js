@@ -306,12 +306,13 @@ const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
 const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
 const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
 const MOTION_PATH_DEFAULT_OFFSET = 22;
-const MOTION_PATH_RADIAL_MIN_RADIUS = 1e-6;
+const MOTION_PATH_RADIAL_RADIUS_EPSILON = 1e-6;
 const MOTION_PATH_RADIAL_COUNT_MIN = 1;
 const MOTION_PATH_RADIAL_COUNT_MAX = 64;
 const MOTION_PATH_RADIAL_SPREAD_MIN = 0;
 const MOTION_PATH_RADIAL_SPREAD_MAX = 360;
 const MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD = 359.999;
+const MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET = 0.5;
 const MOTION_PATH_RUNTIME_BASE_SPEED = 90;
 const MOTION_PATH_RUNTIME_DELTA_CAP = 1 / 24;
 const MOTION_PATH_RUNTIME_INTERACTION_RADIUS = 110;
@@ -560,14 +561,18 @@ function _buildMotionPathRadialPoints(pathItem) {
   const center = points[0];
   const outerHandle = points[1];
   const radius = Math.hypot(outerHandle.x - center.x, outerHandle.y - center.y);
-  if (radius <= MOTION_PATH_RADIAL_MIN_RADIUS) return [center, outerHandle];
+  if (radius <= MOTION_PATH_RADIAL_RADIUS_EPSILON) {
+    // Preserve the authored handles so a zero-length spoke still renders as a selectable primitive.
+    return [center, outerHandle];
+  }
   const count = _normalizeMotionPathRadialCount(pathItem?.radialCount);
   const spread = _normalizeMotionPathRadialSpread(pathItem?.radialSpread);
+  // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
   const fullCircle = count > 1 && spread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
   const baseAngle = Math.atan2(outerHandle.y - center.y, outerHandle.x - center.x);
   const startAngle = fullCircle || count <= 1
     ? baseAngle
-    : baseAngle - ((spread * Math.PI) / 180) * 0.5;
+    : baseAngle - (((spread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
   const stepAngle = fullCircle
     ? (Math.PI * 2) / count
     : count <= 1
@@ -588,6 +593,7 @@ function _buildMotionPathRadialPoints(pathItem) {
       speedScale: outerHandle.speedScale,
     });
     if (index < count - 1) {
+      // Stop after the last spoke so the authored pattern ends at the final tip instead of snapping back to center.
       sampled.push({
         x: center.x,
         y: center.y,
@@ -4963,7 +4969,7 @@ export class App {
     const selected = this._getSelectedMotionPathPrimitive();
     if (!doc || !selected) return;
     if (selected.kind === 'radial') {
-      this.showToast('Radial primitives use their center and spoke handles instead of inserted points');
+      this.showToast('Radial primitives use their center and spoke handle; adjust line count and spread in Selection');
       return;
     }
     if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
