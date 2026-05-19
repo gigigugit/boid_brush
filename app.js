@@ -306,10 +306,12 @@ const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
 const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
 const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
 const MOTION_PATH_DEFAULT_OFFSET = 22;
+const MOTION_PATH_RADIAL_MIN_RADIUS = 1e-6;
 const MOTION_PATH_RADIAL_COUNT_MIN = 1;
 const MOTION_PATH_RADIAL_COUNT_MAX = 64;
 const MOTION_PATH_RADIAL_SPREAD_MIN = 0;
 const MOTION_PATH_RADIAL_SPREAD_MAX = 360;
+const MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD = 359.999;
 const MOTION_PATH_RUNTIME_BASE_SPEED = 90;
 const MOTION_PATH_RUNTIME_DELTA_CAP = 1 / 24;
 const MOTION_PATH_RUNTIME_INTERACTION_RADIUS = 110;
@@ -558,10 +560,10 @@ function _buildMotionPathRadialPoints(pathItem) {
   const center = points[0];
   const outerHandle = points[1];
   const radius = Math.hypot(outerHandle.x - center.x, outerHandle.y - center.y);
-  if (radius <= 1e-6) return [center, outerHandle];
+  if (radius <= MOTION_PATH_RADIAL_MIN_RADIUS) return [center, outerHandle];
   const count = _normalizeMotionPathRadialCount(pathItem?.radialCount);
   const spread = _normalizeMotionPathRadialSpread(pathItem?.radialSpread);
-  const fullCircle = count > 1 && spread >= 359.999;
+  const fullCircle = count > 1 && spread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
   const baseAngle = Math.atan2(outerHandle.y - center.y, outerHandle.x - center.x);
   const startAngle = fullCircle || count <= 1
     ? baseAngle
@@ -4422,7 +4424,10 @@ export class App {
     this._cleanupMotionPathCreation();
     this._setMotionPathEditorTool(`create-${kind}`);
     this.motionPathEditor.creationPathId = null;
-    this.showToast(`Click on the graph canvas to place ${kind === 'rectangle' || kind === 'ellipse' ? 'the first corner' : kind === 'radial' ? 'the center point' : 'the first point'} for a ${kind}`);
+    let placementTarget = 'the first point';
+    if (kind === 'rectangle' || kind === 'ellipse') placementTarget = 'the first corner';
+    else if (kind === 'radial') placementTarget = 'the center point';
+    this.showToast(`Click on the graph canvas to place ${placementTarget} for a ${kind}`);
   }
 
   _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1, handleType = null) {
@@ -5888,8 +5893,14 @@ export class App {
     const createKind = this._getMotionPathEditorCreateKind();
     if (!singleSelected && this.motionPathEditor.insertPointMode) this.motionPathEditor.insertPointMode = false;
     const selectionMeta = document.getElementById('motionPathEditorSelectionMeta');
+    const radialCount = singleSelected?.kind === 'radial'
+      ? _normalizeMotionPathRadialCount(singleSelected.radialCount)
+      : 0;
+    const radialSpread = singleSelected?.kind === 'radial'
+      ? Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))
+      : 0;
     const radialDetails = singleSelected?.kind === 'radial'
-      ? ` · ${_normalizeMotionPathRadialCount(singleSelected.radialCount)} radial line${_normalizeMotionPathRadialCount(singleSelected.radialCount) === 1 ? '' : 's'} · ${Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))}° spread`
+      ? ` · ${radialCount} radial line${radialCount === 1 ? '' : 's'} · ${radialSpread}° spread`
       : '';
     if (selectionMeta) {
       selectionMeta.textContent = singleSelected
