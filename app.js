@@ -307,12 +307,15 @@ const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
 const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
 const MOTION_PATH_DEFAULT_OFFSET = 22;
 const MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS = 1e-6;
+const MOTION_PATH_RADIAL_COUNT_DEFAULT = 8;
 const MOTION_PATH_RADIAL_COUNT_MIN = 1;
 const MOTION_PATH_RADIAL_COUNT_MAX = 64;
 const MOTION_PATH_RADIAL_SPREAD_MIN = 0;
+const MOTION_PATH_RADIAL_SPREAD_DEFAULT = 360;
 const MOTION_PATH_RADIAL_SPREAD_MAX = 360;
 const MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD = 359.999;
 const MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET = 0.5;
+const MOTION_PATH_GROUP_NAME_MAX_LENGTH = 40;
 const MOTION_PATH_RUNTIME_BASE_SPEED = 90;
 const MOTION_PATH_RUNTIME_DELTA_CAP = 1 / 24;
 const MOTION_PATH_RUNTIME_INTERACTION_RADIUS = 110;
@@ -541,7 +544,7 @@ function _roundMotionPathPointSpeedScale(value) {
 
 function _normalizeMotionPathRadialCount(value) {
   return _clamp(
-    Number.isFinite(value) ? Math.round(value) : 8,
+    Number.isFinite(value) ? Math.round(value) : MOTION_PATH_RADIAL_COUNT_DEFAULT,
     MOTION_PATH_RADIAL_COUNT_MIN,
     MOTION_PATH_RADIAL_COUNT_MAX,
   );
@@ -549,7 +552,7 @@ function _normalizeMotionPathRadialCount(value) {
 
 function _normalizeMotionPathRadialSpread(value) {
   return _clamp(
-    Number.isFinite(value) ? value : 360,
+    Number.isFinite(value) ? value : MOTION_PATH_RADIAL_SPREAD_DEFAULT,
     MOTION_PATH_RADIAL_SPREAD_MIN,
     MOTION_PATH_RADIAL_SPREAD_MAX,
   );
@@ -561,7 +564,7 @@ function _normalizeMotionPathGroupId(value) {
 
 function _normalizeMotionPathGroupName(value, fallback = '') {
   const trimmed = typeof value === 'string' ? value.trim() : '';
-  return (trimmed || fallback).slice(0, 40);
+  return (trimmed || fallback).slice(0, MOTION_PATH_GROUP_NAME_MAX_LENGTH);
 }
 
 function _buildMotionPathRadialSpokes(center, spokeHandle, count, spread) {
@@ -5033,8 +5036,8 @@ export class App {
 
   _createMotionPathRadialGroup(centerPoint, spokeHandle, {
     groupName = '',
-    radialCount = 8,
-    radialSpread = 360,
+    radialCount = MOTION_PATH_RADIAL_COUNT_DEFAULT,
+    radialSpread = MOTION_PATH_RADIAL_SPREAD_DEFAULT,
     reusePathId = null,
   } = {}) {
     const doc = this._getActiveMotionPathDocument();
