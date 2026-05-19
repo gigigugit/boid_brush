@@ -306,7 +306,7 @@ const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
 const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
 const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
 const MOTION_PATH_DEFAULT_OFFSET = 22;
-const MOTION_PATH_RADIAL_RADIUS_EPSILON = 1e-6;
+const MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS = 1e-6;
 const MOTION_PATH_RADIAL_COUNT_MIN = 1;
 const MOTION_PATH_RADIAL_COUNT_MAX = 64;
 const MOTION_PATH_RADIAL_SPREAD_MIN = 0;
@@ -559,23 +559,24 @@ function _buildMotionPathRadialPoints(pathItem) {
   const points = _normalizeMotionPathPoints('radial', pathItem?.points);
   if (points.length < 2) return [];
   const center = points[0];
-  const outerHandle = points[1];
-  const radius = Math.hypot(outerHandle.x - center.x, outerHandle.y - center.y);
-  if (radius <= MOTION_PATH_RADIAL_RADIUS_EPSILON) {
+  const spokeHandle = points[1];
+  const radius = Math.hypot(spokeHandle.x - center.x, spokeHandle.y - center.y);
+  if (radius <= MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS) {
     // Preserve the authored handles so a zero-length spoke still renders as a selectable primitive.
-    return [center, outerHandle];
+    return [center, spokeHandle];
   }
   const count = _normalizeMotionPathRadialCount(pathItem?.radialCount);
   const spread = _normalizeMotionPathRadialSpread(pathItem?.radialSpread);
+  const isSingleSpoke = count <= 1;
   // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
-  const fullCircle = count > 1 && spread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
-  const baseAngle = Math.atan2(outerHandle.y - center.y, outerHandle.x - center.x);
-  const startAngle = fullCircle || count <= 1
+  const fullCircle = !isSingleSpoke && spread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
+  const baseAngle = Math.atan2(spokeHandle.y - center.y, spokeHandle.x - center.x);
+  const startAngle = fullCircle || isSingleSpoke
     ? baseAngle
     : baseAngle - (((spread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
   const stepAngle = fullCircle
     ? (Math.PI * 2) / count
-    : count <= 1
+    : isSingleSpoke
       ? 0
       : ((spread * Math.PI) / 180) / Math.max(1, count - 1);
   const sampled = [{
@@ -589,11 +590,11 @@ function _buildMotionPathRadialPoints(pathItem) {
     sampled.push({
       x: center.x + (Math.cos(angle) * radius),
       y: center.y + (Math.sin(angle) * radius),
-      stampScale: outerHandle.stampScale,
-      speedScale: outerHandle.speedScale,
+      stampScale: spokeHandle.stampScale,
+      speedScale: spokeHandle.speedScale,
     });
     if (index < count - 1) {
-      // Stop after the last spoke so the authored pattern ends at the final tip instead of snapping back to center.
+      // Stop after the last spoke so agents finish at the final tip instead of being forced back to center.
       sampled.push({
         x: center.x,
         y: center.y,
@@ -4969,7 +4970,7 @@ export class App {
     const selected = this._getSelectedMotionPathPrimitive();
     if (!doc || !selected) return;
     if (selected.kind === 'radial') {
-      this.showToast('Radial primitives use their center and spoke handle; adjust line count and spread in Selection');
+      this.showToast('Radial primitives use their center and spoke handle; adjust spoke count and spread in Selection');
       return;
     }
     if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
@@ -5906,7 +5907,7 @@ export class App {
       ? Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))
       : 0;
     const radialDetails = singleSelected?.kind === 'radial'
-      ? ` · ${radialCount} radial line${radialCount === 1 ? '' : 's'} · ${radialSpread}° spread`
+      ? ` · ${radialCount} spoke${radialCount === 1 ? '' : 's'} · ${radialSpread}° spread`
       : '';
     if (selectionMeta) {
       selectionMeta.textContent = singleSelected
