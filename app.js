@@ -306,6 +306,10 @@ const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
 const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
 const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
 const MOTION_PATH_DEFAULT_OFFSET = 22;
+const MOTION_PATH_RADIAL_COUNT_MIN = 1;
+const MOTION_PATH_RADIAL_COUNT_MAX = 64;
+const MOTION_PATH_RADIAL_SPREAD_MIN = 0;
+const MOTION_PATH_RADIAL_SPREAD_MAX = 360;
 const MOTION_PATH_RUNTIME_BASE_SPEED = 90;
 const MOTION_PATH_RUNTIME_DELTA_CAP = 1 / 24;
 const MOTION_PATH_RUNTIME_INTERACTION_RADIUS = 110;
@@ -530,6 +534,67 @@ function _roundMotionPathPointSpeedScale(value) {
     MOTION_PATH_POINT_SPEED_MAX,
   );
   return Math.round(clamped / MOTION_PATH_POINT_SPEED_STEP) * MOTION_PATH_POINT_SPEED_STEP;
+}
+
+function _normalizeMotionPathRadialCount(value) {
+  return _clamp(
+    Number.isFinite(value) ? Math.round(value) : 8,
+    MOTION_PATH_RADIAL_COUNT_MIN,
+    MOTION_PATH_RADIAL_COUNT_MAX,
+  );
+}
+
+function _normalizeMotionPathRadialSpread(value) {
+  return _clamp(
+    Number.isFinite(value) ? value : 360,
+    MOTION_PATH_RADIAL_SPREAD_MIN,
+    MOTION_PATH_RADIAL_SPREAD_MAX,
+  );
+}
+
+function _buildMotionPathRadialPoints(pathItem) {
+  const points = _normalizeMotionPathPoints('radial', pathItem?.points);
+  if (points.length < 2) return [];
+  const center = points[0];
+  const outerHandle = points[1];
+  const radius = Math.hypot(outerHandle.x - center.x, outerHandle.y - center.y);
+  if (radius <= 1e-6) return [center, outerHandle];
+  const count = _normalizeMotionPathRadialCount(pathItem?.radialCount);
+  const spread = _normalizeMotionPathRadialSpread(pathItem?.radialSpread);
+  const fullCircle = count > 1 && spread >= 359.999;
+  const baseAngle = Math.atan2(outerHandle.y - center.y, outerHandle.x - center.x);
+  const startAngle = fullCircle || count <= 1
+    ? baseAngle
+    : baseAngle - ((spread * Math.PI) / 180) * 0.5;
+  const stepAngle = fullCircle
+    ? (Math.PI * 2) / count
+    : count <= 1
+      ? 0
+      : ((spread * Math.PI) / 180) / Math.max(1, count - 1);
+  const sampled = [{
+    x: center.x,
+    y: center.y,
+    stampScale: center.stampScale,
+    speedScale: center.speedScale,
+  }];
+  for (let index = 0; index < count; index++) {
+    const angle = startAngle + (stepAngle * index);
+    sampled.push({
+      x: center.x + (Math.cos(angle) * radius),
+      y: center.y + (Math.sin(angle) * radius),
+      stampScale: outerHandle.stampScale,
+      speedScale: outerHandle.speedScale,
+    });
+    if (index < count - 1) {
+      sampled.push({
+        x: center.x,
+        y: center.y,
+        stampScale: center.stampScale,
+        speedScale: center.speedScale,
+      });
+    }
+  }
+  return sampled;
 }
 
 function _getMotionPathBezierTangents(points, index, closed = false) {
@@ -847,6 +912,9 @@ function _sampleMotionPathPrimitive(pathItem, step = MOTION_PATH_RESAMPLE_STEP) 
       });
     }
     return _resampleMotionPathPoints(sampled, step, !!pathItem?.closed);
+  }
+  if (kind === 'radial') {
+    return _resampleMotionPathPoints(_buildMotionPathRadialPoints(pathItem), step, false);
   }
   return _resampleMotionPathPoints(points, step, !!pathItem?.closed);
 }
@@ -4158,7 +4226,7 @@ export class App {
       const paths = rawPaths.map((pathItem, pathIndex) => {
         const pathId = Number.isFinite(pathItem?.id) ? Math.max(1, Math.round(pathItem.id)) : nextPathId;
         nextPathId = Math.max(nextPathId, pathId + 1);
-        const kind = ['polyline', 'bezier', 'rectangle', 'ellipse'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
+        const kind = ['polyline', 'bezier', 'rectangle', 'ellipse', 'radial'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
         const fallbackPoints = kind === 'bezier'
           ? [
               { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT, connector: 'curve' },
@@ -4169,6 +4237,11 @@ export class App {
             ? [
                 { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT },
                 { x: MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
+              ]
+            : kind === 'radial'
+              ? [
+                  { x: 0, y: 0 },
+                  { x: 0, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT },
               ]
             : [
                 { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
@@ -4189,6 +4262,8 @@ export class App {
           startMode: _normalizeMotionPathStartMode(pathItem?.startMode),
           agentCount: Number.isFinite(pathItem?.agentCount) ? Math.max(0, Math.round(pathItem.agentCount)) : 0,
           speedMultiplier: Number.isFinite(pathItem?.speedMultiplier) ? Math.max(0.1, pathItem.speedMultiplier) : 1,
+          radialCount: _normalizeMotionPathRadialCount(pathItem?.radialCount),
+          radialSpread: _normalizeMotionPathRadialSpread(pathItem?.radialSpread),
           points: points.length ? points : _normalizeMotionPathPoints(kind, fallbackPoints, fallbackPoints),
         };
       });
@@ -4289,6 +4364,7 @@ export class App {
   _isMotionPathPrimitiveComplete(path) {
     if (!path) return false;
     if (path.kind === 'rectangle' || path.kind === 'ellipse') return path.points.length >= 2;
+    if (path.kind === 'radial') return path.points.length >= 2;
     if (path.kind === 'bezier') return path.points.length >= 2;
     return path.points.length >= 2;
   }
@@ -4321,7 +4397,7 @@ export class App {
   }
 
   _setMotionPathEditorTool(tool = 'select') {
-    const allowedCreateKinds = new Set(['polyline', 'bezier', 'rectangle', 'ellipse']);
+    const allowedCreateKinds = new Set(['polyline', 'bezier', 'rectangle', 'ellipse', 'radial']);
     const previousKind = this._getMotionPathEditorCreateKind();
     let nextTool = tool === 'delete'
       ? 'delete'
@@ -4342,11 +4418,11 @@ export class App {
   }
 
   _startMotionPathPrimitiveCreation(kind) {
-    if (!['polyline', 'bezier', 'rectangle', 'ellipse'].includes(kind)) return;
+    if (!['polyline', 'bezier', 'rectangle', 'ellipse', 'radial'].includes(kind)) return;
     this._cleanupMotionPathCreation();
     this._setMotionPathEditorTool(`create-${kind}`);
     this.motionPathEditor.creationPathId = null;
-    this.showToast(`Click on the graph canvas to place ${kind === 'rectangle' || kind === 'ellipse' ? 'the first corner' : 'the first point'} for a ${kind}`);
+    this.showToast(`Click on the graph canvas to place ${kind === 'rectangle' || kind === 'ellipse' ? 'the first corner' : kind === 'radial' ? 'the center point' : 'the first point'} for a ${kind}`);
   }
 
   _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1, handleType = null) {
@@ -4847,6 +4923,8 @@ export class App {
       startMode: 'spread',
       agentCount: 0,
       speedMultiplier: 1,
+      radialCount: _normalizeMotionPathRadialCount(),
+      radialSpread: _normalizeMotionPathRadialSpread(),
       points: _normalizeMotionPathPoints(kind, Array.isArray(points) ? points : []),
     };
     doc.paths.push(primitive);
@@ -4879,6 +4957,10 @@ export class App {
     const doc = this._getActiveMotionPathDocument();
     const selected = this._getSelectedMotionPathPrimitive();
     if (!doc || !selected) return;
+    if (selected.kind === 'radial') {
+      this.showToast('Radial primitives use their center and spoke handles instead of inserted points');
+      return;
+    }
     if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
       this._setMotionPathInsertPointMode(!this.motionPathEditor.insertPointMode);
       if (this.motionPathEditor.insertPointMode) this.showToast(`Click on the graph canvas to place a point on ${selected.name}`);
@@ -4940,6 +5022,8 @@ export class App {
       this._syncMotionPathUI();
       if (kind === 'rectangle' || kind === 'ellipse') {
         this.showToast(`Click the opposite corner to finish the ${kind}`);
+      } else if (kind === 'radial') {
+        this.showToast('Click again to place the spoke handle and finish the radial lines');
       } else {
         this.showToast(`Click to place the next ${kind === 'bezier' ? 'curve point' : 'point'}. Double-click or press Enter to finish.`);
       }
@@ -4947,7 +5031,7 @@ export class App {
     }
 
     let selectedHandleIndex = path.points.length - 1;
-    if (kind === 'rectangle' || kind === 'ellipse') {
+    if (kind === 'rectangle' || kind === 'ellipse' || kind === 'radial') {
       if (path.points.length === 1) path.points.push({ x: localX, y: localY, stampScale: 1, speedScale: 1 });
       else path.points[1] = { x: localX, y: localY, stampScale: 1, speedScale: 1 };
       selectedHandleIndex = 1;
@@ -5568,7 +5652,7 @@ export class App {
     const compiledPaths = doc.paths
       .map(path => {
         const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
-        const smoothed = path.kind === 'bezier' || path.kind === 'ellipse'
+        const smoothed = path.kind === 'bezier' || path.kind === 'ellipse' || path.kind === 'radial'
           ? sampled
           : _smoothMotionPathTrackPoints(sampled, p.motionPathPathSmoothing || 0, !!path.closed, MOTION_PATH_RESAMPLE_STEP);
         const track = _buildMotionPathTrack(smoothed, path.closed);
@@ -5804,9 +5888,12 @@ export class App {
     const createKind = this._getMotionPathEditorCreateKind();
     if (!singleSelected && this.motionPathEditor.insertPointMode) this.motionPathEditor.insertPointMode = false;
     const selectionMeta = document.getElementById('motionPathEditorSelectionMeta');
+    const radialDetails = singleSelected?.kind === 'radial'
+      ? ` · ${_normalizeMotionPathRadialCount(singleSelected.radialCount)} radial line${_normalizeMotionPathRadialCount(singleSelected.radialCount) === 1 ? '' : 's'} · ${Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))}° spread`
+      : '';
     if (selectionMeta) {
       selectionMeta.textContent = singleSelected
-        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} · ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` · node size ${selectedPoint.stampScale.toFixed(2)}x · node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
+        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'}${radialDetails} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} · ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` · node size ${selectedPoint.stampScale.toFixed(2)}x · node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
         : selectedCount > 1
           ? `${selectedCount} primitives selected`
           : 'No primitive selected';
@@ -5846,15 +5933,25 @@ export class App {
       closedInput.disabled = !singleSelected || (singleSelected?.kind !== 'polyline' && singleSelected?.kind !== 'bezier');
       closedInput.checked = !!singleSelected?.closed;
     }
+    const radialCountInput = document.getElementById('motionPathSelectedRadialCount');
+    if (radialCountInput) {
+      radialCountInput.disabled = !singleSelected || singleSelected?.kind !== 'radial';
+      radialCountInput.value = String(_normalizeMotionPathRadialCount(singleSelected?.radialCount));
+    }
+    const radialSpreadInput = document.getElementById('motionPathSelectedRadialSpread');
+    if (radialSpreadInput) {
+      radialSpreadInput.disabled = !singleSelected || singleSelected?.kind !== 'radial';
+      radialSpreadInput.value = String(Math.round(_normalizeMotionPathRadialSpread(singleSelected?.radialSpread)));
+    }
     const addPointBtn = document.getElementById('motionPathAddPoint');
     if (addPointBtn) {
-      addPointBtn.disabled = !singleSelected || !!createKind;
+      addPointBtn.disabled = !singleSelected || !!createKind || singleSelected?.kind === 'radial';
       addPointBtn.textContent = this.motionPathEditor.insertPointMode ? 'Cancel Point' : 'Add Point';
     }
     const insertBetweenToggle = document.getElementById('motionPathInsertBetweenToggle');
     if (insertBetweenToggle) {
       insertBetweenToggle.checked = !!this.motionPathEditor.insertBetweenPoints;
-      insertBetweenToggle.disabled = !singleSelected || !!createKind;
+      insertBetweenToggle.disabled = !singleSelected || !!createKind || singleSelected?.kind === 'radial';
     }
     const deletePrimitiveBtn = document.getElementById('motionPathDeletePrimitive');
     if (deletePrimitiveBtn) deletePrimitiveBtn.disabled = !selectedCount;
@@ -5870,6 +5967,7 @@ export class App {
       ['motionPathToolbarAddBezier', true, createKind === 'bezier'],
       ['motionPathToolbarAddRect', true, createKind === 'rectangle'],
       ['motionPathToolbarAddEllipse', true, createKind === 'ellipse'],
+      ['motionPathToolbarAddRadial', true, createKind === 'radial'],
       ['motionPathToolbarPanelGraph', true, this.motionPathEditor.activePanel === 'graph'],
       ['motionPathToolbarPanelSelection', true, this.motionPathEditor.activePanel === 'selection'],
       ['motionPathToolbarPanelEdit', true, this.motionPathEditor.activePanel === 'edit'],
@@ -6285,10 +6383,12 @@ export class App {
     document.getElementById('motionPathAddBezier')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('bezier'));
     document.getElementById('motionPathAddRect')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('rectangle'));
     document.getElementById('motionPathAddEllipse')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('ellipse'));
+    document.getElementById('motionPathAddRadial')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('radial'));
     document.getElementById('motionPathToolbarAddPolyline')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('polyline'));
     document.getElementById('motionPathToolbarAddBezier')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('bezier'));
     document.getElementById('motionPathToolbarAddRect')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('rectangle'));
     document.getElementById('motionPathToolbarAddEllipse')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('ellipse'));
+    document.getElementById('motionPathToolbarAddRadial')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('radial'));
     document.getElementById('motionPathAddPoint')?.addEventListener('click', () => this._addPointToMotionPathPrimitive());
     document.getElementById('motionPathInsertBetweenToggle')?.addEventListener('change', e => {
       this.motionPathEditor.insertBetweenPoints = !!e.target.checked;
@@ -6342,6 +6442,20 @@ export class App {
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected || (selected.kind !== 'polyline' && selected.kind !== 'bezier')) return;
       selected.closed = !!e.target.checked;
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedRadialCount')?.addEventListener('input', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected || selected.kind !== 'radial') return;
+      selected.radialCount = _normalizeMotionPathRadialCount(+e.target.value);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedRadialSpread')?.addEventListener('input', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected || selected.kind !== 'radial') return;
+      selected.radialSpread = _normalizeMotionPathRadialSpread(+e.target.value);
       this._markMotionPathDocumentUpdated();
       this._syncMotionPathUI();
     });

@@ -674,6 +674,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         <button type="button" id="motionPathToolbarAddBezier">Bezier</button>
         <button type="button" id="motionPathToolbarAddRect">Rect</button>
         <button type="button" id="motionPathToolbarAddEllipse">Ellipse</button>
+        <button type="button" id="motionPathToolbarAddRadial">Radial</button>
       </div>
       <div class="motion-path-editor-toolbarGroup">
         <span class="motion-path-editor-toolbarLabel">View</span>
@@ -749,6 +750,14 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
             Closed Path
           </label>
           <label>
+            Radial Lines
+            <input type="number" id="motionPathSelectedRadialCount" min="1" max="64" value="8" disabled>
+          </label>
+          <label>
+            Radial Spread
+            <input type="number" id="motionPathSelectedRadialSpread" min="0" max="360" step="1" value="360" disabled>
+          </label>
+          <label>
             <input type="checkbox" id="motionPathInsertBetweenToggle">
             Insert between existing points
           </label>
@@ -772,7 +781,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         </div>
         <div class="motion-path-editor-helpCard" id="motionPathEditorHelpCard">
           <h3>Graph Editor Help</h3>
-          <p><strong>Sketch:</strong> choose a tool, then click the canvas to place points. Double-click finishes polyline and bezier creation. Double-click a bezier anchor to toggle smooth or sharp.</p>
+          <p><strong>Sketch:</strong> choose a tool, then click the canvas to place points. Double-click finishes polyline and bezier creation. Double-click a bezier anchor to toggle smooth or sharp. Radial places a center first, then a spoke handle.</p>
           <p><strong>Navigate:</strong> Pan tool drags the view with the mouse, mouse wheel scrolls, Ctrl+wheel zooms, and touch uses two-finger pan and pinch.</p>
           <p><strong>Authoring cues:</strong> size handles rise above a node, speed handles extend to the right, and start-mode badges on the path show whether agents begin evenly or randomly.</p>
         </div>
