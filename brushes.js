@@ -1115,8 +1115,7 @@ export class BoidBrush {
 
   /**
    * When simulation mode is active, override brush-level params with any
-   * scene-variable values stored in `simulation.vars`.  Currently this
-   * overrides `seek` so boids follow guides rather than chasing the cursor.
+   * scene-variable values stored in `simulation.vars`.
    * Returns `p` unchanged when simulation is not enabled.
    */
   _applySimVars(p) {
@@ -1125,10 +1124,16 @@ export class BoidBrush {
     }
     const vars = this.app.simulation.vars;
     if (!vars) return p;
-    return Object.assign({}, p, {
+    const next = Object.assign({}, p, {
       seek: Number.isFinite(vars.seek) ? vars.seek : 0,
       simBoundsMargin: p.simBoundsMargin,
     });
+    if (Number.isFinite(vars.cohesion)) next.cohesion = vars.cohesion;
+    if (Number.isFinite(vars.separation)) next.separation = vars.separation;
+    if (Number.isFinite(vars.alignment)) next.alignment = vars.alignment;
+    if (Number.isFinite(vars.maxSpeed)) next.maxSpeed = vars.maxSpeed;
+    if (Number.isFinite(vars.damping)) next.damping = vars.damping;
+    return next;
   }
 
   _spawnAgents(x, y, p, pressure = 1, useHoverAngle = false) {
@@ -1145,7 +1150,16 @@ export class BoidBrush {
     } else if (p.pressureSpawnRadius) {
       r *= 0.3 + 0.7 * pressure;
     }
-    this.sim.spawnBatch(x, y, p.count, p.spawnShape, spawnAngle, p.spawnJitter, r);
+    this.app._spawnSimulationAgents(this.sim, {
+      count: p.count,
+      shape: p.spawnShape,
+      angle: spawnAngle,
+      jitter: p.spawnJitter,
+      radius: r,
+      mask: p.spawnMask || null,
+      distribution: p.spawnDistribution || 'uniform',
+      noiseScale: p.spawnNoiseScale || 1,
+    }, x, y);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
@@ -1714,7 +1728,17 @@ export class BoidBrush {
       : null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
     const strokeP = spawnConfig
-      ? { ...p, count: spawnConfig.count, spawnShape: spawnConfig.shape, spawnAngle: spawnConfig.angle, spawnJitter: spawnConfig.jitter, spawnRadius: spawnConfig.radius }
+      ? {
+          ...p,
+          count: spawnConfig.count,
+          spawnShape: spawnConfig.shape,
+          spawnAngle: spawnConfig.angle,
+          spawnJitter: spawnConfig.jitter,
+          spawnRadius: spawnConfig.radius,
+          spawnMask: spawnConfig.mask,
+          spawnDistribution: spawnConfig.distribution,
+          spawnNoiseScale: spawnConfig.noiseScale,
+        }
       : p;
 
     this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
@@ -1847,7 +1871,7 @@ export class BoidBrush {
     for (const spawn of data.spawns) {
       if (spawn === primary || spawn.enabled === false) continue;
       const config = this.app._resolveSimulationSpawnConfig(spawn, p);
-      this.sim.spawnBatch(spawn.x, spawn.y, config.count, config.shape, config.angle, config.jitter, config.radius);
+      this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
     }
   }
 
@@ -2510,7 +2534,7 @@ export class AntBrush {
     for (const spawn of data.spawns) {
       if (spawn === primary || spawn.enabled === false) continue;
       const config = this.app._resolveSimulationSpawnConfig(spawn, p);
-      this.sim.spawnBatch(spawn.x, spawn.y, config.count, config.shape, config.angle, config.jitter, config.radius);
+      this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
     }
     this._initPheroGrid();
     if (this._pheroData) this._pheroData.fill(0);
@@ -2535,15 +2559,16 @@ export class AntBrush {
     let r = spawnConfig ? spawnConfig.radius : p.spawnRadius;
     if (!spawnConfig && p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
     this.sim.clearAgents();
-    this.sim.spawnBatch(
-      x,
-      y,
-      spawnConfig ? spawnConfig.count : p.count,
-      spawnConfig ? spawnConfig.shape : p.spawnShape,
-      spawnConfig ? spawnConfig.angle : p.spawnAngle,
-      spawnConfig ? spawnConfig.jitter : p.spawnJitter,
-      r,
-    );
+    this.app._spawnSimulationAgents(this.sim, {
+      count: spawnConfig ? spawnConfig.count : p.count,
+      shape: spawnConfig ? spawnConfig.shape : p.spawnShape,
+      angle: spawnConfig ? spawnConfig.angle : p.spawnAngle,
+      jitter: spawnConfig ? spawnConfig.jitter : p.spawnJitter,
+      radius: r,
+      mask: spawnConfig?.mask || null,
+      distribution: spawnConfig?.distribution || 'uniform',
+      noiseScale: spawnConfig?.noiseScale || 1,
+    }, x, y);
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
