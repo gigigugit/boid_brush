@@ -555,45 +555,70 @@ function _normalizeMotionPathRadialSpread(value) {
   );
 }
 
+function _buildMotionPathRadialSpokes(center, spokeHandle, count, spread) {
+  if (!center || !spokeHandle) return [];
+  const radius = Math.hypot(spokeHandle.x - center.x, spokeHandle.y - center.y);
+  if (radius <= MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS) {
+    return [{
+      x: spokeHandle.x,
+      y: spokeHandle.y,
+      stampScale: spokeHandle.stampScale,
+      speedScale: spokeHandle.speedScale,
+    }];
+  }
+  const normalizedCount = _normalizeMotionPathRadialCount(count);
+  const normalizedSpread = _normalizeMotionPathRadialSpread(spread);
+  const isSingleSpoke = normalizedCount <= 1;
+  // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
+  const fullCircle = !isSingleSpoke && normalizedSpread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
+  const baseAngle = Math.atan2(spokeHandle.y - center.y, spokeHandle.x - center.x);
+  const startAngle = fullCircle || isSingleSpoke
+    ? baseAngle
+    : baseAngle - (((normalizedSpread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
+  const stepAngle = fullCircle
+    ? (Math.PI * 2) / normalizedCount
+    : isSingleSpoke
+      ? 0
+      : ((normalizedSpread * Math.PI) / 180) / Math.max(1, normalizedCount - 1);
+  const spokes = [];
+  for (let index = 0; index < normalizedCount; index++) {
+    const angle = startAngle + (stepAngle * index);
+    spokes.push({
+      x: center.x + (Math.cos(angle) * radius),
+      y: center.y + (Math.sin(angle) * radius),
+      stampScale: spokeHandle.stampScale,
+      speedScale: spokeHandle.speedScale,
+    });
+  }
+  return spokes;
+}
+
 function _buildMotionPathRadialPoints(pathItem) {
   const points = _normalizeMotionPathPoints('radial', pathItem?.points);
   if (points.length < 2) return [];
   const center = points[0];
   const spokeHandle = points[1];
-  const radius = Math.hypot(spokeHandle.x - center.x, spokeHandle.y - center.y);
-  if (radius <= MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS) {
-    // Preserve the authored handles so a zero-length spoke still renders as a selectable primitive.
-    return [center, spokeHandle];
-  }
-  const count = _normalizeMotionPathRadialCount(pathItem?.radialCount);
-  const spread = _normalizeMotionPathRadialSpread(pathItem?.radialSpread);
-  const isSingleSpoke = count <= 1;
-  // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
-  const fullCircle = !isSingleSpoke && spread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
-  const baseAngle = Math.atan2(spokeHandle.y - center.y, spokeHandle.x - center.x);
-  const startAngle = fullCircle || isSingleSpoke
-    ? baseAngle
-    : baseAngle - (((spread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
-  const stepAngle = fullCircle
-    ? (Math.PI * 2) / count
-    : isSingleSpoke
-      ? 0
-      : ((spread * Math.PI) / 180) / Math.max(1, count - 1);
+  const spokes = _buildMotionPathRadialSpokes(
+    center,
+    spokeHandle,
+    pathItem?.radialCount,
+    pathItem?.radialSpread,
+  );
+  if (!spokes.length) return [center, spokeHandle];
   const sampled = [{
     x: center.x,
     y: center.y,
     stampScale: center.stampScale,
     speedScale: center.speedScale,
   }];
-  for (let index = 0; index < count; index++) {
-    const angle = startAngle + (stepAngle * index);
+  spokes.forEach((spoke, index) => {
     sampled.push({
-      x: center.x + (Math.cos(angle) * radius),
-      y: center.y + (Math.sin(angle) * radius),
-      stampScale: spokeHandle.stampScale,
-      speedScale: spokeHandle.speedScale,
+      x: spoke.x,
+      y: spoke.y,
+      stampScale: spoke.stampScale,
+      speedScale: spoke.speedScale,
     });
-    if (index < count - 1) {
+    if (index < spokes.length - 1) {
       // Stop after the last spoke so agents finish at the final tip instead of being forced back to center.
       sampled.push({
         x: center.x,
@@ -602,7 +627,7 @@ function _buildMotionPathRadialPoints(pathItem) {
         speedScale: center.speedScale,
       });
     }
-  }
+  });
   return sampled;
 }
 
@@ -4206,6 +4231,7 @@ export class App {
       rules: [],
       view: { zoom: 1, panX: 0, panY: 0 },
       nextPathId: 1,
+      nextGroupId: 1,
       updatedAt: Date.now(),
     };
   }
@@ -4232,9 +4258,12 @@ export class App {
       const name = typeof doc?.name === 'string' && doc.name.trim() ? doc.name.trim().slice(0, 60) : `Motion Graph ${id}`;
       const rawPaths = Array.isArray(doc?.paths) ? doc.paths : [];
       let nextPathId = 1;
+      let nextGroupId = 1;
       const paths = rawPaths.map((pathItem, pathIndex) => {
         const pathId = Number.isFinite(pathItem?.id) ? Math.max(1, Math.round(pathItem.id)) : nextPathId;
         nextPathId = Math.max(nextPathId, pathId + 1);
+        const groupId = Number.isFinite(pathItem?.groupId) ? Math.max(1, Math.round(pathItem.groupId)) : null;
+        if (groupId) nextGroupId = Math.max(nextGroupId, groupId + 1);
         const kind = ['polyline', 'bezier', 'rectangle', 'ellipse', 'radial'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
         const fallbackPoints = kind === 'bezier'
           ? [
@@ -4271,6 +4300,10 @@ export class App {
           startMode: _normalizeMotionPathStartMode(pathItem?.startMode),
           agentCount: Number.isFinite(pathItem?.agentCount) ? Math.max(0, Math.round(pathItem.agentCount)) : 0,
           speedMultiplier: Number.isFinite(pathItem?.speedMultiplier) ? Math.max(0.1, pathItem.speedMultiplier) : 1,
+          groupId,
+          groupKind: typeof pathItem?.groupKind === 'string' ? pathItem.groupKind : '',
+          groupName: typeof pathItem?.groupName === 'string' ? pathItem.groupName.trim().slice(0, 40) : '',
+          radialLineIndex: Number.isFinite(pathItem?.radialLineIndex) ? Math.max(0, Math.round(pathItem.radialLineIndex)) : 0,
           radialCount: _normalizeMotionPathRadialCount(pathItem?.radialCount),
           radialSpread: _normalizeMotionPathRadialSpread(pathItem?.radialSpread),
           points: points.length ? points : _normalizeMotionPathPoints(kind, fallbackPoints, fallbackPoints),
@@ -4289,6 +4322,7 @@ export class App {
           panY: Number.isFinite(doc?.view?.panY) ? doc.view.panY : 0,
         },
         nextPathId: Number.isFinite(doc?.nextPathId) ? Math.max(nextPathId, Math.round(doc.nextPathId)) : nextPathId,
+        nextGroupId: Number.isFinite(doc?.nextGroupId) ? Math.max(nextGroupId, Math.round(doc.nextGroupId)) : nextGroupId,
         updatedAt: Number.isFinite(doc?.updatedAt) ? doc.updatedAt : Date.now(),
       };
     });
@@ -4350,6 +4384,40 @@ export class App {
     if (!doc) return [];
     const idSet = new Set(this._getSelectedMotionPathPrimitiveIds());
     return doc.paths.filter(path => idSet.has(path.id));
+  }
+
+  _getMotionPathGroupMembers(groupId, doc = this._getActiveMotionPathDocument()) {
+    if (!doc || !Number.isFinite(groupId)) return [];
+    return doc.paths.filter(path => Number(path?.groupId) === groupId);
+  }
+
+  _getMotionPathPrimitiveSelectionIds(pathId, { handleType = null } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    const path = doc?.paths?.find(entry => entry.id === pathId);
+    if (!path) return [];
+    if (handleType === 'handle' || handleType === 'size-handle' || handleType === 'speed-handle') {
+      return [path.id];
+    }
+    if (Number.isFinite(path.groupId)) {
+      return this._getMotionPathGroupMembers(path.groupId, doc).map(entry => entry.id);
+    }
+    return [path.id];
+  }
+
+  _getSelectedMotionPathGroup() {
+    const selected = this._getSelectedMotionPathPrimitives();
+    if (!selected.length) return null;
+    const first = selected[0];
+    if (!Number.isFinite(first?.groupId) || !first?.groupKind) return null;
+    if (!selected.every(path => path.groupId === first.groupId && path.groupKind === first.groupKind)) return null;
+    return {
+      groupId: first.groupId,
+      groupKind: first.groupKind,
+      groupName: first.groupName || '',
+      radialCount: _normalizeMotionPathRadialCount(first.radialCount),
+      radialSpread: _normalizeMotionPathRadialSpread(first.radialSpread),
+      paths: selected.slice().sort((a, b) => (a.radialLineIndex || 0) - (b.radialLineIndex || 0)),
+    };
   }
 
   _getSelectedMotionPathPoint() {
@@ -4507,9 +4575,14 @@ export class App {
     }
     this.motionPathEditor.pasteCount = (this.motionPathEditor.pasteCount || 0) + 1;
     const offset = DUPLICATE_OFFSET * this.motionPathEditor.pasteCount;
+    const groupIdMap = new Map();
     const inserted = items.map(source => {
       const clone = this._cloneMotionPathPrimitive(source, offset, offset);
       clone.id = doc.nextPathId++;
+      if (Number.isFinite(source?.groupId)) {
+        if (!groupIdMap.has(source.groupId)) groupIdMap.set(source.groupId, doc.nextGroupId++);
+        clone.groupId = groupIdMap.get(source.groupId);
+      }
       return clone;
     });
     doc.paths.push(...inserted);
@@ -4947,6 +5020,112 @@ export class App {
     return primitive;
   }
 
+  _createMotionPathRadialGroup(centerPoint, spokeHandle, {
+    groupName = '',
+    radialCount = 8,
+    radialSpread = 360,
+    reusePathId = null,
+  } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc || !centerPoint || !spokeHandle) return [];
+    const count = _normalizeMotionPathRadialCount(radialCount);
+    const spread = _normalizeMotionPathRadialSpread(radialSpread);
+    const groupId = doc.nextGroupId++;
+    const resolvedGroupName = (typeof groupName === 'string' && groupName.trim()
+      ? groupName.trim().slice(0, 40)
+      : `Radial ${groupId}`);
+    const spokes = _buildMotionPathRadialSpokes(centerPoint, spokeHandle, count, spread);
+    const created = [];
+    spokes.forEach((spoke, index) => {
+      const pathId = index === 0 && Number.isFinite(reusePathId) ? reusePathId : doc.nextPathId++;
+      created.push({
+        id: pathId,
+        name: `${resolvedGroupName} · Line ${index + 1}`,
+        kind: 'polyline',
+        closed: false,
+        endBehavior: 'restart',
+        directionMode: 'forward',
+        startMode: 'spread',
+        agentCount: 0,
+        speedMultiplier: 1,
+        groupId,
+        groupKind: 'radial',
+        groupName: resolvedGroupName,
+        radialLineIndex: index,
+        radialCount: count,
+        radialSpread: spread,
+        points: _normalizeMotionPathPoints('polyline', [
+          { x: centerPoint.x, y: centerPoint.y, stampScale: centerPoint.stampScale, speedScale: centerPoint.speedScale },
+          { x: spoke.x, y: spoke.y, stampScale: spoke.stampScale, speedScale: spoke.speedScale },
+        ]),
+      });
+    });
+    doc.paths.push(...created);
+    return created;
+  }
+
+  _updateMotionPathRadialGroup(groupId, {
+    radialCount = null,
+    radialSpread = null,
+    groupName = null,
+  } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    const members = this._getMotionPathGroupMembers(groupId, doc)
+      .slice()
+      .sort((a, b) => (a.radialLineIndex || 0) - (b.radialLineIndex || 0));
+    if (!doc || !members.length) return [];
+    const first = members[0];
+    const centerPoint = first.points?.[0];
+    const spokeHandle = first.points?.[1];
+    if (!centerPoint || !spokeHandle) return members;
+    const count = _normalizeMotionPathRadialCount(radialCount ?? first.radialCount);
+    const spread = _normalizeMotionPathRadialSpread(radialSpread ?? first.radialSpread);
+    const resolvedGroupName = (typeof groupName === 'string' && groupName.trim()
+      ? groupName.trim().slice(0, 40)
+      : (first.groupName || `Radial ${groupId}`));
+    const spokes = _buildMotionPathRadialSpokes(centerPoint, spokeHandle, count, spread);
+    while (members.length > count) {
+      const member = members.pop();
+      const index = doc.paths.findIndex(path => path.id === member.id);
+      if (index >= 0) doc.paths.splice(index, 1);
+    }
+    while (members.length < count) {
+      const pathId = doc.nextPathId++;
+      const index = members.length;
+      const clone = _deepClone(first);
+      clone.id = pathId;
+      clone.radialLineIndex = index;
+      doc.paths.push(clone);
+      members.push(clone);
+    }
+    members.forEach((member, index) => {
+      const spoke = spokes[index] || spokes[spokes.length - 1] || spokeHandle;
+      member.name = `${resolvedGroupName} · Line ${index + 1}`;
+      member.kind = 'polyline';
+      member.groupId = groupId;
+      member.groupKind = 'radial';
+      member.groupName = resolvedGroupName;
+      member.radialLineIndex = index;
+      member.radialCount = count;
+      member.radialSpread = spread;
+      member.points = _normalizeMotionPathPoints('polyline', [
+        {
+          x: centerPoint.x,
+          y: centerPoint.y,
+          stampScale: centerPoint.stampScale,
+          speedScale: centerPoint.speedScale,
+        },
+        {
+          x: spoke.x,
+          y: spoke.y,
+          stampScale: spoke.stampScale,
+          speedScale: spoke.speedScale,
+        },
+      ]);
+    });
+    return members;
+  }
+
   _createMotionPathPrimitiveFromShape(path) {
     if (!path) return null;
     const sampled = _sampleMotionPathPrimitive(path, Math.max(MOTION_PATH_RESAMPLE_STEP * 1.5, 18));
@@ -5043,7 +5222,30 @@ export class App {
     }
 
     let selectedHandleIndex = path.points.length - 1;
-    if (kind === 'rectangle' || kind === 'ellipse' || kind === 'radial') {
+    if (kind === 'radial') {
+      const centerPoint = {
+        x: path.points[0]?.x ?? localX,
+        y: path.points[0]?.y ?? localY,
+        stampScale: path.points[0]?.stampScale ?? 1,
+        speedScale: path.points[0]?.speedScale ?? 1,
+      };
+      const spokeHandle = { x: localX, y: localY, stampScale: 1, speedScale: 1 };
+      const radialIndex = doc.paths.findIndex(entry => entry.id === path.id);
+      if (radialIndex >= 0) doc.paths.splice(radialIndex, 1);
+      const created = this._createMotionPathRadialGroup(centerPoint, spokeHandle, {
+        groupName: path.name,
+        radialCount: path.radialCount,
+        radialSpread: path.radialSpread,
+        reusePathId: path.id,
+      });
+      this.motionPathEditor.creationPathId = null;
+      this._markMotionPathDocumentUpdated(doc);
+      this._setSelectedMotionPathPrimitives(created.map(entry => entry.id), created[0]?.id || null, -1);
+      this._maybeAutoSaveSession();
+      this.showToast(`Created grouped radial lines (${created.length})`);
+      return;
+    }
+    if (kind === 'rectangle' || kind === 'ellipse') {
       if (path.points.length === 1) path.points.push({ x: localX, y: localY, stampScale: 1, speedScale: 1 });
       else path.points[1] = { x: localX, y: localY, stampScale: 1, speedScale: 1 };
       selectedHandleIndex = 1;
@@ -5240,7 +5442,8 @@ export class App {
     }
     if (e.button === 0 && this.motionPathEditor.activeTool === 'delete') {
       if (hit?.pathId) {
-        this._setSelectedMotionPathPrimitives([hit.pathId], hit.pathId, -1);
+        const ids = this._getMotionPathPrimitiveSelectionIds(hit.pathId, { handleType: hit.type });
+        this._setSelectedMotionPathPrimitives(ids, hit.pathId, -1);
         this._deleteSelectedMotionPathPrimitive();
       }
       e.preventDefault();
@@ -5250,7 +5453,8 @@ export class App {
     const selectedIds = this._getSelectedMotionPathPrimitiveIds();
     const hitSelected = !!(hit?.pathId && selectedIds.includes(hit.pathId));
     if (e.button === 0 && toggleSelection && hit?.pathId) {
-      this._toggleMotionPathPrimitiveSelection(hit.pathId);
+      const ids = this._getMotionPathPrimitiveSelectionIds(hit.pathId, { handleType: hit.type });
+      ids.forEach(id => this._toggleMotionPathPrimitiveSelection(id));
       e.preventDefault();
       return;
     }
@@ -5273,7 +5477,11 @@ export class App {
     } else if (hit?.pathId && hitSelected && selectedIds.length > 1) {
       this._setSelectedMotionPathPrimitives(selectedIds, hit.pathId, -1);
     } else {
-      this._setSelectedMotionPathPrimitive(
+      const ids = hit?.pathId
+        ? this._getMotionPathPrimitiveSelectionIds(hit.pathId, { handleType: hit.type })
+        : [];
+      this._setSelectedMotionPathPrimitives(
+        ids,
         hit?.pathId || null,
         hit?.type === 'handle' || hit?.type === 'size-handle' || hit?.type === 'speed-handle' ? hit?.handleIndex : -1,
         hit?.type,
@@ -5897,20 +6105,28 @@ export class App {
     const selectedCount = selectedIds.length;
     const singleSelected = selectedCount === 1 ? selected : null;
     const selectedPoint = singleSelected?.points?.[this.motionPathEditor.selectedHandleIndex] || null;
+    const selectedGroup = this._getSelectedMotionPathGroup();
+    const radialGroup = selectedGroup?.groupKind === 'radial' ? selectedGroup : null;
     const createKind = this._getMotionPathEditorCreateKind();
     if (!singleSelected && this.motionPathEditor.insertPointMode) this.motionPathEditor.insertPointMode = false;
     const selectionMeta = document.getElementById('motionPathEditorSelectionMeta');
-    const radialCount = singleSelected?.kind === 'radial'
-      ? _normalizeMotionPathRadialCount(singleSelected.radialCount)
-      : 0;
-    const radialSpread = singleSelected?.kind === 'radial'
-      ? Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))
-      : 0;
-    const radialDetails = singleSelected?.kind === 'radial'
+    const radialCount = radialGroup
+      ? radialGroup.radialCount
+      : singleSelected?.kind === 'radial'
+        ? _normalizeMotionPathRadialCount(singleSelected.radialCount)
+        : 0;
+    const radialSpread = radialGroup
+      ? Math.round(radialGroup.radialSpread)
+      : singleSelected?.kind === 'radial'
+        ? Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))
+        : 0;
+    const radialDetails = radialCount > 0
       ? ` · ${radialCount} spoke${radialCount === 1 ? '' : 's'} · ${radialSpread}° spread`
       : '';
     if (selectionMeta) {
-      selectionMeta.textContent = singleSelected
+      selectionMeta.textContent = radialGroup && selectedCount > 1
+        ? `radial group · ${selectedCount} selected line${selectedCount === 1 ? '' : 's'}${radialDetails}`
+        : singleSelected
         ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'}${radialDetails} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} · ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` · node size ${selectedPoint.stampScale.toFixed(2)}x · node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
         : selectedCount > 1
           ? `${selectedCount} primitives selected`
@@ -5918,12 +6134,12 @@ export class App {
     }
     const nameInput = document.getElementById('motionPathSelectedName');
     if (nameInput) {
-      nameInput.disabled = !singleSelected;
-      nameInput.value = singleSelected?.name || '';
+      nameInput.disabled = !singleSelected && !radialGroup;
+      nameInput.value = radialGroup?.groupName || singleSelected?.name || '';
     }
     const agentInput = document.getElementById('motionPathSelectedAgentCount');
     if (agentInput) {
-      agentInput.disabled = !singleSelected;
+      agentInput.disabled = !singleSelected || !!radialGroup;
       agentInput.value = String(singleSelected?.agentCount || 0);
     }
     const pointStampScaleInput = document.getElementById('motionPathSelectedPointStampScale');
@@ -5948,28 +6164,28 @@ export class App {
     }
     const closedInput = document.getElementById('motionPathSelectedClosed');
     if (closedInput) {
-      closedInput.disabled = !singleSelected || (singleSelected?.kind !== 'polyline' && singleSelected?.kind !== 'bezier');
+      closedInput.disabled = !singleSelected || !!radialGroup || (singleSelected?.kind !== 'polyline' && singleSelected?.kind !== 'bezier');
       closedInput.checked = !!singleSelected?.closed;
     }
     const radialCountInput = document.getElementById('motionPathSelectedRadialCount');
     if (radialCountInput) {
-      radialCountInput.disabled = !singleSelected || singleSelected?.kind !== 'radial';
-      radialCountInput.value = String(_normalizeMotionPathRadialCount(singleSelected?.radialCount));
+      radialCountInput.disabled = !radialGroup && (!singleSelected || singleSelected?.kind !== 'radial');
+      radialCountInput.value = String(radialCount || _normalizeMotionPathRadialCount(singleSelected?.radialCount));
     }
     const radialSpreadInput = document.getElementById('motionPathSelectedRadialSpread');
     if (radialSpreadInput) {
-      radialSpreadInput.disabled = !singleSelected || singleSelected?.kind !== 'radial';
-      radialSpreadInput.value = String(Math.round(_normalizeMotionPathRadialSpread(singleSelected?.radialSpread)));
+      radialSpreadInput.disabled = !radialGroup && (!singleSelected || singleSelected?.kind !== 'radial');
+      radialSpreadInput.value = String(radialSpread || Math.round(_normalizeMotionPathRadialSpread(singleSelected?.radialSpread)));
     }
     const addPointBtn = document.getElementById('motionPathAddPoint');
     if (addPointBtn) {
-      addPointBtn.disabled = !singleSelected || !!createKind || singleSelected?.kind === 'radial';
+      addPointBtn.disabled = !singleSelected || !!createKind || !!radialGroup || singleSelected?.kind === 'radial';
       addPointBtn.textContent = this.motionPathEditor.insertPointMode ? 'Cancel Point' : 'Add Point';
     }
     const insertBetweenToggle = document.getElementById('motionPathInsertBetweenToggle');
     if (insertBetweenToggle) {
       insertBetweenToggle.checked = !!this.motionPathEditor.insertBetweenPoints;
-      insertBetweenToggle.disabled = !singleSelected || !!createKind || singleSelected?.kind === 'radial';
+      insertBetweenToggle.disabled = !singleSelected || !!createKind || !!radialGroup || singleSelected?.kind === 'radial';
     }
     const deletePrimitiveBtn = document.getElementById('motionPathDeletePrimitive');
     if (deletePrimitiveBtn) deletePrimitiveBtn.disabled = !selectedCount;
@@ -6415,6 +6631,18 @@ export class App {
     document.getElementById('motionPathDeletePrimitive')?.addEventListener('pointerdown', e => e.stopPropagation());
     document.getElementById('motionPathDeletePrimitive')?.addEventListener('click', () => this._deleteSelectedMotionPathPrimitive());
     document.getElementById('motionPathSelectedName')?.addEventListener('input', e => {
+      const selectedGroup = this._getSelectedMotionPathGroup();
+      if (selectedGroup?.groupKind === 'radial') {
+        const rawName = String(e.target.value || '').slice(0, 40);
+        const name = rawName.trim() || `Radial ${selectedGroup.groupId}`;
+        selectedGroup.paths.forEach((path, index) => {
+          path.groupName = name;
+          path.name = `${name} · Line ${index + 1}`;
+        });
+        this._markMotionPathDocumentUpdated();
+        this._syncMotionPathUI();
+        return;
+      }
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected) return;
       selected.name = String(e.target.value || '').slice(0, 40);
@@ -6464,6 +6692,13 @@ export class App {
       this._syncMotionPathUI();
     });
     document.getElementById('motionPathSelectedRadialCount')?.addEventListener('input', e => {
+      const selectedGroup = this._getSelectedMotionPathGroup();
+      if (selectedGroup?.groupKind === 'radial') {
+        this._updateMotionPathRadialGroup(selectedGroup.groupId, { radialCount: +e.target.value });
+        this._markMotionPathDocumentUpdated();
+        this._syncMotionPathUI();
+        return;
+      }
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected || selected.kind !== 'radial') return;
       selected.radialCount = _normalizeMotionPathRadialCount(+e.target.value);
@@ -6471,6 +6706,13 @@ export class App {
       this._syncMotionPathUI();
     });
     document.getElementById('motionPathSelectedRadialSpread')?.addEventListener('input', e => {
+      const selectedGroup = this._getSelectedMotionPathGroup();
+      if (selectedGroup?.groupKind === 'radial') {
+        this._updateMotionPathRadialGroup(selectedGroup.groupId, { radialSpread: +e.target.value });
+        this._markMotionPathDocumentUpdated();
+        this._syncMotionPathUI();
+        return;
+      }
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected || selected.kind !== 'radial') return;
       selected.radialSpread = _normalizeMotionPathRadialSpread(+e.target.value);
