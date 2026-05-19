@@ -555,6 +555,15 @@ function _normalizeMotionPathRadialSpread(value) {
   );
 }
 
+function _normalizeMotionPathGroupId(value) {
+  return Number.isFinite(value) ? Math.max(1, Math.round(value)) : null;
+}
+
+function _normalizeMotionPathGroupName(value, fallback = '') {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  return (trimmed || fallback).slice(0, 40);
+}
+
 function _buildMotionPathRadialSpokes(center, spokeHandle, count, spread) {
   if (!center || !spokeHandle) return [];
   const radius = Math.hypot(spokeHandle.x - center.x, spokeHandle.y - center.y);
@@ -572,14 +581,16 @@ function _buildMotionPathRadialSpokes(center, spokeHandle, count, spread) {
   // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
   const fullCircle = !isSingleSpoke && normalizedSpread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
   const baseAngle = Math.atan2(spokeHandle.y - center.y, spokeHandle.x - center.x);
-  const startAngle = fullCircle || isSingleSpoke
-    ? baseAngle
-    : baseAngle - (((normalizedSpread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
-  const stepAngle = fullCircle
-    ? (Math.PI * 2) / normalizedCount
-    : isSingleSpoke
-      ? 0
-      : ((normalizedSpread * Math.PI) / 180) / Math.max(1, normalizedCount - 1);
+  let startAngle = baseAngle;
+  if (!fullCircle && !isSingleSpoke) {
+    startAngle = baseAngle - (((normalizedSpread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
+  }
+  let stepAngle = 0;
+  if (fullCircle) {
+    stepAngle = (Math.PI * 2) / normalizedCount;
+  } else if (!isSingleSpoke) {
+    stepAngle = ((normalizedSpread * Math.PI) / 180) / Math.max(1, normalizedCount - 1);
+  }
   const spokes = [];
   for (let index = 0; index < normalizedCount; index++) {
     const angle = startAngle + (stepAngle * index);
@@ -4262,7 +4273,7 @@ export class App {
       const paths = rawPaths.map((pathItem, pathIndex) => {
         const pathId = Number.isFinite(pathItem?.id) ? Math.max(1, Math.round(pathItem.id)) : nextPathId;
         nextPathId = Math.max(nextPathId, pathId + 1);
-        const groupId = Number.isFinite(pathItem?.groupId) ? Math.max(1, Math.round(pathItem.groupId)) : null;
+        const groupId = _normalizeMotionPathGroupId(pathItem?.groupId);
         if (groupId) nextGroupId = Math.max(nextGroupId, groupId + 1);
         const kind = ['polyline', 'bezier', 'rectangle', 'ellipse', 'radial'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
         const fallbackPoints = kind === 'bezier'
@@ -4302,7 +4313,7 @@ export class App {
           speedMultiplier: Number.isFinite(pathItem?.speedMultiplier) ? Math.max(0.1, pathItem.speedMultiplier) : 1,
           groupId,
           groupKind: typeof pathItem?.groupKind === 'string' ? pathItem.groupKind : '',
-          groupName: typeof pathItem?.groupName === 'string' ? pathItem.groupName.trim().slice(0, 40) : '',
+          groupName: _normalizeMotionPathGroupName(pathItem?.groupName),
           radialLineIndex: Number.isFinite(pathItem?.radialLineIndex) ? Math.max(0, Math.round(pathItem.radialLineIndex)) : 0,
           radialCount: _normalizeMotionPathRadialCount(pathItem?.radialCount),
           radialSpread: _normalizeMotionPathRadialSpread(pathItem?.radialSpread),
@@ -5031,9 +5042,7 @@ export class App {
     const count = _normalizeMotionPathRadialCount(radialCount);
     const spread = _normalizeMotionPathRadialSpread(radialSpread);
     const groupId = doc.nextGroupId++;
-    const resolvedGroupName = (typeof groupName === 'string' && groupName.trim()
-      ? groupName.trim().slice(0, 40)
-      : `Radial ${groupId}`);
+    const resolvedGroupName = _normalizeMotionPathGroupName(groupName, `Radial ${groupId}`);
     const spokes = _buildMotionPathRadialSpokes(centerPoint, spokeHandle, count, spread);
     const created = [];
     spokes.forEach((spoke, index) => {
@@ -5080,9 +5089,7 @@ export class App {
     if (!centerPoint || !spokeHandle) return members;
     const count = _normalizeMotionPathRadialCount(radialCount ?? first.radialCount);
     const spread = _normalizeMotionPathRadialSpread(radialSpread ?? first.radialSpread);
-    const resolvedGroupName = (typeof groupName === 'string' && groupName.trim()
-      ? groupName.trim().slice(0, 40)
-      : (first.groupName || `Radial ${groupId}`));
+    const resolvedGroupName = _normalizeMotionPathGroupName(groupName, first.groupName || `Radial ${groupId}`);
     const spokes = _buildMotionPathRadialSpokes(centerPoint, spokeHandle, count, spread);
     while (members.length > count) {
       const member = members.pop();
@@ -6633,8 +6640,7 @@ export class App {
     document.getElementById('motionPathSelectedName')?.addEventListener('input', e => {
       const selectedGroup = this._getSelectedMotionPathGroup();
       if (selectedGroup?.groupKind === 'radial') {
-        const rawName = String(e.target.value || '').slice(0, 40);
-        const name = rawName.trim() || `Radial ${selectedGroup.groupId}`;
+        const name = _normalizeMotionPathGroupName(e.target.value, `Radial ${selectedGroup.groupId}`);
         selectedGroup.paths.forEach((path, index) => {
           path.groupName = name;
           path.name = `${name} · Line ${index + 1}`;
