@@ -10,6 +10,7 @@ import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, Simple
 import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
+import { BlobStroke } from './blob-stroke.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
@@ -146,6 +147,10 @@ const FACTORY_DEFAULTS = Object.freeze({
   smudge: 0,
   skipStamps: 0,
   stabilizer: 0,
+  strokeWaveType: 'none',
+  strokeWaveAmplitude: 0,
+  strokeWaveLength: 80,
+  strokeWavePhase: 0,
   stampImageRotation: 0,
   canvasTextureStrength: 60,
   canvasTextureScale: 100,
@@ -272,6 +277,20 @@ const ANGLE_PRECISION = 10;
 const SIM_POINT_HIT_RADIUS = 14;
 const SIM_LINE_HIT_RADIUS = 12;
 const SIM_DELETE_HIT_RADIUS = 10;
+const SIM_PARAM_HANDLE_RADIUS = 8;
+const SIM_PARAM_HIT_RADIUS = 12;
+const SIM_POINT_STRENGTH_HANDLE_OFFSET = 22;
+const SIM_POINT_STRENGTH_HANDLE_SCALE = 60;
+const SIM_PATH_START_MARKER_RADIUS = 6;
+const SIM_PATH_DIRECTION_HANDLE_OFFSET = 34;
+const SIM_PATH_DIRECTION_ARROW_LENGTH = 14;
+const SIM_SPAWN_MASK_CELL_SIZE_MIN = 2;
+const SIM_SPAWN_MASK_CELL_SIZE_MAX = 6;
+const SIM_SPAWN_MASK_MAX_DIM = 160;
+const SIM_SPAWN_MASK_ALPHA_THRESHOLD = 8;
+const SIM_SPAWN_NOISE_SCALE_MIN = 0.2;
+const SIM_SPAWN_NOISE_SCALE_MAX = 3;
+const SIM_SPAWN_DISTRIBUTION_MODES = ['uniform', 'density', 'noise'];
 const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const MAX_SWARM_COUNT = 2000;
@@ -284,12 +303,34 @@ const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const MOTION_PATH_HANDLE_RADIUS = 7;
 const MOTION_PATH_HIT_RADIUS = 12;
+const MOTION_PATH_POINT_SIZE_MIN = 0.2;
+const MOTION_PATH_POINT_SIZE_MAX = 4;
+const MOTION_PATH_POINT_SIZE_STEP = 0.05;
+const MOTION_PATH_POINT_SPEED_MIN = 0;
+const MOTION_PATH_POINT_SPEED_MAX = 50;
+const MOTION_PATH_POINT_SPEED_STEP = 0.05;
+const MOTION_PATH_SIZE_HANDLE_RADIUS = 5;
+const MOTION_PATH_SIZE_HANDLE_BASE_OFFSET = 18;
+const MOTION_PATH_SIZE_HANDLE_SCALE_PIXELS = 14;
+const MOTION_PATH_SPEED_HANDLE_RADIUS = 5;
+const MOTION_PATH_SPEED_HANDLE_BASE_OFFSET = 18;
+const MOTION_PATH_SPEED_HANDLE_SCALE_PIXELS = 6;
 const MOTION_PATH_RESAMPLE_STEP = 16;
 const MOTION_PATH_CURVE_SAMPLES = 48;
 const MOTION_PATH_ELLIPSE_MIN_SAMPLES = 32;
 const MOTION_PATH_DEFAULT_HALF_WIDTH = 110;
 const MOTION_PATH_DEFAULT_HALF_HEIGHT = 70;
 const MOTION_PATH_DEFAULT_OFFSET = 22;
+const MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS = 1e-6;
+const MOTION_PATH_RADIAL_COUNT_DEFAULT = 8;
+const MOTION_PATH_RADIAL_COUNT_MIN = 1;
+const MOTION_PATH_RADIAL_COUNT_MAX = 64;
+const MOTION_PATH_RADIAL_SPREAD_MIN = 0;
+const MOTION_PATH_RADIAL_SPREAD_DEFAULT = 360;
+const MOTION_PATH_RADIAL_SPREAD_MAX = 360;
+const MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD = 359.999;
+const MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET = 0.5;
+const MOTION_PATH_GROUP_NAME_MAX_LENGTH = 40;
 const MOTION_PATH_RUNTIME_BASE_SPEED = 90;
 const MOTION_PATH_RUNTIME_DELTA_CAP = 1 / 24;
 const MOTION_PATH_RUNTIME_INTERACTION_RADIUS = 110;
@@ -374,7 +415,44 @@ function _escapeHtml(str) {
 function _normalizeSimulationVars(value) {
   return {
     seek: Number.isFinite(value?.seek) ? value.seek : DEFAULT_SIM_SEEK,
+    cohesion: Number.isFinite(value?.cohesion) ? value.cohesion : undefined,
+    separation: Number.isFinite(value?.separation) ? value.separation : undefined,
+    alignment: Number.isFinite(value?.alignment) ? value.alignment : undefined,
+    maxSpeed: Number.isFinite(value?.maxSpeed) ? value.maxSpeed : undefined,
+    damping: Number.isFinite(value?.damping) ? value.damping : undefined,
   };
+}
+
+function _normalizeSimulationInspectorSections(value) {
+  const next = {};
+  if (!value || typeof value !== 'object') return next;
+  for (const [key, sectionOpen] of Object.entries(value)) {
+    next[key] = !!sectionOpen;
+  }
+  return next;
+}
+
+function _clampSimulationSpawnNoiseScale(value) {
+  return _clamp(
+    Number.isFinite(value) ? value : 1,
+    SIM_SPAWN_NOISE_SCALE_MIN,
+    SIM_SPAWN_NOISE_SCALE_MAX,
+  );
+}
+
+function _simulationSpawnNoise(ix, iy, scale = 1) {
+  const scaledX = ix * scale;
+  const scaledY = iy * scale;
+  const seed = Math.sin((scaledX * 12.9898) + (scaledY * 78.233)) * 43758.5453;
+  return seed - Math.floor(seed);
+}
+
+function _normalizeSimulationPathDirection(value) {
+  return value === 'reverse' ? 'reverse' : 'forward';
+}
+
+function _getSimulationPathDirectionLabel(value) {
+  return _normalizeSimulationPathDirection(value) === 'reverse' ? 'Reverse' : 'Forward';
 }
 
 function _closestPointOnSegment(px, py, ax, ay, bx, by) {
@@ -436,12 +514,35 @@ function _sampleCubicHermitePoint(p0, p1, m0, m1, t) {
   return {
     x: (h00 * p0.x) + (h10 * m0.x) + (h01 * p1.x) + (h11 * m1.x),
     y: (h00 * p0.y) + (h10 * m0.y) + (h01 * p1.y) + (h11 * m1.y),
+    stampScale: _lerp(
+      Number.isFinite(p0?.stampScale) ? p0.stampScale : 1,
+      Number.isFinite(p1?.stampScale) ? p1.stampScale : 1,
+      clamped,
+    ),
+    speedScale: _lerp(
+      Number.isFinite(p0?.speedScale) ? p0.speedScale : 1,
+      Number.isFinite(p1?.speedScale) ? p1.speedScale : 1,
+      clamped,
+    ),
   };
 }
 
 function _normalizeMotionPathPoint(kind, point) {
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null;
-  const normalized = { x: point.x, y: point.y };
+  const normalized = {
+    x: point.x,
+    y: point.y,
+    stampScale: _clamp(
+      Number.isFinite(point?.stampScale) ? point.stampScale : 1,
+      MOTION_PATH_POINT_SIZE_MIN,
+      MOTION_PATH_POINT_SIZE_MAX,
+    ),
+    speedScale: _clamp(
+      Number.isFinite(point?.speedScale) ? point.speedScale : 1,
+      MOTION_PATH_POINT_SPEED_MIN,
+      MOTION_PATH_POINT_SPEED_MAX,
+    ),
+  };
   if (kind === 'bezier') normalized.connector = point?.connector === 'sharp' ? 'sharp' : 'curve';
   return normalized;
 }
@@ -460,13 +561,140 @@ function _normalizeMotionPathPoints(kind, rawPoints, fallbackPoints = []) {
     for (let index = 0; index < valid.length; index += 3) {
       const anchor = valid[index];
       if (!anchor) continue;
-      anchors.push({ x: anchor.x, y: anchor.y, connector: 'curve' });
+      anchors.push({ x: anchor.x, y: anchor.y, stampScale: anchor.stampScale, speedScale: anchor.speedScale, connector: 'curve' });
     }
     return anchors.length ? anchors : fallback;
   }
   return valid.length
-    ? valid.map(point => ({ x: point.x, y: point.y, connector: point.connector === 'sharp' ? 'sharp' : 'curve' }))
+    ? valid.map(point => ({
+        x: point.x,
+        y: point.y,
+        stampScale: point.stampScale,
+        speedScale: point.speedScale,
+        connector: point.connector === 'sharp' ? 'sharp' : 'curve',
+      }))
     : fallback;
+}
+
+function _roundMotionPathPointStampScale(value) {
+  const clamped = _clamp(
+    Number.isFinite(value) ? value : 1,
+    MOTION_PATH_POINT_SIZE_MIN,
+    MOTION_PATH_POINT_SIZE_MAX,
+  );
+  return Math.round(clamped / MOTION_PATH_POINT_SIZE_STEP) * MOTION_PATH_POINT_SIZE_STEP;
+}
+
+function _roundMotionPathPointSpeedScale(value) {
+  const clamped = _clamp(
+    Number.isFinite(value) ? value : 1,
+    MOTION_PATH_POINT_SPEED_MIN,
+    MOTION_PATH_POINT_SPEED_MAX,
+  );
+  return Math.round(clamped / MOTION_PATH_POINT_SPEED_STEP) * MOTION_PATH_POINT_SPEED_STEP;
+}
+
+function _normalizeMotionPathRadialCount(value) {
+  return _clamp(
+    Number.isFinite(value) ? Math.round(value) : MOTION_PATH_RADIAL_COUNT_DEFAULT,
+    MOTION_PATH_RADIAL_COUNT_MIN,
+    MOTION_PATH_RADIAL_COUNT_MAX,
+  );
+}
+
+function _normalizeMotionPathRadialSpread(value) {
+  return _clamp(
+    Number.isFinite(value) ? value : MOTION_PATH_RADIAL_SPREAD_DEFAULT,
+    MOTION_PATH_RADIAL_SPREAD_MIN,
+    MOTION_PATH_RADIAL_SPREAD_MAX,
+  );
+}
+
+function _normalizeMotionPathGroupId(value) {
+  return Number.isFinite(value) ? Math.max(1, Math.round(value)) : null;
+}
+
+function _normalizeMotionPathGroupName(value, fallback = '') {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  return (trimmed || fallback).slice(0, MOTION_PATH_GROUP_NAME_MAX_LENGTH);
+}
+
+function _buildMotionPathRadialSpokes(center, spokeHandle, count, spread) {
+  if (!center || !spokeHandle) return [];
+  const radius = Math.hypot(spokeHandle.x - center.x, spokeHandle.y - center.y);
+  if (radius <= MOTION_PATH_RADIAL_MIN_SAMPLE_RADIUS) {
+    return [{
+      x: spokeHandle.x,
+      y: spokeHandle.y,
+      stampScale: spokeHandle.stampScale,
+      speedScale: spokeHandle.speedScale,
+    }];
+  }
+  const normalizedCount = _normalizeMotionPathRadialCount(count);
+  const normalizedSpread = _normalizeMotionPathRadialSpread(spread);
+  const isSingleSpoke = normalizedCount <= 1;
+  // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
+  const fullCircle = !isSingleSpoke && normalizedSpread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
+  const baseAngle = Math.atan2(spokeHandle.y - center.y, spokeHandle.x - center.x);
+  let startAngle = baseAngle;
+  if (!fullCircle && !isSingleSpoke) {
+    startAngle = baseAngle - (((normalizedSpread * Math.PI) / 180) * MOTION_PATH_RADIAL_SPREAD_CENTER_OFFSET);
+  }
+  let stepAngle = 0;
+  if (fullCircle) {
+    stepAngle = (Math.PI * 2) / normalizedCount;
+  } else if (!isSingleSpoke) {
+    stepAngle = ((normalizedSpread * Math.PI) / 180) / Math.max(1, normalizedCount - 1);
+  }
+  const spokes = [];
+  for (let index = 0; index < normalizedCount; index++) {
+    const angle = startAngle + (stepAngle * index);
+    spokes.push({
+      x: center.x + (Math.cos(angle) * radius),
+      y: center.y + (Math.sin(angle) * radius),
+      stampScale: spokeHandle.stampScale,
+      speedScale: spokeHandle.speedScale,
+    });
+  }
+  return spokes;
+}
+
+function _buildMotionPathRadialPoints(pathItem) {
+  const points = _normalizeMotionPathPoints('radial', pathItem?.points);
+  if (points.length < 2) return [];
+  const center = points[0];
+  const spokeHandle = points[1];
+  const spokes = _buildMotionPathRadialSpokes(
+    center,
+    spokeHandle,
+    pathItem?.radialCount,
+    pathItem?.radialSpread,
+  );
+  if (!spokes.length) return [center, spokeHandle];
+  const sampled = [{
+    x: center.x,
+    y: center.y,
+    stampScale: center.stampScale,
+    speedScale: center.speedScale,
+  }];
+  spokes.forEach((spoke, index) => {
+    sampled.push({
+      x: spoke.x,
+      y: spoke.y,
+      stampScale: spoke.stampScale,
+      speedScale: spoke.speedScale,
+    });
+    if (index < spokes.length - 1) {
+      // Stop after the last spoke so agents finish at the final tip instead of being forced back to center.
+      sampled.push({
+        x: center.x,
+        y: center.y,
+        stampScale: center.stampScale,
+        speedScale: center.speedScale,
+      });
+    }
+  });
+  return sampled;
 }
 
 function _getMotionPathBezierTangents(points, index, closed = false) {
@@ -496,9 +724,45 @@ function _getMotionPathBezierTangents(points, index, closed = false) {
   return { incoming: smooth, outgoing: smooth };
 }
 
+function _normalizeSimulationPathPoints(points) {
+  return Array.isArray(points)
+    ? points
+        .filter(point => Number.isFinite(point?.x) && Number.isFinite(point?.y))
+        .map(point => ({ x: point.x, y: point.y }))
+    : [];
+}
+
+function _smoothSimulationPathPoints(points, closed = false, iterations = 2) {
+  let current = _normalizeSimulationPathPoints(points);
+  if (current.length < 3) return current;
+  for (let iteration = 0; iteration < iterations; iteration++) {
+    if (current.length < 2) break;
+    const next = [];
+    if (!closed) next.push({ x: current[0].x, y: current[0].y });
+    const segmentCount = closed ? current.length : current.length - 1;
+    for (let index = 0; index < segmentCount; index++) {
+      const a = current[index];
+      const b = current[(index + 1) % current.length];
+      next.push({
+        x: a.x * 0.75 + b.x * 0.25,
+        y: a.y * 0.75 + b.y * 0.25,
+      });
+      next.push({
+        x: a.x * 0.25 + b.x * 0.75,
+        y: a.y * 0.25 + b.y * 0.75,
+      });
+    }
+    if (!closed) {
+      const last = current[current.length - 1];
+      next.push({ x: last.x, y: last.y });
+    }
+    current = next;
+  }
+  return current;
+}
+
 function _sampleMotionPathBezierSegment(points, startIndex, closed = false) {
   const count = Array.isArray(points) ? points.length : 0;
-  if (count < 2) return [];
   const endIndex = closed ? ((startIndex + 1) % count) : startIndex + 1;
   const start = points[startIndex];
   const end = points[endIndex];
@@ -536,6 +800,26 @@ function _normalizeMotionPathEndBehavior(value) {
 
 function _normalizeMotionPathDirectionMode(value) {
   return ['forward', 'reverse', 'alternate', 'random'].includes(value) ? value : 'forward';
+}
+
+function _normalizeMotionPathStartMode(value) {
+  return value === 'random' ? 'random' : 'spread';
+}
+
+function _getMotionPathStartModeLabel(value) {
+  return _normalizeMotionPathStartMode(value) === 'random' ? 'Random Start' : 'Even Start';
+}
+
+function _getMotionPathDeterministicStartUnit(documentId, updatedAt, pathId, agentIndex, totalAgents) {
+  const seed = (
+    (Number.isFinite(documentId) ? documentId : 0) * 73856093
+    + (Number.isFinite(pathId) ? pathId : 0) * 19349663
+    + Math.round((Number.isFinite(updatedAt) ? updatedAt : 0) % 2147483647)
+    + (agentIndex + 1) * 83492791
+    + (totalAgents + 1) * 2654435761
+  );
+  const raw = Math.sin(seed * 0.00000123791) * 43758.5453123;
+  return raw - Math.floor(raw);
 }
 
 function _getMotionPathDirectionModeLabel(value) {
@@ -582,7 +866,14 @@ function _getMotionPathEndBehaviorAccent(value) {
 
 function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, closed = false) {
   const valid = Array.isArray(points)
-    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    ? points
+        .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+        .map(pt => ({
+          x: pt.x,
+          y: pt.y,
+          stampScale: Number.isFinite(pt?.stampScale) ? pt.stampScale : 1,
+          speedScale: Number.isFinite(pt?.speedScale) ? pt.speedScale : 1,
+        }))
     : [];
   if (valid.length < 2) return valid;
   const output = [{ ...valid[0] }];
@@ -592,7 +883,20 @@ function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, clo
     const steps = Math.max(1, Math.ceil(length / Math.max(1, step)));
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      output.push({ x: _lerp(a.x, b.x, t), y: _lerp(a.y, b.y, t) });
+      output.push({
+        x: _lerp(a.x, b.x, t),
+        y: _lerp(a.y, b.y, t),
+        stampScale: _lerp(
+          Number.isFinite(a?.stampScale) ? a.stampScale : 1,
+          Number.isFinite(b?.stampScale) ? b.stampScale : 1,
+          t,
+        ),
+        speedScale: _lerp(
+          Number.isFinite(a?.speedScale) ? a.speedScale : 1,
+          Number.isFinite(b?.speedScale) ? b.speedScale : 1,
+          t,
+        ),
+      });
     }
   };
   for (let i = 1; i < valid.length; i++) appendSegment(valid[i - 1], valid[i]);
@@ -602,7 +906,14 @@ function _resampleMotionPathPoints(points, step = MOTION_PATH_RESAMPLE_STEP, clo
 
 function _chaikinSmoothMotionPathPoints(points, closed = false) {
   const valid = Array.isArray(points)
-    ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map(pt => ({ x: pt.x, y: pt.y }))
+    ? points
+        .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
+        .map(pt => ({
+          x: pt.x,
+          y: pt.y,
+          stampScale: Number.isFinite(pt?.stampScale) ? pt.stampScale : 1,
+          speedScale: Number.isFinite(pt?.speedScale) ? pt.speedScale : 1,
+        }))
     : [];
   if (valid.length < 2) return valid;
   if (closed) {
@@ -611,8 +922,18 @@ function _chaikinSmoothMotionPathPoints(points, closed = false) {
       const a = valid[i];
       const b = valid[(i + 1) % valid.length];
       output.push(
-        { x: _lerp(a.x, b.x, 0.25), y: _lerp(a.y, b.y, 0.25) },
-        { x: _lerp(a.x, b.x, 0.75), y: _lerp(a.y, b.y, 0.75) },
+        {
+          x: _lerp(a.x, b.x, 0.25),
+          y: _lerp(a.y, b.y, 0.25),
+          stampScale: _lerp(a.stampScale, b.stampScale, 0.25),
+          speedScale: _lerp(a.speedScale, b.speedScale, 0.25),
+        },
+        {
+          x: _lerp(a.x, b.x, 0.75),
+          y: _lerp(a.y, b.y, 0.75),
+          stampScale: _lerp(a.stampScale, b.stampScale, 0.75),
+          speedScale: _lerp(a.speedScale, b.speedScale, 0.75),
+        },
       );
     }
     return output;
@@ -622,8 +943,18 @@ function _chaikinSmoothMotionPathPoints(points, closed = false) {
     const a = valid[i];
     const b = valid[i + 1];
     output.push(
-      { x: _lerp(a.x, b.x, 0.25), y: _lerp(a.y, b.y, 0.25) },
-      { x: _lerp(a.x, b.x, 0.75), y: _lerp(a.y, b.y, 0.75) },
+      {
+        x: _lerp(a.x, b.x, 0.25),
+        y: _lerp(a.y, b.y, 0.25),
+        stampScale: _lerp(a.stampScale, b.stampScale, 0.25),
+        speedScale: _lerp(a.speedScale, b.speedScale, 0.25),
+      },
+      {
+        x: _lerp(a.x, b.x, 0.75),
+        y: _lerp(a.y, b.y, 0.75),
+        stampScale: _lerp(a.stampScale, b.stampScale, 0.75),
+        speedScale: _lerp(a.speedScale, b.speedScale, 0.75),
+      },
     );
   }
   output.push({ ...valid[valid.length - 1] });
@@ -719,6 +1050,9 @@ function _sampleMotionPathPrimitive(pathItem, step = MOTION_PATH_RESAMPLE_STEP) 
     }
     return _resampleMotionPathPoints(sampled, step, !!pathItem?.closed);
   }
+  if (kind === 'radial') {
+    return _resampleMotionPathPoints(_buildMotionPathRadialPoints(pathItem), step, false);
+  }
   return _resampleMotionPathPoints(points, step, !!pathItem?.closed);
 }
 
@@ -737,7 +1071,15 @@ function _buildMotionPathTrack(points, closed = false) {
 
 function _sampleMotionPathTrack(track, distanceAlongPath) {
   if (!track?.points?.length) return null;
-  if (track.points.length === 1) return { x: track.points[0].x, y: track.points[0].y, angle: 0 };
+  if (track.points.length === 1) {
+    return {
+      x: track.points[0].x,
+      y: track.points[0].y,
+      angle: 0,
+      stampScale: Number.isFinite(track.points[0]?.stampScale) ? track.points[0].stampScale : 1,
+      speedScale: Number.isFinite(track.points[0]?.speedScale) ? track.points[0].speedScale : 1,
+    };
+  }
   const total = Math.max(track.totalLength || 0, 1e-6);
   const distance = track.closed
     ? _wrapIndex(distanceAlongPath, total)
@@ -753,25 +1095,35 @@ function _sampleMotionPathTrack(track, distanceAlongPath) {
         x: _lerp(a.x, b.x, t),
         y: _lerp(a.y, b.y, t),
         angle: Math.atan2(b.y - a.y, b.x - a.x),
+        stampScale: _lerp(
+          Number.isFinite(a?.stampScale) ? a.stampScale : 1,
+          Number.isFinite(b?.stampScale) ? b.stampScale : 1,
+          t,
+        ),
+        speedScale: _lerp(
+          Number.isFinite(a?.speedScale) ? a.speedScale : 1,
+          Number.isFinite(b?.speedScale) ? b.speedScale : 1,
+          t,
+        ),
       };
     }
     remaining -= length;
   }
   const last = track.points[track.points.length - 1];
   const prev = track.points[track.points.length - 2] || last;
-  return { x: last.x, y: last.y, angle: Math.atan2(last.y - prev.y, last.x - prev.x) };
+  return {
+    x: last.x,
+    y: last.y,
+    angle: Math.atan2(last.y - prev.y, last.x - prev.x),
+    stampScale: Number.isFinite(last?.stampScale) ? last.stampScale : 1,
+    speedScale: Number.isFinite(last?.speedScale) ? last.speedScale : 1,
+  };
 }
 
-/**
- * Sample a point along a polyline using an absolute traveled distance.
- * Closed paths wrap continuously; open paths ping-pong forward and backward.
- */
-function _samplePolylinePoint(points, distanceAlongPath, closed = false) {
+function _buildPolylineSegments(points, closed = false) {
   const validPoints = Array.isArray(points)
     ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
     : [];
-  if (validPoints.length === 0) return null;
-  if (validPoints.length === 1) return { x: validPoints[0].x, y: validPoints[0].y };
   const segments = [];
   let totalLength = 0;
   for (let i = 1; i < validPoints.length; i++) {
@@ -791,29 +1143,97 @@ function _samplePolylinePoint(points, distanceAlongPath, closed = false) {
       totalLength += length;
     }
   }
+  return { validPoints, segments, totalLength };
+}
+
+function _samplePolylinePointAtDistance(points, distanceAlongPath, closed = false) {
+  const { validPoints, segments, totalLength } = _buildPolylineSegments(points, closed);
+  if (validPoints.length === 0) return null;
+  if (validPoints.length === 1) {
+    return { x: validPoints[0].x, y: validPoints[0].y, tangentX: 1, tangentY: 0, totalLength: 0, distance: 0 };
+  }
   if (!segments.length || totalLength <= 1e-6) return { x: validPoints[0].x, y: validPoints[0].y };
 
-  let distance;
-  if (closed) {
-    distance = _wrapIndex(distanceAlongPath, totalLength);
-  } else {
-    const pingPongDistance = _wrapIndex(distanceAlongPath, totalLength * 2);
-    distance = pingPongDistance <= totalLength ? pingPongDistance : (totalLength * 2) - pingPongDistance;
-  }
+  let distance = closed
+    ? _wrapIndex(distanceAlongPath, totalLength)
+    : _clamp(distanceAlongPath, 0, totalLength);
 
   for (const segment of segments) {
     if (distance <= segment.length) {
       const t = segment.length <= 1e-6 ? 0 : distance / segment.length;
+      const tangentX = segment.length <= 1e-6 ? 1 : (segment.b.x - segment.a.x) / segment.length;
+      const tangentY = segment.length <= 1e-6 ? 0 : (segment.b.y - segment.a.y) / segment.length;
       return {
         x: _lerp(segment.a.x, segment.b.x, t),
         y: _lerp(segment.a.y, segment.b.y, t),
+        tangentX,
+        tangentY,
+        totalLength,
+        distance,
       };
     }
     distance -= segment.length;
   }
 
   const last = segments[segments.length - 1];
-  return { x: last.b.x, y: last.b.y };
+  return {
+    x: last.b.x,
+    y: last.b.y,
+    tangentX: last.length <= 1e-6 ? 1 : (last.b.x - last.a.x) / last.length,
+    tangentY: last.length <= 1e-6 ? 0 : (last.b.y - last.a.y) / last.length,
+    totalLength,
+    distance: totalLength,
+  };
+}
+
+function _getClosestPolylineDistance(points, x, y, closed = false) {
+  const { validPoints, segments, totalLength } = _buildPolylineSegments(points, closed);
+  if (!validPoints.length) return null;
+  if (validPoints.length === 1 || !segments.length || totalLength <= 1e-6) {
+    return {
+      x: validPoints[0].x,
+      y: validPoints[0].y,
+      tangentX: 1,
+      tangentY: 0,
+      totalLength: 0,
+      distanceAlongPath: 0,
+      distance: Math.hypot(x - validPoints[0].x, y - validPoints[0].y),
+    };
+  }
+  let traversed = 0;
+  let best = null;
+  for (const segment of segments) {
+    const hit = _closestPointOnSegment(x, y, segment.a.x, segment.a.y, segment.b.x, segment.b.y);
+    if (!best || hit.distance < best.distance) {
+      best = {
+        x: hit.x,
+        y: hit.y,
+        tangentX: segment.length <= 1e-6 ? 1 : (segment.b.x - segment.a.x) / segment.length,
+        tangentY: segment.length <= 1e-6 ? 0 : (segment.b.y - segment.a.y) / segment.length,
+        totalLength,
+        distanceAlongPath: traversed + (segment.length * hit.t),
+        distance: hit.distance,
+      };
+    }
+    traversed += segment.length;
+  }
+  return best;
+}
+
+/**
+ * Sample a point along a polyline using an absolute traveled distance.
+ * Closed paths wrap continuously; open paths ping-pong forward and backward.
+ */
+function _samplePolylinePoint(points, distanceAlongPath, closed = false) {
+  const initial = _samplePolylinePointAtDistance(points, 0, closed);
+  if (!initial) return null;
+  const totalLength = initial.totalLength || 0;
+  if (closed) return _samplePolylinePointAtDistance(points, distanceAlongPath, true);
+  const pingPongDistance = totalLength <= 1e-6
+    ? 0
+    : _wrapIndex(distanceAlongPath, totalLength * 2);
+  const distance = pingPongDistance <= totalLength ? pingPongDistance : (totalLength * 2) - pingPongDistance;
+  return _samplePolylinePointAtDistance(points, distance, false);
 }
 
 function _capitalizeTextureChannel(name) {
@@ -898,6 +1318,14 @@ export class App {
     // Stabilizer (lazy mouse)
     this._stabX = 0;
     this._stabY = 0;
+    this._strokeWave = {
+      active: false,
+      lastBaseX: Number.NaN,
+      lastBaseY: Number.NaN,
+      distance: 0,
+      tangentX: 1,
+      tangentY: 0,
+    };
 
     // View transform (pinch zoom/rotate/pan)
     this.viewZoom = 1;
@@ -976,6 +1404,7 @@ export class App {
       running: false,
       paused: false,
       inspectorCollapsed: false,
+      inspectorSections: {},
       editorTool: 'spawn',
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
@@ -987,6 +1416,7 @@ export class App {
       // Named saved simulation sessions.
       sessions: [],
       drawingPath: null,
+      drawingBlob: null,
       dragTarget: null,
       selected: null,
       pathDistance: 0,
@@ -2324,7 +2754,7 @@ export class App {
       motionPathAgentCount: Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(val('motionPathAgentCount') || 12))),
       motionPathRenderMode: sel('motionPathRenderMode') || 'ribbon',
       motionPathScale: (val('motionPathScale') || 100) / 100,
-      motionPathSpeed: (val('motionPathSpeed') || 100) / 100,
+      motionPathSpeed: numOr('motionPathSpeed', 100) / 100,
       motionPathAcceleration: (val('motionPathAcceleration') || 50) / 100,
       motionPathAvoidance: (val('motionPathAvoidance') || 25) / 100,
       motionPathAttraction: (val('motionPathAttraction') || 0) / 100,
@@ -2347,6 +2777,10 @@ export class App {
       smudgeOnly: chk('smudgeOnly'),
       flatStroke: chk('flatStroke'),
       stabilizer: val('stabilizer') / 100,
+      strokeWaveType: sel('strokeWaveType') || 'none',
+      strokeWaveAmplitude: Math.max(0, val('strokeWaveAmplitude') || 0),
+      strokeWaveLength: Math.max(1, val('strokeWaveLength') || 80),
+      strokeWavePhase: ((val('strokeWavePhase') || 0) * Math.PI) / 180,
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
       symmetryCount: val('symmetryCount') || 4,
@@ -2556,6 +2990,9 @@ export class App {
         radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : undefined,
         angle: Number.isFinite(spawn?.angle) ? spawn.angle : undefined,
         jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : undefined,
+        distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : undefined,
+        noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : undefined,
+        mask: this._normalizeSimulationSpawnMask(spawn?.mask),
       }));
 
       if (!Array.isArray(data.points)) data.points = [];
@@ -2585,6 +3022,8 @@ export class App {
           strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : undefined,
           radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
           closed: !!pathItem?.closed,
+          startOffset: Number.isFinite(pathItem?.startOffset) ? _clamp01(pathItem.startOffset) : 0,
+          direction: _normalizeSimulationPathDirection(pathItem?.direction),
         })).filter(pathItem => pathItem.points.length >= 2);
         delete data.path;
       }
@@ -2630,6 +3069,9 @@ export class App {
       radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : p.spawnRadius,
       angle: Number.isFinite(spawn?.angle) ? spawn.angle : p.spawnAngle,
       jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : p.spawnJitter,
+      distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : 'uniform',
+      noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : 1,
+      mask: spawn?.mask || null,
     };
   }
 
@@ -2646,14 +3088,40 @@ export class App {
       strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : DEFAULT_PATH_STRENGTH,
       radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : DEFAULT_PATH_RADIUS,
       closed: !!pathItem?.closed,
+      startOffset: Number.isFinite(pathItem?.startOffset) ? _clamp01(pathItem.startOffset) : 0,
+      direction: _normalizeSimulationPathDirection(pathItem?.direction),
     };
+  }
+
+  _getSimulationPathRenderPoints(pathItem) {
+    const points = _normalizeSimulationPathPoints(pathItem?.points);
+    if (points.length < 3) return points;
+    return _smoothSimulationPathPoints(points, !!pathItem?.closed, 2);
+  }
+
+  _getSimulationPathSample(pathItem, traveledDistance = 0, p = this.getP()) {
+    const config = this._resolveSimulationPathConfig(pathItem, p);
+    const renderPoints = this._getSimulationPathRenderPoints(pathItem);
+    const origin = _samplePolylinePointAtDistance(renderPoints, 0, config.closed);
+    if (!origin) return null;
+    const totalLength = origin.totalLength || 0;
+    const startDistance = totalLength * config.startOffset;
+    let distanceAlongPath = startDistance;
+    if (config.closed) {
+      distanceAlongPath = startDistance + (config.direction === 'reverse' ? -traveledDistance : traveledDistance);
+    } else if (totalLength > 1e-6) {
+      const startPhase = config.direction === 'reverse' ? (totalLength * 2) - startDistance : startDistance;
+      const phase = _wrapIndex(startPhase + traveledDistance, totalLength * 2);
+      distanceAlongPath = phase <= totalLength ? phase : (totalLength * 2) - phase;
+    }
+    const sample = _samplePolylinePointAtDistance(renderPoints, distanceAlongPath, config.closed);
+    return sample ? { ...sample, config, renderPoints, totalLength, startDistance, distanceAlongPath } : null;
   }
 
   _getAnimatedSimulationPathTarget(pathItem, p = this.getP()) {
     if (!pathItem?.points?.length) return null;
-    const config = this._resolveSimulationPathConfig(pathItem, p);
-    const point = _samplePolylinePoint(pathItem.points, this.simulation.pathDistance, config.closed);
-    return point ? { x: point.x, y: point.y, config, pathItem } : null;
+    const point = this._getSimulationPathSample(pathItem, this.simulation.pathDistance, p);
+    return point ? { x: point.x, y: point.y, config: point.config, pathItem, tangentX: point.tangentX, tangentY: point.tangentY } : null;
   }
 
   _resolveSimulationEdgeConfig(edge, p = this.getP()) {
@@ -2711,6 +3179,314 @@ export class App {
     return item ? { x: item.x, y: item.y } : { x: this.W * 0.5, y: this.H * 0.5 };
   }
 
+  _getSimulationDeleteAnchor(item, kind = '') {
+    if (kind === 'spawn' && item?.mask?.bounds) {
+      return {
+        x: item.mask.bounds.maxX,
+        y: item.mask.bounds.minY,
+      };
+    }
+    return this._getSimulationAnchor(item);
+  }
+
+  _normalizeSimulationSpawnMask(mask) {
+    if (!mask || typeof mask !== 'object') return null;
+    const width = Math.max(1, Math.round(mask.width || 0));
+    const height = Math.max(1, Math.round(mask.height || 0));
+    const cellSize = _clamp(
+      Math.round(mask.cellSize || SIM_SPAWN_MASK_CELL_SIZE_MIN),
+      SIM_SPAWN_MASK_CELL_SIZE_MIN,
+      SIM_SPAWN_MASK_CELL_SIZE_MAX,
+    );
+    const alphaSource = Array.isArray(mask.alpha)
+      ? mask.alpha
+      : ArrayBuffer.isView(mask.alpha)
+        ? Array.from(mask.alpha)
+        : [];
+    if (!width || !height || alphaSource.length < width * height) return null;
+    const bounds = mask.bounds;
+    if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+      return null;
+    }
+    return {
+      width,
+      height,
+      cellSize,
+      alpha: alphaSource.slice(0, width * height).map(value => _clamp(Math.round(value || 0), 0, 255)),
+      bounds: {
+        minX: bounds.minX,
+        minY: bounds.minY,
+        width: Math.max(1, bounds.width),
+        height: Math.max(1, bounds.height),
+        maxX: bounds.minX + Math.max(1, bounds.width),
+        maxY: bounds.minY + Math.max(1, bounds.height),
+      },
+      points: Array.isArray(mask.points)
+        ? mask.points
+            .filter(point => Number.isFinite(point?.x) && Number.isFinite(point?.y) && Number.isFinite(point?.radius))
+            .map(point => ({ x: point.x, y: point.y, radius: Math.max(1, point.radius) }))
+        : [],
+      distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(mask.distribution) ? mask.distribution : 'uniform',
+      noiseScale: _clampSimulationSpawnNoiseScale(mask.noiseScale),
+    };
+  }
+
+  _createSimulationSpawnMaskFromStroke(stroke, { distribution = 'uniform', noiseScale = 1 } = {}) {
+    if (!stroke || stroke.isEmpty()) return null;
+    const rawBounds = stroke.getBounds(2);
+    if (!rawBounds) return null;
+    const maxDim = Math.max(rawBounds.width, rawBounds.height, 1);
+    const cellSize = _clamp(
+      Math.ceil(maxDim / SIM_SPAWN_MASK_MAX_DIM),
+      SIM_SPAWN_MASK_CELL_SIZE_MIN,
+      SIM_SPAWN_MASK_CELL_SIZE_MAX,
+    );
+    const width = Math.max(1, Math.ceil(rawBounds.width / cellSize));
+    const height = Math.max(1, Math.ceil(rawBounds.height / cellSize));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(1 / cellSize, 0, 0, 1 / cellSize, -rawBounds.minX / cellSize, -rawBounds.minY / cellSize);
+    stroke.rasterize(ctx, { fillStyle: 'rgba(255,255,255,1)' });
+    const imageData = ctx.getImageData(0, 0, width, height).data;
+    const alpha = new Array(width * height);
+    for (let index = 0; index < alpha.length; index++) {
+      alpha[index] = imageData[(index * 4) + 3];
+    }
+    return {
+      width,
+      height,
+      cellSize,
+      alpha,
+      bounds: {
+        minX: rawBounds.minX,
+        minY: rawBounds.minY,
+        width: rawBounds.width,
+        height: rawBounds.height,
+        maxX: rawBounds.maxX,
+        maxY: rawBounds.maxY,
+      },
+      points: stroke.points.map(point => ({ x: point.x, y: point.y, radius: point.radius })),
+      distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(distribution) ? distribution : 'uniform',
+      noiseScale: _clampSimulationSpawnNoiseScale(noiseScale),
+    };
+  }
+
+  _getSimulationSpawnMaskAlpha(mask, x, y) {
+    if (!mask?.alpha?.length || !mask.bounds) return 0;
+    const localX = (x - mask.bounds.minX) / mask.cellSize;
+    const localY = (y - mask.bounds.minY) / mask.cellSize;
+    const ix = Math.floor(localX);
+    const iy = Math.floor(localY);
+    if (ix < 0 || iy < 0 || ix >= mask.width || iy >= mask.height) return 0;
+    return mask.alpha[(iy * mask.width) + ix] || 0;
+  }
+
+  _sampleSimulationSpawnMask(mask, count) {
+    if (!mask?.alpha?.length || !mask.bounds || count <= 0) return [];
+    const weights = [];
+    const cumulative = [];
+    let totalWeight = 0;
+    for (let index = 0; index < mask.alpha.length; index++) {
+      const alpha = mask.alpha[index] || 0;
+      if (alpha <= SIM_SPAWN_MASK_ALPHA_THRESHOLD) continue;
+      const ix = index % mask.width;
+      const iy = Math.floor(index / mask.width);
+      const baseWeight = alpha / 255;
+      let weight = 1;
+      if (mask.distribution === 'density') {
+        weight = baseWeight;
+      } else if (mask.distribution === 'noise') {
+        const noise = _simulationSpawnNoise(ix, iy, mask.noiseScale || 1);
+        weight = baseWeight * (0.2 + noise * 0.8);
+      }
+      totalWeight += Math.max(0.0001, weight);
+      weights.push(index);
+      cumulative.push(totalWeight);
+    }
+    if (!weights.length) return [];
+    const samples = [];
+    for (let sampleIndex = 0; sampleIndex < count; sampleIndex++) {
+      const pick = Math.random() * totalWeight;
+      let low = 0;
+      let high = cumulative.length - 1;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (pick <= cumulative[mid]) high = mid;
+        else low = mid + 1;
+      }
+      const cellIndex = weights[low];
+      const ix = cellIndex % mask.width;
+      const iy = Math.floor(cellIndex / mask.width);
+      samples.push({
+        x: mask.bounds.minX + ((ix + Math.random()) * mask.cellSize),
+        y: mask.bounds.minY + ((iy + Math.random()) * mask.cellSize),
+      });
+    }
+    return samples;
+  }
+
+  _spawnSimulationAgents(sim, config, cx, cy) {
+    if (!sim || !config) return 0;
+    if (config.mask) {
+      const points = this._sampleSimulationSpawnMask(config.mask, config.count);
+      for (const point of points) sim.spawnAgent(point.x, point.y);
+      return points.length;
+    }
+    sim.spawnBatch(cx, cy, config.count, config.shape, config.angle, config.jitter, config.radius);
+    return config.count;
+  }
+
+  _drawSimulationSpawnMaskPreview(ctx, mask, { fillStyle, strokeStyle } = {}) {
+    if (!mask?.bounds) return;
+    ctx.save();
+    ctx.fillStyle = fillStyle || 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = strokeStyle || 'rgba(255,255,255,0.7)';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (Array.isArray(mask.alpha) && mask.alpha.length === mask.width * mask.height) {
+      for (let index = 0; index < mask.alpha.length; index++) {
+        const alpha = mask.alpha[index] || 0;
+        if (alpha <= SIM_SPAWN_MASK_ALPHA_THRESHOLD) continue;
+        const ix = index % mask.width;
+        const iy = Math.floor(index / mask.width);
+        ctx.globalAlpha = Math.max(0.18, alpha / 255);
+        ctx.fillRect(
+          mask.bounds.minX + (ix * mask.cellSize),
+          mask.bounds.minY + (iy * mask.cellSize),
+          mask.cellSize,
+          mask.cellSize,
+        );
+      }
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(mask.bounds.minX, mask.bounds.minY, mask.bounds.width, mask.bounds.height);
+    }
+    if (Array.isArray(mask.points) && mask.points.length) {
+      for (let index = 0; index < mask.points.length; index++) {
+        const point = mask.points[index];
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, point.radius, 0, Math.PI * 2);
+        ctx.fill();
+        if (index === 0) continue;
+        const previous = mask.points[index - 1];
+        ctx.beginPath();
+        ctx.lineWidth = Math.max(previous.radius, point.radius) * 2;
+        ctx.moveTo(previous.x, previous.y);
+        ctx.lineTo(point.x, point.y);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  _getSimulationParameterHandles(entry, p = this.getP()) {
+    if (!entry?.target) return [];
+    const { kind, target } = entry;
+    if (kind === 'spawn') {
+      if (target.mask) return [];
+      const config = this._resolveSimulationSpawnConfig(target, p);
+      return [{
+        kind: 'paramHandle',
+        handleType: 'radius',
+        selectionKind: kind,
+        field: 'radius',
+        collection: entry.collection,
+        target,
+        x: target.x + Math.max(10, config.radius),
+        y: target.y,
+      }];
+    }
+    if (kind === 'point') {
+      const config = this._resolveSimulationPointConfig(target, p);
+      return [
+        {
+          kind: 'paramHandle',
+          handleType: 'radius',
+          selectionKind: kind,
+          field: 'radius',
+          collection: entry.collection,
+          target,
+          x: target.x + Math.max(10, config.radius),
+          y: target.y,
+        },
+        {
+          kind: 'paramHandle',
+          handleType: 'strength',
+          selectionKind: kind,
+          field: 'strength',
+          collection: entry.collection,
+          target,
+          x: target.x,
+          y: target.y - (SIM_POINT_STRENGTH_HANDLE_OFFSET + config.strength * SIM_POINT_STRENGTH_HANDLE_SCALE),
+        },
+      ];
+    }
+    if (kind === 'path') {
+      const sample = this._getSimulationPathSample(target, 0, p);
+      if (!sample) return [];
+      const directionSign = sample.config.direction === 'reverse' ? -1 : 1;
+      return [
+        {
+          kind: 'paramHandle',
+          handleType: 'pathStart',
+          selectionKind: kind,
+          field: 'startOffset',
+          collection: entry.collection,
+          target,
+          anchorX: sample.x,
+          anchorY: sample.y,
+          x: sample.x,
+          y: sample.y,
+        },
+        {
+          kind: 'paramHandle',
+          handleType: 'pathDirection',
+          selectionKind: kind,
+          field: 'direction',
+          collection: entry.collection,
+          target,
+          anchorX: sample.x,
+          anchorY: sample.y,
+          x: sample.x + (sample.tangentX * SIM_PATH_DIRECTION_HANDLE_OFFSET * directionSign),
+          y: sample.y + (sample.tangentY * SIM_PATH_DIRECTION_HANDLE_OFFSET * directionSign),
+        },
+      ];
+    }
+    return [];
+  }
+
+  _applySimulationParameterHandleDrag(handle, x, y) {
+    if (!handle?.target) return;
+    if (handle.handleType === 'radius') {
+      const radius = Math.max(1, Math.min(300, Math.hypot(x - handle.target.x, y - handle.target.y)));
+      handle.target.radius = radius;
+      return;
+    }
+    if (handle.handleType === 'strength') {
+      const nextStrength = Math.max(0, Math.min(2, (handle.target.y - y - SIM_POINT_STRENGTH_HANDLE_OFFSET) / SIM_POINT_STRENGTH_HANDLE_SCALE));
+      handle.target.strength = nextStrength;
+      return;
+    }
+    if (handle.handleType === 'pathStart') {
+      const config = this._resolveSimulationPathConfig(handle.target);
+      const closest = _getClosestPolylineDistance(this._getSimulationPathRenderPoints(handle.target), x, y, config.closed);
+      handle.target.startOffset = closest && closest.totalLength > 1e-6
+        ? _clamp01(closest.distanceAlongPath / closest.totalLength)
+        : 0;
+      return;
+    }
+    if (handle.handleType === 'pathDirection') {
+      const sample = this._getSimulationPathSample(handle.target, 0);
+      if (!sample) return;
+      const dx = x - sample.x;
+      const dy = y - sample.y;
+      const dot = (dx * sample.tangentX) + (dy * sample.tangentY);
+      if (Math.abs(dot) > 0.5) handle.target.direction = dot < 0 ? 'reverse' : 'forward';
+    }
+  }
+
   _getSimulationBoundsRect(p = this.getP()) {
     const margin = Math.max(0, p?.simBoundsMargin || 0);
     return {
@@ -2732,6 +3508,30 @@ export class App {
   _constrainSimulationTargetToBounds(target, p = this.getP()) {
     if (!target) return;
     const bounds = this._getSimulationBoundsRect(p);
+    if (target.mask?.bounds) {
+      const maskBounds = target.mask.bounds;
+      let dx = 0;
+      let dy = 0;
+      if (maskBounds.minX < bounds.minX) dx = bounds.minX - maskBounds.minX;
+      else if (maskBounds.maxX > bounds.maxX) dx = bounds.maxX - maskBounds.maxX;
+      if (maskBounds.minY < bounds.minY) dy = bounds.minY - maskBounds.minY;
+      else if (maskBounds.maxY > bounds.maxY) dy = bounds.maxY - maskBounds.maxY;
+      if (dx || dy) {
+        target.x += dx;
+        target.y += dy;
+        maskBounds.minX += dx;
+        maskBounds.maxX += dx;
+        maskBounds.minY += dy;
+        maskBounds.maxY += dy;
+        if (Array.isArray(target.mask.points)) {
+          for (const point of target.mask.points) {
+            point.x += dx;
+            point.y += dy;
+          }
+        }
+      }
+      return;
+    }
     if (Array.isArray(target.points) && target.points.length) {
       let minX = target.points[0].x;
       let minY = target.points[0].y;
@@ -2779,6 +3579,22 @@ export class App {
 
   _translateSimulationTarget(target, dx, dy) {
     if (!target) return;
+    if (target.mask?.bounds) {
+      target.x += dx;
+      target.y += dy;
+      target.mask.bounds.minX += dx;
+      target.mask.bounds.maxX += dx;
+      target.mask.bounds.minY += dy;
+      target.mask.bounds.maxY += dy;
+      if (Array.isArray(target.mask.points)) {
+        for (const point of target.mask.points) {
+          point.x += dx;
+          point.y += dy;
+        }
+      }
+      this._constrainSimulationTargetToBounds(target);
+      return;
+    }
     if (Array.isArray(target.points)) {
       for (const pt of target.points) {
         pt.x += dx;
@@ -2800,6 +3616,20 @@ export class App {
     clone.id = this.simulation.nextId++;
     if (Array.isArray(clone.points)) {
       clone.points = clone.points.map(pt => ({ x: pt.x + DUPLICATE_OFFSET, y: pt.y + DUPLICATE_OFFSET }));
+    } else if (clone.mask?.bounds) {
+      clone.x += DUPLICATE_OFFSET;
+      clone.y += DUPLICATE_OFFSET;
+      clone.mask.bounds.minX += DUPLICATE_OFFSET;
+      clone.mask.bounds.maxX += DUPLICATE_OFFSET;
+      clone.mask.bounds.minY += DUPLICATE_OFFSET;
+      clone.mask.bounds.maxY += DUPLICATE_OFFSET;
+      if (Array.isArray(clone.mask.points)) {
+        clone.mask.points = clone.mask.points.map(point => ({
+          x: point.x + DUPLICATE_OFFSET,
+          y: point.y + DUPLICATE_OFFSET,
+          radius: point.radius,
+        }));
+      }
     } else {
       clone.x += DUPLICATE_OFFSET;
       clone.y += DUPLICATE_OFFSET;
@@ -2831,6 +3661,7 @@ export class App {
     };
     this.simulation.nextId = 1;
     this.simulation.selected = null;
+    this.simulation.drawingBlob = null;
     this._ensureSimulationSpawns();
     this._renderSimulationInspector();
     this.saveSession();
@@ -2900,6 +3731,15 @@ export class App {
     if (this.simulation.selected && !selected) this.simulation.selected = null;
     const p = this.getP();
     const isBoid = this.activeBrush === 'boid';
+    const isSectionOpen = sectionId => this.simulation.inspectorSections?.[sectionId] !== false;
+    const renderSection = (sectionId, title, body, { collapsed = false } = {}) => {
+      const openSection = collapsed ? false : isSectionOpen(sectionId);
+      return `
+        <div class="section-header${openSection ? '' : ' closed'}" data-sim-section-toggle="${sectionId}">${_escapeHtml(title)} <span class="chevron">▼</span></div>
+        <div class="section-body${openSection ? '' : ' collapsed'}" data-sim-section-body="${sectionId}">
+          ${body}
+        </div>`;
+    };
     const pointItems = data.points || [];
     const attractPoints = [];
     const repelPoints = [];
@@ -2918,24 +3758,61 @@ export class App {
     const describeSimulationItem = (group, item, idx) => {
       const parts = [`${group.label} ${idx + 1}`];
       if (group.kind === 'spawn') {
-        if (item.shape) parts.push(item.shape);
+        if (item.mask) parts.push('blob');
+        else if (item.shape) parts.push(item.shape);
       } else if (group.kind === 'path') {
         parts.push(item.closed ? 'Closed' : 'Open');
       }
       if (item.enabled === false) parts.push('Off');
       return parts.join(' · ');
     };
-    const summaryButtons = groups.map(group => {
+    const sectionKeyForGroup = group => {
+      if (group.kind === 'point') return group.label.toLowerCase().includes('repel') ? 'repelPoints' : 'attractPoints';
+      if (group.kind === 'path') return 'paths';
+      if (group.kind === 'edge') return 'edges';
+      if (group.kind === 'pheromonePath') return 'pheromonePaths';
+      return group.collection;
+    };
+    const summarySections = groups.map(group => {
       if (!group.items.length) return '';
-      return `<div class="sim-inspector-group"><h3>${_escapeHtml(group.label)}s</h3><div class="sim-inspector-list">${group.items.map((item, idx) => `
+      const sectionKey = sectionKeyForGroup(group);
+      return renderSection(sectionKey, `${group.label}s`, `<div class="sim-inspector-list">${group.items.map((item, idx) => `
         <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
           ${_escapeHtml(describeSimulationItem(group, item, idx))}
-        </button>`).join('')}</div></div>`;
+        </button>`).join('')}</div>`);
     }).join('');
 
     const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Clear Selection</button>' : '';
 
-    const seekPct = Math.round((Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK) * 100);
+    const formatSimVarValue = (varName, value) => {
+      if (!Number.isFinite(value)) return 'Brush def.';
+      switch (varName) {
+        case 'maxSpeed':
+          return value.toFixed(1);
+        case 'damping':
+          return value.toFixed(2);
+        default:
+          return `${Math.round(value * 100)}%`;
+      }
+    };
+    const simVarSlider = ({ id, label, min, max, step, scale, value, desc }) => {
+      const resolved = Number.isFinite(value) ? value : 0;
+      return `
+        <div class="sim-slider-row">
+          <div class="sim-slider-header">
+            <span class="sim-slider-label">${label}</span>
+            <span class="sim-inspector-value" data-sim-var-label="${id}">${formatSimVarValue(id, resolved)}</span>
+          </div>
+          <input type="range" min="${min}" max="${max}" step="${step}" value="${resolved / scale}" data-sim-var="${id}" data-sim-var-scale="${scale}">
+          ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
+        </div>`;
+    };
+    const seekValue = Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK;
+    const cohesionValue = Number.isFinite(this.simulation.vars.cohesion) ? this.simulation.vars.cohesion : p.cohesion;
+    const separationValue = Number.isFinite(this.simulation.vars.separation) ? this.simulation.vars.separation : p.separation;
+    const alignmentValue = Number.isFinite(this.simulation.vars.alignment) ? this.simulation.vars.alignment : p.alignment;
+    const maxSpeedValue = Number.isFinite(this.simulation.vars.maxSpeed) ? this.simulation.vars.maxSpeed : p.maxSpeed;
+    const dampingValue = Number.isFinite(this.simulation.vars.damping) ? this.simulation.vars.damping : p.damping;
     const formatSimPanelValue = (id, value) => {
       switch (id) {
         case 'simSpeed': return `${(value / 100).toFixed(1)}×`;
@@ -2960,88 +3837,87 @@ export class App {
         <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-sim-param="${id}">
         ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
       </div>`;
-    const simulationSettings = `
-      <div class="sim-inspector-group">
-        <h3>Simulation Settings</h3>
-        ${simPanelSlider({
-          id: 'simSpeed',
-          label: 'Playback Speed',
-          min: 10,
-          max: 300,
-          value: Math.round(p.simSpeed * 100),
-          desc: 'Playback multiplier for autonomous painting.',
+    const simulationSettingsBody = `
+      ${simPanelSlider({
+        id: 'simSpeed',
+        label: 'Playback Speed',
+        min: 10,
+        max: 300,
+        value: Math.round(p.simSpeed * 100),
+        desc: 'Playback multiplier for autonomous painting.',
+      })}
+      ${simPanelSlider({
+        id: 'simPointStrength',
+        label: 'Point Force',
+        min: 0,
+        max: 200,
+        value: Math.round(p.simPointStrength * 100),
+      })}
+      ${simPanelSlider({
+        id: 'simPointRadius',
+        label: 'Point Radius',
+        min: 10,
+        max: 300,
+        value: Math.round(p.simPointRadius),
+        desc: 'Spawn count, spread radius, and stamp settings still use the usual brush controls.',
+      })}
+      ${simPanelSlider({
+        id: 'simBoundsMargin',
+        label: 'Bounds Margin',
+        min: 0,
+        max: 240,
+        value: Math.round(p.simBoundsMargin || 0),
+        desc: 'Extends the simulation bounds beyond the canvas edge. 0 keeps agents and guides inside the canvas.',
+      })}`;
+    const guideSettingsBody = isBoid
+      ? `${simPanelSlider({
+          id: 'simPathSpeed',
+          label: 'Path Speed',
+          min: 1,
+          max: 200,
+          value: Math.round(p.simPathSpeed),
+          desc: 'How many pixels per second animated path guides travel, regardless of path length.',
         })}
-        ${simPanelSlider({
-          id: 'simPointStrength',
-          label: 'Point Force',
+        <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint.</div>`
+      : `${simPanelSlider({
+          id: 'simEdgeForce',
+          label: 'Edge Force',
           min: 0,
           max: 200,
-          value: Math.round(p.simPointStrength * 100),
+          value: Math.round(p.simEdgeForce * 100),
         })}
         ${simPanelSlider({
-          id: 'simPointRadius',
-          label: 'Point Radius',
-          min: 10,
-          max: 300,
-          value: Math.round(p.simPointRadius),
-          desc: 'Spawn count, spread radius, and stamp settings still use the usual brush controls.',
-        })}
-        ${simPanelSlider({
-          id: 'simBoundsMargin',
-          label: 'Bounds Margin',
+          id: 'simEdgeRadius',
+          label: 'Avoid Radius',
           min: 0,
-          max: 240,
-          value: Math.round(p.simBoundsMargin || 0),
-          desc: 'Extends the simulation bounds beyond the canvas edge. 0 keeps agents and guides inside the canvas.',
+          max: 200,
+          value: Math.round(p.simEdgeRadius),
         })}
-      </div>
-      ${isBoid ? `
-        <div class="sim-inspector-group">
-          <h3>Boid Guide Settings</h3>
-          ${simPanelSlider({
-            id: 'simPathSpeed',
-            label: 'Path Speed',
-            min: 1,
-            max: 200,
-            value: Math.round(p.simPathSpeed),
-            desc: 'How many pixels per second animated path guides travel, regardless of path length.',
-          })}
-          <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint.</div>
-        </div>` : ''}
-      ${!isBoid ? `
-        <div class="sim-inspector-group">
-          <h3>Ant Guide Settings</h3>
-          ${simPanelSlider({
-            id: 'simEdgeForce',
-            label: 'Edge Force',
-            min: 0,
-            max: 200,
-            value: Math.round(p.simEdgeForce * 100),
-          })}
-          ${simPanelSlider({
-            id: 'simEdgeRadius',
-            label: 'Avoid Radius',
-            min: 0,
-            max: 200,
-            value: Math.round(p.simEdgeRadius),
-          })}
-          ${simPanelSlider({
-            id: 'simPheroPaintRadius',
-            label: 'Phero Radius',
-            min: 2,
-            max: 80,
-            value: Math.round(p.simPheroPaintRadius),
-          })}
-          ${simPanelSlider({
-            id: 'simPheroPaintStrength',
-            label: 'Phero Paint',
-            min: 0,
-            max: 100,
-            value: Math.round(p.simPheroPaintStrength * 100),
-            desc: 'Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow.',
-          })}
-        </div>` : ''}
-    `;
+        ${simPanelSlider({
+          id: 'simPheroPaintRadius',
+          label: 'Phero Radius',
+          min: 2,
+          max: 80,
+          value: Math.round(p.simPheroPaintRadius),
+        })}
+        ${simPanelSlider({
+          id: 'simPheroPaintStrength',
+          label: 'Phero Paint',
+          min: 0,
+          max: 100,
+          value: Math.round(p.simPheroPaintStrength * 100),
+          desc: 'Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow.',
+        })}`;
+    const boidForcesBody = `
+      <div class="sim-inspector-note">These runtime overrides apply immediately while boids are already in motion.</div>
+      ${simVarSlider({ id: 'seek', label: 'Seek (cursor pull)', min: 0, max: 100, step: 0.5, scale: 0.01, value: seekValue, desc: 'Defaults to 0 in simulation mode so guides dominate until you pull boids back toward the cursor.' })}
+      ${simVarSlider({ id: 'cohesion', label: 'Cohesion', min: 0, max: 100, step: 0.5, scale: 0.01, value: cohesionValue })}
+      ${simVarSlider({ id: 'separation', label: 'Separation', min: 0, max: 100, step: 0.5, scale: 0.01, value: separationValue })}
+      ${simVarSlider({ id: 'alignment', label: 'Alignment', min: 0, max: 100, step: 0.5, scale: 0.01, value: alignmentValue })}`;
+    const boidMotionBody = `
+      <div class="sim-inspector-note">Motion overrides affect already-running boids without forcing a respawn.</div>
+      ${simVarSlider({ id: 'maxSpeed', label: 'Max Speed', min: 1, max: 30, step: 0.5, scale: 0.5, value: maxSpeedValue })}
+      ${simVarSlider({ id: 'damping', label: 'Damping', min: 80, max: 100, step: 0.5, scale: 0.01, value: dampingValue })}`;
     const savedSessionsList = this.simulation.sessions.length
       ? `<div class="sim-inspector-note" style="margin-top:8px"><strong>Saved sessions:</strong></div>
          <div class="sim-inspector-list" style="margin-top:6px">${this.simulation.sessions.map((s, i) =>
@@ -3063,36 +3939,22 @@ export class App {
           <button data-sim-help="1">Help</button>
         </div>
       </div>
-      <div class="sim-inspector-group">
-        <h3>Scene</h3>
-        <div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong>. Global simulation controls live in this panel; item values only override when explicitly set here.</div>
-      </div>
-      ${simulationSettings}
-      <div class="sim-inspector-group">
-        <h3>Scene Variables</h3>
-        <div class="sim-inspector-note">Override brush parameters for simulation playback. <strong>Seek</strong> defaults to 0 so agents follow guides instead of the cursor. Values persist when reopening simulation.</div>
-        <div class="sim-inspector-row" style="flex-direction:column;align-items:stretch">
-          <label style="display:flex;justify-content:space-between">
-            <span>Seek (cursor pull)</span><span class="sim-inspector-value" data-sim-var-label="seek">${seekPct}%</span>
-          </label>
-          <input type="range" min="0" max="100" step="0.5" value="${seekPct}" data-sim-var="seek" style="margin-top:4px">
-        </div>
+      ${renderSection('scene', 'Scene', `<div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong>. Global simulation controls live in this panel; item values only override when explicitly set here.</div>`)}
+      ${renderSection('simulationSettings', 'Simulation Settings', simulationSettingsBody)}
+      ${renderSection(isBoid ? 'boidGuides' : 'antGuides', isBoid ? 'Boid Guide Settings' : 'Ant Guide Settings', guideSettingsBody)}
+      ${isBoid ? renderSection('boidForces', 'Boid Forces', boidForcesBody) : ''}
+      ${isBoid ? renderSection('boidMotion', 'Motion', boidMotionBody) : ''}
+      ${renderSection('sceneVariables', isBoid ? 'Sessions' : 'Scene Variables', `<div class="sim-inspector-note">${isBoid ? 'Save and restore the current simulation scene and runtime overrides.' : 'Override brush parameters for simulation playback. Seek defaults to 0 so agents follow guides instead of the cursor.'}</div>
         <div class="sim-inspector-actions" style="margin-top:10px">
           <button data-sim-new-session="1">New Session</button>
           <button data-sim-save-session="1">Save Session</button>
         </div>
-        ${savedSessionsList}
-      </div>
-      ${summaryButtons}
+        ${savedSessionsList}`)}
+      ${summarySections}
     `;
 
     if (!selected) {
-      inspector += `
-        <div class="sim-inspector-group">
-          <h3>No Selection</h3>
-          <div class="sim-inspector-note">Select a spawn, ${isBoid ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>
-        </div>
-      `;
+      inspector += renderSection('selection', 'No Selection', `<div class="sim-inspector-note">Select a spawn, ${isBoid ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>`, { collapsed: false });
     } else {
       const target = selected.target;
       const checked = target.enabled !== false ? 'checked' : '';
@@ -3143,72 +4005,82 @@ export class App {
         </div>`;
       };
 
-      let rows = `
-        <div class="sim-inspector-group">
-          <h3>Selected ${selected.kind === 'point' ? target.type : selected.kind}</h3>
-          <div class="sim-inspector-row">
-            <label>Enabled</label>
-            <input type="checkbox" data-sim-field="enabled" data-sim-type="bool" ${checked}>
-          </div>
-          <div class="sim-inspector-actions">
-            <button data-sim-duplicate="1">Duplicate</button>
-            <button class="danger" data-sim-delete="1">Delete</button>
-          </div>
+      let selectionBody = `
+        <div class="sim-inspector-row">
+          <label>Enabled</label>
+          <input type="checkbox" data-sim-field="enabled" data-sim-type="bool" ${checked}>
+        </div>
+        <div class="sim-inspector-actions">
+          <button data-sim-duplicate="1">Duplicate</button>
+          <button class="danger" data-sim-delete="1">Delete</button>
         </div>
       `;
       if (selected.kind === 'spawn') {
-        rows += `
-          <div class="sim-inspector-group">
-            <h3>Spawn Overrides</h3>
-            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-            ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
-            <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
-              <option value="">Brush default</option>
-              ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
-            </select></label></div>
-            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-            ${simSlider('angle', 'angle', 'Angle', -180, 180, 1, 1)}
-            ${simSlider('jitter', 'number', 'Jitter', 0, 100, 1, 0.01)}
-          </div>`;
+        selectionBody += target.mask
+          ? `
+          <div class="sim-inspector-note" style="margin-top:10px"><strong>Spawn Blob</strong></div>
+          <div class="sim-inspector-note">Painted spawn blobs use their alpha mask for placement. Count and distribution stay editable here.</div>
+          ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
+          <div class="sim-inspector-row"><label>Distribution<select data-sim-field="distribution" data-sim-type="select">
+            ${SIM_SPAWN_DISTRIBUTION_MODES.map(mode => `<option value="${mode}" ${((target.distribution || 'uniform') === mode) ? 'selected' : ''}>${mode}</option>`).join('')}
+          </select></label></div>
+          ${simSlider('noiseScale', 'number', 'Noise Scale', 20, 300, 5, 0.01)}`
+          : `
+          <div class="sim-inspector-note" style="margin-top:10px"><strong>Spawn Overrides</strong></div>
+          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+          ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
+          <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
+            <option value="">Brush default</option>
+            ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
+          </select></label></div>
+          ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+          ${simSlider('angle', 'angle', 'Angle', -180, 180, 1, 1)}
+          ${simSlider('jitter', 'number', 'Jitter', 0, 100, 1, 0.01)}`;
       } else if (selected.kind === 'point') {
-        rows += `
-          <div class="sim-inspector-group">
-            <h3>${target.type === 'repel' ? 'Repulsion' : 'Attraction'} Overrides</h3>
-            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-            ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
-            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-            ${target.type === 'repel' ? simSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1) : ''}
-          </div>`;
+        selectionBody += `
+          <div class="sim-inspector-note" style="margin-top:10px"><strong>${target.type === 'repel' ? 'Repulsion' : 'Attraction'} Overrides</strong></div>
+          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+          ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
+          ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+          ${target.type === 'repel' ? simSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1) : ''}`;
       } else if (selected.kind === 'path') {
-        rows += `
-          <div class="sim-inspector-group">
-            <h3>Path Attraction</h3>
-            <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Strength and radius apply to that moving guide point.</div>
-            ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
-            ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-            <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
-          </div>`;
+        const pathConfig = this._resolveSimulationPathConfig(target, p);
+        selectionBody += `
+          <div class="sim-inspector-note" style="margin-top:10px"><strong>Path Attraction</strong></div>
+          <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Drag the green start handle on-canvas to move the starting location, then drag the arrow handle to flip direction.</div>
+          <div class="sim-inspector-note">Current start: <strong>${Math.round(pathConfig.startOffset * 100)}%</strong> · Direction: <strong>${_getSimulationPathDirectionLabel(pathConfig.direction)}</strong></div>
+          <div class="sim-inspector-row"><label>Direction<select data-sim-field="direction" data-sim-type="select">
+            <option value="forward" ${pathConfig.direction === 'forward' ? 'selected' : ''}>Forward</option>
+            <option value="reverse" ${pathConfig.direction === 'reverse' ? 'selected' : ''}>Reverse</option>
+          </select></label></div>
+          ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
+          ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
+          <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>`;
       } else if (selected.kind === 'edge') {
-        rows += `
-          <div class="sim-inspector-group">
-            <h3>Edge Barrier</h3>
-            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-            ${simSlider('strength', 'number', 'Force', 0, 200, 5, 0.01)}
-            ${simSlider('radius', 'integer', 'Radius', 0, 300, 1, 1)}
-          </div>`;
+        selectionBody += `
+          <div class="sim-inspector-note" style="margin-top:10px"><strong>Edge Barrier</strong></div>
+          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+          ${simSlider('strength', 'number', 'Force', 0, 200, 5, 0.01)}
+          ${simSlider('radius', 'integer', 'Radius', 0, 300, 1, 1)}`;
       } else if (selected.kind === 'pheromonePath') {
-        rows += `
-          <div class="sim-inspector-group">
-            <h3>Pheromone Trail</h3>
-            <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-            ${simSlider('radius', 'integer', 'Radius', 1, 80, 1, 1)}
-            ${simSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01)}
-          </div>`;
+        selectionBody += `
+          <div class="sim-inspector-note" style="margin-top:10px"><strong>Pheromone Trail</strong></div>
+          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+          ${simSlider('radius', 'integer', 'Radius', 1, 80, 1, 1)}
+          ${simSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01)}`;
       }
-      inspector += rows;
+      inspector += renderSection('selection', `Selected ${selected.kind === 'point' ? target.type : selected.kind}`, selectionBody);
     }
 
     panel.innerHTML = inspector;
+
+    panel.querySelectorAll('[data-sim-section-toggle]').forEach(header => {
+      header.addEventListener('click', () => {
+        const sectionId = header.dataset.simSectionToggle;
+        this.simulation.inspectorSections[sectionId] = !isSectionOpen(sectionId);
+        this._renderSimulationInspector();
+      });
+    });
 
     panel.querySelectorAll('[data-sim-select]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -3364,11 +4236,12 @@ export class App {
     // Scene-variable sliders (seek, etc.)
     panel.querySelectorAll('[data-sim-var]').forEach(el => {
       const varName = el.dataset.simVar;
+      const scale = parseFloat(el.dataset.simVarScale || '0.01');
       const updateVar = () => {
         const raw = +el.value;
-        this.simulation.vars[varName] = raw / 100;
+        this.simulation.vars[varName] = raw * scale;
         const label = panel.querySelector(`[data-sim-var-label="${varName}"]`);
-        if (label) label.textContent = `${Math.round(raw)}%`;
+        if (label) label.textContent = formatSimVarValue(varName, this.simulation.vars[varName]);
         this._maybeAutoSaveSession();
       };
       el.addEventListener('input', updateVar);
@@ -3401,6 +4274,7 @@ export class App {
     this.simulation.enabled = next;
     this.simulation.paused = false;
     this.simulation.drawingPath = null;
+    this.simulation.drawingBlob = null;
     this.simulation.dragTarget = null;
     this._normalizeSimulationData();
     if (next) {
@@ -3523,20 +4397,27 @@ export class App {
     const clampedPoint = this._clampSimulationPoint(x, y);
     x = clampedPoint.x;
     y = clampedPoint.y;
+    const tool = this.simulation.editorTool;
+    const isPathCreationTool =
+      (tool === 'path' && this.activeBrush === 'boid') ||
+      (tool === 'edge' && this.activeBrush === 'ant') ||
+      (tool === 'pheromone' && this.activeBrush === 'ant');
 
     const hit = this._findSimulationHit(x, y);
     if (hit?.kind === 'delete') {
       this._deleteSimulationItem(hit);
       return true;
     }
-    if (hit?.kind) {
-      this._setSimulationSelection(hit);
+    if (hit?.kind && (!isPathCreationTool || hit.kind === 'paramHandle')) {
+      this._setSimulationSelection(hit.kind === 'paramHandle'
+        ? { collection: hit.collection, kind: hit.selectionKind || 'point', target: hit.target }
+        : hit);
       this.simulation.dragTarget = { ...hit, lastX: x, lastY: y };
       return true;
     }
 
-    const tool = this.simulation.editorTool;
     const data = this._getSimulationBrushData();
+    const p = this.getP();
     if (!data) return true;
     this._setSimulationSelection(null);
 
@@ -3545,6 +4426,10 @@ export class App {
       data.spawns.push(spawn);
       this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
       this._maybeAutoSaveSession();
+    } else if (tool === 'spawnBlob') {
+      const stroke = new BlobStroke();
+      stroke.begin(x, y, { radius: Math.max(8, p.spawnRadius) });
+      this.simulation.drawingBlob = { stroke };
     } else if (tool === 'attract' || tool === 'repel') {
       const point = { id: this.simulation.nextId++, x, y, type: tool, enabled: true };
       data.points.push(point);
@@ -3577,7 +4462,15 @@ export class App {
       hit.lastX = x;
       hit.lastY = y;
       hit.moved = true;
-      this._translateSimulationTarget(hit.target, dx, dy);
+      if (hit.kind === 'paramHandle') {
+        this._applySimulationParameterHandleDrag(hit, x, y);
+      } else {
+        this._translateSimulationTarget(hit.target, dx, dy);
+      }
+      return true;
+    }
+    if (this.simulation.drawingBlob?.stroke) {
+      this.simulation.drawingBlob.stroke.extend(x, y, { radius: Math.max(8, this.getP().spawnRadius) });
       return true;
     }
     if (this.simulation.drawingPath) {
@@ -3594,7 +4487,33 @@ export class App {
   _handleSimulationPointerUp() {
     if (!this.simulation.enabled || !this._isMotionBrush()) return false;
     const hadMoved = !!this.simulation.dragTarget?.moved;
+    const dragKind = this.simulation.dragTarget?.kind;
     this.simulation.dragTarget = null;
+    if (this.simulation.drawingBlob?.stroke) {
+      const data = this._getSimulationBrushData();
+      const mask = this._createSimulationSpawnMaskFromStroke(this.simulation.drawingBlob.stroke, {
+        distribution: 'uniform',
+        noiseScale: 1,
+      });
+      if (data && mask) {
+        const spawn = {
+          id: this.simulation.nextId++,
+          x: mask.bounds.minX + (mask.bounds.width * 0.5),
+          y: mask.bounds.minY + (mask.bounds.height * 0.5),
+          enabled: true,
+          count: this.getP().count,
+          distribution: 'uniform',
+          noiseScale: 1,
+          mask,
+        };
+        data.spawns.push(spawn);
+        this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
+        this._maybeAutoSaveSession();
+      }
+      this.simulation.drawingBlob = null;
+      this._renderSimulationInspector();
+      return true;
+    }
     if (this.simulation.drawingPath) {
       const path = this.simulation.drawingPath.points.filter((pt, i, arr) => i === 0 || Math.hypot(pt.x - arr[i - 1].x, pt.y - arr[i - 1].y) > 1);
       const data = this._getSimulationBrushData();
@@ -3620,7 +4539,10 @@ export class App {
       this._renderSimulationInspector();
       return true;
     }
-    if (hadMoved) this._maybeAutoSaveSession();
+    if (hadMoved) {
+      if (dragKind === 'paramHandle') this._renderSimulationInspector();
+      this._maybeAutoSaveSession();
+    }
     return this.simulation.running || this.simulation.paused || this.simulation.enabled;
   }
 
@@ -3670,8 +4592,17 @@ export class App {
   _findSimulationHit(x, y) {
     const data = this._getSimulationBrushData();
     if (!data) return null;
+    const selected = this._getSelectedSimulationEntry();
+    if (selected) {
+      const handles = this._getSimulationParameterHandles(selected);
+      for (const handle of handles) {
+        if (Math.hypot(x - handle.x, y - handle.y) <= SIM_PARAM_HIT_RADIUS) {
+          return handle;
+        }
+      }
+    }
     const checkDelete = (target, collection, kind) => {
-      const anchor = this._getSimulationAnchor(target);
+      const anchor = this._getSimulationDeleteAnchor(target, kind);
       const dx = x - (anchor.x + 12);
       const dy = y - (anchor.y - 12);
       return dx * dx + dy * dy <= SIM_DELETE_HIT_RADIUS * SIM_DELETE_HIT_RADIUS ? { kind: 'delete', target, collection, anchorType: kind } : null;
@@ -3680,6 +4611,9 @@ export class App {
     for (const spawn of this._ensureSimulationSpawns()) {
       const del = checkDelete(spawn, 'spawns', 'spawn');
       if (del) return del;
+      if (spawn.mask && this._getSimulationSpawnMaskAlpha(spawn.mask, x, y) > SIM_SPAWN_MASK_ALPHA_THRESHOLD) {
+        return { kind: 'spawn', target: spawn, collection: 'spawns' };
+      }
       if (Math.hypot(x - spawn.x, y - spawn.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'spawn', target: spawn, collection: 'spawns' };
     }
 
@@ -3693,7 +4627,7 @@ export class App {
       for (const pathItem of data.paths || []) {
         const del = checkDelete(pathItem, 'paths', 'path');
         if (del) return del;
-        if (this._findPolylineHit(pathItem.points || [], x, y, SIM_LINE_HIT_RADIUS)) {
+        if (this._findPolylineHit(this._getSimulationPathRenderPoints(pathItem), x, y, SIM_LINE_HIT_RADIUS)) {
           return { kind: 'path', target: pathItem, collection: 'paths' };
         }
       }
@@ -3756,6 +4690,7 @@ export class App {
     const p = this.getP();
     const selected = this._getSelectedSimulationEntry();
     const isSelected = (collection, item) => selected?.collection === collection && selected?.id === item.id;
+    const selectedHandles = selected ? this._getSimulationParameterHandles(selected, p) : [];
 
     const drawDelete = (x, y) => {
       ctx.fillStyle = 'rgba(18,18,22,0.55)';
@@ -3772,6 +4707,71 @@ export class App {
       ctx.fillText('×', x + 12, y - 12);
     };
 
+    const drawHandle = (handle, color) => {
+      if (!handle?.target) return;
+      const anchorX = Number.isFinite(handle.anchorX) ? handle.anchorX : handle.target.x;
+      const anchorY = Number.isFinite(handle.anchorY) ? handle.anchorY : handle.target.y;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1.75;
+      if (Number.isFinite(anchorX) && Number.isFinite(anchorY) && (Math.abs(handle.x - anchorX) > 0.5 || Math.abs(handle.y - anchorY) > 0.5)) {
+        ctx.beginPath();
+        ctx.moveTo(anchorX, anchorY);
+        ctx.lineTo(handle.x, handle.y);
+        ctx.stroke();
+      }
+      if (handle.handleType === 'strength') {
+        ctx.translate(handle.x, handle.y);
+        ctx.rotate(Math.PI * 0.25);
+        ctx.fillRect(-SIM_PARAM_HANDLE_RADIUS + 1, -SIM_PARAM_HANDLE_RADIUS + 1, (SIM_PARAM_HANDLE_RADIUS - 1) * 2, (SIM_PARAM_HANDLE_RADIUS - 1) * 2);
+      } else if (handle.handleType === 'pathDirection') {
+        const angle = Math.atan2(handle.y - anchorY, handle.x - anchorX);
+        ctx.translate(handle.x, handle.y);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.moveTo(SIM_PARAM_HANDLE_RADIUS, 0);
+        ctx.lineTo(-SIM_PARAM_HANDLE_RADIUS + 1, -SIM_PARAM_HANDLE_RADIUS + 1);
+        ctx.lineTo(-SIM_PARAM_HANDLE_RADIUS + 1, SIM_PARAM_HANDLE_RADIUS + 1);
+        ctx.closePath();
+        ctx.fill();
+      } else if (handle.handleType === 'pathStart') {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS + 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS - 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    };
+
+    const drawSelectedHandles = (item, color) => {
+      for (const handle of selectedHandles) {
+        if (handle.target === item) drawHandle(handle, color);
+      }
+    };
+
+    const drawPathArrow = (x, y, angle, color, scale = 1) => {
+      const length = SIM_PATH_DIRECTION_ARROW_LENGTH * scale;
+      const wing = 5 * scale;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-length, -wing);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(-length, wing);
+      ctx.stroke();
+      ctx.restore();
+    };
+
     for (const spawn of this._ensureSimulationSpawns()) {
       const config = this._resolveSimulationSpawnConfig(spawn, p);
       const active = spawn.enabled !== false;
@@ -3780,15 +4780,24 @@ export class App {
       ctx.strokeStyle = isSelected('spawns', spawn) ? 'rgba(140,196,255,0.98)' : 'rgba(255,255,255,0.6)';
       ctx.fillStyle = 'rgba(255,255,255,0.12)';
       ctx.lineWidth = isSelected('spawns', spawn) ? 2.4 : 1.5;
-      ctx.beginPath();
-      ctx.arc(spawn.x, spawn.y, Math.max(8, config.radius), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      if (spawn.mask) {
+        this._drawSimulationSpawnMaskPreview(ctx, spawn.mask, {
+          fillStyle: isSelected('spawns', spawn) ? 'rgba(140,196,255,0.22)' : 'rgba(110,176,255,0.16)',
+          strokeStyle: isSelected('spawns', spawn) ? 'rgba(140,196,255,0.96)' : 'rgba(110,176,255,0.78)',
+        });
+      } else {
+        ctx.beginPath();
+        ctx.arc(spawn.x, spawn.y, Math.max(8, config.radius), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
       ctx.beginPath();
       ctx.arc(spawn.x, spawn.y, 5, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.fill();
-      drawDelete(spawn.x, spawn.y);
+      if (isSelected('spawns', spawn)) drawSelectedHandles(spawn, 'rgba(140,196,255,0.98)');
+      const deleteAnchor = this._getSimulationDeleteAnchor(spawn, 'spawn');
+      drawDelete(deleteAnchor.x, deleteAnchor.y);
       ctx.restore();
     }
 
@@ -3812,6 +4821,7 @@ export class App {
       ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
+      if (isSelected('points', point)) drawSelectedHandles(point, color);
       drawDelete(point.x, point.y);
       ctx.restore();
     }
@@ -3820,15 +4830,17 @@ export class App {
       for (const pathItem of data.paths || []) {
         if (!pathItem.points?.length) continue;
         const config = this._resolveSimulationPathConfig(pathItem, p);
+        const renderPoints = this._getSimulationPathRenderPoints(pathItem);
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
+        const startSample = this._getSimulationPathSample(pathItem, 0, p);
         ctx.save();
         ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
         ctx.strokeStyle = isSelected('paths', pathItem) ? 'rgba(168,218,255,0.98)' : 'rgba(116,166,255,0.85)';
         ctx.lineWidth = isSelected('paths', pathItem) ? 3 : 2;
         ctx.setLineDash([8, 6]);
         ctx.beginPath();
-        ctx.moveTo(pathItem.points[0].x, pathItem.points[0].y);
-        for (let i = 1; i < pathItem.points.length; i++) ctx.lineTo(pathItem.points[i].x, pathItem.points[i].y);
+        ctx.moveTo(renderPoints[0].x, renderPoints[0].y);
+        for (let i = 1; i < renderPoints.length; i++) ctx.lineTo(renderPoints[i].x, renderPoints[i].y);
         if (config.closed) ctx.closePath();
         ctx.stroke();
         ctx.setLineDash([]);
@@ -3842,6 +4854,20 @@ export class App {
           ctx.arc(target.x, target.y, Math.max(5, Math.min(9, config.radius * 0.2)), 0, Math.PI * 2);
           ctx.fill();
         }
+        if (startSample) {
+          const startColor = isSelected('paths', pathItem) ? 'rgba(120,236,178,0.98)' : 'rgba(120,236,178,0.82)';
+          ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.35;
+          ctx.fillStyle = startColor;
+          ctx.strokeStyle = 'rgba(12,16,24,0.85)';
+          ctx.lineWidth = 1.25;
+          ctx.beginPath();
+          ctx.arc(startSample.x, startSample.y, SIM_PATH_START_MARKER_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          const angle = Math.atan2(startSample.tangentY, startSample.tangentX) + (startSample.config.direction === 'reverse' ? Math.PI : 0);
+          drawPathArrow(startSample.x + (Math.cos(angle) * (SIM_PATH_START_MARKER_RADIUS + 2)), startSample.y + (Math.sin(angle) * (SIM_PATH_START_MARKER_RADIUS + 2)), angle, startColor, isSelected('paths', pathItem) ? 1.1 : 0.95);
+        }
+        if (isSelected('paths', pathItem)) drawSelectedHandles(pathItem, 'rgba(120,236,178,0.98)');
         const anchor = this._getSimulationAnchor(pathItem);
         drawDelete(anchor.x, anchor.y);
         ctx.restore();
@@ -3910,6 +4936,14 @@ export class App {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+
+    if (this.simulation.drawingBlob?.stroke) {
+      this.simulation.drawingBlob.stroke.renderPreview(ctx, {
+        fillStyle: 'rgba(140,196,255,0.18)',
+        strokeStyle: 'rgba(140,196,255,0.92)',
+        guideStyle: 'rgba(255,210,120,0.85)',
+      });
+    }
   }
 
   // ========================================================
@@ -3920,11 +4954,15 @@ export class App {
     return {
       canvas: null,
       ctx: null,
+      activePanel: null,
+      helpOpen: false,
       selectedPathId: null,
       selectedPathIds: [],
       selectedHandleIndex: -1,
+      selectedHandleType: null,
       hoverPathId: null,
       hoverHandleIndex: -1,
+      hoverHandleType: null,
       dragPathId: null,
       dragMode: null,
       dragHandleIndex: -1,
@@ -3935,6 +4973,11 @@ export class App {
       insertPointMode: false,
       insertBetweenPoints: false,
       pointerId: null,
+      touchPoints: {},
+      touchGestureActive: false,
+      touchGestureDistance: 0,
+      touchGestureCenterX: 0,
+      touchGestureCenterY: 0,
       lastLocalX: 0,
       lastLocalY: 0,
       lastScreenX: 0,
@@ -3955,6 +4998,7 @@ export class App {
       rules: [],
       view: { zoom: 1, panX: 0, panY: 0 },
       nextPathId: 1,
+      nextGroupId: 1,
       updatedAt: Date.now(),
     };
   }
@@ -3981,10 +5025,13 @@ export class App {
       const name = typeof doc?.name === 'string' && doc.name.trim() ? doc.name.trim().slice(0, 60) : `Motion Graph ${id}`;
       const rawPaths = Array.isArray(doc?.paths) ? doc.paths : [];
       let nextPathId = 1;
+      let nextGroupId = 1;
       const paths = rawPaths.map((pathItem, pathIndex) => {
         const pathId = Number.isFinite(pathItem?.id) ? Math.max(1, Math.round(pathItem.id)) : nextPathId;
         nextPathId = Math.max(nextPathId, pathId + 1);
-        const kind = ['polyline', 'bezier', 'rectangle', 'ellipse'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
+        const groupId = _normalizeMotionPathGroupId(pathItem?.groupId);
+        if (groupId) nextGroupId = Math.max(nextGroupId, groupId + 1);
+        const kind = ['polyline', 'bezier', 'rectangle', 'ellipse', 'radial'].includes(pathItem?.kind) ? pathItem.kind : 'polyline';
         const fallbackPoints = kind === 'bezier'
           ? [
               { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT, connector: 'curve' },
@@ -3995,6 +5042,11 @@ export class App {
             ? [
                 { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT },
                 { x: MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
+              ]
+            : kind === 'radial'
+              ? [
+                  { x: 0, y: 0 },
+                  { x: 0, y: -MOTION_PATH_DEFAULT_HALF_HEIGHT },
               ]
             : [
                 { x: -MOTION_PATH_DEFAULT_HALF_WIDTH, y: MOTION_PATH_DEFAULT_HALF_HEIGHT },
@@ -4012,8 +5064,15 @@ export class App {
           closed: kind === 'rectangle' || kind === 'ellipse' ? true : !!pathItem?.closed,
           endBehavior: _normalizeMotionPathEndBehavior(pathItem?.endBehavior),
           directionMode: _normalizeMotionPathDirectionMode(pathItem?.directionMode),
+          startMode: _normalizeMotionPathStartMode(pathItem?.startMode),
           agentCount: Number.isFinite(pathItem?.agentCount) ? Math.max(0, Math.round(pathItem.agentCount)) : 0,
           speedMultiplier: Number.isFinite(pathItem?.speedMultiplier) ? Math.max(0.1, pathItem.speedMultiplier) : 1,
+          groupId,
+          groupKind: typeof pathItem?.groupKind === 'string' ? pathItem.groupKind : '',
+          groupName: _normalizeMotionPathGroupName(pathItem?.groupName),
+          radialLineIndex: Number.isFinite(pathItem?.radialLineIndex) ? Math.max(0, Math.round(pathItem.radialLineIndex)) : 0,
+          radialCount: _normalizeMotionPathRadialCount(pathItem?.radialCount),
+          radialSpread: _normalizeMotionPathRadialSpread(pathItem?.radialSpread),
           points: points.length ? points : _normalizeMotionPathPoints(kind, fallbackPoints, fallbackPoints),
         };
       });
@@ -4030,6 +5089,7 @@ export class App {
           panY: Number.isFinite(doc?.view?.panY) ? doc.view.panY : 0,
         },
         nextPathId: Number.isFinite(doc?.nextPathId) ? Math.max(nextPathId, Math.round(doc.nextPathId)) : nextPathId,
+        nextGroupId: Number.isFinite(doc?.nextGroupId) ? Math.max(nextGroupId, Math.round(doc.nextGroupId)) : nextGroupId,
         updatedAt: Number.isFinite(doc?.updatedAt) ? doc.updatedAt : Date.now(),
       };
     });
@@ -4093,6 +5153,48 @@ export class App {
     return doc.paths.filter(path => idSet.has(path.id));
   }
 
+  _getMotionPathGroupMembers(groupId, doc = this._getActiveMotionPathDocument()) {
+    if (!doc || !Number.isFinite(groupId)) return [];
+    return doc.paths.filter(path => Number(path?.groupId) === groupId);
+  }
+
+  _getMotionPathPrimitiveSelectionIds(pathId, { handleType = null } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    const path = doc?.paths?.find(entry => entry.id === pathId);
+    if (!path) return [];
+    if (handleType === 'handle' || handleType === 'size-handle' || handleType === 'speed-handle') {
+      return [path.id];
+    }
+    if (Number.isFinite(path.groupId)) {
+      return this._getMotionPathGroupMembers(path.groupId, doc).map(entry => entry.id);
+    }
+    return [path.id];
+  }
+
+  _getSelectedMotionPathGroup() {
+    const selected = this._getSelectedMotionPathPrimitives();
+    if (!selected.length) return null;
+    const first = selected[0];
+    if (!Number.isFinite(first?.groupId) || !first?.groupKind) return null;
+    if (!selected.every(path => path.groupId === first.groupId && path.groupKind === first.groupKind)) return null;
+    return {
+      groupId: first.groupId,
+      groupKind: first.groupKind,
+      groupName: first.groupName || '',
+      radialCount: _normalizeMotionPathRadialCount(first.radialCount),
+      radialSpread: _normalizeMotionPathRadialSpread(first.radialSpread),
+      paths: selected.slice().sort((a, b) => (a.radialLineIndex || 0) - (b.radialLineIndex || 0)),
+    };
+  }
+
+  _getSelectedMotionPathPoint() {
+    const path = this._getSelectedMotionPathPrimitive();
+    const handleIndex = Number.isFinite(this.motionPathEditor?.selectedHandleIndex)
+      ? this.motionPathEditor.selectedHandleIndex
+      : -1;
+    return path?.points?.[handleIndex] || null;
+  }
+
   _isMotionPathPrimitiveSelected(pathId) {
     return this._getSelectedMotionPathPrimitiveIds().includes(pathId);
   }
@@ -4106,6 +5208,7 @@ export class App {
   _isMotionPathPrimitiveComplete(path) {
     if (!path) return false;
     if (path.kind === 'rectangle' || path.kind === 'ellipse') return path.points.length >= 2;
+    if (path.kind === 'radial') return path.points.length >= 2;
     if (path.kind === 'bezier') return path.points.length >= 2;
     return path.points.length >= 2;
   }
@@ -4138,9 +5241,13 @@ export class App {
   }
 
   _setMotionPathEditorTool(tool = 'select') {
-    const allowedCreateKinds = new Set(['polyline', 'bezier', 'rectangle', 'ellipse']);
+    const allowedCreateKinds = new Set(['polyline', 'bezier', 'rectangle', 'ellipse', 'radial']);
     const previousKind = this._getMotionPathEditorCreateKind();
-    let nextTool = tool === 'delete' ? 'delete' : 'select';
+    let nextTool = tool === 'delete'
+      ? 'delete'
+      : tool === 'pan'
+        ? 'pan'
+        : 'select';
     if (typeof tool === 'string' && tool.startsWith('create-')) {
       const kind = tool.slice('create-'.length);
       if (allowedCreateKinds.has(kind)) nextTool = `create-${kind}`;
@@ -4155,14 +5262,17 @@ export class App {
   }
 
   _startMotionPathPrimitiveCreation(kind) {
-    if (!['polyline', 'bezier', 'rectangle', 'ellipse'].includes(kind)) return;
+    if (!['polyline', 'bezier', 'rectangle', 'ellipse', 'radial'].includes(kind)) return;
     this._cleanupMotionPathCreation();
     this._setMotionPathEditorTool(`create-${kind}`);
     this.motionPathEditor.creationPathId = null;
-    this.showToast(`Click on the graph canvas to place ${kind === 'rectangle' || kind === 'ellipse' ? 'the first corner' : 'the first point'} for a ${kind}`);
+    let placementTarget = 'the first point';
+    if (kind === 'rectangle' || kind === 'ellipse') placementTarget = 'the first corner';
+    else if (kind === 'radial') placementTarget = 'the center point';
+    this.showToast(`Click on the graph canvas to place ${placementTarget} for a ${kind}`);
   }
 
-  _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1) {
+  _setSelectedMotionPathPrimitives(pathIds = [], primaryPathId = null, handleIndex = -1, handleType = null) {
     const ids = Array.from(new Set((Array.isArray(pathIds) ? pathIds : [pathIds])
       .filter(Number.isFinite)
       .map(id => Math.round(id))));
@@ -4172,12 +5282,15 @@ export class App {
     this.motionPathEditor.selectedPathIds = ids;
     this.motionPathEditor.selectedPathId = nextPrimary;
     this.motionPathEditor.selectedHandleIndex = ids.length === 1 && Number.isFinite(handleIndex) ? handleIndex : -1;
+    this.motionPathEditor.selectedHandleType = ids.length === 1 && Number.isFinite(handleIndex)
+      ? (handleType === 'size-handle' ? 'size-handle' : 'handle')
+      : null;
     this.motionPathEditor.needsRedraw = true;
     this._syncMotionPathUI();
   }
 
-  _setSelectedMotionPathPrimitive(pathId = null, handleIndex = -1) {
-    this._setSelectedMotionPathPrimitives(Number.isFinite(pathId) ? [pathId] : [], pathId, handleIndex);
+  _setSelectedMotionPathPrimitive(pathId = null, handleIndex = -1, handleType = null) {
+    this._setSelectedMotionPathPrimitives(Number.isFinite(pathId) ? [pathId] : [], pathId, handleIndex, handleType);
   }
 
   _toggleMotionPathPrimitiveSelection(pathId) {
@@ -4229,9 +5342,14 @@ export class App {
     }
     this.motionPathEditor.pasteCount = (this.motionPathEditor.pasteCount || 0) + 1;
     const offset = DUPLICATE_OFFSET * this.motionPathEditor.pasteCount;
+    const groupIdMap = new Map();
     const inserted = items.map(source => {
       const clone = this._cloneMotionPathPrimitive(source, offset, offset);
       clone.id = doc.nextPathId++;
+      if (Number.isFinite(source?.groupId)) {
+        if (!groupIdMap.has(source.groupId)) groupIdMap.set(source.groupId, doc.nextGroupId++);
+        clone.groupId = groupIdMap.get(source.groupId);
+      }
       return clone;
     });
     doc.paths.push(...inserted);
@@ -4331,6 +5449,7 @@ export class App {
       controls.push(`
         <div class="motion-path-editor-pathControls" style="left:${anchor.x + 22}px;top:${anchor.y - 18}px;" data-path-id="${path.id}">
           <button type="button" data-kind="direction" data-path-id="${path.id}" title="Cycle path direction mode">${_getMotionPathDirectionModeLabel(path.directionMode)}</button>
+          <button type="button" data-kind="start" data-path-id="${path.id}" title="Toggle initial start placement">${_normalizeMotionPathStartMode(path.startMode) === 'random' ? 'Random' : 'Even'}</button>
           ${path.closed ? '' : `<button type="button" data-kind="behavior" data-path-id="${path.id}" title="Choose end behavior">${_getMotionPathEndBehaviorLabel(path.endBehavior)}</button>`}
         </div>
       `);
@@ -4404,6 +5523,152 @@ export class App {
     this.motionPathEditor.needsRedraw = true;
   }
 
+  _resetMotionPathEditorView(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    doc.view.zoom = 1;
+    doc.view.panX = 0;
+    doc.view.panY = 0;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _resetMotionPathEditorZoom(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    const canvas = this._getMotionPathEditorCanvas();
+    const width = this.motionPathEditor.canvasWidth || canvas?.clientWidth || 1;
+    const height = this.motionPathEditor.canvasHeight || canvas?.clientHeight || 1;
+    const centerX = width * 0.5;
+    const centerY = height * 0.5;
+    const currentZoom = Math.max(0.1, doc.view?.zoom || 1);
+    this._zoomMotionPathEditorAt(centerX, centerY, 1 / currentZoom, doc);
+    this._syncMotionPathUI();
+  }
+
+  _centerMotionPathEditorView(doc = this._getActiveMotionPathDocument()) {
+    if (!doc) return;
+    doc.view.panX = 0;
+    doc.view.panY = 0;
+    this.motionPathEditor.needsRedraw = true;
+    this._syncMotionPathUI();
+  }
+
+  _setMotionPathEditorPanel(panel = null) {
+    const allowed = panel === 'graph' || panel === 'selection' || panel === 'edit';
+    const nextPanel = allowed ? panel : null;
+    if (nextPanel === null) {
+      if (this.motionPathEditor.activePanel === null) return;
+      this.motionPathEditor.activePanel = null;
+    } else {
+      this.motionPathEditor.activePanel = this.motionPathEditor.activePanel === nextPanel ? null : nextPanel;
+    }
+    this._syncMotionPathUI();
+  }
+
+  _setMotionPathEditorHelp(open = null) {
+    const next = open === null ? !this.motionPathEditor.helpOpen : !!open;
+    if (this.motionPathEditor.helpOpen === next) return;
+    this.motionPathEditor.helpOpen = next;
+    this._syncMotionPathUI();
+  }
+
+  _positionMotionPathEditorPopover(buttonId, popupId, { alignRight = false } = {}) {
+    const button = document.getElementById(buttonId);
+    const popup = document.getElementById(popupId);
+    const host = document.querySelector('#motionPathEditor .motion-path-editor-main');
+    if (!button || !popup || !host) return;
+    const hostRect = host.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    const maxLeft = Math.max(0, hostRect.width - popupRect.width - 8);
+    const rawLeft = alignRight
+      ? buttonRect.right - hostRect.left - popupRect.width
+      : buttonRect.left - hostRect.left;
+    const left = _clamp(rawLeft, 8, maxLeft);
+    const top = Math.max(8, (buttonRect.bottom - hostRect.top) + 8);
+    popup.style.left = `${Math.round(left)}px`;
+    popup.style.top = `${Math.round(top)}px`;
+  }
+
+  _cycleMotionPathStartMode(pathId) {
+    const doc = this._getActiveMotionPathDocument();
+    const numericPathId = Math.round(+pathId);
+    const path = doc?.paths?.find(entry => entry.id === numericPathId);
+    if (!path) return;
+    path.startMode = _normalizeMotionPathStartMode(path.startMode) === 'random' ? 'spread' : 'random';
+    this._markMotionPathDocumentUpdated(doc);
+    this._syncMotionPathUI();
+    this._maybeAutoSaveSession();
+    this.showToast(`${path.name}: ${_getMotionPathStartModeLabel(path.startMode)}`);
+  }
+
+  _updateMotionPathEditorTouchPoint(pointerId, clientX, clientY) {
+    this.motionPathEditor.touchPoints[pointerId] = { clientX, clientY };
+  }
+
+  _removeMotionPathEditorTouchPoint(pointerId) {
+    delete this.motionPathEditor.touchPoints[pointerId];
+  }
+
+  _getMotionPathEditorTouchPoints() {
+    return Object.values(this.motionPathEditor.touchPoints || {});
+  }
+
+  _cancelMotionPathEditorDrag() {
+    this.motionPathEditor.pointerId = null;
+    this.motionPathEditor.dragMode = null;
+    this.motionPathEditor.dragPathId = null;
+    this.motionPathEditor.dragHandleIndex = -1;
+  }
+
+  _endMotionPathEditorTouchGesture() {
+    this.motionPathEditor.touchGestureActive = false;
+    this.motionPathEditor.touchGestureDistance = 0;
+    this.motionPathEditor.touchGestureCenterX = 0;
+    this.motionPathEditor.touchGestureCenterY = 0;
+    this.motionPathEditor.needsRedraw = true;
+  }
+
+  _beginMotionPathEditorTouchGesture(canvas) {
+    const points = this._getMotionPathEditorTouchPoints();
+    if (!canvas || points.length < 2) return false;
+    const rect = canvas.getBoundingClientRect();
+    const [first, second] = points;
+    this._cancelMotionPathEditorDrag();
+    this.motionPathEditor.touchGestureActive = true;
+    this.motionPathEditor.touchGestureDistance = Math.max(1, Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY));
+    this.motionPathEditor.touchGestureCenterX = ((first.clientX + second.clientX) * 0.5) - rect.left;
+    this.motionPathEditor.touchGestureCenterY = ((first.clientY + second.clientY) * 0.5) - rect.top;
+    this.motionPathEditor.needsRedraw = true;
+    return true;
+  }
+
+  _updateMotionPathEditorTouchGesture(canvas) {
+    if (!canvas || !this.motionPathEditor.touchGestureActive) return false;
+    const points = this._getMotionPathEditorTouchPoints();
+    if (points.length < 2) {
+      this._endMotionPathEditorTouchGesture();
+      return false;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const [first, second] = points;
+    const centerX = ((first.clientX + second.clientX) * 0.5) - rect.left;
+    const centerY = ((first.clientY + second.clientY) * 0.5) - rect.top;
+    const distance = Math.max(1, Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY));
+    const previousDistance = this.motionPathEditor.touchGestureDistance || distance;
+    const deltaX = centerX - this.motionPathEditor.touchGestureCenterX;
+    const deltaY = centerY - this.motionPathEditor.touchGestureCenterY;
+    if (distance > 0 && previousDistance > 0) {
+      this._zoomMotionPathEditorAt(centerX, centerY, distance / previousDistance);
+    }
+    if (deltaX || deltaY) {
+      this._panMotionPathEditorView(deltaX, deltaY);
+    }
+    this.motionPathEditor.touchGestureDistance = distance;
+    this.motionPathEditor.touchGestureCenterX = centerX;
+    this.motionPathEditor.touchGestureCenterY = centerY;
+    return true;
+  }
+
   _setMotionPathInsertPointMode(active) {
     this.motionPathEditor.insertPointMode = !!active;
     this.motionPathEditor.needsRedraw = true;
@@ -4428,16 +5693,58 @@ export class App {
     return bestIndex;
   }
 
+  _getMotionPathInsertedPointStampScale(points, insertIndex, closed = false) {
+    const items = Array.isArray(points) ? points : [];
+    if (!items.length) return 1;
+    const prev = insertIndex > 0
+      ? items[insertIndex - 1]
+      : (closed ? items[items.length - 1] : items[0]);
+    const next = insertIndex < items.length
+      ? items[insertIndex]
+      : (closed ? items[0] : items[items.length - 1]);
+    if (prev && next) {
+      return _roundMotionPathPointStampScale(((prev.stampScale || 1) + (next.stampScale || 1)) * 0.5);
+    }
+    return _roundMotionPathPointStampScale(prev?.stampScale ?? next?.stampScale ?? 1);
+  }
+
+  _getMotionPathInsertedPointSpeedScale(points, insertIndex, closed = false) {
+    const items = Array.isArray(points) ? points : [];
+    if (!items.length) return 1;
+    const prev = insertIndex > 0
+      ? items[insertIndex - 1]
+      : (closed ? items[items.length - 1] : items[0]);
+    const next = insertIndex < items.length
+      ? items[insertIndex]
+      : (closed ? items[0] : items[items.length - 1]);
+    if (prev && next) {
+      return _roundMotionPathPointSpeedScale(((prev.speedScale || 1) + (next.speedScale || 1)) * 0.5);
+    }
+    return _roundMotionPathPointSpeedScale(prev?.speedScale ?? next?.speedScale ?? 1);
+  }
+
   _appendMotionPathBezierAnchor(path, localX, localY) {
     if (!path) return -1;
-    path.points.push({ x: localX, y: localY, connector: 'curve' });
+    path.points.push({
+      x: localX,
+      y: localY,
+      stampScale: _roundMotionPathPointStampScale(path.points[path.points.length - 1]?.stampScale ?? 1),
+      speedScale: _roundMotionPathPointSpeedScale(path.points[path.points.length - 1]?.speedScale ?? 1),
+      connector: 'curve',
+    });
     return path.points.length - 1;
   }
 
   _insertMotionPathBezierAnchor(path, localX, localY) {
     if (!path || path.points.length < 2) return this._appendMotionPathBezierAnchor(path, localX, localY);
     const insertIndex = _findMotionPathBezierInsertIndex(path.points, localX, localY, !!path.closed);
-    path.points.splice(insertIndex, 0, { x: localX, y: localY, connector: 'curve' });
+    path.points.splice(insertIndex, 0, {
+      x: localX,
+      y: localY,
+      stampScale: this._getMotionPathInsertedPointStampScale(path.points, insertIndex, !!path.closed),
+      speedScale: this._getMotionPathInsertedPointSpeedScale(path.points, insertIndex, !!path.closed),
+      connector: 'curve',
+    });
     return insertIndex;
   }
 
@@ -4465,8 +5772,11 @@ export class App {
       closed: kind === 'rectangle' || kind === 'ellipse',
       endBehavior: 'restart',
       directionMode: 'forward',
+      startMode: 'spread',
       agentCount: 0,
       speedMultiplier: 1,
+      radialCount: _normalizeMotionPathRadialCount(),
+      radialSpread: _normalizeMotionPathRadialSpread(),
       points: _normalizeMotionPathPoints(kind, Array.isArray(points) ? points : []),
     };
     doc.paths.push(primitive);
@@ -4475,6 +5785,109 @@ export class App {
     this._maybeAutoSaveSession();
     if (announce) this.showToast(`Added ${primitive.kind}`);
     return primitive;
+  }
+
+  _createMotionPathRadialGroup(centerPoint, spokeHandle, {
+    groupName = '',
+    radialCount = MOTION_PATH_RADIAL_COUNT_DEFAULT,
+    radialSpread = MOTION_PATH_RADIAL_SPREAD_DEFAULT,
+    reusePathId = null,
+  } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    if (!doc || !centerPoint || !spokeHandle) return [];
+    const count = _normalizeMotionPathRadialCount(radialCount);
+    const spread = _normalizeMotionPathRadialSpread(radialSpread);
+    const groupId = doc.nextGroupId++;
+    const resolvedGroupName = _normalizeMotionPathGroupName(groupName, `Radial ${groupId}`);
+    const spokes = _buildMotionPathRadialSpokes(centerPoint, spokeHandle, count, spread);
+    const created = [];
+    spokes.forEach((spoke, index) => {
+      const pathId = index === 0 && Number.isFinite(reusePathId) ? reusePathId : doc.nextPathId++;
+      created.push({
+        id: pathId,
+        name: `${resolvedGroupName} · Line ${index + 1}`,
+        kind: 'polyline',
+        closed: false,
+        endBehavior: 'restart',
+        directionMode: 'forward',
+        startMode: 'spread',
+        agentCount: 0,
+        speedMultiplier: 1,
+        groupId,
+        groupKind: 'radial',
+        groupName: resolvedGroupName,
+        radialLineIndex: index,
+        radialCount: count,
+        radialSpread: spread,
+        points: _normalizeMotionPathPoints('polyline', [
+          { x: centerPoint.x, y: centerPoint.y, stampScale: centerPoint.stampScale, speedScale: centerPoint.speedScale },
+          { x: spoke.x, y: spoke.y, stampScale: spoke.stampScale, speedScale: spoke.speedScale },
+        ]),
+      });
+    });
+    doc.paths.push(...created);
+    return created;
+  }
+
+  _updateMotionPathRadialGroup(groupId, {
+    radialCount = null,
+    radialSpread = null,
+    groupName = null,
+  } = {}) {
+    const doc = this._getActiveMotionPathDocument();
+    const members = this._getMotionPathGroupMembers(groupId, doc)
+      .slice()
+      .sort((a, b) => (a.radialLineIndex || 0) - (b.radialLineIndex || 0));
+    if (!doc || !members.length) return [];
+    const first = members[0];
+    const centerPoint = first.points?.[0];
+    const spokeHandle = first.points?.[1];
+    if (!centerPoint || !spokeHandle) return members;
+    // Group edits keep radial metadata synchronized, so the first member is the canonical source for shared defaults.
+    const count = _normalizeMotionPathRadialCount(radialCount ?? first.radialCount);
+    const spread = _normalizeMotionPathRadialSpread(radialSpread ?? first.radialSpread);
+    const resolvedGroupName = _normalizeMotionPathGroupName(groupName, first.groupName || `Radial ${groupId}`);
+    const spokes = _buildMotionPathRadialSpokes(centerPoint, spokeHandle, count, spread);
+    while (members.length > count) {
+      const member = members.pop();
+      const index = doc.paths.findIndex(path => path.id === member.id);
+      if (index >= 0) doc.paths.splice(index, 1);
+    }
+    while (members.length < count) {
+      const pathId = doc.nextPathId++;
+      const index = members.length;
+      const clone = _deepClone(first);
+      clone.id = pathId;
+      clone.radialLineIndex = index;
+      doc.paths.push(clone);
+      members.push(clone);
+    }
+    members.forEach((member, index) => {
+      const spoke = spokes[index] || spokes[spokes.length - 1] || spokeHandle;
+      member.name = `${resolvedGroupName} · Line ${index + 1}`;
+      member.kind = 'polyline';
+      member.groupId = groupId;
+      member.groupKind = 'radial';
+      member.groupName = resolvedGroupName;
+      member.radialLineIndex = index;
+      member.radialCount = count;
+      member.radialSpread = spread;
+      member.points = _normalizeMotionPathPoints('polyline', [
+        {
+          x: centerPoint.x,
+          y: centerPoint.y,
+          stampScale: centerPoint.stampScale,
+          speedScale: centerPoint.speedScale,
+        },
+        {
+          x: spoke.x,
+          y: spoke.y,
+          stampScale: spoke.stampScale,
+          speedScale: spoke.speedScale,
+        },
+      ]);
+    });
+    return members;
   }
 
   _createMotionPathPrimitiveFromShape(path) {
@@ -4499,6 +5912,10 @@ export class App {
     const doc = this._getActiveMotionPathDocument();
     const selected = this._getSelectedMotionPathPrimitive();
     if (!doc || !selected) return;
+    if (selected.kind === 'radial') {
+      this.showToast('Radial primitives use their center and spoke handle; adjust spoke count and spread in Selection');
+      return;
+    }
     if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
       this._setMotionPathInsertPointMode(!this.motionPathEditor.insertPointMode);
       if (this.motionPathEditor.insertPointMode) this.showToast(`Click on the graph canvas to place a point on ${selected.name}`);
@@ -4534,7 +5951,12 @@ export class App {
       localY,
       this.motionPathEditor.insertBetweenPoints ? 'between' : 'append',
     );
-    pts.splice(insertIndex, 0, { x: localX, y: localY });
+    pts.splice(insertIndex, 0, {
+      x: localX,
+      y: localY,
+      stampScale: this._getMotionPathInsertedPointStampScale(pts, insertIndex, !!selected.closed),
+      speedScale: this._getMotionPathInsertedPointSpeedScale(pts, insertIndex, !!selected.closed),
+    });
     this.motionPathEditor.selectedHandleIndex = insertIndex;
     this._markMotionPathDocumentUpdated(doc);
     this._syncMotionPathUI();
@@ -4548,13 +5970,15 @@ export class App {
     if (!doc) return;
     let path = doc.paths.find(entry => entry.id === this.motionPathEditor.creationPathId && entry.kind === kind) || null;
     if (!path) {
-      path = this._createMotionPathPrimitive(kind, { points: [{ x: localX, y: localY }], announce: false });
+      path = this._createMotionPathPrimitive(kind, { points: [{ x: localX, y: localY, stampScale: 1, speedScale: 1 }], announce: false });
       if (!path) return;
       this.motionPathEditor.creationPathId = path.id;
       this.motionPathEditor.selectedHandleIndex = 0;
       this._syncMotionPathUI();
       if (kind === 'rectangle' || kind === 'ellipse') {
         this.showToast(`Click the opposite corner to finish the ${kind}`);
+      } else if (kind === 'radial') {
+        this.showToast('Click again to place the spoke handle and finish the radial lines');
       } else {
         this.showToast(`Click to place the next ${kind === 'bezier' ? 'curve point' : 'point'}. Double-click or press Enter to finish.`);
       }
@@ -4562,16 +5986,39 @@ export class App {
     }
 
     let selectedHandleIndex = path.points.length - 1;
+    if (kind === 'radial') {
+      const centerPoint = {
+        x: path.points[0]?.x ?? localX,
+        y: path.points[0]?.y ?? localY,
+        stampScale: path.points[0]?.stampScale ?? 1,
+        speedScale: path.points[0]?.speedScale ?? 1,
+      };
+      const spokeHandle = { x: localX, y: localY, stampScale: 1, speedScale: 1 };
+      const radialIndex = doc.paths.findIndex(entry => entry.id === path.id);
+      if (radialIndex >= 0) doc.paths.splice(radialIndex, 1);
+      const created = this._createMotionPathRadialGroup(centerPoint, spokeHandle, {
+        groupName: path.name,
+        radialCount: path.radialCount,
+        radialSpread: path.radialSpread,
+        reusePathId: path.id,
+      });
+      this.motionPathEditor.creationPathId = null;
+      this._markMotionPathDocumentUpdated(doc);
+      this._setSelectedMotionPathPrimitives(created.map(entry => entry.id), created[0]?.id || null, -1);
+      this._maybeAutoSaveSession();
+      this.showToast(`Created grouped radial lines (${created.length})`);
+      return;
+    }
     if (kind === 'rectangle' || kind === 'ellipse') {
-      if (path.points.length === 1) path.points.push({ x: localX, y: localY });
-      else path.points[1] = { x: localX, y: localY };
+      if (path.points.length === 1) path.points.push({ x: localX, y: localY, stampScale: 1, speedScale: 1 });
+      else path.points[1] = { x: localX, y: localY, stampScale: 1, speedScale: 1 };
       selectedHandleIndex = 1;
       this.motionPathEditor.creationPathId = null;
     } else if (kind === 'bezier') {
       selectedHandleIndex = this._appendMotionPathBezierAnchor(path, localX, localY);
       if (finalize && this._isMotionPathPrimitiveComplete(path)) this.motionPathEditor.creationPathId = null;
     } else {
-      path.points.push({ x: localX, y: localY });
+      path.points.push({ x: localX, y: localY, stampScale: 1, speedScale: 1 });
       selectedHandleIndex = path.points.length - 1;
       if (finalize && this._isMotionPathPrimitiveComplete(path)) this.motionPathEditor.creationPathId = null;
     }
@@ -4627,15 +6074,63 @@ export class App {
     for (const path of selected) this._translateMotionPathPrimitive(path, dx, dy);
   }
 
-  _hitTestMotionPathPrimitive(localX, localY) {
+  _getMotionPathPointSizeHandleOffset(stampScale = 1) {
+    return MOTION_PATH_SIZE_HANDLE_BASE_OFFSET + (_roundMotionPathPointStampScale(stampScale) * MOTION_PATH_SIZE_HANDLE_SCALE_PIXELS);
+  }
+
+  _getMotionPathPointSpeedHandleOffset(speedScale = 1) {
+    return MOTION_PATH_SPEED_HANDLE_BASE_OFFSET + (_roundMotionPathPointSpeedScale(speedScale) * MOTION_PATH_SPEED_HANDLE_SCALE_PIXELS);
+  }
+
+  _getMotionPathPointSizeHandleScreenPoint(point, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    return {
+      x: anchor.x,
+      y: anchor.y - this._getMotionPathPointSizeHandleOffset(point?.stampScale),
+    };
+  }
+
+  _getMotionPathPointSpeedHandleScreenPoint(point, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    return {
+      x: anchor.x + this._getMotionPathPointSpeedHandleOffset(point?.speedScale),
+      y: anchor.y,
+    };
+  }
+
+  _getMotionPathPointStampScaleFromScreen(point, screenX, screenY, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    const radialDistance = Math.max(0, Math.hypot(screenX - anchor.x, screenY - anchor.y));
+    return _roundMotionPathPointStampScale((radialDistance - MOTION_PATH_SIZE_HANDLE_BASE_OFFSET) / MOTION_PATH_SIZE_HANDLE_SCALE_PIXELS);
+  }
+
+  _getMotionPathPointSpeedScaleFromScreen(point, screenX, doc = this._getActiveMotionPathDocument()) {
+    const anchor = this._motionPathLocalToEditorPoint(point?.x || 0, point?.y || 0, doc);
+    const distance = Math.max(0, screenX - anchor.x);
+    return _roundMotionPathPointSpeedScale((distance - MOTION_PATH_SPEED_HANDLE_BASE_OFFSET) / MOTION_PATH_SPEED_HANDLE_SCALE_PIXELS);
+  }
+
+  _hitTestMotionPathPrimitive(localX, localY, screenX = Number.NaN, screenY = Number.NaN) {
     const doc = this._getActiveMotionPathDocument();
     if (!doc) return null;
     const zoom = Math.max(0.1, doc.view?.zoom || 1);
     const handleRadius = MOTION_PATH_HIT_RADIUS / zoom;
+    const sizeHandleRadius = MOTION_PATH_SIZE_HANDLE_RADIUS + 4;
+    const speedHandleRadius = MOTION_PATH_SPEED_HANDLE_RADIUS + 4;
     for (let i = doc.paths.length - 1; i >= 0; i--) {
       const path = doc.paths[i];
       for (let handleIndex = 0; handleIndex < path.points.length; handleIndex++) {
         const pt = path.points[handleIndex];
+        if (Number.isFinite(screenX) && Number.isFinite(screenY)) {
+          const sizeHandle = this._getMotionPathPointSizeHandleScreenPoint(pt, doc);
+          if (_distanceSquared(screenX, screenY, sizeHandle.x, sizeHandle.y) <= sizeHandleRadius * sizeHandleRadius) {
+            return { pathId: path.id, type: 'size-handle', handleIndex };
+          }
+          const speedHandle = this._getMotionPathPointSpeedHandleScreenPoint(pt, doc);
+          if (_distanceSquared(screenX, screenY, speedHandle.x, speedHandle.y) <= speedHandleRadius * speedHandleRadius) {
+            return { pathId: path.id, type: 'speed-handle', handleIndex };
+          }
+        }
         if (_distanceSquared(localX, localY, pt.x, pt.y) <= handleRadius * handleRadius) {
           return { pathId: path.id, type: 'handle', handleIndex };
         }
@@ -4656,9 +6151,29 @@ export class App {
     const canvas = this._getMotionPathEditorCanvas();
     if (!canvas || e.target !== canvas) return;
     this._hideMotionPathOverlayEndBehaviorSelect();
+    if (e.pointerType === 'touch') {
+      this._updateMotionPathEditorTouchPoint(e.pointerId, e.clientX, e.clientY);
+      canvas.setPointerCapture?.(e.pointerId);
+      if (this._beginMotionPathEditorTouchGesture(canvas)) {
+        e.preventDefault();
+        return;
+      }
+    }
     const rect = canvas.getBoundingClientRect();
-    const local = this._motionPathEditorToLocalPoint(e.clientX - rect.left, e.clientY - rect.top);
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const local = this._motionPathEditorToLocalPoint(screenX, screenY);
     if (e.button === 1) {
+      this.motionPathEditor.pointerId = e.pointerId;
+      this.motionPathEditor.dragMode = 'pan';
+      this.motionPathEditor.lastScreenX = e.clientX;
+      this.motionPathEditor.lastScreenY = e.clientY;
+      canvas.setPointerCapture?.(e.pointerId);
+      this.motionPathEditor.needsRedraw = true;
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0 && this.motionPathEditor.activeTool === 'pan') {
       this.motionPathEditor.pointerId = e.pointerId;
       this.motionPathEditor.dragMode = 'pan';
       this.motionPathEditor.lastScreenX = e.clientX;
@@ -4674,7 +6189,7 @@ export class App {
       e.preventDefault();
       return;
     }
-    const hit = this._hitTestMotionPathPrimitive(local.x, local.y);
+    const hit = this._hitTestMotionPathPrimitive(local.x, local.y, screenX, screenY);
     if (e.button === 0 && e.detail >= 2 && hit?.type === 'handle') {
       const doc = this._getActiveMotionPathDocument();
       const path = doc?.paths?.find(entry => entry.id === hit.pathId);
@@ -4691,7 +6206,8 @@ export class App {
     }
     if (e.button === 0 && this.motionPathEditor.activeTool === 'delete') {
       if (hit?.pathId) {
-        this._setSelectedMotionPathPrimitives([hit.pathId], hit.pathId, -1);
+        const ids = this._getMotionPathPrimitiveSelectionIds(hit.pathId, { handleType: hit.type });
+        this._setSelectedMotionPathPrimitives(ids, hit.pathId, -1);
         this._deleteSelectedMotionPathPrimitive();
       }
       e.preventDefault();
@@ -4701,7 +6217,8 @@ export class App {
     const selectedIds = this._getSelectedMotionPathPrimitiveIds();
     const hitSelected = !!(hit?.pathId && selectedIds.includes(hit.pathId));
     if (e.button === 0 && toggleSelection && hit?.pathId) {
-      this._toggleMotionPathPrimitiveSelection(hit.pathId);
+      const ids = this._getMotionPathPrimitiveSelectionIds(hit.pathId, { handleType: hit.type });
+      ids.forEach(id => this._toggleMotionPathPrimitiveSelection(id));
       e.preventDefault();
       return;
     }
@@ -4719,12 +6236,20 @@ export class App {
     this.motionPathEditor.dragMode = hit?.type || null;
     this.motionPathEditor.dragHandleIndex = hit?.handleIndex ?? -1;
     canvas.setPointerCapture?.(e.pointerId);
-    if (hit?.type === 'handle' && selectedIds.length > 1) {
-      this._setSelectedMotionPathPrimitive(hit.pathId, hit.handleIndex);
+    if ((hit?.type === 'handle' || hit?.type === 'size-handle' || hit?.type === 'speed-handle') && selectedIds.length > 1) {
+      this._setSelectedMotionPathPrimitive(hit.pathId, hit.handleIndex, hit.type);
     } else if (hit?.pathId && hitSelected && selectedIds.length > 1) {
       this._setSelectedMotionPathPrimitives(selectedIds, hit.pathId, -1);
     } else {
-      this._setSelectedMotionPathPrimitive(hit?.pathId || null, hit?.type === 'handle' ? hit?.handleIndex : -1);
+      const ids = hit?.pathId
+        ? this._getMotionPathPrimitiveSelectionIds(hit.pathId, { handleType: hit.type })
+        : [];
+      this._setSelectedMotionPathPrimitives(
+        ids,
+        hit?.pathId || null,
+        hit?.type === 'handle' || hit?.type === 'size-handle' || hit?.type === 'speed-handle' ? hit?.handleIndex : -1,
+        hit?.type,
+      );
     }
     this.motionPathEditor.needsRedraw = true;
     e.preventDefault();
@@ -4734,12 +6259,30 @@ export class App {
     if (!this.motionPath.editorOpen) return;
     const canvas = this._getMotionPathEditorCanvas();
     if (!canvas) return;
+    if (e.pointerType === 'touch' && this.motionPathEditor.touchPoints[e.pointerId]) {
+      this._updateMotionPathEditorTouchPoint(e.pointerId, e.clientX, e.clientY);
+      if (this.motionPathEditor.touchGestureActive || this._getMotionPathEditorTouchPoints().length >= 2) {
+        this._beginMotionPathEditorTouchGesture(canvas);
+        this._updateMotionPathEditorTouchGesture(canvas);
+        e.preventDefault();
+        return;
+      }
+    }
     const rect = canvas.getBoundingClientRect();
-    const local = this._motionPathEditorToLocalPoint(e.clientX - rect.left, e.clientY - rect.top);
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const local = this._motionPathEditorToLocalPoint(screenX, screenY);
     if (this.motionPathEditor.pointerId !== e.pointerId || !this.motionPathEditor.dragMode) {
-      const hover = this._hitTestMotionPathPrimitive(local.x, local.y);
+      const hover = this._hitTestMotionPathPrimitive(local.x, local.y, screenX, screenY);
       this.motionPathEditor.hoverPathId = hover?.pathId || null;
       this.motionPathEditor.hoverHandleIndex = hover?.handleIndex ?? -1;
+      this.motionPathEditor.hoverHandleType = hover?.type === 'size-handle'
+        ? 'size-handle'
+        : hover?.type === 'speed-handle'
+          ? 'speed-handle'
+          : hover?.type === 'handle'
+            ? 'handle'
+            : null;
       this.motionPathEditor.needsRedraw = true;
       return;
     }
@@ -4762,6 +6305,19 @@ export class App {
       } else {
         this._translateMotionPathPrimitive(path, dx, dy);
       }
+    } else if (this.motionPathEditor.dragMode === 'size-handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
+      path.points[this.motionPathEditor.dragHandleIndex].stampScale = this._getMotionPathPointStampScaleFromScreen(
+        path.points[this.motionPathEditor.dragHandleIndex],
+        screenX,
+        screenY,
+        doc,
+      );
+    } else if (this.motionPathEditor.dragMode === 'speed-handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
+      path.points[this.motionPathEditor.dragHandleIndex].speedScale = this._getMotionPathPointSpeedScaleFromScreen(
+        path.points[this.motionPathEditor.dragHandleIndex],
+        screenX,
+        doc,
+      );
     } else if (this.motionPathEditor.dragMode === 'handle' && path.points[this.motionPathEditor.dragHandleIndex]) {
       path.points[this.motionPathEditor.dragHandleIndex].x = local.x;
       path.points[this.motionPathEditor.dragHandleIndex].y = local.y;
@@ -4773,6 +6329,17 @@ export class App {
   }
 
   _onMotionPathEditorPointerUp(e) {
+    if (e.pointerType === 'touch' && this.motionPathEditor.touchPoints[e.pointerId]) {
+      this._removeMotionPathEditorTouchPoint(e.pointerId);
+      if (this.motionPathEditor.touchGestureActive) {
+        if (this._getMotionPathEditorTouchPoints().length < 2) {
+          this._endMotionPathEditorTouchGesture();
+        }
+        this._cancelMotionPathEditorDrag();
+        e.preventDefault();
+        return;
+      }
+    }
     if (this.motionPathEditor.pointerId !== e.pointerId) return;
     this.motionPathEditor.pointerId = null;
     this.motionPathEditor.dragMode = null;
@@ -4841,6 +6408,21 @@ export class App {
       });
       ctx.stroke();
 
+      if (_normalizeMotionPathStartMode(path.startMode) === 'random') {
+        ctx.save();
+        ctx.strokeStyle = primary ? 'rgba(120,236,178,0.92)' : 'rgba(120,236,178,0.62)';
+        ctx.lineWidth = primary ? 1.7 : 1.2;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath();
+        sampled.forEach((pt, index) => {
+          const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
+          if (index === 0) ctx.moveTo(screen.x, screen.y);
+          else ctx.lineTo(screen.x, screen.y);
+        });
+        ctx.stroke();
+        ctx.restore();
+      }
+
       if (path.kind === 'bezier' && path.points.length >= 2) {
         ctx.strokeStyle = 'rgba(255,255,255,0.18)';
         ctx.setLineDash([5, 5]);
@@ -4856,9 +6438,84 @@ export class App {
 
       path.points.forEach((pt, handleIndex) => {
         const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
-        const hot = primary && handleIndex === this.motionPathEditor.hoverHandleIndex && path.id === this.motionPathEditor.hoverPathId;
+        const hot = primary
+          && handleIndex === this.motionPathEditor.hoverHandleIndex
+          && path.id === this.motionPathEditor.hoverPathId
+          && this.motionPathEditor.hoverHandleType === 'handle';
+        const hotSizeHandle = primary
+          && handleIndex === this.motionPathEditor.hoverHandleIndex
+          && path.id === this.motionPathEditor.hoverPathId
+          && this.motionPathEditor.hoverHandleType === 'size-handle';
+        const hotSpeedHandle = primary
+          && handleIndex === this.motionPathEditor.hoverHandleIndex
+          && path.id === this.motionPathEditor.hoverPathId
+          && this.motionPathEditor.hoverHandleType === 'speed-handle';
+        const selectedSizeHandle = primary
+          && handleIndex === this.motionPathEditor.selectedHandleIndex
+          && this.motionPathEditor.selectedHandleType === 'size-handle';
+        const selectedSpeedHandle = primary
+          && handleIndex === this.motionPathEditor.selectedHandleIndex
+          && this.motionPathEditor.selectedHandleType === 'speed-handle';
         const fill = hot ? '#ffffff' : primary ? '#8bb3ff' : selected ? '#9ec4ff' : '#d7e5ff';
         const isSharpBezierAnchor = path.kind === 'bezier' && pt?.connector === 'sharp';
+        const sizeHandle = this._getMotionPathPointSizeHandleScreenPoint(pt, doc);
+        const speedHandle = this._getMotionPathPointSpeedHandleScreenPoint(pt, doc);
+        ctx.strokeStyle = selectedSizeHandle
+          ? 'rgba(255,210,120,0.96)'
+          : hotSizeHandle
+            ? 'rgba(255,236,196,0.96)'
+            : 'rgba(255,210,120,0.52)';
+        ctx.lineWidth = selectedSizeHandle ? 2 : 1.3;
+        ctx.beginPath();
+        ctx.moveTo(screen.x, screen.y);
+        ctx.lineTo(sizeHandle.x, sizeHandle.y);
+        ctx.stroke();
+        ctx.fillStyle = selectedSizeHandle
+          ? 'rgba(255,210,120,0.98)'
+          : hotSizeHandle
+            ? 'rgba(255,236,196,0.98)'
+            : 'rgba(255,210,120,0.86)';
+        ctx.strokeStyle = 'rgba(12,16,24,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(sizeHandle.x, sizeHandle.y, MOTION_PATH_SIZE_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (selectedSizeHandle || hotSizeHandle) {
+          ctx.fillStyle = 'rgba(245,248,255,0.95)';
+          ctx.font = '10px Segoe UI, Arial, sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${pt.stampScale.toFixed(2)}x`, sizeHandle.x + 10, sizeHandle.y);
+        }
+        ctx.strokeStyle = selectedSpeedHandle
+          ? 'rgba(120,236,178,0.96)'
+          : hotSpeedHandle
+            ? 'rgba(210,255,233,0.98)'
+            : 'rgba(120,236,178,0.52)';
+        ctx.lineWidth = selectedSpeedHandle ? 2 : 1.3;
+        ctx.beginPath();
+        ctx.moveTo(screen.x, screen.y);
+        ctx.lineTo(speedHandle.x, speedHandle.y);
+        ctx.stroke();
+        ctx.fillStyle = selectedSpeedHandle
+          ? 'rgba(120,236,178,0.98)'
+          : hotSpeedHandle
+            ? 'rgba(210,255,233,0.98)'
+            : 'rgba(120,236,178,0.88)';
+        ctx.strokeStyle = 'rgba(12,16,24,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(speedHandle.x, speedHandle.y, MOTION_PATH_SPEED_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (selectedSpeedHandle || hotSpeedHandle) {
+          ctx.fillStyle = 'rgba(245,248,255,0.95)';
+          ctx.font = '10px Segoe UI, Arial, sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${pt.speedScale.toFixed(2)}x`, speedHandle.x + 10, speedHandle.y);
+        }
         ctx.fillStyle = fill;
         ctx.strokeStyle = 'rgba(12,16,24,0.85)';
         ctx.lineWidth = 1.5;
@@ -4964,7 +6621,7 @@ export class App {
         const screen = this._motionPathLocalToEditorPoint(pt.x, pt.y, doc);
         ctx.fillStyle = 'rgba(255,210,120,0.9)';
         ctx.beginPath();
-        ctx.arc(screen.x, screen.y, 3.5, 0, Math.PI * 2);
+        ctx.arc(screen.x, screen.y, 2.5 + ((pt.stampScale || 1) * 1.2), 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -4979,11 +6636,23 @@ export class App {
     const compiledPaths = doc.paths
       .map(path => {
         const sampled = _sampleMotionPathPrimitive(path, MOTION_PATH_RESAMPLE_STEP);
-        const smoothed = path.kind === 'bezier' || path.kind === 'ellipse'
+        const smoothed = path.kind === 'bezier' || path.kind === 'ellipse' || path.kind === 'radial'
           ? sampled
           : _smoothMotionPathTrackPoints(sampled, p.motionPathPathSmoothing || 0, !!path.closed, MOTION_PATH_RESAMPLE_STEP);
         const track = _buildMotionPathTrack(smoothed, path.closed);
-        return track ? { ...track, id: path.id, kind: path.kind, name: path.name, agentCount: path.agentCount || 0, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), directionMode: _normalizeMotionPathDirectionMode(path.directionMode) } : null;
+        return track
+          ? {
+              ...track,
+              id: path.id,
+              kind: path.kind,
+              name: path.name,
+              agentCount: path.agentCount || 0,
+              speedMultiplier: path.speedMultiplier || 1,
+              endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior),
+              directionMode: _normalizeMotionPathDirectionMode(path.directionMode),
+              startMode: _normalizeMotionPathStartMode(path.startMode),
+            }
+          : null;
       })
       .filter(Boolean);
     const agents = [];
@@ -5014,11 +6683,14 @@ export class App {
               : directionMode === 'random'
                 ? (Math.random() < 0.5 ? -1 : 1)
                 : 1;
-          const baseDistance = count <= 1 ? 0 : (path.totalLength * agentIndex) / count;
+          const startMode = _normalizeMotionPathStartMode(path.startMode);
+          const baseDistance = startMode === 'random'
+            ? _getMotionPathDeterministicStartUnit(doc.id, doc.updatedAt, path.id, agentIndex, count) * path.totalLength
+            : (count <= 1 ? 0 : (path.totalLength * agentIndex) / count);
           const distance = !path.closed && direction === -1
             ? Math.max(0, path.totalLength - baseDistance)
             : baseDistance;
-          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction });
+          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction, startMode });
         }
       });
       if (!agents.length) {
@@ -5033,8 +6705,11 @@ export class App {
               : directionMode === 'random'
                 ? (Math.random() < 0.5 ? -1 : 1)
                 : 1;
-          const distance = !path.closed && direction === -1 ? path.totalLength : 0;
-          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction });
+          const baseDistance = _normalizeMotionPathStartMode(path.startMode) === 'random'
+            ? _getMotionPathDeterministicStartUnit(doc.id, doc.updatedAt, path.id, i, totalAgents) * path.totalLength
+            : 0;
+          const distance = !path.closed && direction === -1 ? Math.max(0, path.totalLength - baseDistance) : baseDistance;
+          agents.push({ pathIndex, pathId: path.id, distance, speedMultiplier: path.speedMultiplier || 1, endBehavior: _normalizeMotionPathEndBehavior(path.endBehavior), direction, startMode: _normalizeMotionPathStartMode(path.startMode) });
         }
       }
     }
@@ -5139,6 +6814,7 @@ export class App {
         ? this.motionPathEditor.selectedPathId
         : (selectedIds[selectedIds.length - 1] || null);
       this.motionPathEditor.selectedHandleIndex = selectedIds.length === 1 ? this.motionPathEditor.selectedHandleIndex : -1;
+      this.motionPathEditor.selectedHandleType = selectedIds.length === 1 ? this.motionPathEditor.selectedHandleType : null;
     }
     const optionsHtml = docs.map(entry => `<option value="${entry.id}">${entry.name}</option>`).join('');
     for (const id of ['motionPathDocSelect', 'motionPathEditorSelect']) {
@@ -5163,11 +6839,15 @@ export class App {
       const createKind = this._getMotionPathEditorCreateKind();
       const toolLabel = createKind
         ? `Create ${createKind[0].toUpperCase()}${createKind.slice(1)}`
+        : this.motionPathEditor.activeTool === 'pan'
+          ? 'Pan Tool'
         : this.motionPathEditor.activeTool === 'delete'
           ? 'Delete Tool'
           : 'Select Tool';
       badge.textContent = this.motionPathEditor.insertPointMode ? 'Click to Place Point' : `${toolLabel} · View ${zoomLabel}`;
     }
+    const zoomBadge = document.getElementById('motionPathToolbarZoomLabel');
+    if (zoomBadge) zoomBadge.textContent = `${Math.round((doc?.view?.zoom || 1) * 100)}%`;
     const singleDoc = docs.length <= 1;
     for (const id of ['motionPathDeleteDocBtn', 'motionPathEditorDelete']) {
       const btn = document.getElementById(id);
@@ -5183,54 +6863,100 @@ export class App {
     if (!selectedIds.length && doc?.paths?.length && Number.isFinite(this.motionPathEditor.selectedPathId) && !doc.paths.some(path => path.id === this.motionPathEditor.selectedPathId)) {
       this.motionPathEditor.selectedPathId = null;
       this.motionPathEditor.selectedHandleIndex = -1;
+      this.motionPathEditor.selectedHandleType = null;
     }
     const selected = this._getSelectedMotionPathPrimitive();
     const selectedCount = selectedIds.length;
     const singleSelected = selectedCount === 1 ? selected : null;
+    const selectedPoint = singleSelected?.points?.[this.motionPathEditor.selectedHandleIndex] || null;
+    const selectedGroup = this._getSelectedMotionPathGroup();
+    const radialGroup = selectedGroup?.groupKind === 'radial' ? selectedGroup : null;
     const createKind = this._getMotionPathEditorCreateKind();
     if (!singleSelected && this.motionPathEditor.insertPointMode) this.motionPathEditor.insertPointMode = false;
     const selectionMeta = document.getElementById('motionPathEditorSelectionMeta');
+    const radialCount = radialGroup
+      ? radialGroup.radialCount
+      : singleSelected?.kind === 'radial'
+        ? _normalizeMotionPathRadialCount(singleSelected.radialCount)
+        : 0;
+    const radialSpread = radialGroup
+      ? Math.round(radialGroup.radialSpread)
+      : singleSelected?.kind === 'radial'
+        ? Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))
+        : 0;
+    const radialDetails = radialCount > 0
+      ? ` · ${radialCount} spoke${radialCount === 1 ? '' : 's'} · ${radialSpread}° spread`
+      : '';
     if (selectionMeta) {
-      selectionMeta.textContent = singleSelected
-        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}`
+      selectionMeta.textContent = radialGroup && selectedCount > 1
+        ? `radial group · ${selectedCount} selected line${selectedCount === 1 ? '' : 's'}${radialDetails}`
+        : singleSelected
+        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'}${radialDetails} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} · ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` · node size ${selectedPoint.stampScale.toFixed(2)}x · node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
         : selectedCount > 1
           ? `${selectedCount} primitives selected`
           : 'No primitive selected';
     }
     const nameInput = document.getElementById('motionPathSelectedName');
     if (nameInput) {
-      nameInput.disabled = !singleSelected;
-      nameInput.value = singleSelected?.name || '';
+      nameInput.disabled = !singleSelected && !radialGroup;
+      if (radialGroup) nameInput.value = radialGroup.groupName || '';
+      else nameInput.value = singleSelected?.name || '';
     }
     const agentInput = document.getElementById('motionPathSelectedAgentCount');
     if (agentInput) {
-      agentInput.disabled = !singleSelected;
+      agentInput.disabled = !singleSelected || !!radialGroup;
       agentInput.value = String(singleSelected?.agentCount || 0);
+    }
+    const pointStampScaleInput = document.getElementById('motionPathSelectedPointStampScale');
+    if (pointStampScaleInput) {
+      pointStampScaleInput.disabled = !selectedPoint;
+      pointStampScaleInput.value = selectedPoint ? selectedPoint.stampScale.toFixed(2) : '1.00';
+    }
+    const pointSpeedScaleInput = document.getElementById('motionPathSelectedPointSpeedScale');
+    if (pointSpeedScaleInput) {
+      pointSpeedScaleInput.disabled = !selectedPoint;
+      pointSpeedScaleInput.value = selectedPoint ? selectedPoint.speedScale.toFixed(2) : '1.00';
     }
     const endBehaviorInput = document.getElementById('motionPathSelectedEndBehavior');
     if (endBehaviorInput) {
       endBehaviorInput.disabled = !singleSelected || !!singleSelected?.closed;
       endBehaviorInput.value = _normalizeMotionPathEndBehavior(singleSelected?.endBehavior);
     }
+    const startModeInput = document.getElementById('motionPathSelectedStartMode');
+    if (startModeInput) {
+      startModeInput.disabled = !singleSelected;
+      startModeInput.value = _normalizeMotionPathStartMode(singleSelected?.startMode);
+    }
     const closedInput = document.getElementById('motionPathSelectedClosed');
     if (closedInput) {
-      closedInput.disabled = !singleSelected || (singleSelected?.kind !== 'polyline' && singleSelected?.kind !== 'bezier');
+      closedInput.disabled = !singleSelected || !!radialGroup || (singleSelected?.kind !== 'polyline' && singleSelected?.kind !== 'bezier');
       closedInput.checked = !!singleSelected?.closed;
+    }
+    const radialCountInput = document.getElementById('motionPathSelectedRadialCount');
+    if (radialCountInput) {
+      radialCountInput.disabled = !radialGroup && singleSelected?.kind !== 'radial';
+      radialCountInput.value = String(radialCount);
+    }
+    const radialSpreadInput = document.getElementById('motionPathSelectedRadialSpread');
+    if (radialSpreadInput) {
+      radialSpreadInput.disabled = !radialGroup && singleSelected?.kind !== 'radial';
+      radialSpreadInput.value = String(radialSpread);
     }
     const addPointBtn = document.getElementById('motionPathAddPoint');
     if (addPointBtn) {
-      addPointBtn.disabled = !singleSelected || !!createKind;
+      addPointBtn.disabled = !singleSelected || !!createKind || !!radialGroup || singleSelected?.kind === 'radial';
       addPointBtn.textContent = this.motionPathEditor.insertPointMode ? 'Cancel Point' : 'Add Point';
     }
     const insertBetweenToggle = document.getElementById('motionPathInsertBetweenToggle');
     if (insertBetweenToggle) {
       insertBetweenToggle.checked = !!this.motionPathEditor.insertBetweenPoints;
-      insertBetweenToggle.disabled = !singleSelected || !!createKind;
+      insertBetweenToggle.disabled = !singleSelected || !!createKind || !!radialGroup || singleSelected?.kind === 'radial';
     }
     const deletePrimitiveBtn = document.getElementById('motionPathDeletePrimitive');
     if (deletePrimitiveBtn) deletePrimitiveBtn.disabled = !selectedCount;
     const toolbarStates = [
       ['motionPathToolSelect', true, this.motionPathEditor.activeTool === 'select'],
+      ['motionPathToolPan', true, this.motionPathEditor.activeTool === 'pan'],
       ['motionPathToolDelete', true, this.motionPathEditor.activeTool === 'delete'],
       ['motionPathToolbarCopy', !!selectedCount, false],
       ['motionPathToolbarPaste', !!(this.motionPathEditor.clipboardPaths?.length), false],
@@ -5240,10 +6966,15 @@ export class App {
       ['motionPathToolbarAddBezier', true, createKind === 'bezier'],
       ['motionPathToolbarAddRect', true, createKind === 'rectangle'],
       ['motionPathToolbarAddEllipse', true, createKind === 'ellipse'],
-      ['motionPathAddPolyline', true, createKind === 'polyline'],
-      ['motionPathAddBezier', true, createKind === 'bezier'],
-      ['motionPathAddRect', true, createKind === 'rectangle'],
-      ['motionPathAddEllipse', true, createKind === 'ellipse'],
+      ['motionPathToolbarAddRadial', true, createKind === 'radial'],
+      ['motionPathToolbarPanelGraph', true, this.motionPathEditor.activePanel === 'graph'],
+      ['motionPathToolbarPanelSelection', true, this.motionPathEditor.activePanel === 'selection'],
+      ['motionPathToolbarPanelEdit', true, this.motionPathEditor.activePanel === 'edit'],
+      ['motionPathToolbarHelp', true, !!this.motionPathEditor.helpOpen],
+      ['motionPathToolbarZoomOut', true, false],
+      ['motionPathToolbarZoomReset', true, false],
+      ['motionPathToolbarZoomIn', true, false],
+      ['motionPathToolbarCenterView', true, false],
     ];
     for (const [id, enabled, active] of toolbarStates) {
       const button = document.getElementById(id);
@@ -5253,11 +6984,36 @@ export class App {
     }
     const empty = document.getElementById('motionPathEditorEmpty');
     if (empty) empty.classList.toggle('hidden', !!doc?.paths?.length);
+    const drawer = document.getElementById('motionPathEditorDrawer');
+    if (drawer) {
+      drawer.classList.toggle('open', !!this.motionPathEditor.activePanel);
+      if (this.motionPathEditor.activePanel === 'graph') this._positionMotionPathEditorPopover('motionPathToolbarPanelGraph', 'motionPathEditorDrawer');
+      else if (this.motionPathEditor.activePanel === 'selection') this._positionMotionPathEditorPopover('motionPathToolbarPanelSelection', 'motionPathEditorDrawer');
+      else if (this.motionPathEditor.activePanel === 'edit') this._positionMotionPathEditorPopover('motionPathToolbarPanelEdit', 'motionPathEditorDrawer');
+    }
+    const panelMap = [
+      ['motionPathEditorGraphPanel', 'graph'],
+      ['motionPathEditorSelectionPanel', 'selection'],
+      ['motionPathEditorEditPanel', 'edit'],
+    ];
+    for (const [id, panel] of panelMap) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('is-open', this.motionPathEditor.activePanel === panel);
+    }
+    const helpCard = document.getElementById('motionPathEditorHelpCard');
+    if (helpCard) {
+      helpCard.classList.toggle('open', !!this.motionPathEditor.helpOpen);
+      if (this.motionPathEditor.helpOpen) {
+        this._positionMotionPathEditorPopover('motionPathToolbarHelp', 'motionPathEditorHelpCard', { alignRight: true });
+      }
+    }
     this._syncMotionPathOverlayControls(doc);
     const canvas = this._getMotionPathEditorCanvas();
     if (canvas) {
       canvas.style.cursor = this.motionPathEditor.dragMode === 'pan'
         ? 'grabbing'
+        : this.motionPathEditor.activeTool === 'pan'
+          ? 'grab'
         : this.motionPathEditor.insertPointMode
           ? 'copy'
           : createKind
@@ -5283,6 +7039,9 @@ export class App {
     document.getElementById('brushDropdown')?.classList.remove('open');
     document.getElementById('motionPathEditor')?.classList.add('open');
     this.motionPath.editorOpen = true;
+    this.motionPathEditor.activePanel = null;
+    this.motionPathEditor.touchPoints = {};
+    this._endMotionPathEditorTouchGesture();
     this._syncMotionPathEditorCanvasSize();
     this._syncMotionPathUI();
     this._syncMotionPathOverlayControls();
@@ -5302,7 +7061,12 @@ export class App {
     this.motionPathEditor.dragMode = null;
     this.motionPathEditor.dragPathId = null;
     this.motionPathEditor.dragHandleIndex = -1;
+    this.motionPathEditor.activePanel = null;
+    this.motionPathEditor.touchPoints = {};
+    this._endMotionPathEditorTouchGesture();
     this.motionPathEditor.selectedHandleIndex = -1;
+    this.motionPathEditor.selectedHandleType = null;
+    this.motionPathEditor.hoverHandleType = null;
     this.motionPathEditor.creationPathId = null;
     this.motionPathEditor.activeTool = 'select';
     this.motionPathEditor.insertPointMode = false;
@@ -5588,7 +7352,28 @@ export class App {
     document.getElementById('motionPathEditorDelete')?.addEventListener('click', () => this._deleteActiveMotionPathDocument());
     document.getElementById('motionPathEditorSelect')?.addEventListener('change', e => this._setActiveMotionPathDocument(e.target.value));
     document.getElementById('motionPathToolSelect')?.addEventListener('click', () => this._setMotionPathEditorTool('select'));
+    document.getElementById('motionPathToolPan')?.addEventListener('click', () => this._setMotionPathEditorTool('pan'));
     document.getElementById('motionPathToolDelete')?.addEventListener('click', () => this._setMotionPathEditorTool('delete'));
+    document.getElementById('motionPathToolbarZoomOut')?.addEventListener('click', () => {
+      const canvas = this._getMotionPathEditorCanvas();
+      const width = this.motionPathEditor.canvasWidth || canvas?.clientWidth || 1;
+      const height = this.motionPathEditor.canvasHeight || canvas?.clientHeight || 1;
+      this._zoomMotionPathEditorAt(width * 0.5, height * 0.5, 1 / 1.2);
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathToolbarZoomReset')?.addEventListener('click', () => this._resetMotionPathEditorZoom());
+    document.getElementById('motionPathToolbarZoomIn')?.addEventListener('click', () => {
+      const canvas = this._getMotionPathEditorCanvas();
+      const width = this.motionPathEditor.canvasWidth || canvas?.clientWidth || 1;
+      const height = this.motionPathEditor.canvasHeight || canvas?.clientHeight || 1;
+      this._zoomMotionPathEditorAt(width * 0.5, height * 0.5, 1.2);
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathToolbarCenterView')?.addEventListener('click', () => this._centerMotionPathEditorView());
+    document.getElementById('motionPathToolbarPanelGraph')?.addEventListener('click', () => this._setMotionPathEditorPanel('graph'));
+    document.getElementById('motionPathToolbarPanelSelection')?.addEventListener('click', () => this._setMotionPathEditorPanel('selection'));
+    document.getElementById('motionPathToolbarPanelEdit')?.addEventListener('click', () => this._setMotionPathEditorPanel('edit'));
+    document.getElementById('motionPathToolbarHelp')?.addEventListener('click', () => this._setMotionPathEditorHelp());
     document.getElementById('motionPathToolbarCopy')?.addEventListener('click', () => this._copySelectedMotionPathPrimitives());
     document.getElementById('motionPathToolbarPaste')?.addEventListener('click', () => this._pasteMotionPathPrimitives());
     document.getElementById('motionPathToolbarDuplicate')?.addEventListener('click', () => this._duplicateSelectedMotionPathPrimitives());
@@ -5597,10 +7382,12 @@ export class App {
     document.getElementById('motionPathAddBezier')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('bezier'));
     document.getElementById('motionPathAddRect')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('rectangle'));
     document.getElementById('motionPathAddEllipse')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('ellipse'));
+    document.getElementById('motionPathAddRadial')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('radial'));
     document.getElementById('motionPathToolbarAddPolyline')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('polyline'));
     document.getElementById('motionPathToolbarAddBezier')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('bezier'));
     document.getElementById('motionPathToolbarAddRect')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('rectangle'));
     document.getElementById('motionPathToolbarAddEllipse')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('ellipse'));
+    document.getElementById('motionPathToolbarAddRadial')?.addEventListener('click', () => this._startMotionPathPrimitiveCreation('radial'));
     document.getElementById('motionPathAddPoint')?.addEventListener('click', () => this._addPointToMotionPathPrimitive());
     document.getElementById('motionPathInsertBetweenToggle')?.addEventListener('change', e => {
       this.motionPathEditor.insertBetweenPoints = !!e.target.checked;
@@ -5609,6 +7396,17 @@ export class App {
     document.getElementById('motionPathDeletePrimitive')?.addEventListener('pointerdown', e => e.stopPropagation());
     document.getElementById('motionPathDeletePrimitive')?.addEventListener('click', () => this._deleteSelectedMotionPathPrimitive());
     document.getElementById('motionPathSelectedName')?.addEventListener('input', e => {
+      const selectedGroup = this._getSelectedMotionPathGroup();
+      if (selectedGroup?.groupKind === 'radial') {
+        const name = _normalizeMotionPathGroupName(e.target.value, `Radial ${selectedGroup.groupId}`);
+        this._getMotionPathGroupMembers(selectedGroup.groupId).forEach((path, index) => {
+          path.groupName = name;
+          path.name = `${name} · Line ${index + 1}`;
+        });
+        this._markMotionPathDocumentUpdated();
+        this._syncMotionPathUI();
+        return;
+      }
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected) return;
       selected.name = String(e.target.value || '').slice(0, 40);
@@ -5622,6 +7420,20 @@ export class App {
       this._markMotionPathDocumentUpdated();
       this._syncMotionPathUI();
     });
+    document.getElementById('motionPathSelectedPointStampScale')?.addEventListener('input', e => {
+      const point = this._getSelectedMotionPathPoint();
+      if (!point) return;
+      point.stampScale = _roundMotionPathPointStampScale(+e.target.value || 1);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedPointSpeedScale')?.addEventListener('input', e => {
+      const point = this._getSelectedMotionPathPoint();
+      if (!point) return;
+      point.speedScale = _roundMotionPathPointSpeedScale(Number(e.target.value));
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
     document.getElementById('motionPathSelectedEndBehavior')?.addEventListener('change', e => {
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected) return;
@@ -5629,10 +7441,45 @@ export class App {
       this._markMotionPathDocumentUpdated();
       this._syncMotionPathUI();
     });
+    document.getElementById('motionPathSelectedStartMode')?.addEventListener('change', e => {
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected) return;
+      selected.startMode = _normalizeMotionPathStartMode(e.target.value);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
     document.getElementById('motionPathSelectedClosed')?.addEventListener('change', e => {
       const selected = this._getSelectedMotionPathPrimitive();
       if (!selected || (selected.kind !== 'polyline' && selected.kind !== 'bezier')) return;
       selected.closed = !!e.target.checked;
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedRadialCount')?.addEventListener('input', e => {
+      const selectedGroup = this._getSelectedMotionPathGroup();
+      if (selectedGroup?.groupKind === 'radial') {
+        this._updateMotionPathRadialGroup(selectedGroup.groupId, { radialCount: +e.target.value });
+        this._markMotionPathDocumentUpdated();
+        this._syncMotionPathUI();
+        return;
+      }
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected || selected.kind !== 'radial') return;
+      selected.radialCount = _normalizeMotionPathRadialCount(+e.target.value);
+      this._markMotionPathDocumentUpdated();
+      this._syncMotionPathUI();
+    });
+    document.getElementById('motionPathSelectedRadialSpread')?.addEventListener('input', e => {
+      const selectedGroup = this._getSelectedMotionPathGroup();
+      if (selectedGroup?.groupKind === 'radial') {
+        this._updateMotionPathRadialGroup(selectedGroup.groupId, { radialSpread: +e.target.value });
+        this._markMotionPathDocumentUpdated();
+        this._syncMotionPathUI();
+        return;
+      }
+      const selected = this._getSelectedMotionPathPrimitive();
+      if (!selected || selected.kind !== 'radial') return;
+      selected.radialSpread = _normalizeMotionPathRadialSpread(+e.target.value);
       this._markMotionPathDocumentUpdated();
       this._syncMotionPathUI();
     });
@@ -5647,6 +7494,10 @@ export class App {
       if (!pathId) return;
       if (button.dataset.kind === 'direction') {
         this._cycleMotionPathDirectionMode(pathId);
+        return;
+      }
+      if (button.dataset.kind === 'start') {
+        this._cycleMotionPathStartMode(pathId);
         return;
       }
       if (button.dataset.kind === 'behavior') {
@@ -5996,17 +7847,20 @@ export class App {
     // Reset EMA pressure at stroke start for immediate response
     this._rawPressure = e.pressure || 0.5;
     this.pressure = this._rawPressure;
-    this.leaderX = x;
-    this.leaderY = y;
     this._stabX = x;
     this._stabY = y;
     this.isDrawing = true;
     this.undoPushedThisStroke = false;
     this.isTapering = false;
     this.strokeFrame = 0;
+    const p = this.getP();
+    this._resetStrokeWaveState();
+    const waveStart = this._applyStrokeWavePoint(x, y, p, { reset: true });
+    this.leaderX = waveStart.x;
+    this.leaderY = waveStart.y;
 
     const brush = this.getCurrentBrush();
-    if (brush) brush.onDown(x, y, this.pressure);
+    if (brush) brush.onDown(this.leaderX, this.leaderY, this.pressure);
   }
 
   _onPointerMove(e) {
@@ -6072,13 +7926,15 @@ export class App {
         const alpha = 1 - stab * 0.95; // keeps min 5% responsiveness at max stabilizer
         this._stabX += (x - this._stabX) * alpha;
         this._stabY += (y - this._stabY) * alpha;
-        this.leaderX = this._stabX;
-        this.leaderY = this._stabY;
-        if (brush) brush.onMove(this._stabX, this._stabY, this.pressure);
+        const wavePoint = this._applyStrokeWavePoint(this._stabX, this._stabY, p);
+        this.leaderX = wavePoint.x;
+        this.leaderY = wavePoint.y;
+        if (brush) brush.onMove(this.leaderX, this.leaderY, this.pressure);
       } else {
-        this.leaderX = x;
-        this.leaderY = y;
-        if (brush) brush.onMove(x, y, this.pressure);
+        const wavePoint = this._applyStrokeWavePoint(x, y, p);
+        this.leaderX = wavePoint.x;
+        this.leaderY = wavePoint.y;
+        if (brush) brush.onMove(this.leaderX, this.leaderY, this.pressure);
       }
     }
   }
@@ -6109,12 +7965,31 @@ export class App {
     const { x, y } = this._getEventCoords(e);
 
     const brush = this.getCurrentBrush();
-    if (brush) brush.onUp(x, y);
+    const p = this.getP();
+    const waveActive = (p.strokeWaveType || 'none') !== 'none' && (p.strokeWaveAmplitude || 0) > 0;
+    if (waveActive) {
+      const stab = p.stabilizer || 0;
+      let baseX = x;
+      let baseY = y;
+      if (stab > 0) {
+        const alpha = 1 - stab * 0.95;
+        this._stabX += (x - this._stabX) * alpha;
+        this._stabY += (y - this._stabY) * alpha;
+        baseX = this._stabX;
+        baseY = this._stabY;
+      }
+      const wavePoint = this._applyStrokeWavePoint(baseX, baseY, p);
+      this.leaderX = wavePoint.x;
+      this.leaderY = wavePoint.y;
+      if (brush) brush.onUp(this.leaderX, this.leaderY);
+    } else if (brush) {
+      brush.onUp(x, y);
+    }
+    this._resetStrokeWaveState();
 
     this._recordColor(this.primaryEl.value);
 
     // Start taper if configured
-    const p = this.getP();
     if (p.taperLength > 0) {
       this.isTapering = true;
       this.taperFrame = 0;
@@ -6130,6 +8005,68 @@ export class App {
     if ((e.pointerType || this.pointerType) === 'touch') return;
     const brush = this.getCurrentBrush();
     if (brush && brush.onHoverEnd) brush.onHoverEnd();
+  }
+
+  _resetStrokeWaveState() {
+    this._strokeWave.active = false;
+    this._strokeWave.lastBaseX = Number.NaN;
+    this._strokeWave.lastBaseY = Number.NaN;
+    this._strokeWave.distance = 0;
+    this._strokeWave.tangentX = 1;
+    this._strokeWave.tangentY = 0;
+  }
+
+  _applyStrokeWavePoint(baseX, baseY, p = this.getP(), { reset = false } = {}) {
+    const state = this._strokeWave;
+    if (!state) return { x: baseX, y: baseY };
+
+    if (reset || !state.active) {
+      state.active = true;
+      state.lastBaseX = baseX;
+      state.lastBaseY = baseY;
+      state.distance = 0;
+      state.tangentX = 1;
+      state.tangentY = 0;
+    } else {
+      const dx = baseX - state.lastBaseX;
+      const dy = baseY - state.lastBaseY;
+      const stepDistance = Math.hypot(dx, dy);
+      if (stepDistance > 1e-3) {
+        state.distance += stepDistance;
+        state.tangentX = dx / stepDistance;
+        state.tangentY = dy / stepDistance;
+      }
+      state.lastBaseX = baseX;
+      state.lastBaseY = baseY;
+    }
+
+    const waveType = String(p?.strokeWaveType || 'none');
+    const amplitude = Math.max(0, Number(p?.strokeWaveAmplitude) || 0);
+    if (waveType === 'none' || amplitude <= 0) {
+      return { x: baseX, y: baseY, baseX, baseY, tangentX: state.tangentX, tangentY: state.tangentY, normalX: -state.tangentY, normalY: state.tangentX };
+    }
+
+    const wavelength = Math.max(1, Number(p?.strokeWaveLength) || 1);
+    const phase = (state.distance / wavelength) * Math.PI * 2 + (Number(p?.strokeWavePhase) || 0);
+    let waveValue = 0;
+    switch (waveType) {
+      case 'sine':
+      default:
+        waveValue = Math.sin(phase);
+        break;
+    }
+    const normalX = -state.tangentY;
+    const normalY = state.tangentX;
+    return {
+      x: baseX + normalX * waveValue * amplitude,
+      y: baseY + normalY * waveValue * amplitude,
+      baseX,
+      baseY,
+      tangentX: state.tangentX,
+      tangentY: state.tangentY,
+      normalX,
+      normalY,
+    };
   }
 
   _onKeyDown(e) {
@@ -7868,6 +9805,7 @@ export class App {
       controls._simulation = {
         enabled: this.simulation.enabled,
         inspectorCollapsed: this.simulation.inspectorCollapsed,
+        inspectorSections: this.simulation.inspectorSections,
         editorTool: this.simulation.editorTool,
         brushData: this.simulation.brushData,
         nextId: this.simulation.nextId,
@@ -7908,6 +9846,7 @@ export class App {
         if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
         this.simulation.enabled = !!val?.enabled;
         this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
+        this.simulation.inspectorSections = _normalizeSimulationInspectorSections(val?.inspectorSections);
         if (val?.vars && typeof val.vars === 'object') {
           this.simulation.vars = _normalizeSimulationVars(val.vars);
         }
