@@ -7,7 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders } from './ui.js';
+import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -279,11 +279,16 @@ const SIM_LINE_HIT_RADIUS = 12;
 const SIM_DELETE_HIT_RADIUS = 10;
 const SIM_PARAM_HANDLE_RADIUS = 8;
 const SIM_PARAM_HIT_RADIUS = 12;
+const SIM_OVERLAY_ACTION_HIT_RADIUS = 12;
 const SIM_POINT_STRENGTH_HANDLE_OFFSET = 22;
 const SIM_POINT_STRENGTH_HANDLE_SCALE = 60;
 const SIM_PATH_START_MARKER_RADIUS = 6;
 const SIM_PATH_DIRECTION_HANDLE_OFFSET = 34;
 const SIM_PATH_DIRECTION_ARROW_LENGTH = 14;
+const SIM_PATH_SPEED_ADD_BUTTON_OFFSET_Y = 28;
+const SIM_PATH_SPEED_ADD_BUTTON_WIDTH = 88;
+const SIM_PATH_SPEED_ADD_BUTTON_HEIGHT = 22;
+const SIM_PATH_SPEED_DELETE_OFFSET = 14;
 const SIM_SPAWN_MASK_CELL_SIZE_MIN = 2;
 const SIM_SPAWN_MASK_CELL_SIZE_MAX = 6;
 const SIM_SPAWN_MASK_MAX_DIM = 160;
@@ -296,6 +301,18 @@ const MAX_SIM_HARDNESS = 10;
 const MAX_SWARM_COUNT = 2000;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
+const DEFAULT_SIM_PATH_SPEED = 1;
+const SIM_PATH_SPEED_MIN = 0.1;
+const SIM_PATH_SPEED_MAX = 4;
+const SIM_PATH_SIZE_HANDLE_OFFSET = 14;
+const SIM_PATH_TOGGLE_HANDLE_OFFSET = 18;
+const SIM_PATH_SPEED_HANDLE_OFFSET = 18;
+const SIM_PATH_SPEED_HANDLE_SCALE = 18;
+const SIM_PATH_PRIMITIVE_DEFAULT_RADIUS = 84;
+const SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO = 0.65;
+const SIM_PATH_PRIMITIVE_SAMPLE_COUNT = 40;
+const SIM_PATH_STAR_INNER_RATIO = 0.46;
+const SIM_PATH_PRIMITIVE_KINDS = ['circle', 'star', 'square', 'diamond', 'ellipse'];
 // Keep traveled distance bounded during long simulation runs; each path still
 // wraps or ping-pongs against its own actual length when sampled.
 const PATH_DISTANCE_WRAP_THRESHOLD = 1000000;
@@ -1220,6 +1237,130 @@ function _getClosestPolylineDistance(points, x, y, closed = false) {
   return best;
 }
 
+function _smoothstep01(value) {
+  const t = _clamp01(value);
+  return t * t * (3 - (2 * t));
+}
+
+function _normalizeSimulationPathPrimitiveKind(value) {
+  return SIM_PATH_PRIMITIVE_KINDS.includes(value) ? value : '';
+}
+
+function _normalizeSimulationPathSpeed(value) {
+  return _clamp(Number.isFinite(value) ? value : DEFAULT_SIM_PATH_SPEED, SIM_PATH_SPEED_MIN, SIM_PATH_SPEED_MAX);
+}
+
+function _getSimulationPathBounds(points) {
+  const validPoints = Array.isArray(points)
+    ? points.filter(point => Number.isFinite(point?.x) && Number.isFinite(point?.y))
+    : [];
+  if (!validPoints.length) return null;
+  let minX = validPoints[0].x;
+  let maxX = validPoints[0].x;
+  let minY = validPoints[0].y;
+  let maxY = validPoints[0].y;
+  for (const point of validPoints) {
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+    if (point.y < minY) minY = point.y;
+    if (point.y > maxY) maxY = point.y;
+  }
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    centerX: (minX + maxX) * 0.5,
+    centerY: (minY + maxY) * 0.5,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+}
+
+function _buildSimulationPathPrimitivePoints(pathItem) {
+  const primitiveKind = _normalizeSimulationPathPrimitiveKind(pathItem?.primitiveKind);
+  if (!primitiveKind) return [];
+  const centerX = Number.isFinite(pathItem?.centerX) ? pathItem.centerX : 0;
+  const centerY = Number.isFinite(pathItem?.centerY) ? pathItem.centerY : 0;
+  const radiusX = Math.max(8, Number.isFinite(pathItem?.primitiveRadius) ? pathItem.primitiveRadius : SIM_PATH_PRIMITIVE_DEFAULT_RADIUS);
+  const radiusY = Math.max(8, Number.isFinite(pathItem?.primitiveRadiusY)
+    ? pathItem.primitiveRadiusY
+    : (primitiveKind === 'ellipse' ? radiusX * SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO : radiusX));
+  if (primitiveKind === 'square') {
+    return [
+      { x: centerX - radiusX, y: centerY - radiusY },
+      { x: centerX + radiusX, y: centerY - radiusY },
+      { x: centerX + radiusX, y: centerY + radiusY },
+      { x: centerX - radiusX, y: centerY + radiusY },
+    ];
+  }
+  if (primitiveKind === 'diamond') {
+    return [
+      { x: centerX, y: centerY - radiusY },
+      { x: centerX + radiusX, y: centerY },
+      { x: centerX, y: centerY + radiusY },
+      { x: centerX - radiusX, y: centerY },
+    ];
+  }
+  if (primitiveKind === 'star') {
+    const points = [];
+    for (let index = 0; index < 10; index++) {
+      const angle = (-Math.PI * 0.5) + ((Math.PI * 2 * index) / 10);
+      const useOuter = index % 2 === 0;
+      const rx = useOuter ? radiusX : radiusX * SIM_PATH_STAR_INNER_RATIO;
+      const ry = useOuter ? radiusY : radiusY * SIM_PATH_STAR_INNER_RATIO;
+      points.push({ x: centerX + Math.cos(angle) * rx, y: centerY + Math.sin(angle) * ry });
+    }
+    return points;
+  }
+  const samples = SIM_PATH_PRIMITIVE_SAMPLE_COUNT;
+  const points = [];
+  for (let index = 0; index < samples; index++) {
+    const angle = (index / samples) * Math.PI * 2;
+    points.push({
+      x: centerX + Math.cos(angle) * radiusX,
+      y: centerY + Math.sin(angle) * (primitiveKind === 'ellipse' ? radiusY : radiusX),
+    });
+  }
+  return points;
+}
+
+function _rebuildSimulationPathPrimitive(pathItem) {
+  if (!pathItem) return;
+  const primitiveKind = _normalizeSimulationPathPrimitiveKind(pathItem.primitiveKind);
+  if (!primitiveKind) return;
+  pathItem.points = _buildSimulationPathPrimitivePoints(pathItem);
+}
+
+function _normalizeSimulationPathSpeedPoints(points, nextIdRef) {
+  const rawPoints = Array.isArray(points) ? points : [];
+  return rawPoints
+    .filter(point => Number.isFinite(point?.t) || Number.isFinite(point?.speed))
+    .map(point => ({
+      id: Number.isFinite(point?.id) ? point.id : nextIdRef(),
+      t: _clamp01(Number.isFinite(point?.t) ? point.t : 0.5),
+      speed: _normalizeSimulationPathSpeed(point?.speed),
+    }))
+    .sort((left, right) => left.t - right.t);
+}
+
+function _getSimulationPathSpeedAt(pathItem, pathT, baseSpeed = DEFAULT_SIM_PATH_SPEED, closed = false) {
+  const points = Array.isArray(pathItem?.speedPoints) ? pathItem.speedPoints.slice().sort((left, right) => left.t - right.t) : [];
+  const fallbackSpeed = _normalizeSimulationPathSpeed(baseSpeed);
+  if (!points.length) return fallbackSpeed;
+  const t = closed ? _wrapIndex(pathT, 1) : _clamp01(pathT);
+  const nodes = [{ t: 0, speed: fallbackSpeed }, ...points, { t: 1, speed: fallbackSpeed }];
+  for (let index = 1; index < nodes.length; index++) {
+    const start = nodes[index - 1];
+    const end = nodes[index];
+    if (t > end.t && index < nodes.length - 1) continue;
+    const span = Math.max(1e-6, end.t - start.t);
+    const mix = _smoothstep01((t - start.t) / span);
+    return _lerp(start.speed, end.speed, mix);
+  }
+  return nodes[nodes.length - 1].speed;
+}
+
 /**
  * Sample a point along a polyline using an absolute traveled distance.
  * Closed paths wrap continuously; open paths ping-pong forward and backward.
@@ -1403,6 +1544,7 @@ export class App {
       enabled: false,
       running: false,
       paused: false,
+      guidesVisible: true,
       inspectorCollapsed: false,
       inspectorSections: {},
       editorTool: 'spawn',
@@ -3011,20 +3153,47 @@ export class App {
         const legacyPaths = [];
         if (Array.isArray(data.path) && data.path.length >= 2) legacyPaths.push({ points: data.path });
         if (Array.isArray(data.paths)) legacyPaths.push(...data.paths);
-        data.paths = legacyPaths.map(pathItem => ({
-          id: pathItem?.id || this.simulation.nextId++,
-          enabled: pathItem?.enabled !== false,
-          points: Array.isArray(pathItem?.points)
+        data.paths = legacyPaths.map(pathItem => {
+          const primitiveKind = _normalizeSimulationPathPrimitiveKind(pathItem?.primitiveKind);
+          const points = Array.isArray(pathItem?.points)
             ? pathItem.points
                 .filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
                 .map(pt => ({ x: pt.x, y: pt.y }))
-            : [],
-          strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : undefined,
-          radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
-          closed: !!pathItem?.closed,
-          startOffset: Number.isFinite(pathItem?.startOffset) ? _clamp01(pathItem.startOffset) : 0,
-          direction: _normalizeSimulationPathDirection(pathItem?.direction),
-        })).filter(pathItem => pathItem.points.length >= 2);
+            : [];
+          const bounds = _getSimulationPathBounds(points);
+          const normalized = {
+            id: pathItem?.id || this.simulation.nextId++,
+            enabled: pathItem?.enabled !== false,
+            points,
+            strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : undefined,
+            radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
+            influenceRadius: Number.isFinite(pathItem?.influenceRadius) ? Math.max(1, pathItem.influenceRadius) : undefined,
+            closed: !!pathItem?.closed,
+            startOffset: Number.isFinite(pathItem?.startOffset) ? _clamp01(pathItem.startOffset) : 0,
+            direction: _normalizeSimulationPathDirection(pathItem?.direction),
+            primitiveKind,
+            centerX: Number.isFinite(pathItem?.centerX) ? pathItem.centerX : (bounds?.centerX ?? this.W * 0.5),
+            centerY: Number.isFinite(pathItem?.centerY) ? pathItem.centerY : (bounds?.centerY ?? this.H * 0.5),
+            primitiveRadius: Number.isFinite(pathItem?.primitiveRadius)
+              ? Math.max(8, pathItem.primitiveRadius)
+              : Math.max(8, Math.max(bounds?.width || 0, bounds?.height || 0, SIM_PATH_PRIMITIVE_DEFAULT_RADIUS) * 0.5),
+            primitiveRadiusY: Number.isFinite(pathItem?.primitiveRadiusY)
+              ? Math.max(8, pathItem.primitiveRadiusY)
+              : undefined,
+            speed: _normalizeSimulationPathSpeed(pathItem?.speed),
+            speedPoints: _normalizeSimulationPathSpeedPoints(pathItem?.speedPoints, () => this.simulation.nextId++),
+            travelDistance: Number.isFinite(pathItem?.travelDistance) ? pathItem.travelDistance : 0,
+          };
+          if (primitiveKind) {
+            if (!Number.isFinite(normalized.primitiveRadiusY)) {
+              normalized.primitiveRadiusY = primitiveKind === 'ellipse'
+                ? normalized.primitiveRadius * SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO
+                : normalized.primitiveRadius;
+            }
+            _rebuildSimulationPathPrimitive(normalized);
+          }
+          return normalized;
+        }).filter(pathItem => pathItem.points.length >= 2);
         delete data.path;
       }
 
@@ -3084,12 +3253,15 @@ export class App {
   }
 
   _resolveSimulationPathConfig(pathItem, p = this.getP()) {
+    const radius = Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : DEFAULT_PATH_RADIUS;
     return {
       strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : DEFAULT_PATH_STRENGTH,
-      radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : DEFAULT_PATH_RADIUS,
+      radius,
+      influenceRadius: Number.isFinite(pathItem?.influenceRadius) ? Math.max(radius, pathItem.influenceRadius) : radius,
       closed: !!pathItem?.closed,
       startOffset: Number.isFinite(pathItem?.startOffset) ? _clamp01(pathItem.startOffset) : 0,
       direction: _normalizeSimulationPathDirection(pathItem?.direction),
+      speed: _normalizeSimulationPathSpeed(pathItem?.speed),
     };
   }
 
@@ -3115,12 +3287,15 @@ export class App {
       distanceAlongPath = phase <= totalLength ? phase : (totalLength * 2) - phase;
     }
     const sample = _samplePolylinePointAtDistance(renderPoints, distanceAlongPath, config.closed);
-    return sample ? { ...sample, config, renderPoints, totalLength, startDistance, distanceAlongPath } : null;
+    if (!sample) return null;
+    const pathT = totalLength > 1e-6 ? _clamp01(distanceAlongPath / totalLength) : 0;
+    const speed = _getSimulationPathSpeedAt(pathItem, pathT, config.speed, config.closed);
+    return { ...sample, config, renderPoints, totalLength, startDistance, distanceAlongPath, pathT, speed };
   }
 
-  _getAnimatedSimulationPathTarget(pathItem, p = this.getP()) {
+  _getAnimatedSimulationPathTarget(pathItem, p = this.getP(), traveledDistance = null) {
     if (!pathItem?.points?.length) return null;
-    const point = this._getSimulationPathSample(pathItem, this.simulation.pathDistance, p);
+    const point = this._getSimulationPathSample(pathItem, Number.isFinite(traveledDistance) ? traveledDistance : (pathItem?.travelDistance || 0), p);
     return point ? { x: point.x, y: point.y, config: point.config, pathItem, tangentX: point.tangentX, tangentY: point.tangentY } : null;
   }
 
@@ -3426,8 +3601,9 @@ export class App {
     if (kind === 'path') {
       const sample = this._getSimulationPathSample(target, 0, p);
       if (!sample) return [];
+      const bounds = _getSimulationPathBounds(target.points);
       const directionSign = sample.config.direction === 'reverse' ? -1 : 1;
-      return [
+      const handles = [
         {
           kind: 'paramHandle',
           handleType: 'pathStart',
@@ -3453,6 +3629,55 @@ export class App {
           y: sample.y + (sample.tangentY * SIM_PATH_DIRECTION_HANDLE_OFFSET * directionSign),
         },
       ];
+      if (bounds) {
+        handles.push({
+          kind: 'paramHandle',
+          handleType: 'pathScale',
+          selectionKind: kind,
+          field: 'primitiveRadius',
+          collection: entry.collection,
+          target,
+          anchorX: bounds.centerX,
+          anchorY: bounds.centerY,
+          x: bounds.centerX + Math.max(12, Math.max(bounds.width, bounds.height) * 0.5) + SIM_PATH_SIZE_HANDLE_OFFSET,
+          y: bounds.centerY,
+        });
+        handles.push({
+          kind: 'paramHandle',
+          handleType: 'pathClosed',
+          selectionKind: kind,
+          field: 'closed',
+          collection: entry.collection,
+          target,
+          anchorX: bounds.centerX,
+          anchorY: bounds.centerY,
+          x: bounds.centerX,
+          y: bounds.minY - SIM_PATH_TOGGLE_HANDLE_OFFSET,
+        });
+      }
+      if (Array.isArray(target.speedPoints) && sample.totalLength > 1e-6) {
+        for (const speedPoint of target.speedPoints) {
+          const pointSample = _samplePolylinePointAtDistance(sample.renderPoints, sample.totalLength * _clamp01(speedPoint.t), sample.config.closed);
+          if (!pointSample) continue;
+          const normalX = -pointSample.tangentY;
+          const normalY = pointSample.tangentX;
+          const offset = SIM_PATH_SPEED_HANDLE_OFFSET + (_normalizeSimulationPathSpeed(speedPoint.speed) * SIM_PATH_SPEED_HANDLE_SCALE);
+          handles.push({
+            kind: 'paramHandle',
+            handleType: 'pathSpeed',
+            selectionKind: kind,
+            field: 'speedPoints',
+            collection: entry.collection,
+            target,
+            speedPointId: speedPoint.id,
+            anchorX: pointSample.x,
+            anchorY: pointSample.y,
+            x: pointSample.x + (normalX * offset),
+            y: pointSample.y + (normalY * offset),
+          });
+        }
+      }
+      return handles;
     }
     return [];
   }
@@ -3484,6 +3709,45 @@ export class App {
       const dy = y - sample.y;
       const dot = (dx * sample.tangentX) + (dy * sample.tangentY);
       if (Math.abs(dot) > 0.5) handle.target.direction = dot < 0 ? 'reverse' : 'forward';
+      return;
+    }
+    if (handle.handleType === 'pathScale') {
+      const bounds = _getSimulationPathBounds(handle.target.points);
+      if (!bounds) return;
+      const centerX = bounds.centerX;
+      const centerY = bounds.centerY;
+      const currentRadius = Math.max(8, Math.max(bounds.width, bounds.height) * 0.5);
+      const targetRadius = Math.max(8, Math.min(320, Math.hypot(x - centerX, y - centerY) - SIM_PATH_SIZE_HANDLE_OFFSET));
+      const scale = targetRadius / currentRadius;
+      for (const point of handle.target.points) {
+        point.x = centerX + ((point.x - centerX) * scale);
+        point.y = centerY + ((point.y - centerY) * scale);
+      }
+      if (_normalizeSimulationPathPrimitiveKind(handle.target.primitiveKind)) {
+        handle.target.centerX = centerX;
+        handle.target.centerY = centerY;
+        handle.target.primitiveRadius = Math.max(8, (handle.target.primitiveRadius || currentRadius) * scale);
+        handle.target.primitiveRadiusY = Math.max(8, (handle.target.primitiveRadiusY || currentRadius) * scale);
+        _rebuildSimulationPathPrimitive(handle.target);
+      }
+      this._constrainSimulationTargetToBounds(handle.target);
+      return;
+    }
+    if (handle.handleType === 'pathSpeed') {
+      const speedPoint = Array.isArray(handle.target.speedPoints)
+        ? handle.target.speedPoints.find(point => point.id === handle.speedPointId)
+        : null;
+      if (!speedPoint) return;
+      const config = this._resolveSimulationPathConfig(handle.target);
+      const renderPoints = this._getSimulationPathRenderPoints(handle.target);
+      const closest = _getClosestPolylineDistance(renderPoints, x, y, config.closed);
+      if (!closest || closest.totalLength <= 1e-6) return;
+      const normalX = -closest.tangentY;
+      const normalY = closest.tangentX;
+      const offset = ((x - closest.x) * normalX) + ((y - closest.y) * normalY);
+      speedPoint.t = _clamp01(closest.distanceAlongPath / closest.totalLength);
+      speedPoint.speed = _normalizeSimulationPathSpeed((offset - SIM_PATH_SPEED_HANDLE_OFFSET) / SIM_PATH_SPEED_HANDLE_SCALE);
+      handle.target.speedPoints.sort((left, right) => left.t - right.t);
     }
   }
 
@@ -3554,6 +3818,10 @@ export class App {
           pt.x += dx;
           pt.y += dy;
         }
+        if (_normalizeSimulationPathPrimitiveKind(target.primitiveKind)) {
+          target.centerX = (Number.isFinite(target.centerX) ? target.centerX : 0) + dx;
+          target.centerY = (Number.isFinite(target.centerY) ? target.centerY : 0) + dy;
+        }
       }
       return;
     }
@@ -3600,12 +3868,104 @@ export class App {
         pt.x += dx;
         pt.y += dy;
       }
+      if (_normalizeSimulationPathPrimitiveKind(target.primitiveKind)) {
+        target.centerX = (Number.isFinite(target.centerX) ? target.centerX : 0) + dx;
+        target.centerY = (Number.isFinite(target.centerY) ? target.centerY : 0) + dy;
+      }
       this._constrainSimulationTargetToBounds(target);
       return;
     }
     target.x += dx;
     target.y += dy;
     this._constrainSimulationTargetToBounds(target);
+  }
+
+  _createSimulationPathPrimitive(kind, centerX = this.W * 0.5, centerY = this.H * 0.5) {
+    const primitiveKind = _normalizeSimulationPathPrimitiveKind(kind);
+    if (!primitiveKind) return null;
+    const primitiveRadius = primitiveKind === 'ellipse' ? SIM_PATH_PRIMITIVE_DEFAULT_RADIUS * 1.1 : SIM_PATH_PRIMITIVE_DEFAULT_RADIUS;
+    const entry = {
+      id: this.simulation.nextId++,
+      enabled: true,
+      primitiveKind,
+      centerX,
+      centerY,
+      primitiveRadius,
+      primitiveRadiusY: primitiveKind === 'ellipse'
+        ? primitiveRadius * SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO
+        : primitiveRadius,
+      radius: DEFAULT_PATH_RADIUS,
+      strength: DEFAULT_PATH_STRENGTH,
+      speed: DEFAULT_SIM_PATH_SPEED,
+      speedPoints: [],
+      closed: true,
+      startOffset: 0,
+      direction: 'forward',
+      travelDistance: 0,
+      points: [],
+    };
+    _rebuildSimulationPathPrimitive(entry);
+    this._constrainSimulationTargetToBounds(entry);
+    return entry;
+  }
+
+  _addSimulationPathPrimitive(kind) {
+    if (this.activeBrush !== 'boid') return;
+    const data = this._getSimulationBrushData('boid');
+    if (!data) return;
+    const entry = this._createSimulationPathPrimitive(kind);
+    if (!entry) return;
+    data.paths.push(entry);
+    this._setSimulationSelection({ collection: 'paths', kind: 'path', target: entry });
+    this._renderSimulationInspector();
+    this._maybeAutoSaveSession();
+    this.showToast(`${kind[0].toUpperCase()}${kind.slice(1)} path added`);
+  }
+
+  _addSimulationPathSpeedPoint(target) {
+    if (!target) return;
+    if (!Array.isArray(target.speedPoints)) target.speedPoints = [];
+    const t = target.speedPoints.length
+      ? _clamp01(target.speedPoints[target.speedPoints.length - 1].t + 0.15)
+      : 0.5;
+    target.speedPoints.push({
+      id: this.simulation.nextId++,
+      t,
+      speed: _normalizeSimulationPathSpeed(target.speed),
+    });
+    target.speedPoints.sort((left, right) => left.t - right.t);
+  }
+
+  _getSimulationPathSpeedOverlayControls(target, p = this.getP()) {
+    if (!target?.points?.length) return { addButton: null, deleteButtons: [] };
+    const bounds = _getSimulationPathBounds(target.points);
+    const handles = this._getSimulationParameterHandles({ kind: 'path', collection: 'paths', target }, p)
+      .filter(handle => handle.handleType === 'pathSpeed');
+    const addButton = bounds ? {
+      kind: 'overlayAction',
+      action: 'addSpeedPoint',
+      target,
+      collection: 'paths',
+      x: bounds.centerX,
+      y: bounds.minY - SIM_PATH_SPEED_ADD_BUTTON_OFFSET_Y,
+      width: SIM_PATH_SPEED_ADD_BUTTON_WIDTH,
+      height: SIM_PATH_SPEED_ADD_BUTTON_HEIGHT,
+    } : null;
+    const deleteButtons = handles.map(handle => ({
+      kind: 'overlayAction',
+      action: 'deleteSpeedPoint',
+      target,
+      collection: 'paths',
+      speedPointId: handle.speedPointId,
+      x: handle.x + SIM_PATH_SPEED_DELETE_OFFSET,
+      y: handle.y - SIM_PATH_SPEED_DELETE_OFFSET,
+    }));
+    return { addButton, deleteButtons };
+  }
+
+  _removeSimulationPathSpeedPoint(target, speedPointId) {
+    if (!target || !Array.isArray(target.speedPoints)) return;
+    target.speedPoints = target.speedPoints.filter(point => point.id !== speedPointId);
   }
 
   _duplicateSelectedSimulationItem() {
@@ -3616,6 +3976,13 @@ export class App {
     clone.id = this.simulation.nextId++;
     if (Array.isArray(clone.points)) {
       clone.points = clone.points.map(pt => ({ x: pt.x + DUPLICATE_OFFSET, y: pt.y + DUPLICATE_OFFSET }));
+      if (_normalizeSimulationPathPrimitiveKind(clone.primitiveKind)) {
+        clone.centerX = (Number.isFinite(clone.centerX) ? clone.centerX : this.W * 0.5) + DUPLICATE_OFFSET;
+        clone.centerY = (Number.isFinite(clone.centerY) ? clone.centerY : this.H * 0.5) + DUPLICATE_OFFSET;
+      }
+      if (Array.isArray(clone.speedPoints)) {
+        clone.speedPoints = clone.speedPoints.map(point => ({ ...point, id: this.simulation.nextId++ }));
+      }
     } else if (clone.mask?.bounds) {
       clone.x += DUPLICATE_OFFSET;
       clone.y += DUPLICATE_OFFSET;
@@ -3715,31 +4082,32 @@ export class App {
   _renderSimulationInspector() {
     const panel = document.getElementById('simOverlaySidebar');
     if (!panel) return;
-    const open = this.simulation.enabled && this._isMotionBrush() && !this.simulation.inspectorCollapsed;
-    panel.classList.toggle('open', open);
-    if (!open) {
-      panel.innerHTML = '';
-      return;
-    }
+    try {
+      const open = this.simulation.enabled && this._isMotionBrush() && !this.simulation.inspectorCollapsed;
+      panel.classList.toggle('open', open);
+      if (!open) {
+        panel.innerHTML = '';
+        return;
+      }
 
-    const data = this._getSimulationBrushData();
-    if (!data) {
-      panel.innerHTML = '';
-      return;
-    }
-    const selected = this._getSelectedSimulationEntry();
-    if (this.simulation.selected && !selected) this.simulation.selected = null;
-    const p = this.getP();
-    const isBoid = this.activeBrush === 'boid';
-    const isSectionOpen = sectionId => this.simulation.inspectorSections?.[sectionId] !== false;
-    const renderSection = (sectionId, title, body, { collapsed = false } = {}) => {
-      const openSection = collapsed ? false : isSectionOpen(sectionId);
-      return `
-        <div class="section-header${openSection ? '' : ' closed'}" data-sim-section-toggle="${sectionId}">${_escapeHtml(title)} <span class="chevron">▼</span></div>
-        <div class="section-body${openSection ? '' : ' collapsed'}" data-sim-section-body="${sectionId}">
-          ${body}
-        </div>`;
-    };
+      const data = this._getSimulationBrushData();
+      if (!data) {
+        panel.innerHTML = '';
+        return;
+      }
+      const selected = this._getSelectedSimulationEntry();
+      if (this.simulation.selected && !selected) this.simulation.selected = null;
+      const p = this.getP();
+      const isBoid = this.activeBrush === 'boid';
+      const isSectionOpen = sectionId => this.simulation.inspectorSections?.[sectionId] !== false;
+      const renderSection = (sectionId, title, body, { collapsed = false } = {}) => {
+        const openSection = collapsed ? false : isSectionOpen(sectionId);
+        return `
+          <div class="section-header${openSection ? '' : ' closed'}" data-sim-section-toggle="${sectionId}">${_escapeHtml(title)} <span class="chevron">▼</span></div>
+          <div class="section-body${openSection ? '' : ' collapsed'}" data-sim-section-body="${sectionId}">
+            ${body}
+          </div>`;
+      };
     const pointItems = data.points || [];
     const attractPoints = [];
     const repelPoints = [];
@@ -3761,6 +4129,7 @@ export class App {
         if (item.mask) parts.push('blob');
         else if (item.shape) parts.push(item.shape);
       } else if (group.kind === 'path') {
+        if (item.primitiveKind) parts.push(item.primitiveKind);
         parts.push(item.closed ? 'Closed' : 'Open');
       }
       if (item.enabled === false) parts.push('Off');
@@ -3773,14 +4142,24 @@ export class App {
       if (group.kind === 'pheromonePath') return 'pheromonePaths';
       return group.collection;
     };
-    const summarySections = groups.map(group => {
-      if (!group.items.length) return '';
-      const sectionKey = sectionKeyForGroup(group);
-      return renderSection(sectionKey, `${group.label}s`, `<div class="sim-inspector-list">${group.items.map((item, idx) => `
+    const groupBySectionKey = Object.fromEntries(groups.map(group => [sectionKeyForGroup(group), group]));
+    const renderItemButtonList = group => {
+      if (!group?.items?.length) return '<div class="sim-inspector-note">No items yet.</div>';
+      return `<div class="sim-inspector-list">${group.items.map((item, idx) => `
         <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
           ${_escapeHtml(describeSimulationItem(group, item, idx))}
-        </button>`).join('')}</div>`);
-    }).join('');
+        </button>`).join('')}</div>`;
+    };
+    const renderInspectorSubgroup = (title, body) => `
+      <div class="sim-inspector-subgroup">
+        <div class="sim-inspector-subgroup-title">${_escapeHtml(title)}</div>
+        ${body}
+      </div>`;
+    const renderTypeSection = (sectionId, title, parts, { collapsed = false } = {}) => {
+      const body = parts.filter(Boolean).join('');
+      if (!body) return '';
+      return renderSection(sectionId, title, body, { collapsed });
+    };
 
     const clearSelectionBtn = selected ? '<button data-sim-clear-selection="1">Clear Selection</button>' : '';
 
@@ -3795,15 +4174,53 @@ export class App {
           return `${Math.round(value * 100)}%`;
       }
     };
+    const formatSimInputNumber = (value, digits = 2) => {
+      if (!Number.isFinite(value)) return '';
+      return String(Number(value.toFixed(digits)));
+    };
+    const getSimParamDisplayMeta = (id, raw) => {
+      switch (id) {
+        case 'simSpeed':
+          return { value: raw / 100, min: 0.1, max: 3, step: 0.01, digits: 2 };
+        case 'simPointStrength':
+        case 'simEdgeForce':
+        case 'simPheroPaintStrength':
+          return { value: raw / 100, min: 0, max: id === 'simPheroPaintStrength' ? 1 : 2, step: 0.01, digits: 2 };
+        default:
+          return { value: raw, min: null, max: null, step: null, digits: Number.isInteger(raw) ? 0 : 2 };
+      }
+    };
+    const simParamDisplayToRaw = (id, displayValue) => {
+      switch (id) {
+        case 'simSpeed':
+        case 'simPointStrength':
+        case 'simEdgeForce':
+        case 'simPheroPaintStrength':
+          return displayValue * 100;
+        default:
+          return displayValue;
+      }
+    };
+    const renderCompactSimNumberInput = ({ datasetAttr, id, value, min, max, step, placeholder = '' }) => {
+      const placeholderAttr = placeholder ? ` placeholder="${placeholder}"` : '';
+      return `<input type="number" class="sim-slider-number" min="${min}" max="${max}" step="${step}" value="${value}" data-sim-input-kind="number" ${datasetAttr}="${id}"${placeholderAttr}>`;
+    };
     const simVarSlider = ({ id, label, min, max, step, scale, value, desc }) => {
       const resolved = Number.isFinite(value) ? value : 0;
+      const sliderValue = resolved / scale;
+      const numberMin = min * scale;
+      const numberMax = max * scale;
+      const numberStep = step * scale;
       return `
         <div class="sim-slider-row">
           <div class="sim-slider-header">
             <span class="sim-slider-label">${label}</span>
             <span class="sim-inspector-value" data-sim-var-label="${id}">${formatSimVarValue(id, resolved)}</span>
           </div>
-          <input type="range" min="${min}" max="${max}" step="${step}" value="${resolved / scale}" data-sim-var="${id}" data-sim-var-scale="${scale}">
+          <div class="sim-slider-controls">
+            <input type="range" min="${min}" max="${max}" step="${step}" value="${sliderValue}" data-sim-var="${id}" data-sim-var-scale="${scale}" data-sim-input-kind="range">
+            ${renderCompactSimNumberInput({ datasetAttr: 'data-sim-var', id, value: formatSimInputNumber(resolved, scale < 1 ? 2 : 1), min: numberMin, max: numberMax, step: numberStep })}
+          </div>
           ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
         </div>`;
     };
@@ -3828,16 +4245,25 @@ export class App {
           return String(Math.round(value));
       }
     };
-    const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => `
+    const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => {
+      const numberMeta = getSimParamDisplayMeta(id, value);
+      const numberMin = numberMeta.min ?? getSimParamDisplayMeta(id, min).value;
+      const numberMax = numberMeta.max ?? getSimParamDisplayMeta(id, max).value;
+      const numberStep = numberMeta.step ?? Math.max(getSimParamDisplayMeta(id, step).value, 0.01);
+      return `
       <div class="sim-slider-row">
         <div class="sim-slider-header">
           <span class="sim-slider-label">${label}</span>
           <span class="sim-inspector-value" data-sim-param-label="${id}">${formatSimPanelValue(id, value)}</span>
         </div>
-        <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-sim-param="${id}">
+        <div class="sim-slider-controls">
+          <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-sim-param="${id}" data-sim-input-kind="range">
+          ${renderCompactSimNumberInput({ datasetAttr: 'data-sim-param', id, value: formatSimInputNumber(numberMeta.value, numberMeta.digits), min: numberMin, max: numberMax, step: numberStep })}
+        </div>
         ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
       </div>`;
-    const simulationSettingsBody = `
+    };
+    const playbackSettingsBody = `
       ${simPanelSlider({
         id: 'simSpeed',
         label: 'Playback Speed',
@@ -3846,6 +4272,15 @@ export class App {
         value: Math.round(p.simSpeed * 100),
         desc: 'Playback multiplier for autonomous painting.',
       })}
+      ${simPanelSlider({
+        id: 'simBoundsMargin',
+        label: 'Bounds Margin',
+        min: 0,
+        max: 240,
+        value: Math.round(p.simBoundsMargin || 0),
+        desc: 'Extends the simulation bounds beyond the canvas edge. 0 keeps agents and guides inside the canvas.',
+      })}`;
+    const pointSettingsBody = `
       ${simPanelSlider({
         id: 'simPointStrength',
         label: 'Point Force',
@@ -3859,17 +4294,9 @@ export class App {
         min: 10,
         max: 300,
         value: Math.round(p.simPointRadius),
-        desc: 'Spawn count, spread radius, and stamp settings still use the usual brush controls.',
-      })}
-      ${simPanelSlider({
-        id: 'simBoundsMargin',
-        label: 'Bounds Margin',
-        min: 0,
-        max: 240,
-        value: Math.round(p.simBoundsMargin || 0),
-        desc: 'Extends the simulation bounds beyond the canvas edge. 0 keeps agents and guides inside the canvas.',
+        desc: 'Attract and repel points share these defaults until an item override is set.',
       })}`;
-    const guideSettingsBody = isBoid
+    const pathSettingsBody = isBoid
       ? `${simPanelSlider({
           id: 'simPathSpeed',
           label: 'Path Speed',
@@ -3879,7 +4306,13 @@ export class App {
           desc: 'How many pixels per second animated path guides travel, regardless of path length.',
         })}
         <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint.</div>`
-      : `${simPanelSlider({
+      : '';
+    const pathPrimitiveButtons = isBoid
+      ? `<div class="sim-inspector-actions" style="margin-top:4px">${SIM_PATH_PRIMITIVE_KINDS.map(kind => `<button data-sim-add-path-primitive="${kind}">${kind[0].toUpperCase()}${kind.slice(1)}</button>`).join('')}</div>
+         <div class="sim-inspector-note">Insert reusable path primitives directly onto the canvas, then drag the teal size handle to resize them.</div>`
+      : '';
+    const edgeSettingsBody = !isBoid
+      ? `${simPanelSlider({
           id: 'simEdgeForce',
           label: 'Edge Force',
           min: 0,
@@ -3892,8 +4325,10 @@ export class App {
           min: 0,
           max: 200,
           value: Math.round(p.simEdgeRadius),
-        })}
-        ${simPanelSlider({
+        })}`
+      : '';
+    const pheromoneSettingsBody = !isBoid
+      ? `${simPanelSlider({
           id: 'simPheroPaintRadius',
           label: 'Phero Radius',
           min: 2,
@@ -3907,7 +4342,8 @@ export class App {
           max: 100,
           value: Math.round(p.simPheroPaintStrength * 100),
           desc: 'Use the Edge tool for barriers and the Pheromone tool to paint visible pheromone trails that ants will follow.',
-        })}`;
+        })}`
+      : '';
     const boidForcesBody = `
       <div class="sim-inspector-note">These runtime overrides apply immediately while boids are already in motion.</div>
       ${simVarSlider({ id: 'seek', label: 'Seek (cursor pull)', min: 0, max: 100, step: 0.5, scale: 0.01, value: seekValue, desc: 'Defaults to 0 in simulation mode so guides dominate until you pull boids back toward the cursor.' })}
@@ -3926,6 +4362,41 @@ export class App {
          ).join('')}</div>`
       : '';
 
+    const boidSettingsSection = isBoid
+      ? renderTypeSection('boidSettings', 'Boid Settings', [
+          renderInspectorSubgroup('Forces', boidForcesBody),
+          renderInspectorSubgroup('Motion', boidMotionBody),
+        ])
+      : '';
+    const pointSection = renderTypeSection('pointSettings', 'Points', [
+      renderInspectorSubgroup('Defaults', pointSettingsBody),
+      renderInspectorSubgroup('Attract Points', renderItemButtonList(groupBySectionKey.attractPoints)),
+      renderInspectorSubgroup('Repel Points', renderItemButtonList(groupBySectionKey.repelPoints)),
+    ]);
+    const pathSection = isBoid
+      ? renderTypeSection('paths', 'Paths', [
+          renderInspectorSubgroup('Add Primitive', pathPrimitiveButtons),
+          renderInspectorSubgroup('Defaults', pathSettingsBody),
+          renderInspectorSubgroup('Path Guides', renderItemButtonList(groupBySectionKey.paths)),
+        ])
+      : '';
+    const spawnSection = renderTypeSection('spawns', 'Spawns', [
+      `<div class="sim-inspector-note">Select a spawn to override its count, shape, radius, and other per-spawn behavior. Shared brush spawn settings still live in the main sidebar.</div>`,
+      renderInspectorSubgroup('Spawn Items', renderItemButtonList(groupBySectionKey.spawns)),
+    ]);
+    const edgeSection = !isBoid
+      ? renderTypeSection('edges', 'Edge Barriers', [
+          renderInspectorSubgroup('Defaults', edgeSettingsBody),
+          renderInspectorSubgroup('Barrier Items', renderItemButtonList(groupBySectionKey.edges)),
+        ])
+      : '';
+    const pheromoneSection = !isBoid
+      ? renderTypeSection('pheromonePaths', 'Pheromone Trails', [
+          renderInspectorSubgroup('Defaults', pheromoneSettingsBody),
+          renderInspectorSubgroup('Trail Items', renderItemButtonList(groupBySectionKey.pheromonePaths)),
+        ])
+      : '';
+
     let inspector = `
       <div class="sim-inspector-header">
         <div>
@@ -3940,17 +4411,21 @@ export class App {
         </div>
       </div>
       ${renderSection('scene', 'Scene', `<div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong>. Global simulation controls live in this panel; item values only override when explicitly set here.</div>`)}
-      ${renderSection('simulationSettings', 'Simulation Settings', simulationSettingsBody)}
-      ${renderSection(isBoid ? 'boidGuides' : 'antGuides', isBoid ? 'Boid Guide Settings' : 'Ant Guide Settings', guideSettingsBody)}
-      ${isBoid ? renderSection('boidForces', 'Boid Forces', boidForcesBody) : ''}
-      ${isBoid ? renderSection('boidMotion', 'Motion', boidMotionBody) : ''}
+      ${renderTypeSection('playback', 'Playback & Bounds', [
+        renderInspectorSubgroup('Playback', playbackSettingsBody),
+      ])}
+      ${boidSettingsSection}
+      ${pointSection}
+      ${pathSection}
+      ${spawnSection}
+      ${edgeSection}
+      ${pheromoneSection}
       ${renderSection('sceneVariables', isBoid ? 'Sessions' : 'Scene Variables', `<div class="sim-inspector-note">${isBoid ? 'Save and restore the current simulation scene and runtime overrides.' : 'Override brush parameters for simulation playback. Seek defaults to 0 so agents follow guides instead of the cursor.'}</div>
         <div class="sim-inspector-actions" style="margin-top:10px">
           <button data-sim-new-session="1">New Session</button>
           <button data-sim-save-session="1">Save Session</button>
         </div>
         ${savedSessionsList}`)}
-      ${summarySections}
     `;
 
     if (!selected) {
@@ -3996,11 +4471,9 @@ export class App {
           </div>
           <div class="sim-slider-controls">
             <input type="range" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
-                   data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>
-            ${showNumberInput
-              ? `<input type="number" min="${min}" max="${max}" step="${step}" value="${inputVal}" placeholder="Brush def."
-                   data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}"${unset}>`
-              : ''}
+                   data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}" data-sim-input-kind="range"${unset}>
+            <input type="number" class="sim-slider-number" min="${type === 'angle' ? -180 : (type === 'integer' ? Math.round(min * scale) : min * scale)}" max="${type === 'angle' ? 180 : (type === 'integer' ? Math.round(max * scale) : max * scale)}" step="${type === 'integer' ? 1 : (type === 'angle' ? 1 : scale < 1 ? scale : step * scale)}" value="${inputVal}" placeholder="Brush def."
+                   data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}" data-sim-input-kind="number"${unset}>
           </div>
         </div>`;
       };
@@ -4045,17 +4518,28 @@ export class App {
           ${target.type === 'repel' ? simSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1) : ''}`;
       } else if (selected.kind === 'path') {
         const pathConfig = this._resolveSimulationPathConfig(target, p);
+        const speedPointRows = Array.isArray(target.speedPoints) && target.speedPoints.length
+          ? target.speedPoints.map((point, index) => `
+            <div class="sim-inspector-row">
+              <label>Speed Point ${index + 1} · ${Math.round(point.t * 100)}% · ${_normalizeSimulationPathSpeed(point.speed).toFixed(2)}×</label>
+              <button type="button" data-sim-del-speed-point="${point.id}">Remove</button>
+            </div>`).join('')
+          : '<div class="sim-inspector-note">No speed points yet. Add one, then drag its teal handle along and away from the path to vary speed smoothly.</div>';
         selectionBody += `
           <div class="sim-inspector-note" style="margin-top:10px"><strong>Path Attraction</strong></div>
-          <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Drag the green start handle on-canvas to move the starting location, then drag the arrow handle to flip direction.</div>
-          <div class="sim-inspector-note">Current start: <strong>${Math.round(pathConfig.startOffset * 100)}%</strong> · Direction: <strong>${_getSimulationPathDirectionLabel(pathConfig.direction)}</strong></div>
+          <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Drag the green start handle to move the starting location, the teal size handle to scale the path, and the pill toggle to switch closed/open.</div>
+          <div class="sim-inspector-note">Current start: <strong>${Math.round(pathConfig.startOffset * 100)}%</strong> · Direction: <strong>${_getSimulationPathDirectionLabel(pathConfig.direction)}</strong> · Speed: <strong>${pathConfig.speed.toFixed(2)}×</strong> · Influence: <strong>${Math.round(pathConfig.influenceRadius)}px</strong></div>
           <div class="sim-inspector-row"><label>Direction<select data-sim-field="direction" data-sim-type="select">
             <option value="forward" ${pathConfig.direction === 'forward' ? 'selected' : ''}>Forward</option>
             <option value="reverse" ${pathConfig.direction === 'reverse' ? 'selected' : ''}>Reverse</option>
           </select></label></div>
           ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
           ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-          <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>`;
+          ${simSlider('influenceRadius', 'integer', 'Influence Radius', 1, 600, 1, 1)}
+          ${simSlider('speed', 'number', 'Path Speed', 10, 400, 5, 0.01)}
+          <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
+          <div class="sim-inspector-actions" style="margin-top:8px"><button type="button" data-sim-add-speed-point="1">Add Speed Point</button></div>
+          ${speedPointRows}`;
       } else if (selected.kind === 'edge') {
         selectionBody += `
           <div class="sim-inspector-note" style="margin-top:10px"><strong>Edge Barrier</strong></div>
@@ -4099,6 +4583,25 @@ export class App {
     panel.querySelector('[data-sim-help]')?.addEventListener('click', () => this._openSimulationHelp());
     panel.querySelector('[data-sim-clear-selection]')?.addEventListener('click', () => this._setSimulationSelection(null));
     panel.querySelector('[data-sim-duplicate]')?.addEventListener('click', () => this._duplicateSelectedSimulationItem());
+    panel.querySelectorAll('[data-sim-add-path-primitive]').forEach(btn => {
+      btn.addEventListener('click', () => this._addSimulationPathPrimitive(btn.dataset.simAddPathPrimitive));
+    });
+    panel.querySelector('[data-sim-add-speed-point]')?.addEventListener('click', () => {
+      const entry = this._getSelectedSimulationEntry();
+      if (!entry || entry.kind !== 'path') return;
+      this._addSimulationPathSpeedPoint(entry.target);
+      this._renderSimulationInspector();
+      this._maybeAutoSaveSession();
+    });
+    panel.querySelectorAll('[data-sim-del-speed-point]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry || entry.kind !== 'path') return;
+        this._removeSimulationPathSpeedPoint(entry.target, +btn.dataset.simDelSpeedPoint);
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
+    });
     panel.querySelector('[data-sim-delete]')?.addEventListener('click', () => {
       const entry = this._getSelectedSimulationEntry();
       if (entry) this._deleteSimulationItem(entry);
@@ -4106,6 +4609,8 @@ export class App {
     panel.querySelectorAll('[data-sim-param]').forEach(el => {
       const paramId = el.dataset.simParam;
       const source = document.getElementById(paramId);
+      const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
+      const peers = () => Array.from(panel.querySelectorAll(`[data-sim-param="${paramId}"]`));
       const syncParamUI = value => {
         const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
         if (label) label.textContent = formatSimPanelValue(paramId, value);
@@ -4113,19 +4618,55 @@ export class App {
           const summary = panel.querySelector('[data-sim-summary="simSpeed"]');
           if (summary) summary.textContent = formatSimPanelValue(paramId, value);
         }
+        const numberMeta = getSimParamDisplayMeta(paramId, value);
+        peers().forEach(peer => {
+          peer.value = peer.type === 'number'
+            ? formatSimInputNumber(numberMeta.value, numberMeta.digits)
+            : String(value);
+        });
       };
       syncParamUI(+el.value);
       if (!source) return;
       const forward = eventName => {
-        source.value = el.value;
-        syncParamUI(+el.value);
+        const nextValue = el.type === 'number'
+          ? simParamDisplayToRaw(paramId, Math.max(Number(el.min || Number.NEGATIVE_INFINITY), Math.min(Number(el.max || Number.POSITIVE_INFINITY), Number(el.value || getSimParamDisplayMeta(paramId, Number(source.value || 0)).value || 0))))
+          : +el.value;
+        if (Number.isNaN(nextValue)) return;
+        source.value = String(nextValue);
+        if (el.type === 'number') {
+          const numberMeta = getSimParamDisplayMeta(paramId, nextValue);
+          el.value = formatSimInputNumber(numberMeta.value, numberMeta.digits);
+        }
+        syncParamUI(nextValue);
         source.dispatchEvent(new Event(eventName, { bubbles: true }));
         if (paramId === 'simBoundsMargin') {
           this._constrainSimulationDataToBounds('boid');
           this._constrainSimulationDataToBounds('ant');
         }
       };
-      el.addEventListener('input', () => forward('input'));
+      el.addEventListener('input', () => {
+        if (inputKind === 'range') {
+          const value = +el.value;
+          peers().forEach(peer => {
+            if (peer !== el) {
+              const numberMeta = getSimParamDisplayMeta(paramId, value);
+              peer.value = peer.type === 'number'
+                ? formatSimInputNumber(numberMeta.value, numberMeta.digits)
+                : String(value);
+            }
+          });
+          syncParamUI(value);
+        } else {
+          const value = Number(el.value);
+          if (!Number.isNaN(value)) {
+            peers().forEach(peer => {
+              if (peer !== el) peer.value = String(simParamDisplayToRaw(paramId, value));
+            });
+            syncParamUI(simParamDisplayToRaw(paramId, value));
+          }
+        }
+        forward('input');
+      });
       el.addEventListener('change', () => forward('change'));
     });
     panel.querySelectorAll('[data-sim-field]').forEach(el => {
@@ -4237,11 +4778,19 @@ export class App {
     panel.querySelectorAll('[data-sim-var]').forEach(el => {
       const varName = el.dataset.simVar;
       const scale = parseFloat(el.dataset.simVarScale || '0.01');
+      const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
+      const peers = () => Array.from(panel.querySelectorAll(`[data-sim-var="${varName}"]`));
       const updateVar = () => {
-        const raw = +el.value;
+        const raw = inputKind === 'number' ? (+el.value / scale) : +el.value;
+        if (Number.isNaN(raw)) return;
         this.simulation.vars[varName] = raw * scale;
         const label = panel.querySelector(`[data-sim-var-label="${varName}"]`);
         if (label) label.textContent = formatSimVarValue(varName, this.simulation.vars[varName]);
+        peers().forEach(peer => {
+          peer.value = peer.type === 'number'
+            ? formatSimInputNumber(this.simulation.vars[varName], scale < 1 ? 2 : 1)
+            : String(raw);
+        });
         this._maybeAutoSaveSession();
       };
       el.addEventListener('input', updateVar);
@@ -4250,12 +4799,18 @@ export class App {
 
     panel.querySelector('[data-sim-new-session]')?.addEventListener('click', () => this._newSimulationSession());
     panel.querySelector('[data-sim-save-session]')?.addEventListener('click', () => this._saveSimulationSession());
-    panel.querySelectorAll('[data-sim-load-session]').forEach(btn => {
-      btn.addEventListener('click', () => this._loadSimulationSession(+btn.dataset.simLoadSession));
-    });
-    panel.querySelectorAll('[data-sim-del-session]').forEach(btn => {
-      btn.addEventListener('click', () => this._deleteSimulationSavedSession(+btn.dataset.simDelSession));
-    });
+      panel.querySelectorAll('[data-sim-load-session]').forEach(btn => {
+        btn.addEventListener('click', () => this._loadSimulationSession(+btn.dataset.simLoadSession));
+      });
+      panel.querySelectorAll('[data-sim-del-session]').forEach(btn => {
+        btn.addEventListener('click', () => this._deleteSimulationSavedSession(+btn.dataset.simDelSession));
+      });
+    } catch (error) {
+      console.error('Simulation inspector render failed:', error);
+      this.simulation.inspectorCollapsed = true;
+      panel.classList.remove('open');
+      panel.innerHTML = '';
+    }
   }
 
   _toggleSimulationMode(force) {
@@ -4327,11 +4882,25 @@ export class App {
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
     document.getElementById('simInspectorToggle')?.classList.toggle('active', !this.simulation.inspectorCollapsed);
+    const guidesBtn = document.getElementById('simGuidesToggle');
+    if (guidesBtn) {
+      guidesBtn.classList.toggle('active', this.simulation.guidesVisible !== false);
+      guidesBtn.textContent = this.simulation.guidesVisible !== false ? 'Hide Guides' : 'Show Guides';
+      guidesBtn.setAttribute('aria-pressed', this.simulation.guidesVisible !== false ? 'true' : 'false');
+    }
     const status = document.getElementById('simStatus');
     if (status) {
       status.textContent = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
     }
+    syncEdgeSliders(this);
     this._renderSimulationInspector();
+  }
+
+  _toggleSimulationGuidesVisibility(force) {
+    const next = typeof force === 'boolean' ? force : this.simulation.guidesVisible === false;
+    this.simulation.guidesVisible = next;
+    this._syncSimulationUI();
+    this.saveSession();
   }
 
   startSimulation() {
@@ -4346,6 +4915,11 @@ export class App {
     this.simulation.running = true;
     this.simulation.paused = false;
     this.simulation.pathDistance = 0;
+    if (this.activeBrush === 'boid') {
+      for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
+        pathItem.travelDistance = 0;
+      }
+    }
     const center = this._getSimulationSpawnCenter();
     this.leaderX = center.x;
     this.leaderY = center.y;
@@ -4406,6 +4980,24 @@ export class App {
     const hit = this._findSimulationHit(x, y);
     if (hit?.kind === 'delete') {
       this._deleteSimulationItem(hit);
+      return true;
+    }
+    if (hit?.kind === 'overlayAction') {
+      this._setSimulationSelection({ collection: hit.collection, kind: 'path', target: hit.target });
+      if (hit.action === 'addSpeedPoint') {
+        this._addSimulationPathSpeedPoint(hit.target);
+      } else if (hit.action === 'deleteSpeedPoint') {
+        this._removeSimulationPathSpeedPoint(hit.target, hit.speedPointId);
+      }
+      this._renderSimulationInspector();
+      this._maybeAutoSaveSession();
+      return true;
+    }
+    if (hit?.kind === 'paramHandle' && hit.handleType === 'pathClosed') {
+      hit.target.closed = !hit.target.closed;
+      this._setSimulationSelection({ collection: hit.collection, kind: hit.selectionKind || 'path', target: hit.target });
+      this._renderSimulationInspector();
+      this._maybeAutoSaveSession();
       return true;
     }
     if (hit?.kind && (!isPathCreationTool || hit.kind === 'paramHandle')) {
@@ -4519,7 +5111,17 @@ export class App {
       const data = this._getSimulationBrushData();
       if (data && path.length >= 2) {
         if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') {
-          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          const entry = {
+            id: this.simulation.nextId++,
+            points: path,
+            enabled: true,
+            closed: false,
+            direction: 'forward',
+            startOffset: 0,
+            speed: DEFAULT_SIM_PATH_SPEED,
+            speedPoints: [],
+            travelDistance: 0,
+          };
           data.paths.push(entry);
           this._setSimulationSelection({ collection: 'paths', kind: 'path', target: entry });
           this._maybeAutoSaveSession();
@@ -4590,10 +5192,31 @@ export class App {
   }
 
   _findSimulationHit(x, y) {
+    if (this.simulation.guidesVisible === false) return null;
     const data = this._getSimulationBrushData();
     if (!data) return null;
     const selected = this._getSelectedSimulationEntry();
     if (selected) {
+      if (selected.kind === 'path') {
+        const speedControls = this._getSimulationPathSpeedOverlayControls(selected.target);
+        if (speedControls.addButton) {
+          const halfWidth = speedControls.addButton.width * 0.5;
+          const halfHeight = speedControls.addButton.height * 0.5;
+          if (
+            x >= speedControls.addButton.x - halfWidth &&
+            x <= speedControls.addButton.x + halfWidth &&
+            y >= speedControls.addButton.y - halfHeight &&
+            y <= speedControls.addButton.y + halfHeight
+          ) {
+            return speedControls.addButton;
+          }
+        }
+        for (const button of speedControls.deleteButtons) {
+          if (Math.hypot(x - button.x, y - button.y) <= SIM_OVERLAY_ACTION_HIT_RADIUS) {
+            return button;
+          }
+        }
+      }
       const handles = this._getSimulationParameterHandles(selected);
       for (const handle of handles) {
         if (Math.hypot(x - handle.x, y - handle.y) <= SIM_PARAM_HIT_RADIUS) {
@@ -4659,12 +5282,17 @@ export class App {
       const data = this._getSimulationBrushData('boid');
       const activePaths = (data?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
       if (activePaths.length) {
-        this.simulation.pathDistance += (elapsed / 1000) * p.simPathSpeed * p.simSpeed;
-        if (this.simulation.pathDistance >= PATH_DISTANCE_WRAP_THRESHOLD) {
-          this.simulation.pathDistance %= PATH_DISTANCE_WRAP_THRESHOLD;
-        }
         const targets = activePaths
-          .map(pathItem => this._getAnimatedSimulationPathTarget(pathItem, p))
+          .map(pathItem => {
+            const currentDistance = Number.isFinite(pathItem.travelDistance) ? pathItem.travelDistance : 0;
+            const sample = this._getSimulationPathSample(pathItem, currentDistance, p);
+            const speed = sample?.speed ?? _normalizeSimulationPathSpeed(pathItem?.speed);
+            pathItem.travelDistance = currentDistance + ((elapsed / 1000) * p.simPathSpeed * p.simSpeed * speed);
+            if (pathItem.travelDistance >= PATH_DISTANCE_WRAP_THRESHOLD) {
+              pathItem.travelDistance %= PATH_DISTANCE_WRAP_THRESHOLD;
+            }
+            return this._getAnimatedSimulationPathTarget(pathItem, p, pathItem.travelDistance);
+          })
           .filter(Boolean);
         if (targets.length) {
           let sx = 0;
@@ -4685,6 +5313,7 @@ export class App {
 
   drawSimulationOverlay(ctx) {
     if (!this.simulation.enabled || !this._isMotionBrush()) return;
+    if (this.simulation.guidesVisible === false) return;
     const data = this._getSimulationBrushData();
     if (!data) return;
     const p = this.getP();
@@ -4705,6 +5334,36 @@ export class App {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('×', x + 12, y - 12);
+    };
+
+    const drawOverlayChip = (button, label) => {
+      if (!button) return;
+      const width = button.width || 22;
+      const height = button.height || 22;
+      const radius = Math.min(9, height * 0.5);
+      ctx.save();
+      ctx.fillStyle = 'rgba(12,18,30,0.82)';
+      ctx.strokeStyle = 'rgba(126,206,255,0.7)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(button.x - width * 0.5 + radius, button.y - height * 0.5);
+      ctx.lineTo(button.x + width * 0.5 - radius, button.y - height * 0.5);
+      ctx.quadraticCurveTo(button.x + width * 0.5, button.y - height * 0.5, button.x + width * 0.5, button.y - height * 0.5 + radius);
+      ctx.lineTo(button.x + width * 0.5, button.y + height * 0.5 - radius);
+      ctx.quadraticCurveTo(button.x + width * 0.5, button.y + height * 0.5, button.x + width * 0.5 - radius, button.y + height * 0.5);
+      ctx.lineTo(button.x - width * 0.5 + radius, button.y + height * 0.5);
+      ctx.quadraticCurveTo(button.x - width * 0.5, button.y + height * 0.5, button.x - width * 0.5, button.y + height * 0.5 - radius);
+      ctx.lineTo(button.x - width * 0.5, button.y - height * 0.5 + radius);
+      ctx.quadraticCurveTo(button.x - width * 0.5, button.y - height * 0.5, button.x - width * 0.5 + radius, button.y - height * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(214,240,255,0.96)';
+      ctx.font = width > 30 ? '11px Segoe UI, sans-serif' : '10px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, button.x, button.y + 0.5);
+      ctx.restore();
     };
 
     const drawHandle = (handle, color) => {
@@ -4741,6 +5400,33 @@ export class App {
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS - 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (handle.handleType === 'pathScale') {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS + 1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath();
+        ctx.moveTo(handle.x - 4, handle.y);
+        ctx.lineTo(handle.x + 4, handle.y);
+        ctx.moveTo(handle.x, handle.y - 4);
+        ctx.lineTo(handle.x, handle.y + 4);
+        ctx.stroke();
+      } else if (handle.handleType === 'pathClosed') {
+        const width = 18;
+        const height = 12;
+        ctx.fillRect(handle.x - width * 0.5, handle.y - height * 0.5, width, height);
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.strokeRect(handle.x - width * 0.5, handle.y - height * 0.5, width, height);
+      } else if (handle.handleType === 'pathSpeed') {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS + 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(handle.x, handle.y - 5);
+        ctx.lineTo(handle.x + 4, handle.y + 1);
+        ctx.lineTo(handle.x - 4, handle.y + 1);
+        ctx.closePath();
         ctx.fill();
       } else {
         ctx.beginPath();
@@ -4867,7 +5553,14 @@ export class App {
           const angle = Math.atan2(startSample.tangentY, startSample.tangentX) + (startSample.config.direction === 'reverse' ? Math.PI : 0);
           drawPathArrow(startSample.x + (Math.cos(angle) * (SIM_PATH_START_MARKER_RADIUS + 2)), startSample.y + (Math.sin(angle) * (SIM_PATH_START_MARKER_RADIUS + 2)), angle, startColor, isSelected('paths', pathItem) ? 1.1 : 0.95);
         }
-        if (isSelected('paths', pathItem)) drawSelectedHandles(pathItem, 'rgba(120,236,178,0.98)');
+        if (isSelected('paths', pathItem)) {
+          drawSelectedHandles(pathItem, 'rgba(120,236,178,0.98)');
+          const speedControls = this._getSimulationPathSpeedOverlayControls(pathItem, p);
+          if (speedControls.addButton) drawOverlayChip(speedControls.addButton, '+ Speed');
+          for (const button of speedControls.deleteButtons) {
+            drawOverlayChip({ ...button, width: 20, height: 20 }, '×');
+          }
+        }
         const anchor = this._getSimulationAnchor(pathItem);
         drawDelete(anchor.x, anchor.y);
         ctx.restore();
@@ -7295,6 +7988,7 @@ export class App {
     });
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
     document.getElementById('simCanvasClearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
     document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
@@ -9804,6 +10498,7 @@ export class App {
       }
       controls._simulation = {
         enabled: this.simulation.enabled,
+        guidesVisible: this.simulation.guidesVisible !== false,
         inspectorCollapsed: this.simulation.inspectorCollapsed,
         inspectorSections: this.simulation.inspectorSections,
         editorTool: this.simulation.editorTool,
@@ -9845,6 +10540,7 @@ export class App {
         if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
         if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
         this.simulation.enabled = !!val?.enabled;
+        this.simulation.guidesVisible = val?.guidesVisible !== false;
         this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
         this.simulation.inspectorSections = _normalizeSimulationInspectorSections(val?.inspectorSections);
         if (val?.vars && typeof val.vars === 'object') {

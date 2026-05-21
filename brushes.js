@@ -823,6 +823,7 @@ function _collectSimulationGuides(brush, p) {
             y: target.y,
             strength: target.config.strength,
             radius: target.config.radius,
+            influenceRadius: target.config.influenceRadius,
           }))
       : [],
     edges: app.activeBrush === 'ant'
@@ -838,6 +839,22 @@ function _collectSimulationGuides(brush, p) {
           })
       : [],
   };
+}
+
+function _pathInfluenceFalloff(distance, radius, influenceRadius) {
+  const innerRadius = Math.max(1, radius || 0);
+  const outerRadius = Math.max(innerRadius, influenceRadius || innerRadius);
+  if (distance <= innerRadius) return 1;
+  if (distance >= outerRadius) return 0;
+  const innerSq = innerRadius * innerRadius;
+  const outerSq = outerRadius * outerRadius;
+  const distanceSq = Math.max(distance * distance, 1);
+  const gravity = 1 / distanceSq;
+  const innerGravity = 1 / innerSq;
+  const outerGravity = 1 / outerSq;
+  const denom = innerGravity - outerGravity;
+  if (denom <= 1e-6) return 0;
+  return Math.max(0, Math.min(1, (gravity - outerGravity) / denom));
 }
 
 function _syncSimulationGuidesToGpu(brush, guideState) {
@@ -884,8 +901,9 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
         const dx = target.x - x;
         const dy = target.y - y;
         const d = Math.hypot(dx, dy);
-        if (d <= 0.0001 || d > target.radius) continue;
-        const falloff = 1 - d / target.radius;
+        const influenceRadius = Math.max(target.radius || 0, target.influenceRadius || 0);
+        if (d <= 0.0001 || d > influenceRadius) continue;
+        const falloff = _pathInfluenceFalloff(d, target.radius, influenceRadius);
         const push = target.strength * p.simSpeed * falloff;
         sumX += (dx / d) * push;
         sumY += (dy / d) * push;

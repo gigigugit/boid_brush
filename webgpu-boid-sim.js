@@ -107,7 +107,7 @@ export class WebGPUBoidSim {
     this.agentBuffers = [];
     this.bindGroups = [];
     this._pointGuides = new Float32Array(MAX_GPU_SIM_POINT_GUIDES * 8);
-    this._pathTargets = new Float32Array(MAX_GPU_SIM_PATH_TARGETS * 4);
+    this._pathTargets = new Float32Array(MAX_GPU_SIM_PATH_TARGETS * 8);
     this._pointGuideCount = 0;
     this._pathTargetCount = 0;
   }
@@ -230,7 +230,8 @@ struct PointGuide {
 }
 
 struct PathTarget {
-  data : vec4f,
+  primary : vec4f,
+  influence : vec4f,
 }
 
 struct GuideMeta {
@@ -405,15 +406,32 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   for (var pathIndex = 0u; pathIndex < guideMeta.pathTargetCount; pathIndex = pathIndex + 1u) {
-    let pathTargetData = pathTargets[pathIndex].data;
-    let dx = pathTargetData.x - xi;
-    let dy = pathTargetData.y - yi;
+    let pathPrimary = pathTargets[pathIndex].primary;
+    let pathInfluence = pathTargets[pathIndex].influence;
+    let dx = pathPrimary.x - xi;
+    let dy = pathPrimary.y - yi;
     let d = length(vec2f(dx, dy));
-    if (d <= 0.0001 || d > pathTargetData.w) {
+    let innerRadius = max(pathPrimary.w, 0.0001);
+    let outerRadius = max(pathInfluence.x, innerRadius);
+    if (d <= 0.0001 || d > outerRadius) {
       continue;
     }
-    let falloff = 1.0 - d / pathTargetData.w;
-    let push = pathTargetData.z * simSpeed * falloff;
+    var falloff = 1.0;
+    if (d > innerRadius) {
+      let innerSq = innerRadius * innerRadius;
+      let outerSq = outerRadius * outerRadius;
+      let distanceSq = max(d * d, 1.0);
+      let gravity = 1.0 / distanceSq;
+      let innerGravity = 1.0 / innerSq;
+      let outerGravity = 1.0 / outerSq;
+      let denom = innerGravity - outerGravity;
+      if (denom <= 0.000001) {
+        falloff = 0.0;
+      } else {
+        falloff = clamp((gravity - outerGravity) / denom, 0.0, 1.0);
+      }
+    }
+    let push = pathPrimary.z * simSpeed * falloff;
     ax = ax + (dx / d) * push;
     ay = ay + (dy / d) * push;
   }
@@ -606,11 +624,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     if (supportsPathTargets) {
       for (let i = 0; i < pathTargets.length; i++) {
         const target = pathTargets[i];
-        const base = i * 4;
+        const base = i * 8;
         this._pathTargets[base + 0] = target.x ?? 0;
         this._pathTargets[base + 1] = target.y ?? 0;
         this._pathTargets[base + 2] = target.strength ?? 0;
         this._pathTargets[base + 3] = target.radius ?? 0;
+        this._pathTargets[base + 4] = target.influenceRadius ?? target.radius ?? 0;
+        this._pathTargets[base + 5] = 0;
+        this._pathTargets[base + 6] = 0;
+        this._pathTargets[base + 7] = 0;
       }
     }
 
@@ -668,7 +690,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       this.device.queue.writeBuffer(this.pointGuideBuffer, 0, this._pointGuides.buffer, this._pointGuides.byteOffset, this._pointGuideCount * 8 * BYTES_PER_F32);
     }
     if (this._pathTargetCount > 0) {
-      this.device.queue.writeBuffer(this.pathTargetBuffer, 0, this._pathTargets.buffer, this._pathTargets.byteOffset, this._pathTargetCount * 4 * BYTES_PER_F32);
+      this.device.queue.writeBuffer(this.pathTargetBuffer, 0, this._pathTargets.buffer, this._pathTargets.byteOffset, this._pathTargetCount * 8 * BYTES_PER_F32);
     }
 
     const outputIndex = 1 - this._activeBufferIndex;

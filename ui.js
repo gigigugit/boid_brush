@@ -642,7 +642,7 @@ export function buildSidebar(app) {
     const update = () => {
       span.textContent = fmt ? fmt(+inp.value) : inp.value;
       app.invalidateParams();
-      syncEdgeSliders();
+      syncEdgeSliders(app);
     };
     inp.addEventListener('input', update);
   });
@@ -1082,7 +1082,7 @@ export function syncUI(app) {
   _renderLayerList(app);
   syncTextureUI(app);
   syncStampImageUI(app);
-  syncEdgeSliders();
+  syncEdgeSliders(app);
   app._syncMotionPathUI?.();
 }
 
@@ -1277,6 +1277,8 @@ const _sliderFormats = {
   simEdgeForce: v => (v / 100).toFixed(2),
   simPheroPaintStrength: v => (v / 100).toFixed(2),
 };
+
+let _edgeSliderApp = null;
 
 // ── Layer list renderer ─────────────────────────────────────
 let _dragSrcIdx = null;
@@ -1623,30 +1625,50 @@ function _exportPresets(app) {
 }
 
 // ── Edge slider sync ────────────────────────────────────────
-export function syncEdgeSliders() {
+export function syncEdgeSliders(app = _edgeSliderApp) {
   document.querySelectorAll('.edge-slider').forEach(slider => {
+    const simOnly = slider.dataset.simOnly === '1';
+    const showSimOnly = !!(app?.simulation?.enabled && app?._isMotionBrush?.());
+    if (simOnly) {
+      slider.hidden = !showSimOnly;
+      slider.style.display = showSimOnly ? '' : 'none';
+    } else {
+      slider.style.display = '';
+    }
     const paramId = slider.dataset.param;
+    const simVarId = slider.dataset.simVar;
+    const simVarScale = parseFloat(slider.dataset.simVarScale || '1');
     const min = +slider.dataset.min;
     const max = +slider.dataset.max;
     const fill = slider.querySelector('.edge-slider-fill');
     const thumb = slider.querySelector('.edge-slider-thumb');
     const valueEl = slider.querySelector('.edge-slider-value');
-    const sidebarSlider = document.getElementById(paramId);
-    if (!sidebarSlider) return;
-    const val = +sidebarSlider.value;
+    const sidebarSlider = simVarId ? null : document.getElementById(paramId);
+    if (slider.hidden) return;
+    let val = min;
+    if (simVarId) {
+      const simVarValue = app?.simulation?.vars?.[simVarId];
+      val = Number.isFinite(simVarValue) ? (simVarValue / simVarScale) : min;
+    } else {
+      if (!sidebarSlider) return;
+      val = +sidebarSlider.value;
+    }
     const pct = Math.max(0, Math.min(1, (val - min) / (max - min)));
     fill.style.height = (pct * 100) + '%';
     thumb.style.bottom = (pct * 100) + '%';
-    const fmt = _sliderFormats[paramId];
+    const fmt = _sliderFormats[simVarId || paramId];
     valueEl.textContent = fmt ? fmt(val) : val;
   });
 }
 
 // ── Initialize edge slider drag behavior ────────────────────
 export function initEdgeSliders(app) {
+  _edgeSliderApp = app;
   document.querySelectorAll('.edge-slider').forEach(slider => {
     const track = slider.querySelector('.edge-slider-track');
     const paramId = slider.dataset.param;
+    const simVarId = slider.dataset.simVar;
+    const simVarScale = parseFloat(slider.dataset.simVarScale || '1');
     const min = +slider.dataset.min;
     const max = +slider.dataset.max;
 
@@ -1654,8 +1676,13 @@ export function initEdgeSliders(app) {
       const rect = track.getBoundingClientRect();
       const pct = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
       const val = Math.round(min + pct * (max - min));
-      const sidebarSlider = document.getElementById(paramId);
-      if (sidebarSlider) {
+      if (simVarId) {
+        if (!app?.simulation?.vars) return;
+        app.simulation.vars[simVarId] = val * simVarScale;
+        syncEdgeSliders(app);
+      } else {
+        const sidebarSlider = document.getElementById(paramId);
+        if (!sidebarSlider) return;
         sidebarSlider.value = val;
         sidebarSlider.dispatchEvent(new Event('input'));
       }
@@ -1676,5 +1703,5 @@ export function initEdgeSliders(app) {
     });
   });
 
-  syncEdgeSliders();
+  syncEdgeSliders(app);
 }

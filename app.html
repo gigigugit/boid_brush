@@ -220,7 +220,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 .am-math{display:block;font-size:8px;color:#666;margin:-2px 0 2px 0;line-height:1.2;white-space:normal;font-style:italic;}
 
 /* Simulation inspector overlay */
-#simOverlaySidebar{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:min(320px,92vw);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:22;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px;font-size:11px;transform:translateX(100%);transition:transform 220ms ease;box-shadow:var(--shadow-lg);}
+#simOverlaySidebar{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:min(296px,92vw);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:22;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px;font-size:11px;transform:translateX(100%);transition:transform 220ms ease;box-shadow:var(--shadow-lg);}
 #simOverlaySidebar.open{transform:translateX(0);}
 #simOverlayHandle{position:fixed;top:calc(var(--topbar-h) + 84px);right:0;z-index:21;display:none;align-items:center;justify-content:center;writing-mode:vertical-rl;transform:translateX(100%);padding:10px 7px;border:1px solid var(--line-0);border-right:none;border-radius:12px 0 0 12px;background:rgba(12,15,22,0.94);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);color:#dfe7f8;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:transform 220ms ease,background 140ms ease,color 140ms ease;}
 #simOverlayHandle.open{display:flex;transform:translateX(0);}
@@ -228,20 +228,25 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar::-webkit-scrollbar{width:5px;}
 #simOverlaySidebar::-webkit-scrollbar-track{background:transparent;}
 #simOverlaySidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-.sim-inspector-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
-.sim-inspector-title{font-size:13px;font-weight:700;color:#f2f5ff;}
-.sim-inspector-subtitle{font-size:10px;color:#8e98aa;margin-top:2px;}
-.sim-inspector-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
-.sim-inspector-actions button,.sim-inspector-list button,#simOverlaySidebar button{padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#e7ebf5;font-size:11px;cursor:pointer;transition:all 140ms ease;}
+#simOverlaySidebar .section-header{margin:3px 0 0;padding:8px 10px;min-height:34px;border-radius:9px 9px 0 0;}
+#simOverlaySidebar .section-body{padding:6px;gap:4px;margin-bottom:3px;border-radius:0 0 9px 9px;}
+.sim-inspector-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;}
+.sim-inspector-title{font-size:12px;font-weight:700;color:#f2f5ff;}
+.sim-inspector-subtitle{font-size:9px;color:#8e98aa;margin-top:2px;line-height:1.25;}
+.sim-inspector-actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;}
+.sim-inspector-actions button,.sim-inspector-list button,#simOverlaySidebar button{padding:5px 8px;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#e7ebf5;font-size:10px;cursor:pointer;transition:all 140ms ease;}
 .sim-inspector-actions button:hover,.sim-inspector-list button:hover,#simOverlaySidebar button:hover{background:rgba(255,255,255,0.12);color:#fff;}
 .sim-inspector-actions .danger,.sim-inspector-list .danger{background:rgba(138,52,52,0.72);border-color:rgba(225,99,99,0.28);color:#ffd6d6;}
 .sim-inspector-actions .danger:hover,.sim-inspector-list .danger:hover{background:rgba(255,59,48,0.38);color:#fff;}
 .sim-inspector-actions .active,.sim-inspector-list .active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.28);}
 .sim-inspector-group{border:1px solid var(--line-0);border-radius:10px;background:rgba(0,0,0,0.2);padding:8px;margin-bottom:4px;overflow:hidden;}
 .sim-inspector-group h3{margin:-8px -8px 8px;padding:10px 12px;font-size:10px;font-weight:700;color:var(--ink-0);text-transform:uppercase;letter-spacing:1px;background:rgba(255,255,255,0.04);border-bottom:1px solid var(--line-0);}
-.sim-inspector-note{font-size:10px;line-height:1.45;color:#a9b3c5;}
+.sim-inspector-note{font-size:9px;line-height:1.35;color:#a9b3c5;}
 .sim-inspector-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-.sim-inspector-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0;}
+.sim-inspector-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:4px 0;}
+.sim-inspector-subgroup{display:grid;gap:4px;padding:6px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;background:rgba(255,255,255,0.03);}
+.sim-inspector-subgroup + .sim-inspector-subgroup{margin-top:2px;}
+.sim-inspector-subgroup-title{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#cfd8ea;}
 .sim-inspector-row label{display:flex;flex-direction:column;gap:4px;color:#d9e0ee;font-weight:600;flex:1;min-width:0;}
 .sim-inspector-row input[type="range"]{width:100%;}
 #simOverlaySidebar input[type="range"]{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
@@ -249,19 +254,20 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
 #simOverlaySidebar input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
 #simOverlaySidebar input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
-.sim-slider-row{margin:5px 0;}
-.sim-slider-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;}
+.sim-slider-row{margin:4px 0;display:grid;gap:3px;}
+.sim-slider-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1px;gap:6px;}
 .sim-slider-label{font-size:10px;color:#d9e0ee;font-weight:600;}
 .sim-slider-meta{display:flex;align-items:center;gap:4px;}
-.sim-slider-controls{display:flex;align-items:center;gap:8px;}
-#simOverlaySidebar .sim-slider-controls input[type="number"]{width:88px;background:rgba(20,25,36,0.98);color:#eef3ff;border:1px solid var(--line-1);border-radius:8px;padding:6px 8px;font-size:11px;min-height:30px;flex:0 0 88px;}
+.sim-slider-controls{display:flex;align-items:center;gap:6px;}
+.sim-slider-controls input[type="range"]{flex:1 1 auto;min-width:0;}
+#simOverlaySidebar .sim-slider-controls input[type="number"]{width:64px;background:rgba(20,25,36,0.98);color:#eef3ff;border:1px solid var(--line-1);border-radius:7px;padding:4px 6px;font-size:10px;min-height:24px;flex:0 0 64px;}
 #simOverlaySidebar .sim-fld-reset{padding:0!important;width:16px!important;height:16px!important;border-radius:50%;font-size:9px;flex-shrink:0;line-height:1;}
 .sim-inspector-row input[type="number"],.sim-inspector-row select{width:100%;background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:8px;padding:6px 8px;font-size:11px;min-height:34px;}
 .sim-inspector-row select{color-scheme:dark;}
 .sim-inspector-row select option,.sim-inspector-row select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
 .sim-inspector-row input[type="checkbox"]{margin-left:auto;}
-.sim-inspector-value{font-size:10px;color:#8e98aa;white-space:nowrap;}
-.sim-inspector-list{display:flex;flex-wrap:wrap;gap:6px;}
+.sim-inspector-value{font-size:9px;color:#8e98aa;white-space:nowrap;}
+.sim-inspector-list{display:flex;flex-wrap:wrap;gap:4px;}
 .sim-inspector-divider{height:1px;background:rgba(255,255,255,0.08);margin:10px 0;}
 .sim-help-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:120;}
 .sim-help-modal.open{display:flex;}
@@ -276,7 +282,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 
 /* Edge sliders - left side quick controls */
 #edgeSliders,#edgeSliders *{touch-action:none;}
-#edgeSliders{position:fixed;left:0;top:var(--topbar-h);bottom:var(--status-h);z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:20px;pointer-events:none;padding-left:8px;}
+#edgeSliders{position:fixed;left:0;top:var(--topbar-h);bottom:var(--status-h);z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:16px;pointer-events:none;padding-left:8px;}
 .edge-slider{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:36px;background:rgba(0,0,0,0.35);border-radius:0 10px 10px 0;padding:10px 6px 6px;cursor:pointer;}
 .edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
 .edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
@@ -492,6 +498,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <button class="sim-pill" data-sim-tool="path">Path</button>
       <button class="sim-pill" data-sim-tool="edge">Edge</button>
       <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+      <button class="sim-pill active" id="simGuidesToggle">Hide Guides</button>
       <button class="sim-pill warn" id="simCanvasClearBtn">Clear Canvas</button>
       <button class="sim-pill warn" id="simClearBtn">Clear</button>
     </div>
@@ -524,6 +531,14 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </div>
     <div class="edge-slider-label">Opacity</div>
     <div class="edge-slider-value">0.15</div>
+  </div>
+  <div class="edge-slider" data-param="seek" data-sim-var="seek" data-sim-var-scale="0.01" data-min="0" data-max="100" data-sim-only="1" hidden>
+    <div class="edge-slider-track">
+      <div class="edge-slider-fill"></div>
+      <div class="edge-slider-thumb"></div>
+    </div>
+    <div class="edge-slider-label">Seek</div>
+    <div class="edge-slider-value">0.75</div>
   </div>
 </div>
 
