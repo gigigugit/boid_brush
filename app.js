@@ -302,6 +302,7 @@ const MAX_SWARM_COUNT = 2000;
 const DEFAULT_PATH_STRENGTH = 0.9;
 const DEFAULT_PATH_RADIUS = 40;
 const DEFAULT_SIM_PATH_SPEED = 1;
+const DEFAULT_SIM_POINT_INFLUENCE_SCALE = 1.8;
 const SIM_PATH_SPEED_MIN = 0.1;
 const SIM_PATH_SPEED_MAX = 4;
 const SIM_PATH_SIZE_HANDLE_OFFSET = 14;
@@ -316,6 +317,10 @@ const SIM_PATH_PRIMITIVE_KINDS = ['circle', 'star', 'square', 'diamond', 'ellips
 // Keep traveled distance bounded during long simulation runs; each path still
 // wraps or ping-pongs against its own actual length when sampled.
 const PATH_DISTANCE_WRAP_THRESHOLD = 1000000;
+const SIM_HEATMAP_MIN_CELL_SIZE = 18;
+const SIM_HEATMAP_MAX_CELL_SIZE = 28;
+const SIM_HEATMAP_TARGET_CELLS = 48;
+const SIM_HEATMAP_MAX_ALPHA = 1;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const MOTION_PATH_HANDLE_RADIUS = 7;
@@ -1237,6 +1242,22 @@ function _getClosestPolylineDistance(points, x, y, closed = false) {
   return best;
 }
 
+function _pathInfluenceFalloff(distance, radius, influenceRadius) {
+  const innerRadius = Math.max(1, radius || 0);
+  const outerRadius = Math.max(innerRadius, influenceRadius || innerRadius);
+  if (distance <= innerRadius) return 1;
+  if (distance >= outerRadius) return 0;
+  const innerSq = innerRadius * innerRadius;
+  const outerSq = outerRadius * outerRadius;
+  const distanceSq = Math.max(distance * distance, 1);
+  const gravity = 1 / distanceSq;
+  const innerGravity = 1 / innerSq;
+  const outerGravity = 1 / outerSq;
+  const denom = innerGravity - outerGravity;
+  if (denom <= 1e-6) return 0;
+  return Math.max(0, Math.min(1, (gravity - outerGravity) / denom));
+}
+
 function _smoothstep01(value) {
   const t = _clamp01(value);
   return t * t * (3 - (2 * t));
@@ -1545,6 +1566,8 @@ export class App {
       running: false,
       paused: false,
       guidesVisible: true,
+      heatmapVisible: false,
+      hudCollapsed: false,
       inspectorCollapsed: false,
       inspectorSections: {},
       editorTool: 'spawn',
@@ -3245,10 +3268,17 @@ export class App {
   }
 
   _resolveSimulationPointConfig(point, p = this.getP()) {
+    const radius = Number.isFinite(point?.radius) ? Math.max(1, point.radius) : p.simPointRadius;
+    const isRepel = point?.type === 'repel';
     return {
       strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : p.simPointStrength,
-      radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : p.simPointRadius,
+      radius,
       hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : 1,
+      influenceRadius: isRepel
+        ? radius
+        : (Number.isFinite(point?.influenceRadius)
+            ? Math.max(radius, point.influenceRadius)
+            : radius * DEFAULT_SIM_POINT_INFLUENCE_SCALE),
     };
   }
 
@@ -3325,6 +3355,34 @@ export class App {
       sy += spawn.y;
     }
     return { x: sx / activeSpawns.length, y: sy / activeSpawns.length };
+  }
+
+  _getBoidGuideFollowTargets(p = this.getP(), advancePaths = false, elapsed = 0) {
+    const data = this._getSimulationBrushData('boid');
+    if (!data) return [];
+    const targets = [];
+
+    for (const pathItem of data.paths || []) {
+      if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
+      const currentDistance = Number.isFinite(pathItem.travelDistance) ? pathItem.travelDistance : 0;
+      let targetDistance = currentDistance;
+      if (advancePaths) {
+        const sample = this._getSimulationPathSample(pathItem, currentDistance, p);
+        const speed = sample?.speed ?? _normalizeSimulationPathSpeed(pathItem?.speed);
+        targetDistance = currentDistance + ((elapsed / 1000) * p.simPathSpeed * p.simSpeed * speed);
+        if (targetDistance >= PATH_DISTANCE_WRAP_THRESHOLD) targetDistance %= PATH_DISTANCE_WRAP_THRESHOLD;
+        pathItem.travelDistance = targetDistance;
+      }
+      const target = this._getAnimatedSimulationPathTarget(pathItem, p, targetDistance);
+      if (!target?.config || !Number.isFinite(target.config.strength) || target.config.strength <= 0) continue;
+      targets.push({ x: target.x, y: target.y, weight: target.config.strength });
+    }
+
+    return targets;
+  }
+
+  _getBoidGuideFollowSeek(p = this.getP()) {
+    return 0;
   }
 
   _setSimulationSelection(selection) {
@@ -4528,14 +4586,14 @@ export class App {
         selectionBody += `
           <div class="sim-inspector-note" style="margin-top:10px"><strong>Path Attraction</strong></div>
           <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Drag the green start handle to move the starting location, the teal size handle to scale the path, and the pill toggle to switch closed/open.</div>
-          <div class="sim-inspector-note">Current start: <strong>${Math.round(pathConfig.startOffset * 100)}%</strong> · Direction: <strong>${_getSimulationPathDirectionLabel(pathConfig.direction)}</strong> · Speed: <strong>${pathConfig.speed.toFixed(2)}×</strong> · Influence: <strong>${Math.round(pathConfig.influenceRadius)}px</strong></div>
+          <div class="sim-inspector-note">Current start: <strong>${Math.round(pathConfig.startOffset * 100)}%</strong> · Direction: <strong>${_getSimulationPathDirectionLabel(pathConfig.direction)}</strong> · Speed: <strong>${pathConfig.speed.toFixed(2)}×</strong> · Falloff: <strong>${Math.round(pathConfig.influenceRadius)}px</strong></div>
           <div class="sim-inspector-row"><label>Direction<select data-sim-field="direction" data-sim-type="select">
             <option value="forward" ${pathConfig.direction === 'forward' ? 'selected' : ''}>Forward</option>
             <option value="reverse" ${pathConfig.direction === 'reverse' ? 'selected' : ''}>Reverse</option>
           </select></label></div>
           ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
           ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-          ${simSlider('influenceRadius', 'integer', 'Influence Radius', 1, 600, 1, 1)}
+          ${simSlider('influenceRadius', 'integer', 'Falloff Radius', 1, 600, 1, 1)}
           ${simSlider('speed', 'number', 'Path Speed', 10, 400, 5, 0.01)}
           <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
           <div class="sim-inspector-actions" style="margin-top:8px"><button type="button" data-sim-add-speed-point="1">Add Speed Point</button></div>
@@ -4678,6 +4736,12 @@ export class App {
         const maxVal = control.max !== '' ? +control.max : Number.POSITIVE_INFINITY;
         return Math.max(minVal, Math.min(maxVal, value));
       };
+      const clampToStoredBounds = (control, value, fallbackMin = Number.NEGATIVE_INFINITY) => {
+        const unitScale = control.type === 'range' && type !== 'angle' ? scale : 1;
+        const minVal = control.min !== '' ? (+control.min * unitScale) : fallbackMin;
+        const maxVal = control.max !== '' ? (+control.max * unitScale) : Number.POSITIVE_INFINITY;
+        return Math.max(minVal, Math.min(maxVal, value));
+      };
 
       // Write the current control value into target (no re-render).
       const writeField = () => {
@@ -4691,20 +4755,20 @@ export class App {
           else target[field] = el.value;
         } else if (el.type === 'range') {
           if (type === 'integer') {
-            target[field] = clampToInputBounds(el, Math.round(+el.value * scale), 1);
+            target[field] = clampToStoredBounds(el, Math.round(+el.value * scale), 1);
           } else if (type === 'angle') {
             target[field] = _parseAngleDegrees(el.value);
           } else {
-            target[field] = clampToInputBounds(el, +el.value * scale);
+            target[field] = clampToStoredBounds(el, +el.value * scale);
           }
         } else if (el.value === '') {
           delete target[field];
         } else if (type === 'integer') {
-          target[field] = clampToInputBounds(el, Math.round(+el.value), 1);
+          target[field] = clampToStoredBounds(el, Math.round(+el.value), 1);
         } else if (type === 'angle') {
           target[field] = _parseAngleDegrees(el.value);
         } else {
-          target[field] = clampToInputBounds(el, +el.value);
+          target[field] = clampToStoredBounds(el, +el.value);
         }
         return true;
       };
@@ -4717,8 +4781,8 @@ export class App {
           const liveValue = type === 'angle'
             ? Math.round(+el.value)
             : type === 'integer'
-              ? clampToInputBounds(el, Math.round(+el.value * scale), 1)
-              : clampToInputBounds(el, +el.value * scale);
+              ? clampToStoredBounds(el, Math.round(+el.value * scale), 1)
+              : clampToStoredBounds(el, +el.value * scale);
           if (type === 'angle') lbl.textContent = `${liveValue}°`;
           else if (type === 'integer') lbl.textContent = String(liveValue);
           else lbl.textContent = liveValue.toFixed(scale < 1 ? 2 : 1);
@@ -4741,8 +4805,8 @@ export class App {
             return;
           }
           const numericValue = type === 'integer'
-            ? clampToInputBounds(el, Math.round(+el.value), 1)
-            : clampToInputBounds(el, +el.value);
+            ? clampToStoredBounds(el, Math.round(+el.value), 1)
+            : clampToStoredBounds(el, +el.value);
           if (lbl) {
             if (type === 'angle') lbl.textContent = `${Math.round(numericValue)}°`;
             else if (type === 'integer') lbl.textContent = String(numericValue);
@@ -4853,13 +4917,30 @@ export class App {
     if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
+    const hudCollapseBtn = document.getElementById('simHudCollapseBtn');
+    const heatmapBtn = document.getElementById('simHeatmapToggle');
+    const stepBackBtn = document.getElementById('simStepBackBtn');
+    const stepForwardBtn = document.getElementById('simStepForwardBtn');
     const handle = document.getElementById('simOverlayHandle');
     const isMotion = this._isMotionBrush();
+    const boidPaths = this.activeBrush === 'boid'
+      ? (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
+      : [];
+    const canStepPaths = boidPaths.length > 0;
+    const showPathStepButtons = this.activeBrush === 'boid' && !!this.simulation.heatmapVisible;
     if (btn) {
       btn.style.display = isMotion ? '' : 'none';
       btn.classList.toggle('active', !!this.simulation.enabled);
     }
-    if (hud) hud.classList.toggle('open', !!this.simulation.enabled && isMotion);
+    if (hud) {
+      hud.classList.toggle('open', !!this.simulation.enabled && isMotion);
+      hud.classList.toggle('collapsed', !!this.simulation.hudCollapsed);
+    }
+    if (hudCollapseBtn) {
+      const expanded = !this.simulation.hudCollapsed;
+      hudCollapseBtn.textContent = expanded ? 'Collapse' : 'Expand';
+      hudCollapseBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
     if (handle) {
       const showHandle = !!this.simulation.enabled && isMotion && this.simulation.inspectorCollapsed;
       handle.classList.toggle('open', showHandle);
@@ -4888,9 +4969,22 @@ export class App {
       guidesBtn.textContent = this.simulation.guidesVisible !== false ? 'Hide Guides' : 'Show Guides';
       guidesBtn.setAttribute('aria-pressed', this.simulation.guidesVisible !== false ? 'true' : 'false');
     }
+    if (heatmapBtn) {
+      heatmapBtn.classList.toggle('active', !!this.simulation.heatmapVisible);
+      heatmapBtn.setAttribute('aria-pressed', this.simulation.heatmapVisible ? 'true' : 'false');
+    }
+    if (stepBackBtn) {
+      stepBackBtn.style.display = showPathStepButtons ? '' : 'none';
+      stepBackBtn.disabled = !canStepPaths;
+    }
+    if (stepForwardBtn) {
+      stepForwardBtn.style.display = showPathStepButtons ? '' : 'none';
+      stepForwardBtn.disabled = !canStepPaths;
+    }
     const status = document.getElementById('simStatus');
     if (status) {
-      status.textContent = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
+      const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
+      status.textContent = this.simulation.heatmapVisible ? `${base} · Heatmap` : base;
     }
     syncEdgeSliders(this);
     this._renderSimulationInspector();
@@ -4901,6 +4995,30 @@ export class App {
     this.simulation.guidesVisible = next;
     this._syncSimulationUI();
     this.saveSession();
+  }
+
+  _toggleSimulationHeatmap(force) {
+    const next = typeof force === 'boolean' ? force : !this.simulation.heatmapVisible;
+    this.simulation.heatmapVisible = !!next;
+    this._syncSimulationUI();
+    this.saveSession();
+  }
+
+  _stepSimulationPathPosition(direction = 1) {
+    if (!this.simulation.enabled || this.activeBrush !== 'boid') return;
+    const paths = (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
+    if (!paths.length) return;
+    const p = this.getP();
+    const delta = Math.max(4, (p.simPathSpeed || 0) * 0.25) * (direction < 0 ? -1 : 1);
+    for (const pathItem of paths) {
+      const current = Number.isFinite(pathItem.travelDistance) ? pathItem.travelDistance : 0;
+      let next = current + delta;
+      next %= PATH_DISTANCE_WRAP_THRESHOLD;
+      if (next < 0) next += PATH_DISTANCE_WRAP_THRESHOLD;
+      pathItem.travelDistance = next;
+    }
+    this._updateSimulationLeader(0, p);
+    this._maybeAutoSaveSession();
   }
 
   startSimulation() {
@@ -4920,14 +5038,13 @@ export class App {
         pathItem.travelDistance = 0;
       }
     }
-    const center = this._getSimulationSpawnCenter();
-    this.leaderX = center.x;
-    this.leaderY = center.y;
+    const simParams = this.getP();
+    this._updateSimulationLeader(0, simParams);
     this.isDrawing = true;
     this.undoPushedThisStroke = false;
     this.strokeFrame = 0;
     brush.onDown?.(spawn.x, spawn.y, 1);
-    brush.configureSimulation?.(this._getSimulationBrushData(), this.getP());
+    brush.configureSimulation?.(this._getSimulationBrushData(), simParams);
     this._syncSimulationUI();
     this.showToast('Simulation running');
   }
@@ -5115,6 +5232,9 @@ export class App {
             id: this.simulation.nextId++,
             points: path,
             enabled: true,
+            radius: DEFAULT_PATH_RADIUS,
+            strength: DEFAULT_PATH_STRENGTH,
+            influenceRadius: DEFAULT_PATH_RADIUS,
             closed: false,
             direction: 'forward',
             startOffset: 0,
@@ -5178,6 +5298,154 @@ export class App {
     this._renderSimulationInspector();
     this._maybeAutoSaveSession();
     this.showToast('Simulation guides cleared');
+  }
+
+  _getSimulationPolylineMinDistance(points, x, y) {
+    if (!Array.isArray(points) || !points.length) return Infinity;
+    if (points.length === 1) return Math.hypot(x - points[0].x, y - points[0].y);
+    let minDistance = Infinity;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const candidate = _closestPointOnSegment(x, y, a.x, a.y, b.x, b.y);
+      if (candidate.distance < minDistance) minDistance = candidate.distance;
+    }
+    return minDistance;
+  }
+
+  _getSimulationHeatmapValueAt(x, y, p = this.getP(), data = this._getSimulationBrushData()) {
+    if (!data) return 0;
+    let value = 0;
+    const simSpeed = Math.max(0, p.simSpeed || 0);
+    const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
+
+    for (const point of data.points || []) {
+      if (point?.enabled === false) continue;
+      const config = this._resolveSimulationPointConfig(point, p);
+      if (!Number.isFinite(config.strength) || config.strength <= 0 || !Number.isFinite(config.radius) || config.radius <= 0) continue;
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const distance = Math.hypot(dx, dy);
+      const sign = point.type === 'repel' ? -1 : 1;
+      const outerRadius = point.type === 'repel'
+        ? config.radius
+        : Math.max(config.radius, config.influenceRadius || config.radius);
+      if (distance > outerRadius) continue;
+      let shaped = 0;
+      if (sign < 0) {
+        const falloff = Math.max(0, 1 - (distance / config.radius));
+        shaped = Math.pow(falloff, Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, config.hardness)));
+      } else if (distance <= config.radius) {
+        shaped = Math.max(0, 1 - (distance / config.radius));
+      } else {
+        shaped = _pathInfluenceFalloff(distance, config.radius, outerRadius);
+      }
+      value += sign * config.strength * simSpeed * guideSpeedScale * shaped * 0.85;
+    }
+
+    if (this.activeBrush === 'boid') {
+      for (const pathItem of data.paths || []) {
+        if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
+        const target = this._getAnimatedSimulationPathTarget(pathItem, p);
+        if (!target?.config) continue;
+        const dx = target.x - x;
+        const dy = target.y - y;
+        const distance = Math.hypot(dx, dy);
+        const influenceRadius = Math.max(target.config.radius || 0, target.config.influenceRadius || 0);
+        if (distance > influenceRadius) continue;
+        value += target.config.strength * simSpeed * guideSpeedScale * _pathInfluenceFalloff(distance, target.config.radius, target.config.influenceRadius);
+      }
+    }
+
+    if (this.activeBrush === 'ant') {
+      for (const trail of data.pheromonePaths || []) {
+        if (trail?.enabled === false || !trail?.points?.length) continue;
+        const config = this._resolveSimulationPheromoneConfig(trail, p);
+        if (!Number.isFinite(config.radius) || config.radius <= 0 || !Number.isFinite(config.intensity) || config.intensity <= 0) continue;
+        const distance = this._getSimulationPolylineMinDistance(trail.points, x, y);
+        if (distance > config.radius) continue;
+        value += (1 - (distance / config.radius)) * (config.intensity * 100) * simSpeed;
+      }
+      for (const edge of data.edges || []) {
+        if (edge?.enabled === false || !edge?.points?.length) continue;
+        const config = this._resolveSimulationEdgeConfig(edge, p);
+        if (!Number.isFinite(config.radius) || config.radius <= 0 || !Number.isFinite(config.strength) || config.strength <= 0) continue;
+        const distance = this._getSimulationPolylineMinDistance(edge.points, x, y);
+        if (distance > config.radius) continue;
+        value -= (1 - (distance / config.radius)) * config.strength * simSpeed;
+      }
+    }
+
+    return value;
+  }
+
+  _drawSimulationHeatmapOverlay(ctx, p = this.getP(), data = this._getSimulationBrushData()) {
+    if (!data) return;
+    const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
+    const cellSize = Math.max(
+      SIM_HEATMAP_MIN_CELL_SIZE,
+      Math.min(SIM_HEATMAP_MAX_CELL_SIZE, Math.round(Math.min(this.W, this.H) / SIM_HEATMAP_TARGET_CELLS))
+    );
+    const samples = [];
+    const pathHotspots = [];
+    let maxAbs = 0;
+    for (let top = 0; top < this.H; top += cellSize) {
+      for (let left = 0; left < this.W; left += cellSize) {
+        const centerX = Math.min(this.W - 1, left + (cellSize * 0.5));
+        const centerY = Math.min(this.H - 1, top + (cellSize * 0.5));
+        const value = this._getSimulationHeatmapValueAt(centerX, centerY, p, data);
+        const magnitude = Math.abs(value);
+        if (magnitude <= 1e-4) continue;
+        if (magnitude > maxAbs) maxAbs = magnitude;
+        samples.push({ left, top, value });
+      }
+    }
+
+    if (this.activeBrush === 'boid') {
+      for (const pathItem of data.paths || []) {
+        if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
+        const target = this._getAnimatedSimulationPathTarget(pathItem, p);
+        if (!target?.config) continue;
+        const peak = target.config.strength * Math.max(0, p.simSpeed || 0) * guideSpeedScale;
+        if (peak <= 1e-4) continue;
+        pathHotspots.push({
+          x: target.x,
+          y: target.y,
+          radius: Math.max(target.config.radius || 0, target.config.influenceRadius || 0, 1),
+          coreRadius: Math.max(1, target.config.radius || 0),
+          peak,
+        });
+        if (peak > maxAbs) maxAbs = peak;
+      }
+    }
+
+    if (maxAbs <= 1e-4 || (!samples.length && !pathHotspots.length)) return;
+
+    ctx.save();
+    if (samples.length) {
+      for (const sample of samples) {
+        const alpha = Math.min(SIM_HEATMAP_MAX_ALPHA, (Math.abs(sample.value) / maxAbs) * SIM_HEATMAP_MAX_ALPHA);
+        ctx.fillStyle = sample.value >= 0
+          ? `rgba(255, 72, 72, ${alpha.toFixed(4)})`
+          : `rgba(72, 132, 255, ${alpha.toFixed(4)})`;
+        ctx.fillRect(sample.left, sample.top, cellSize + 1, cellSize + 1);
+      }
+    }
+
+    // Path guides only influence the sim at their current animated target, so add
+    // a direct hotspot overlay to make that moving attraction clearly visible.
+    for (const hotspot of pathHotspots) {
+      const alpha = Math.min(1, hotspot.peak / maxAbs);
+      const gradient = ctx.createRadialGradient(hotspot.x, hotspot.y, 0, hotspot.x, hotspot.y, hotspot.radius);
+      gradient.addColorStop(0, `rgba(255, 72, 72, ${(alpha * 0.95).toFixed(4)})`);
+      gradient.addColorStop(Math.min(1, Math.max(0.2, hotspot.coreRadius / hotspot.radius)), `rgba(255, 72, 72, ${(alpha * 0.55).toFixed(4)})`);
+      gradient.addColorStop(1, 'rgba(255, 72, 72, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(hotspot.x, hotspot.y, hotspot.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   _findPolylineHit(points, x, y, maxDistance) {
@@ -5279,33 +5547,21 @@ export class App {
   _updateSimulationLeader(elapsed, p) {
     const center = this._getSimulationSpawnCenter();
     if (this.activeBrush === 'boid') {
-      const data = this._getSimulationBrushData('boid');
-      const activePaths = (data?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
-      if (activePaths.length) {
-        const targets = activePaths
-          .map(pathItem => {
-            const currentDistance = Number.isFinite(pathItem.travelDistance) ? pathItem.travelDistance : 0;
-            const sample = this._getSimulationPathSample(pathItem, currentDistance, p);
-            const speed = sample?.speed ?? _normalizeSimulationPathSpeed(pathItem?.speed);
-            pathItem.travelDistance = currentDistance + ((elapsed / 1000) * p.simPathSpeed * p.simSpeed * speed);
-            if (pathItem.travelDistance >= PATH_DISTANCE_WRAP_THRESHOLD) {
-              pathItem.travelDistance %= PATH_DISTANCE_WRAP_THRESHOLD;
-            }
-            return this._getAnimatedSimulationPathTarget(pathItem, p, pathItem.travelDistance);
-          })
-          .filter(Boolean);
+      const targets = this._getBoidGuideFollowTargets(p, true, elapsed);
         if (targets.length) {
           let sx = 0;
           let sy = 0;
+          let sw = 0;
           for (const target of targets) {
-            sx += target.x;
-            sy += target.y;
+            const weight = Math.max(0.001, target.weight || 0);
+            sx += target.x * weight;
+            sy += target.y * weight;
+            sw += weight;
           }
-          this.leaderX = sx / targets.length;
-          this.leaderY = sy / targets.length;
+          this.leaderX = sx / Math.max(sw, 1);
+          this.leaderY = sy / Math.max(sw, 1);
           return;
         }
-      }
     }
     this.leaderX = center.x;
     this.leaderY = center.y;
@@ -5313,10 +5569,11 @@ export class App {
 
   drawSimulationOverlay(ctx) {
     if (!this.simulation.enabled || !this._isMotionBrush()) return;
-    if (this.simulation.guidesVisible === false) return;
     const data = this._getSimulationBrushData();
     if (!data) return;
     const p = this.getP();
+    if (this.simulation.heatmapVisible) this._drawSimulationHeatmapOverlay(ctx, p, data);
+    if (this.simulation.guidesVisible === false) return;
     const selected = this._getSelectedSimulationEntry();
     const isSelected = (collection, item) => selected?.collection === collection && selected?.id === item.id;
     const selectedHandles = selected ? this._getSimulationParameterHandles(selected, p) : [];
@@ -7989,8 +8246,15 @@ export class App {
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
+    document.getElementById('simHeatmapToggle')?.addEventListener('click', () => this._toggleSimulationHeatmap());
     document.getElementById('simCanvasClearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
+    document.getElementById('simStepBackBtn')?.addEventListener('click', () => this._stepSimulationPathPosition(-1));
+    document.getElementById('simStepForwardBtn')?.addEventListener('click', () => this._stepSimulationPathPosition(1));
+    document.getElementById('simHudCollapseBtn')?.addEventListener('click', () => {
+      this.simulation.hudCollapsed = !this.simulation.hudCollapsed;
+      this._syncSimulationUI();
+    });
     document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
       this.simulation.inspectorCollapsed = !this.simulation.inspectorCollapsed;
       this._syncSimulationUI();
@@ -10499,6 +10763,8 @@ export class App {
       controls._simulation = {
         enabled: this.simulation.enabled,
         guidesVisible: this.simulation.guidesVisible !== false,
+        heatmapVisible: this.simulation.heatmapVisible === true,
+        hudCollapsed: this.simulation.hudCollapsed,
         inspectorCollapsed: this.simulation.inspectorCollapsed,
         inspectorSections: this.simulation.inspectorSections,
         editorTool: this.simulation.editorTool,
@@ -10541,6 +10807,8 @@ export class App {
         if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
         this.simulation.enabled = !!val?.enabled;
         this.simulation.guidesVisible = val?.guidesVisible !== false;
+        this.simulation.heatmapVisible = !!val?.heatmapVisible;
+        this.simulation.hudCollapsed = !!val?.hudCollapsed;
         this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
         this.simulation.inspectorSections = _normalizeSimulationInspectorSections(val?.inspectorSections);
         if (val?.vars && typeof val.vars === 'object') {

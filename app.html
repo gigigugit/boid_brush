@@ -174,17 +174,27 @@ html,body{overflow:hidden;width:100%;height:100%;
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
 /* Simulation HUD */
-#simHud{position:fixed;left:14px;top:calc(var(--topbar-h) + 14px);z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;}
+#simHud{position:fixed;left:58px;top:calc(var(--topbar-h) + 14px);z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
 #simHud.open{display:flex;}
 .sim-card{pointer-events:auto;background:rgba(17,20,29,0.88);backdrop-filter:blur(14px);border:1px solid var(--line-0);border-radius:12px;padding:8px;box-shadow:var(--shadow-lg);}
+#simHud .sim-card{width:100%;}
+#simHud.collapsed .sim-hud-body{display:none;}
+.sim-hud-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
+.sim-hud-header .sim-label{margin-bottom:0;}
+.sim-hud-toggle{min-height:28px;padding:5px 8px;font-size:10px;}
+.sim-hud-body{display:flex;flex-direction:column;gap:8px;}
 .sim-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.sim-stack{flex-direction:column;align-items:stretch;flex-wrap:nowrap;}
 .sim-pill{padding:6px 10px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.06);color:var(--ink-1);font-size:11px;font-weight:600;min-height:34px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;}
+#simHud .sim-stack .sim-pill{text-align:left;width:100%;}
 .sim-pill:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
+.sim-pill:disabled{opacity:0.45;cursor:not-allowed;box-shadow:none;}
+.sim-pill:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
 .sim-pill.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
 .sim-pill.warn{background:rgba(146,54,54,0.72);border-color:rgba(225,99,99,0.35);color:#ffd6d6;}
 .sim-pill.warn:hover{background:rgba(255,59,48,0.4);color:#fff;}
 .sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
-.sim-status{font-size:10px;color:var(--ink-1);min-width:90px;}
+.sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
 
 /* Preset buttons */
 .preset-item{display:flex;align-items:center;gap:4px;margin:2px 0;}
@@ -288,7 +298,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 .edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
 .edge-slider-thumb{position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;left:50%;transform:translate(-50%,50%);box-shadow:0 1px 4px rgba(0,0,0,0.5);pointer-events:none;}
 .edge-slider-label{font-size:8px;color:var(--ink-2);text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;pointer-events:none;font-weight:600;}
-.edge-slider-value{font-size:10px;color:var(--ink-1);font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;font-weight:500;}
+.edge-slider-value{display:flex;align-items:center;justify-content:center;align-self:stretch;box-sizing:border-box;min-height:18px;margin-top:2px;padding:2px 4px;border-radius:999px;background:rgba(6,10,18,0.9);border:1px solid rgba(255,255,255,0.16);box-shadow:0 1px 6px rgba(0,0,0,0.35);font-size:11px;line-height:1;color:#fff;font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;font-weight:700;letter-spacing:0.02em;text-shadow:0 1px 2px rgba(0,0,0,0.7);}
 
 /* Brush type dropdown */
 #brushBtnWrap{position:relative;}
@@ -489,27 +499,33 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <div id="simHud">
   <div class="sim-card">
-    <div class="sim-label">Simulation</div>
-    <div class="sim-row" id="simToolRow">
-      <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
-      <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
-      <button class="sim-pill" data-sim-tool="attract">Attract</button>
-      <button class="sim-pill" data-sim-tool="repel">Repel</button>
-      <button class="sim-pill" data-sim-tool="path">Path</button>
-      <button class="sim-pill" data-sim-tool="edge">Edge</button>
-      <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
-      <button class="sim-pill active" id="simGuidesToggle">Hide Guides</button>
-      <button class="sim-pill warn" id="simCanvasClearBtn">Clear Canvas</button>
-      <button class="sim-pill warn" id="simClearBtn">Clear</button>
+    <div class="sim-hud-header">
+      <div class="sim-label">Simulation</div>
+      <button class="sim-pill sim-hud-toggle" id="simHudCollapseBtn" type="button" aria-controls="simHudBody" aria-expanded="true">Collapse</button>
     </div>
-  </div>
-  <div class="sim-card">
-    <div class="sim-row">
-      <button class="sim-pill active" id="simRunBtn">Run</button>
-      <button class="sim-pill" id="simPauseBtn">Pause</button>
-      <button class="sim-pill warn" id="simStopBtn">Stop</button>
-      <button class="sim-pill active" id="simInspectorToggle">Settings</button>
-      <span class="sim-status" id="simStatus">Ready</span>
+    <div class="sim-hud-body" id="simHudBody">
+      <div class="sim-row sim-stack" id="simToolRow">
+        <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
+        <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
+        <button class="sim-pill" data-sim-tool="attract">Attract</button>
+        <button class="sim-pill" data-sim-tool="repel">Repel</button>
+        <button class="sim-pill" data-sim-tool="path">Path</button>
+        <button class="sim-pill" data-sim-tool="edge">Edge</button>
+        <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+        <button class="sim-pill active" id="simGuidesToggle">Hide Guides</button>
+        <button class="sim-pill" id="simHeatmapToggle" aria-pressed="false">Heatmap</button>
+        <button class="sim-pill warn" id="simCanvasClearBtn">Clear Canvas</button>
+        <button class="sim-pill warn" id="simClearBtn">Clear</button>
+      </div>
+      <div class="sim-row sim-stack">
+        <button class="sim-pill active" id="simRunBtn">Run</button>
+        <button class="sim-pill" id="simPauseBtn">Pause</button>
+        <button class="sim-pill warn" id="simStopBtn">Stop</button>
+        <button class="sim-pill" id="simStepBackBtn" type="button">Step Path -</button>
+        <button class="sim-pill" id="simStepForwardBtn" type="button">Step Path +</button>
+        <button class="sim-pill active" id="simInspectorToggle">Settings</button>
+        <span class="sim-status" id="simStatus">Ready</span>
+      </div>
     </div>
   </div>
 </div>
@@ -572,6 +588,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <ul>
       <li>Each enabled Boid path animates a moving attraction point along the drawn stroke.</li>
       <li>Boids steer by vector-summing enabled moving path guides and point attractions.</li>
+      <li>Enabled attract points and moving path targets also provide a soft flock-follow target, so the swarm can notice guides before every boid enters the local guide radius.</li>
       <li>Per-path strength and radius let you bias one guide more than another.</li>
     </ul>
     <h3>Repulsion hardness</h3>

@@ -387,20 +387,37 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let guide = pointGuides[pointIndex];
     let guidePos = guide.posRadius.xy;
     let guideRadius = max(guide.posRadius.z, 0.0001);
+      let guideOuterRadius = max(guide.params.w, guideRadius);
     let dx = guidePos.x - xi;
     let dy = guidePos.y - yi;
     let d = length(vec2f(dx, dy));
-    if (d <= 0.0001 || d > guideRadius) {
+      if (d <= 0.0001 || d > guideOuterRadius) {
       continue;
     }
-    let falloff = 1.0 - d / guideRadius;
     let guideSign = guide.params.y;
     let guideHardness = max(guide.params.z, 0.1);
-    var shaped = falloff;
+      var shaped = 0.0;
     if (guideSign < 0.0) {
-      shaped = pow(falloff, guideHardness);
+        if (d > guideRadius) {
+          continue;
+        }
+        let falloff = 1.0 - d / guideRadius;
+        shaped = pow(falloff, guideHardness);
+      } else if (d <= guideRadius) {
+        shaped = 1.0 - d / guideRadius;
+      } else {
+        let innerSq = guideRadius * guideRadius;
+        let outerSq = guideOuterRadius * guideOuterRadius;
+        let distanceSq = max(d * d, 1.0);
+        let gravity = 1.0 / distanceSq;
+        let innerGravity = 1.0 / innerSq;
+        let outerGravity = 1.0 / outerSq;
+        let denom = innerGravity - outerGravity;
+        if (denom > 0.000001) {
+          shaped = clamp((gravity - outerGravity) / denom, 0.0, 1.0);
+        }
     }
-    let push = guide.params.x * simSpeed * shaped * 0.85 * guideSign;
+    let push = guide.params.x * simSpeed * agentMaxSpeed * shaped * 0.85 * guideSign;
     ax = ax + (dx / d) * push;
     ay = ay + (dy / d) * push;
   }
@@ -431,7 +448,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         falloff = clamp((gravity - outerGravity) / denom, 0.0, 1.0);
       }
     }
-    let push = pathPrimary.z * simSpeed * falloff;
+    let push = pathPrimary.z * simSpeed * agentMaxSpeed * falloff;
     ax = ax + (dx / d) * push;
     ay = ay + (dy / d) * push;
   }
@@ -617,7 +634,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         this._pointGuides[base + 4] = guide.strength ?? 0;
         this._pointGuides[base + 5] = guide.type === 'repel' ? -1 : 1;
         this._pointGuides[base + 6] = guide.hardness ?? 1;
-        this._pointGuides[base + 7] = 0;
+          this._pointGuides[base + 7] = guide.influenceRadius ?? guide.radius ?? 0;
       }
     }
 

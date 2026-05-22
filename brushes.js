@@ -809,6 +809,7 @@ function _collectSimulationGuides(brush, p) {
               type: point.type === 'repel' ? 'repel' : 'attract',
               strength: config.strength,
               radius: config.radius,
+              influenceRadius: config.influenceRadius,
               hardness: config.hardness,
             };
           })
@@ -869,6 +870,7 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   const edgeGuides = guideState.edges || [];
   if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
   const { buffer, count, stride } = read;
+  const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
 
   for (let i = 0; i < count; i++) {
     const base = i * stride;
@@ -881,15 +883,23 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
       const dx = point.x - x;
       const dy = point.y - y;
       const d = Math.hypot(dx, dy);
-      if (d <= 0.0001 || d > point.radius) continue;
       const sign = point.type === 'repel' ? -1 : 1;
-      const falloff = 1 - d / point.radius;
-      // Repel points use a hardness-shaped falloff so users can make repulsion
-      // either soft/wide or tight/punchy; attract points stay linear.
-      const shaped = point.type === 'repel'
-        ? Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, point.hardness))
-        : falloff;
-      const push = point.strength * p.simSpeed * shaped * 0.85 * sign;
+      const outerRadius = sign < 0
+        ? point.radius
+        : Math.max(point.radius || 0, point.influenceRadius || point.radius || 0);
+      if (d <= 0.0001 || d > outerRadius) continue;
+      let shaped = 0;
+      if (sign < 0) {
+        const falloff = 1 - d / point.radius;
+        // Repel points use a hardness-shaped falloff so users can make repulsion
+        // either soft/wide or tight/punchy; attract points stay linear.
+        shaped = Math.pow(falloff, Math.max(MIN_ALLOWED_SIM_HARDNESS, point.hardness));
+      } else if (d <= point.radius) {
+        shaped = 1 - d / point.radius;
+      } else {
+        shaped = _pathInfluenceFalloff(d, point.radius, outerRadius);
+      }
+      const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85 * sign;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
     }
@@ -904,7 +914,7 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
         const influenceRadius = Math.max(target.radius || 0, target.influenceRadius || 0);
         if (d <= 0.0001 || d > influenceRadius) continue;
         const falloff = _pathInfluenceFalloff(d, target.radius, influenceRadius);
-        const push = target.strength * p.simSpeed * falloff;
+        const push = target.strength * p.simSpeed * guideSpeedScale * falloff;
         sumX += (dx / d) * push;
         sumY += (dy / d) * push;
       }
@@ -1020,7 +1030,6 @@ export class BoidBrush {
       if (renderState.stampBitmap) {
         if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
         chain.push(this.renderer.canvas);
-        return chain;
       }
       if (this.renderer.webgpu.ready) chain.push(this.renderer.webgpu);
       if (this.renderer.webgl.ready) chain.push(this.renderer.webgl);
@@ -4305,24 +4314,18 @@ export class SimpleBrush {
       seen.add(key);
       expanded.push({ x, y, rotation });
     };
+    const stampBounds = this._getStampBounds(stampSize);
     for (const point of points) {
       const rotation = Number.isFinite(point.rotation) ? point.rotation : 0;
       const symPoints = p.symmetryEnabled ? this.app.getSymmetryPoints(point.x, point.y) : [point];
       for (const symPoint of symPoints) {
         addPoint(symPoint.x, symPoint.y, rotation);
         if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
-        const wraps = this.app._getStampWrapPoints(symPoint.x, symPoint.y, stampSize);
-        for (const wrap of wraps) addPoint(wrap.x, wrap.y, rotation);
+        const wrapPoints = this.app._getStampWrapPoints(symPoint.x, symPoint.y, stampBounds);
+        for (const wrap of wrapPoints) addPoint(wrap.x, wrap.y, rotation + (wrap.rotation || 0));
       }
     }
     return expanded;
-  }
-
-  _resolveStrokeAngle(pathAngle, p, fallbackAngle = this._lastStrokeAngle) {
-    return this.app.resolveStrokeAngle(pathAngle, {
-      mode: p.strokeAngleMode,
-      fallbackAngle,
-    });
   }
 
   _buildSimpleBatch(points, p, pressure) {
@@ -6244,7 +6247,6 @@ export class MotionPathBrush {
       this.app.symStamp(layer.ctx, point.x, point.y, point.size || baseSize, p.color, opacity);
     }
     layer.dirty = true;
-    this.app.compositeAllLayers();
   }
 
   _cpuRenderRibbonSegments(segments, p) {
@@ -6257,8 +6259,7 @@ export class MotionPathBrush {
     let opacity = p.stampOpacity;
     if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
     opacity = Math.min(opacity, 1);
-    const activeLayer = this.app.getActiveLayer();
-    const useAlphaLock = activeLayer && activeLayer.alphaLock;
+    const useAlphaLock = layer.alphaLock;
     const useStampImage = this.app.hasActiveStampImage?.(p);
     const support = useStampImage ? _getProceduralBatchRendererSupport(this, p, false) : { ok: false, reason: '' };
     const offsets = this.app.tilingMode
