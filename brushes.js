@@ -1183,10 +1183,12 @@ export class BoidBrush {
       angle: spawnAngle,
       jitter: p.spawnJitter,
       radius: r,
+      color: p.color,
+      opacity: p.stampOpacity,
       mask: p.spawnMask || null,
       distribution: p.spawnDistribution || 'uniform',
       noiseScale: p.spawnNoiseScale || 1,
-    }, x, y);
+    }, x, y, p);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
@@ -1758,6 +1760,8 @@ export class BoidBrush {
       ? {
           ...p,
           count: spawnConfig.count,
+          color: spawnConfig.color,
+          stampOpacity: spawnConfig.opacity,
           spawnShape: spawnConfig.shape,
           spawnAngle: spawnConfig.angle,
           spawnJitter: spawnConfig.jitter,
@@ -2592,10 +2596,12 @@ export class AntBrush {
       angle: spawnConfig ? spawnConfig.angle : p.spawnAngle,
       jitter: spawnConfig ? spawnConfig.jitter : p.spawnJitter,
       radius: r,
+      color: spawnConfig ? spawnConfig.color : p.color,
+      opacity: spawnConfig ? spawnConfig.opacity : p.stampOpacity,
       mask: spawnConfig?.mask || null,
       distribution: spawnConfig?.distribution || 'uniform',
       noiseScale: spawnConfig?.noiseScale || 1,
-    }, x, y);
+    }, x, y, p);
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
