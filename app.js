@@ -2690,13 +2690,20 @@ export class App {
     const l = this.getActiveLayer();
     if (l.isBackground) { this.showToast('Use BG color picker to change background'); return; }
     const brush = this.getCurrentBrush();
-    if (brush?.deactivate) brush.deactivate();
+    const preserveSimulationStroke = !!(
+      brush &&
+      this.simulation.enabled &&
+      this._isMotionBrush() &&
+      (this.simulation.running || this.simulation.paused)
+    );
+    if (!preserveSimulationStroke && brush?.deactivate) brush.deactivate();
     this.pushUndo();
     l.ctx.save();
     l.ctx.setTransform(1, 0, 0, 1, 0, 0);
     l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
     l.ctx.restore();
     l.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+    if (preserveSimulationStroke) brush?.onActiveLayerCleared?.(l);
     this._markLayerDirty(l);
     // Also clear height map when there's only one paint layer
     if (this.layers.filter(layer => !layer.isBackground).length === 1) {

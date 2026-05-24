@@ -413,6 +413,25 @@ function _clearProceduralGpuPreview(brush, { composite = false } = {}) {
   if (composite && layer) brush.app.compositeAllLayers();
 }
 
+function _resetMotionBrushPaintState(brush, layer = brush.app?.getActiveLayer?.()) {
+  const dpr = brush.app?.DPR || 1;
+  if (brush._preStrokeCanvas && brush._preStrokeCtx) {
+    brush._preStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    brush._preStrokeCtx.clearRect(0, 0, brush._preStrokeCanvas.width, brush._preStrokeCanvas.height);
+    if (layer?.canvas) brush._preStrokeCtx.drawImage(layer.canvas, 0, 0);
+  }
+  if (brush._strokeCanvas && brush._strokeCtx) {
+    brush._strokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    brush._strokeCtx.clearRect(0, 0, brush._strokeCanvas.width, brush._strokeCanvas.height);
+    brush._strokeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  if (brush._blurStrokeCanvas && brush._blurStrokeCtx) {
+    brush._blurStrokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    brush._blurStrokeCtx.clearRect(0, 0, brush._blurStrokeCanvas.width, brush._blurStrokeCanvas.height);
+    brush._blurStrokeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+}
+
 function _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock = false } = {}) {
   const layer = brush._gpuPreviewLayer;
   const renderer = brush._gpuPreviewRenderer;
@@ -2397,6 +2416,14 @@ export class BoidBrush {
     return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
   }
 
+  onActiveLayerCleared(layer) {
+    this._clearGpuPreview();
+    this._resetInterpolationState();
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    _resetMotionBrushPaintState(this, layer);
+  }
+
   deactivate() {
     if (this.sim) this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
@@ -3280,6 +3307,15 @@ export class AntBrush {
       ? (_getProceduralBatchRendererSupport(this, this.app.getP(), this._flatActive).reason || this.renderer.legacyReason || this._renderLegacyReason)
       : '';
     return `Ant | Agents: ${count} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+  }
+
+  onActiveLayerCleared(layer) {
+    _clearProceduralGpuPreview(this);
+    this._lastStampX = [];
+    this._lastStampY = [];
+    this._lastSpacingX = [];
+    this._lastSpacingY = [];
+    _resetMotionBrushPaintState(this, layer);
   }
 
   deactivate() {
