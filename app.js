@@ -1422,48 +1422,6 @@ function _normalizeHexColor(value, fallback = '') {
   return hex.toLowerCase();
 }
 
-function _rgbToHslDegrees(r, g, b) {
-  const rn = r / 255;
-  const gn = g / 255;
-  const bn = b / 255;
-  const max = Math.max(rn, gn, bn);
-  const min = Math.min(rn, gn, bn);
-  const delta = max - min;
-  let h = 0;
-  let s = 0;
-  const l = (max + min) * 0.5;
-  if (delta > 1e-6) {
-    s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min);
-    if (max === rn) h = ((gn - bn) / delta + (gn < bn ? 6 : 0)) / 6;
-    else if (max === gn) h = ((bn - rn) / delta + 2) / 6;
-    else h = ((rn - gn) / delta + 4) / 6;
-  }
-  return { h: h * 360, s: s * 100, l: l * 100 };
-}
-
-function _getHexColorDelta(baseHex, nextHex) {
-  const baseRgb = {
-    r: parseInt(baseHex.slice(1, 3), 16),
-    g: parseInt(baseHex.slice(3, 5), 16),
-    b: parseInt(baseHex.slice(5, 7), 16),
-  };
-  const nextRgb = {
-    r: parseInt(nextHex.slice(1, 3), 16),
-    g: parseInt(nextHex.slice(3, 5), 16),
-    b: parseInt(nextHex.slice(5, 7), 16),
-  };
-  const baseHsl = _rgbToHslDegrees(baseRgb.r, baseRgb.g, baseRgb.b);
-  const nextHsl = _rgbToHslDegrees(nextRgb.r, nextRgb.g, nextRgb.b);
-  let hue = nextHsl.h - baseHsl.h;
-  if (hue > 180) hue -= 360;
-  else if (hue < -180) hue += 360;
-  return {
-    hue,
-    sat: nextHsl.s - baseHsl.s,
-    lit: nextHsl.l - baseHsl.l,
-  };
-}
-
 function _valueNoise2D(x, y, scale, seed = 0) {
   const sx = x / scale;
   const sy = y / scale;
@@ -3617,46 +3575,26 @@ export class App {
     return samples;
   }
 
-  _applySimulationSpawnAppearance(sim, startIndex, endIndex, config, baseParams = this.getP()) {
-    if (!sim || !config || endIndex <= startIndex) return;
-    const baseColor = _normalizeHexColor(baseParams?.color, '#1a1a1a');
-    const targetColor = _normalizeHexColor(config.color, baseColor);
-    const baseOpacity = Number.isFinite(baseParams?.stampOpacity) ? Math.max(0, baseParams.stampOpacity) : 1;
-    const targetOpacity = Number.isFinite(config.opacity) ? Math.max(0, Math.min(1, config.opacity)) : baseOpacity;
-    const colorDelta = targetColor !== baseColor ? _getHexColorDelta(baseColor, targetColor) : null;
-    const opacityRatio = baseOpacity > 1e-6 ? (targetOpacity / baseOpacity) : 1;
-    if (!colorDelta && Math.abs(opacityRatio - 1) <= 1e-6) return;
-    const { buffer, count, stride } = sim.readAgents();
-    const clampedStart = Math.max(0, Math.min(count, startIndex));
-    const clampedEnd = Math.max(clampedStart, Math.min(count, endIndex));
-    for (let index = clampedStart; index < clampedEnd; index++) {
-      const base = index * stride;
-      if (colorDelta && stride > 22) {
-        buffer[base + 20] = (Number.isFinite(buffer[base + 20]) ? buffer[base + 20] : 0) + colorDelta.hue;
-        buffer[base + 21] = (Number.isFinite(buffer[base + 21]) ? buffer[base + 21] : 0) + colorDelta.sat;
-        buffer[base + 22] = (Number.isFinite(buffer[base + 22]) ? buffer[base + 22] : 0) + colorDelta.lit;
-      }
-      if (Math.abs(opacityRatio - 1) > 1e-6 && stride > 9) {
-        buffer[base + 9] = (Number.isFinite(buffer[base + 9]) ? buffer[base + 9] : 1) * opacityRatio;
-      }
-    }
-    sim.markStateDirty?.();
-  }
-
-  _spawnSimulationAgents(sim, config, cx, cy, baseParams = this.getP()) {
-    if (!sim || !config) return 0;
+  _spawnSimulationAgents(sim, config, cx, cy) {
+    if (!sim || !config) return { count: 0, startIndex: 0, endIndex: 0 };
     const beforeCount = sim.readAgents().count;
     if (config.mask) {
       const points = this._sampleSimulationSpawnMask(config.mask, config.count);
       for (const point of points) sim.spawnAgent(point.x, point.y);
       const afterCount = sim.readAgents().count;
-      this._applySimulationSpawnAppearance(sim, beforeCount, afterCount, config, baseParams);
-      return points.length;
+      return {
+        count: Math.max(0, afterCount - beforeCount),
+        startIndex: beforeCount,
+        endIndex: afterCount,
+      };
     }
     sim.spawnBatch(cx, cy, config.count, config.shape, config.angle, config.jitter, config.radius);
     const afterCount = sim.readAgents().count;
-    this._applySimulationSpawnAppearance(sim, beforeCount, afterCount, config, baseParams);
-    return config.count;
+    return {
+      count: Math.max(0, afterCount - beforeCount),
+      startIndex: beforeCount,
+      endIndex: afterCount,
+    };
   }
 
   _drawSimulationSpawnMaskPreview(ctx, mask, { fillStyle, strokeStyle } = {}) {

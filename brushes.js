@@ -148,6 +148,43 @@ function hslToRGB(h, s, l) {
   return hexToRGB(hslToHex(h, s, l));
 }
 
+function _normalizeBrushHexColor(value, fallback = '#000000') {
+  let hex = String(value || '').trim();
+  if (!hex) return fallback;
+  if (!hex.startsWith('#')) hex = `#${hex}`;
+  if (!/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(hex)) return fallback;
+  if (hex.length === 4) {
+    hex = `#${hex.slice(1).split('').map(ch => ch + ch).join('')}`;
+  }
+  return hex.toLowerCase();
+}
+
+function _resetSimulationSpawnAppearance(brush) {
+  brush._agentSpawnColors = [];
+  brush._agentSpawnOpacity = [];
+}
+
+function _setSimulationSpawnAppearanceRange(brush, spawnInfo, config, p) {
+  if (!brush?.app?.simulation?.enabled || !spawnInfo || spawnInfo.endIndex <= spawnInfo.startIndex) return;
+  if (!brush._agentSpawnColors || !brush._agentSpawnOpacity) _resetSimulationSpawnAppearance(brush);
+  const color = _normalizeBrushHexColor(config?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+  const opacity = Number.isFinite(config?.opacity)
+    ? Math.max(0, Math.min(1, config.opacity))
+    : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+  for (let index = spawnInfo.startIndex; index < spawnInfo.endIndex; index++) {
+    brush._agentSpawnColors[index] = color;
+    brush._agentSpawnOpacity[index] = opacity;
+  }
+}
+
+function _getSimulationSpawnAppearance(brush, index, p) {
+  const color = _normalizeBrushHexColor(brush?._agentSpawnColors?.[index], _normalizeBrushHexColor(p?.color, '#000000'));
+  const opacity = Number.isFinite(brush?._agentSpawnOpacity?.[index])
+    ? Math.max(0, Math.min(1, brush._agentSpawnOpacity[index]))
+    : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+  return { color, opacity };
+}
+
 class StampInstanceBuffer {
   constructor(initialCapacity = 1024) {
     this._stride = 8;
@@ -1018,6 +1055,7 @@ export class BoidBrush {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._debugMaxEvents = 120;
+    _resetSimulationSpawnAppearance(this);
   }
 
   _patchRendererChain() {
@@ -1054,6 +1092,7 @@ export class BoidBrush {
       this._gpuBatchVisibilityVerified = false;
       this._rendererChainPatched = false;
       this._gpuPreviewRenderer = null;
+      _resetSimulationSpawnAppearance(this);
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
@@ -1135,6 +1174,7 @@ export class BoidBrush {
   _clearAgents() {
     if (!this.sim) return;
     this.sim.clearAgents();
+    _resetSimulationSpawnAppearance(this);
     this._clearGpuPreview({ composite: true });
     this._resetInterpolationState();
     this._boidsSpawned = false;
@@ -1177,7 +1217,7 @@ export class BoidBrush {
     } else if (p.pressureSpawnRadius) {
       r *= 0.3 + 0.7 * pressure;
     }
-    this.app._spawnSimulationAgents(this.sim, {
+    const spawnInfo = this.app._spawnSimulationAgents(this.sim, {
       count: p.count,
       shape: p.spawnShape,
       angle: spawnAngle,
@@ -1188,7 +1228,11 @@ export class BoidBrush {
       mask: p.spawnMask || null,
       distribution: p.spawnDistribution || 'uniform',
       noiseScale: p.spawnNoiseScale || 1,
-    }, x, y, p);
+    }, x, y);
+    _setSimulationSpawnAppearanceRange(this, spawnInfo, {
+      color: p.color,
+      opacity: p.stampOpacity,
+    }, p);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
@@ -1495,8 +1539,16 @@ export class BoidBrush {
     const { buffer, count, stride } = read;
     const instances = new StampInstanceBuffer(Math.max(64, count));
     const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
-    const baseHSL = hexToHSL(p.color);
-    const baseRGB = hexToRGB(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), rgb: hexToRGB(key) };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
     const textureEnabled = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
 
     for (let i = 0; i < count; i++) {
@@ -1508,9 +1560,11 @@ export class BoidBrush {
       const agentHue = buffer[base + 20];
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
 
       let size = p.stampSize * sm;
-      let opacity = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
       if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
       if (taperSize) size *= taperCurve;
@@ -1519,8 +1573,8 @@ export class BoidBrush {
       if (opacity < 0.005 || size < 0.5) continue;
 
       const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
-        ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
-        : baseRGB;
+        ? hslToRGB(appearanceColor.hsl[0] + agentHue, appearanceColor.hsl[1] + agentSat, appearanceColor.hsl[2] + agentLit)
+        : appearanceColor.rgb;
       const pushInstance = (x, y) => {
         const renderPoints = p.symmetryEnabled
           ? this.app.getSymmetryPoints(x, y)
@@ -1682,7 +1736,16 @@ export class BoidBrush {
   } = {}) {
     const { buffer, count, stride } = read;
     this._setRenderBackend('legacy', reason || this._renderLegacyReason || this.renderer.legacyReason);
-    this._baseHSL = hexToHSL(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), color: key };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
     for (let i = 0; i < count; i++) {
       const base = i * stride;
       const ax = buffer[base + 0];
@@ -1692,16 +1755,18 @@ export class BoidBrush {
       const agentHue = buffer[base + 20];
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
       let sz = p.stampSize * sm;
-      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
       if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
       if (taperSize) sz *= taperCurve;
       if (taperOpacity) op *= taperCurve;
       op = Math.min(op, 1);
-      let color = p.color;
+      let color = appearanceColor.color;
       if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-        const [bh, bs, bl] = this._baseHSL;
+        const [bh, bs, bl] = appearanceColor.hsl;
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
       this.app.symStamp(targetCtx, ax, ay, sz, color, op);
@@ -1717,6 +1782,7 @@ export class BoidBrush {
     if (!this._ready) return;
     if (this._hoverSpawned) return; // hover state already entered — sim runs via onHoverFrame
     const p = this.app.getP();
+    if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
     this._hoverSpawned = this._applyLifecycleAction(p.boidHoverAction, p, x, y, 1, true);
   }
 
@@ -1744,6 +1810,7 @@ export class BoidBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
     this._pushRenderDebug('pointer-down', {
       x,
       y,
@@ -1902,7 +1969,8 @@ export class BoidBrush {
     for (const spawn of data.spawns) {
       if (spawn === primary || spawn.enabled === false) continue;
       const config = this.app._resolveSimulationSpawnConfig(spawn, p);
-      this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
+      const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
+      _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
     }
   }
 
@@ -1981,7 +2049,16 @@ export class BoidBrush {
       }
     }
     this._setRenderBackend('legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
-    this._baseHSL = hexToHSL(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), color: key };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -1992,6 +2069,8 @@ export class BoidBrush {
       const agentHue = buffer[base + 20]; // hue offset (degrees)
       const agentSat = buffer[base + 21]; // saturation offset
       const agentLit = buffer[base + 22]; // lightness offset
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
 
       // Skip first N stamps (lead-in) — track position but don't stamp
       if (app.strokeFrame <= skipN) {
@@ -2005,15 +2084,15 @@ export class BoidBrush {
       // Compute size and opacity (needed for spacing calculation)
       let sz = p.stampSize * sm;
       // In flat mode, stamps go at full agent opacity; master opacity applied on composite
-      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
       if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
       op = Math.min(op, 1);
 
       // Per-agent color modification
-      let color = p.color;
+      let color = appearanceColor.color;
       if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-        const [bh, bs, bl] = this._baseHSL;
+        const [bh, bs, bl] = appearanceColor.hsl;
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
@@ -2200,7 +2279,16 @@ export class BoidBrush {
       return;
     }
     this._setRenderBackend('legacy', batchSupport.reason);
-    this._baseHSL = hexToHSL(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), color: key };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -2211,17 +2299,19 @@ export class BoidBrush {
       const agentHue = buffer[base + 20];
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
 
       let sz = p.stampSize * sm;
-      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (p.taperSize) sz *= curve;
       if (p.taperOpacity) op *= curve;
       op = Math.min(op, 1);
       if (op < 0.005 || sz < 0.5) continue;
 
-      let color = p.color;
+      let color = appearanceColor.color;
       if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-        const [bh, bs, bl] = this._baseHSL;
+        const [bh, bs, bl] = appearanceColor.hsl;
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
@@ -2309,6 +2399,7 @@ export class BoidBrush {
 
   deactivate() {
     if (this.sim) this.sim.clearAgents();
+    _resetSimulationSpawnAppearance(this);
     this._clearGpuPreview({ composite: true });
     this._boidsSpawned = false;
     this._hoverSpawned = false;
@@ -2365,6 +2456,7 @@ export class AntBrush {
     this._preStrokeCanvas = null;
     this._preStrokeCtx = null;
     this._flatActive = false;
+    _resetSimulationSpawnAppearance(this);
     _ensureProceduralStampRendererInit(this);
   }
 
@@ -2385,6 +2477,7 @@ export class AntBrush {
       this._gpuPreviewActive = false;
       this._gpuPreviewLayer = null;
       this._gpuPreviewRenderer = null;
+      _resetSimulationSpawnAppearance(this);
       this.renderer.reset();
     }
     _ensureProceduralStampRendererInit(this);
@@ -2415,8 +2508,16 @@ export class AntBrush {
     const { buffer, count, stride } = read;
     const instances = new StampInstanceBuffer(Math.max(64, count));
     const skipActive = applySkip && this.app.strokeFrame <= (p.skipStamps || 0);
-    const baseHSL = hexToHSL(p.color);
-    const baseRGB = hexToRGB(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), rgb: hexToRGB(key) };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -2427,9 +2528,11 @@ export class AntBrush {
       const agentHue = buffer[base + 20];
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
 
       let size = p.stampSize * sm;
-      let opacity = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
       if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
       if (taperSize) size *= taperCurve;
@@ -2438,8 +2541,8 @@ export class AntBrush {
       if (opacity < 0.005 || size < 0.5) continue;
 
       const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
-        ? hslToRGB(baseHSL[0] + agentHue, baseHSL[1] + agentSat, baseHSL[2] + agentLit)
-        : baseRGB;
+        ? hslToRGB(appearanceColor.hsl[0] + agentHue, appearanceColor.hsl[1] + agentSat, appearanceColor.hsl[2] + agentLit)
+        : appearanceColor.rgb;
 
       if (skipActive) {
         this._lastStampX[i] = ax;
@@ -2565,7 +2668,8 @@ export class AntBrush {
     for (const spawn of data.spawns) {
       if (spawn === primary || spawn.enabled === false) continue;
       const config = this.app._resolveSimulationSpawnConfig(spawn, p);
-      this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
+      const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
+      _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
     }
     this._initPheroGrid();
     if (this._pheroData) this._pheroData.fill(0);
@@ -2582,6 +2686,7 @@ export class AntBrush {
   onDown(x, y, pressure) {
     if (!this._ready) return;
     const p = this.app.getP();
+    if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
     if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'ant'
       ? (this.app._ensureSimulationSpawns('ant').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('ant')[0])
@@ -2590,7 +2695,8 @@ export class AntBrush {
     let r = spawnConfig ? spawnConfig.radius : p.spawnRadius;
     if (!spawnConfig && p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
     this.sim.clearAgents();
-    this.app._spawnSimulationAgents(this.sim, {
+    _resetSimulationSpawnAppearance(this);
+    const spawnInfo = this.app._spawnSimulationAgents(this.sim, {
       count: spawnConfig ? spawnConfig.count : p.count,
       shape: spawnConfig ? spawnConfig.shape : p.spawnShape,
       angle: spawnConfig ? spawnConfig.angle : p.spawnAngle,
@@ -2601,7 +2707,11 @@ export class AntBrush {
       mask: spawnConfig?.mask || null,
       distribution: spawnConfig?.distribution || 'uniform',
       noiseScale: spawnConfig?.noiseScale || 1,
-    }, x, y, p);
+    }, x, y);
+    _setSimulationSpawnAppearanceRange(this, spawnInfo, {
+      color: spawnConfig ? spawnConfig.color : p.color,
+      opacity: spawnConfig ? spawnConfig.opacity : p.stampOpacity,
+    }, p);
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;
@@ -2673,7 +2783,16 @@ export class AntBrush {
             forceStamp: true,
           });
           if (!_renderProceduralBatchToTarget(this, layer.ctx, batch, p, { allowAlphaLock: true })) {
-            this._baseHSL = hexToHSL(p.color);
+            const colorCache = new Map();
+            const getAppearanceColor = color => {
+              const key = _normalizeBrushHexColor(color, '#000000');
+              let cached = colorCache.get(key);
+              if (!cached) {
+                cached = { hsl: hexToHSL(key), color: key };
+                colorCache.set(key, cached);
+              }
+              return cached;
+            };
             for (let i = 0; i < count; i++) {
               const base = i * stride;
               const ax = buffer[base + 0];
@@ -2683,14 +2802,16 @@ export class AntBrush {
               const agentHue = buffer[base + 20];
               const agentSat = buffer[base + 21];
               const agentLit = buffer[base + 22];
+              const appearance = _getSimulationSpawnAppearance(this, i, p);
+              const appearanceColor = getAppearanceColor(appearance.color);
               let sz = p.stampSize * sm;
-              let op = p.stampOpacity * om;
+              let op = appearance.opacity * om;
               if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
               if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
               op = Math.min(op, 1);
-              let color = p.color;
+              let color = appearanceColor.color;
               if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-                const [bh, bs, bl] = this._baseHSL;
+                const [bh, bs, bl] = appearanceColor.hsl;
                 color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
               }
               this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
@@ -2700,7 +2821,16 @@ export class AntBrush {
           }
         } else {
           _setProceduralRenderBackend(this, 'legacy', batchSupport.reason);
-          this._baseHSL = hexToHSL(p.color);
+          const colorCache = new Map();
+          const getAppearanceColor = color => {
+            const key = _normalizeBrushHexColor(color, '#000000');
+            let cached = colorCache.get(key);
+            if (!cached) {
+              cached = { hsl: hexToHSL(key), color: key };
+              colorCache.set(key, cached);
+            }
+            return cached;
+          };
           for (let i = 0; i < count; i++) {
             const base = i * stride;
             const ax = buffer[base + 0];
@@ -2710,14 +2840,16 @@ export class AntBrush {
             const agentHue = buffer[base + 20];
             const agentSat = buffer[base + 21];
             const agentLit = buffer[base + 22];
+            const appearance = _getSimulationSpawnAppearance(this, i, p);
+            const appearanceColor = getAppearanceColor(appearance.color);
             let sz = p.stampSize * sm;
-            let op = p.stampOpacity * om;
+            let op = appearance.opacity * om;
             if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
             if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
             op = Math.min(op, 1);
-            let color = p.color;
+            let color = appearanceColor.color;
             if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-              const [bh, bs, bl] = this._baseHSL;
+              const [bh, bs, bl] = appearanceColor.hsl;
               color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
             }
             this.app.symStamp(layer.ctx, ax, ay, sz, color, op);
@@ -2848,7 +2980,16 @@ export class AntBrush {
     }
 
     _setProceduralRenderBackend(this, 'legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
-    this._baseHSL = hexToHSL(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), color: key };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -2859,6 +3000,8 @@ export class AntBrush {
       const agentHue = buffer[base + 20];
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
 
       // Skip first N stamps
       if (app.strokeFrame <= skipN) {
@@ -2868,14 +3011,14 @@ export class AntBrush {
       }
 
       let sz = p.stampSize * sm;
-      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
       if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
       op = Math.min(op, 1);
 
-      let color = p.color;
+      let color = appearanceColor.color;
       if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-        const [bh, bs, bl] = this._baseHSL;
+        const [bh, bs, bl] = appearanceColor.hsl;
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
@@ -3021,7 +3164,16 @@ export class AntBrush {
     }
 
     _setProceduralRenderBackend(this, 'legacy', batchSupport.reason || this.renderer.legacyReason || this._renderLegacyReason);
-    this._baseHSL = hexToHSL(p.color);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), color: key };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
@@ -3032,17 +3184,19 @@ export class AntBrush {
       const agentHue = buffer[base + 20];
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(appearance.color);
 
       let sz = p.stampSize * sm;
-      let op = flat ? Math.min(om, 1) : p.stampOpacity * om;
+      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (p.taperSize) sz *= curve;
       if (p.taperOpacity) op *= curve;
       op = Math.min(op, 1);
       if (op < 0.005 || sz < 0.5) continue;
 
-      let color = p.color;
+      let color = appearanceColor.color;
       if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-        const [bh, bs, bl] = this._baseHSL;
+        const [bh, bs, bl] = appearanceColor.hsl;
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
@@ -3131,6 +3285,7 @@ export class AntBrush {
   deactivate() {
     _clearProceduralGpuPreview(this, { composite: true });
     if (this.sim) this.sim.clearAgents();
+    _resetSimulationSpawnAppearance(this);
     if (this._pheroData) this._pheroData.fill(0);
   }
 }
