@@ -133,6 +133,11 @@ pub fn spawn_batch(cx: f32, cy: f32, count: u32, shape: u32, angle: f32, jitter:
     with_sim(|sim| sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius));
 }
 
+#[wasm_bindgen]
+pub fn set_leader_range(start_index: u32, end_index: u32, leader_count: u32) {
+    with_sim(|sim| sim.set_leader_range(start_index, end_index, leader_count));
+}
+
 /// Remove an agent by ID. Uses swap-remove (O(1), may reorder).
 #[wasm_bindgen]
 pub fn remove_agent(id: u32) {
@@ -422,7 +427,8 @@ mod tests {
         sim.buf[base + boid::AX] = 0.0;
         sim.buf[base + boid::AY] = 0.0;
 
-        crate::sensing::apply_sensing_force(&mut sim.buf, base, &sim.params, &sim.sensing);
+        let params = sim.params.params_for(false);
+        crate::sensing::apply_sensing_force(&mut sim.buf, base, &params, &sim.sensing);
 
         // Agent should be pushed LEFT (negative x) away from bright right side
         assert!(
