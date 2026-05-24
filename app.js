@@ -1411,6 +1411,17 @@ function _smoothstep(t) {
   return t * t * (3 - 2 * t);
 }
 
+function _normalizeHexColor(value, fallback = '') {
+  let hex = String(value || '').trim();
+  if (!hex) return fallback;
+  if (!hex.startsWith('#')) hex = `#${hex}`;
+  if (!/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(hex)) return fallback;
+  if (hex.length === 4) {
+    hex = `#${hex.slice(1).split('').map(ch => ch + ch).join('')}`;
+  }
+  return hex.toLowerCase();
+}
+
 function _valueNoise2D(x, y, scale, seed = 0) {
   const sx = x / scale;
   const sy = y / scale;
@@ -2679,13 +2690,20 @@ export class App {
     const l = this.getActiveLayer();
     if (l.isBackground) { this.showToast('Use BG color picker to change background'); return; }
     const brush = this.getCurrentBrush();
-    if (brush?.deactivate) brush.deactivate();
+    const preserveSimulationStroke = !!(
+      brush &&
+      this.simulation.enabled &&
+      this._isMotionBrush() &&
+      (this.simulation.running || this.simulation.paused)
+    );
+    if (!preserveSimulationStroke && brush?.deactivate) brush.deactivate();
     this.pushUndo();
     l.ctx.save();
     l.ctx.setTransform(1, 0, 0, 1, 0, 0);
     l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
     l.ctx.restore();
     l.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+    if (preserveSimulationStroke) brush?.onActiveLayerCleared?.(l);
     this._markLayerDirty(l);
     // Also clear height map when there's only one paint layer
     if (this.layers.filter(layer => !layer.isBackground).length === 1) {
@@ -3155,6 +3173,8 @@ export class App {
         radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : undefined,
         angle: Number.isFinite(spawn?.angle) ? spawn.angle : undefined,
         jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : undefined,
+        color: _normalizeHexColor(spawn?.color),
+        opacity: Number.isFinite(spawn?.opacity) ? Math.max(0, Math.min(1, spawn.opacity)) : undefined,
         distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : undefined,
         noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : undefined,
         mask: this._normalizeSimulationSpawnMask(spawn?.mask),
@@ -3261,6 +3281,8 @@ export class App {
       radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : p.spawnRadius,
       angle: Number.isFinite(spawn?.angle) ? spawn.angle : p.spawnAngle,
       jitter: Number.isFinite(spawn?.jitter) ? Math.max(0, Math.min(1, spawn.jitter)) : p.spawnJitter,
+      color: _normalizeHexColor(spawn?.color, _normalizeHexColor(p.color, '#1a1a1a')),
+      opacity: Number.isFinite(spawn?.opacity) ? Math.max(0, Math.min(1, spawn.opacity)) : p.stampOpacity,
       distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : 'uniform',
       noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : 1,
       mask: spawn?.mask || null,
@@ -3561,14 +3583,25 @@ export class App {
   }
 
   _spawnSimulationAgents(sim, config, cx, cy) {
-    if (!sim || !config) return 0;
+    if (!sim || !config) return { count: 0, startIndex: 0, endIndex: 0 };
+    const beforeCount = sim.readAgents().count;
     if (config.mask) {
       const points = this._sampleSimulationSpawnMask(config.mask, config.count);
       for (const point of points) sim.spawnAgent(point.x, point.y);
-      return points.length;
+      const afterCount = sim.readAgents().count;
+      return {
+        count: Math.max(0, afterCount - beforeCount),
+        startIndex: beforeCount,
+        endIndex: afterCount,
+      };
     }
     sim.spawnBatch(cx, cy, config.count, config.shape, config.angle, config.jitter, config.radius);
-    return config.count;
+    const afterCount = sim.readAgents().count;
+    return {
+      count: Math.max(0, afterCount - beforeCount),
+      startIndex: beforeCount,
+      endIndex: afterCount,
+    };
   }
 
   _drawSimulationSpawnMaskPreview(ctx, mask, { fillStyle, strokeStyle } = {}) {
@@ -4535,6 +4568,25 @@ export class App {
           </div>
         </div>`;
       };
+      const simColorField = (field, label, fallbackColor = p.color) => {
+        const raw = _normalizeHexColor(target[field]);
+        const isSet = !!raw;
+        const value = raw || _normalizeHexColor(fallbackColor, '#1a1a1a');
+        const displayVal = isSet ? value.toUpperCase() : 'Brush def.';
+        const resetOpacity = isSet ? '' : ' style="opacity:0.35"';
+        return `<div class="sim-slider-row">
+          <div class="sim-slider-header">
+            <span class="sim-slider-label">${label}</span>
+            <div class="sim-slider-meta">
+              <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
+              <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
+            </div>
+          </div>
+          <div class="sim-slider-controls">
+            <input type="color" value="${value}" data-sim-field="${field}" data-sim-type="color"${isSet ? '' : ' data-sim-unset="1"'}>
+          </div>
+        </div>`;
+      };
 
       let selectionBody = `
         <div class="sim-inspector-row">
@@ -4550,16 +4602,20 @@ export class App {
         selectionBody += target.mask
           ? `
           <div class="sim-inspector-note" style="margin-top:10px"><strong>Spawn Blob</strong></div>
-          <div class="sim-inspector-note">Painted spawn blobs use their alpha mask for placement. Count and distribution stay editable here.</div>
+          <div class="sim-inspector-note">Painted spawn blobs use their alpha mask for placement. Count, color, opacity, and distribution stay editable here.</div>
           ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
+          ${simColorField('color', 'Color')}
+          ${simSlider('opacity', 'number', 'Opacity', 0, 100, 1, 0.01)}
           <div class="sim-inspector-row"><label>Distribution<select data-sim-field="distribution" data-sim-type="select">
             ${SIM_SPAWN_DISTRIBUTION_MODES.map(mode => `<option value="${mode}" ${((target.distribution || 'uniform') === mode) ? 'selected' : ''}>${mode}</option>`).join('')}
           </select></label></div>
           ${simSlider('noiseScale', 'number', 'Noise Scale', 20, 300, 5, 0.01)}`
           : `
           <div class="sim-inspector-note" style="margin-top:10px"><strong>Spawn Overrides</strong></div>
-          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
+          <div class="sim-inspector-note">Move a slider or pick a color to override; press × to restore brush default.</div>
           ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
+          ${simColorField('color', 'Color')}
+          ${simSlider('opacity', 'number', 'Opacity', 0, 100, 1, 0.01)}
           <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
             <option value="">Brush default</option>
             ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
@@ -4750,6 +4806,10 @@ export class App {
         const { target } = entry;
         if (type === 'bool') {
           target[field] = el.checked;
+        } else if (type === 'color') {
+          const normalized = _normalizeHexColor(el.value);
+          if (!normalized) delete target[field];
+          else target[field] = normalized;
         } else if (type === 'select') {
           if (el.value === '') delete target[field];
           else target[field] = el.value;
@@ -4791,6 +4851,14 @@ export class App {
           if (numberInput) numberInput.value = String(liveValue);
           // Restore reset-button opacity once the user moves the slider.
           const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          if (resetBtn) resetBtn.style.opacity = '1';
+        });
+      } else if (el.type === 'color') {
+        el.addEventListener('input', () => {
+          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          const normalized = _normalizeHexColor(el.value, '#000000');
+          if (lbl) lbl.textContent = normalized.toUpperCase();
           if (resetBtn) resetBtn.style.opacity = '1';
         });
       } else if (el.type === 'number') {
