@@ -69,7 +69,7 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  return !(p?.sensingEnabled) && !((p?.quorumThreshold ?? 0) >= 2);
+  return true;
 }
 
 export class WebGPUBoidSim {
@@ -99,13 +99,20 @@ export class WebGPUBoidSim {
     this.adapter = null;
     this.device = null;
     this.pipeline = null;
+    this.quorumPipeline = null;
     this.paramsBuffer = null;
     this.metaBuffer = null;
     this.guideMetaBuffer = null;
     this.pointGuideBuffer = null;
     this.pathTargetBuffer = null;
+    this.quorumBuffer = null;
     this.agentBuffers = [];
     this.bindGroups = [];
+    this.quorumBindGroups = [];
+    this.sensingTexture = null;
+    this.sensingTextureView = null;
+    this._sensingTextureWidth = 0;
+    this._sensingTextureHeight = 0;
     this._pointGuides = new Float32Array(MAX_GPU_SIM_POINT_GUIDES * 8);
     this._pathTargets = new Float32Array(MAX_GPU_SIM_PATH_TARGETS * 8);
     this._pointGuideCount = 0;
@@ -151,6 +158,17 @@ export class WebGPUBoidSim {
       size: this._pathTargets.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+    this.quorumBuffer = this.device.createBuffer({
+      size: this.maxAgents * Uint32Array.BYTES_PER_ELEMENT,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this._ensureSensingTexture(1, 1);
+    this.device.queue.writeTexture(
+      { texture: this.sensingTexture },
+      new Uint8Array([0]),
+      { offset: 0, bytesPerRow: 1, rowsPerImage: 1 },
+      { width: 1, height: 1, depthOrArrayLayers: 1 },
+    );
     for (let i = 0; i < STAGING_BUFFER_COUNT; i++) {
       this._stagingSlots.push({
         buffer: this.device.createBuffer({
@@ -169,9 +187,20 @@ export class WebGPUBoidSim {
         entryPoint: 'main',
       },
     });
+    this.quorumPipeline = this.device.createComputePipeline({
+      layout: 'auto',
+      compute: {
+        module: this.device.createShaderModule({ code: this._quorumShaderCode() }),
+        entryPoint: 'main',
+      },
+    });
     this.bindGroups = [
       this._createBindGroup(0, 1),
       this._createBindGroup(1, 0),
+    ];
+    this.quorumBindGroups = [
+      this._createQuorumBindGroup(0),
+      this._createQuorumBindGroup(1),
     ];
     this.ready = true;
   }
@@ -187,8 +216,51 @@ export class WebGPUBoidSim {
           { binding: 4, resource: { buffer: this.pointGuideBuffer } },
           { binding: 5, resource: { buffer: this.pathTargetBuffer } },
           { binding: 6, resource: { buffer: this.guideMetaBuffer } },
+          { binding: 7, resource: this.sensingTextureView },
+          { binding: 8, resource: { buffer: this.quorumBuffer } },
         ],
       });
+  }
+
+  _createQuorumBindGroup(inputIndex) {
+    return this.device.createBindGroup({
+      layout: this.quorumPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.agentBuffers[inputIndex] } },
+        { binding: 1, resource: { buffer: this.paramsBuffer } },
+        { binding: 2, resource: { buffer: this.metaBuffer } },
+        { binding: 3, resource: { buffer: this.quorumBuffer } },
+      ],
+    });
+  }
+
+  _ensureSensingTexture(width, height) {
+    const safeWidth = Math.max(1, Math.floor(width || 0));
+    const safeHeight = Math.max(1, Math.floor(height || 0));
+    if (
+      this.sensingTexture &&
+      this._sensingTextureWidth === safeWidth &&
+      this._sensingTextureHeight === safeHeight
+    ) {
+      return;
+    }
+    if (this.sensingTexture) {
+      this.sensingTexture.destroy();
+    }
+    this.sensingTexture = this.device.createTexture({
+      size: { width: safeWidth, height: safeHeight, depthOrArrayLayers: 1 },
+      format: 'r8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    this.sensingTextureView = this.sensingTexture.createView();
+    this._sensingTextureWidth = safeWidth;
+    this._sensingTextureHeight = safeHeight;
+    if (this.pipeline) {
+      this.bindGroups = [
+        this._createBindGroup(0, 1),
+        this._createBindGroup(1, 0),
+      ];
+    }
   }
 
   _shaderCode() {
@@ -248,6 +320,8 @@ struct GuideMeta {
 @group(0) @binding(4) var<storage, read> pointGuides : array<PointGuide, ${MAX_GPU_SIM_POINT_GUIDES}>;
 @group(0) @binding(5) var<storage, read> pathTargets : array<PathTarget, ${MAX_GPU_SIM_PATH_TARGETS}>;
 @group(0) @binding(6) var<uniform> guideMeta : GuideMeta;
+@group(0) @binding(7) var sensingTex : texture_2d<f32>;
+@group(0) @binding(8) var<storage, read> quorumMembers : array<u32>;
 
 fn agentIndex(agent : u32, field : u32) -> u32 {
   return agent * STRIDE + field;
@@ -263,6 +337,22 @@ fn hash1(n : f32) -> f32 {
 
 fn hash2(p : vec2f) -> f32 {
   return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453123);
+}
+
+fn sampleSensing(canvasPos : vec2f) -> f32 {
+  if (simMeta.width <= 0.0 || simMeta.height <= 0.0) {
+    return 0.0;
+  }
+  let dims = textureDimensions(sensingTex);
+  if (dims.x == 0u || dims.y == 0u) {
+    return 0.0;
+  }
+  let sensingX = i32(round(canvasPos.x * (f32(dims.x) / simMeta.width)));
+  let sensingY = i32(round(canvasPos.y * (f32(dims.y) / simMeta.height)));
+  if (sensingX < 0 || sensingY < 0 || sensingX >= i32(dims.x) || sensingY >= i32(dims.y)) {
+    return 0.0;
+  }
+  return textureLoad(sensingTex, vec2i(sensingX, sensingY), 0).r;
 }
 
 fn valueNoise(p : vec2f) -> f32 {
@@ -324,6 +414,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let flowScale = params.values[10];
   let fleeRadius = params.values[11];
   let fovRad = params.values[12] * PI / 180.0;
+  let quorumEnabled = params.values[14] >= 2.0;
+  let quorumCompositeStrength = clamp(params.values[15], 0.0, 1.0);
+  let sensingEnabled = params.values[16] > 0.5;
+  let sensingAttract = params.values[17] > 0.5;
+  let sensingStrength = params.values[18];
+  let sensingRadius = params.values[19];
+  let sensingThreshold = params.values[20];
   let goalPos = vec2f(params.values[21], params.values[22]);
   let time = params.values[23];
   let neighborRadius = max(params.values[24], 1.0);
@@ -333,6 +430,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   let xi = agentValue(i, X);
   let yi = agentValue(i, Y);
+  let focalQuorum = quorumEnabled && quorumMembers[i] != 0u;
   var vx = agentValue(i, VX);
   var vy = agentValue(i, VY);
   var wa = agentValue(i, WA);
@@ -381,6 +479,23 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let angle = valueNoise(samplePos) * TAU;
     ax = ax + cos(angle) * flowField * agentMaxSpeed;
     ay = ay + sin(angle) * flowField * agentMaxSpeed;
+  }
+
+  if (sensingEnabled && sensingStrength != 0.0 && sensingRadius > 0.0) {
+    var sensingFx = 0.0;
+    var sensingFy = 0.0;
+    for (var senseIndex = 0u; senseIndex < 8u; senseIndex = senseIndex + 1u) {
+      let angle = (f32(senseIndex) / 8.0) * TAU;
+      let senseDir = vec2f(cos(angle), sin(angle));
+      let senseSample = sampleSensing(vec2f(xi, yi) + senseDir * sensingRadius);
+      if (senseSample > sensingThreshold) {
+        let signedSample = select(-senseSample, senseSample, sensingAttract);
+        sensingFx = sensingFx + senseDir.x * signedSample;
+        sensingFy = sensingFy + senseDir.y * signedSample;
+      }
+    }
+    ax = ax + sensingFx * sensingStrength * agentMaxSpeed;
+    ay = ay + sensingFy * sensingStrength * agentMaxSpeed;
   }
 
   for (var pointIndex = 0u; pointIndex < guideMeta.pointCount; pointIndex = pointIndex + 1u) {
@@ -463,6 +578,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var ac = 0u;
   var sx = 0.0;
   var sy = 0.0;
+  var qcx = 0.0;
+  var qcy = 0.0;
+  var qvx = 0.0;
+  var qvy = 0.0;
+  var qc = 0u;
 
   for (var j = 0u; j < simMeta.agentCount; j = j + 1u) {
     if (j == i) {
@@ -482,19 +602,46 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let dx = ox - xi;
     let dy = oy - yi;
     let d2 = dx * dx + dy * dy;
+    let neighborQuorum = quorumEnabled && quorumMembers[j] != 0u;
 
-    if (d2 < nd2) {
-      cx = cx + ox;
-      cy = cy + oy;
-      cc = cc + 1u;
-      avx = avx + agentValue(j, VX);
-      avy = avy + agentValue(j, VY);
-      ac = ac + 1u;
-    }
-    if (d2 < sd2 && d2 > 0.0) {
-      let d = sqrt(d2);
-      sx = sx - dx / d;
-      sy = sy - dy / d;
+    if (focalQuorum) {
+      if (neighborQuorum) {
+        if (d2 < nd2) {
+          cx = cx + ox;
+          cy = cy + oy;
+          cc = cc + 1u;
+          avx = avx + agentValue(j, VX);
+          avy = avy + agentValue(j, VY);
+          ac = ac + 1u;
+        }
+        if (d2 < sd2 && d2 > 0.0) {
+          let d = sqrt(d2);
+          sx = sx - dx / d;
+          sy = sy - dy / d;
+        }
+      }
+    } else if (neighborQuorum) {
+      if (d2 < nd2 || d2 < sd2) {
+        qcx = qcx + ox;
+        qcy = qcy + oy;
+        qvx = qvx + agentValue(j, VX);
+        qvy = qvy + agentValue(j, VY);
+        qc = qc + 1u;
+      }
+    } else {
+      if (d2 < nd2) {
+        cx = cx + ox;
+        cy = cy + oy;
+        cc = cc + 1u;
+        avx = avx + agentValue(j, VX);
+        avy = avy + agentValue(j, VY);
+        ac = ac + 1u;
+      }
+      if (d2 < sd2 && d2 > 0.0) {
+        let d = sqrt(d2);
+        sx = sx - dx / d;
+        sy = sy - dy / d;
+      }
     }
   }
 
@@ -515,6 +662,40 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (separation > 0.0) {
     ax = ax + sx * separation * sepMul;
     ay = ay + sy * separation * sepMul;
+  }
+
+  if (!focalQuorum && qc > 0u && quorumCompositeStrength > 0.0) {
+    let compositeCenter = vec2f(qcx / f32(qc), qcy / f32(qc));
+    if (cohesion > 0.0) {
+      let toComposite = compositeCenter - vec2f(xi, yi);
+      let compositeDist = max(length(toComposite), 1.0);
+      let compositeDesired = (toComposite / compositeDist) * agentMaxSpeed;
+      ax = ax + (compositeDesired.x - vx) * cohesion * cohMul * quorumCompositeStrength;
+      ay = ay + (compositeDesired.y - vy) * cohesion * cohMul * quorumCompositeStrength;
+    }
+
+    if (alignment > 0.0) {
+      let compositeSpeed = length(vec2f(qvx, qvy));
+      var compositeVx = qvx;
+      var compositeVy = qvy;
+      if (compositeSpeed > agentMaxSpeed && compositeSpeed > 0.0) {
+        let compositeScale = agentMaxSpeed / compositeSpeed;
+        compositeVx = compositeVx * compositeScale;
+        compositeVy = compositeVy * compositeScale;
+      }
+      ax = ax + (compositeVx - vx) * alignment * quorumCompositeStrength;
+      ay = ay + (compositeVy - vy) * alignment * quorumCompositeStrength;
+    }
+
+    if (separation > 0.0) {
+      let compositeDelta = compositeCenter - vec2f(xi, yi);
+      let compositeDist2 = dot(compositeDelta, compositeDelta);
+      if (compositeDist2 < sd2 && compositeDist2 > 0.0) {
+        let compositeDist = sqrt(compositeDist2);
+        ax = ax - (compositeDelta.x / compositeDist) * separation * sepMul * quorumCompositeStrength;
+        ay = ay - (compositeDelta.y / compositeDist) * separation * sepMul * quorumCompositeStrength;
+      }
+    }
   }
 
   vx = vx + ax;
@@ -568,6 +749,119 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   outAgents[agentIndex(i, AY)] = ay;
   outAgents[agentIndex(i, WA)] = wa;
   outAgents[agentIndex(i, LIFE)] = agentValue(i, LIFE) + 1.0;
+}
+`;
+  }
+
+  _quorumShaderCode() {
+    return `
+const STRIDE : u32 = ${AGENT_STRIDE}u;
+const X : u32 = 0u;
+const Y : u32 = 1u;
+const VX : u32 = 2u;
+const VY : u32 = 3u;
+const FLAGS : u32 = 15u;
+const FLAG_ALIVE : u32 = 1u;
+const PI : f32 = 3.141592653589793;
+const TAU : f32 = 6.283185307179586;
+
+struct ParamsBuffer {
+  values : array<f32, ${PARAMS_LEN}>,
+}
+
+struct SimMeta {
+  agentCount : u32,
+  _pad0 : u32,
+  width : f32,
+  height : f32,
+}
+
+@group(0) @binding(0) var<storage, read> inAgents : array<f32>;
+@group(0) @binding(1) var<storage, read> params : ParamsBuffer;
+@group(0) @binding(2) var<uniform> simMeta : SimMeta;
+@group(0) @binding(3) var<storage, read_write> quorumMembers : array<u32>;
+
+fn agentIndex(agent : u32, field : u32) -> u32 {
+  return agent * STRIDE + field;
+}
+
+fn agentValue(agent : u32, field : u32) -> f32 {
+  return inAgents[agentIndex(agent, field)];
+}
+
+fn inFov(xi : f32, yi : f32, vx : f32, vy : f32, ox : f32, oy : f32, fovRad : f32) -> bool {
+  if (fovRad >= TAU - 0.001) {
+    return true;
+  }
+  let speed = length(vec2f(vx, vy));
+  if (speed <= 0.0001) {
+    return true;
+  }
+  let toOther = vec2f(ox - xi, oy - yi);
+  let dist = length(toOther);
+  if (dist <= 0.0001) {
+    return true;
+  }
+  let dir = vec2f(vx, vy) / speed;
+  let toDir = toOther / dist;
+  return dot(dir, toDir) >= cos(fovRad * 0.5);
+}
+
+@compute @workgroup_size(${WORKGROUP_SIZE})
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let i = gid.x;
+  if (i >= simMeta.agentCount) {
+    return;
+  }
+
+  let flags = u32(max(agentValue(i, FLAGS), 0.0));
+  if ((flags & FLAG_ALIVE) == 0u) {
+    quorumMembers[i] = 0u;
+    return;
+  }
+
+  let threshold = u32(max(params.values[14], 0.0));
+  if (threshold < 2u) {
+    quorumMembers[i] = 0u;
+    return;
+  }
+
+  let neighborRadius = max(params.values[24], 1.0);
+  let neighborRadius2 = neighborRadius * neighborRadius;
+  let fovRad = params.values[12] * PI / 180.0;
+  let xi = agentValue(i, X);
+  let yi = agentValue(i, Y);
+  let vx = agentValue(i, VX);
+  let vy = agentValue(i, VY);
+  var seen = 0u;
+
+  for (var j = 0u; j < simMeta.agentCount; j = j + 1u) {
+    if (j == i) {
+      continue;
+    }
+    let otherFlags = u32(max(agentValue(j, FLAGS), 0.0));
+    if ((otherFlags & FLAG_ALIVE) == 0u) {
+      continue;
+    }
+
+    let ox = agentValue(j, X);
+    let oy = agentValue(j, Y);
+    if (!inFov(xi, yi, vx, vy, ox, oy, fovRad)) {
+      continue;
+    }
+
+    let dx = ox - xi;
+    let dy = oy - yi;
+    if (dx * dx + dy * dy < neighborRadius2) {
+      seen = seen + 1u;
+      if (seen >= threshold) {
+        quorumMembers[i] = 1u;
+        return;
+      }
+    }
+  }
+
+  quorumMembers[i] = 0u;
 }
 `;
   }
@@ -712,6 +1006,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
     const outputIndex = 1 - this._activeBufferIndex;
     const encoder = this.device.createCommandEncoder();
+    const quorumPass = encoder.beginComputePass();
+    quorumPass.setPipeline(this.quorumPipeline);
+    quorumPass.setBindGroup(0, this.quorumBindGroups[this._activeBufferIndex]);
+    quorumPass.dispatchWorkgroups(Math.ceil(read.count / WORKGROUP_SIZE));
+    quorumPass.end();
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroups[this._activeBufferIndex]);
@@ -778,6 +1077,22 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   uploadSensing(luminance, w, h) {
     this.helper.uploadSensing(luminance, w, h);
+    if (!this.ready) return;
+    this._ensureSensingTexture(w, h);
+    this.device.queue.writeTexture(
+      { texture: this.sensingTexture },
+      luminance,
+      {
+        offset: 0,
+        bytesPerRow: Math.max(1, Math.floor(w || 0)),
+        rowsPerImage: Math.max(1, Math.floor(h || 0)),
+      },
+      {
+        width: Math.max(1, Math.floor(w || 0)),
+        height: Math.max(1, Math.floor(h || 0)),
+        depthOrArrayLayers: 1,
+      },
+    );
   }
 
   get wasm() {
