@@ -77,6 +77,8 @@ export function init_sensing(w: number, h: number): void;
  */
 export function remove_agent(id: number): void;
 
+export function set_group_range(start_index: number, end_index: number, group_id: number): void;
+
 export function set_leader_range(start_index: number, end_index: number, leader_count: number): void;
 
 /**
@@ -168,6 +170,7 @@ export interface InitOutput {
     readonly get_stride: () => number;
     readonly init_sensing: (a: number, b: number) => void;
     readonly remove_agent: (a: number) => void;
+    readonly set_group_range: (a: number, b: number, c: number) => void;
     readonly sim_init: (a: number, b: number, c: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly update_sensing: () => void;

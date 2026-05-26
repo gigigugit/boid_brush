@@ -296,8 +296,8 @@ fn apply_composite_neighbor_force(
     }
 
     if params.alignment > 0.0 && composite.alignment_weight > 0.0 {
-        let mut composite_vx = composite.alignment_vx / composite.alignment_weight;
-        let mut composite_vy = composite.alignment_vy / composite.alignment_weight;
+        let mut composite_vx = composite.alignment_vx;
+        let mut composite_vy = composite.alignment_vy;
         let composite_speed = (composite_vx * composite_vx + composite_vy * composite_vy).sqrt();
         if composite_speed > max_speed {
             let scale = max_speed / composite_speed;

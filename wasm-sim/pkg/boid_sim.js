@@ -209,6 +209,15 @@ export function remove_agent(id) {
 /**
  * @param {number} start_index
  * @param {number} end_index
+ * @param {number} group_id
+ */
+export function set_group_range(start_index, end_index, group_id) {
+    wasm.set_group_range(start_index, end_index, group_id);
+}
+
+/**
+ * @param {number} start_index
+ * @param {number} end_index
  * @param {number} leader_count
  */
 export function set_leader_range(start_index, end_index, leader_count) {
