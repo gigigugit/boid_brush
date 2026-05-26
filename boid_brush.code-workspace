@@ -11,6 +11,7 @@
 			"open-pages": [
 				"pinyfakepage.html"
 			]
-		}
+		},
+		"liveServer.settings.multiRootWorkspaceName": "agents-overlay-controls-svg-mockup"
 	}
 }

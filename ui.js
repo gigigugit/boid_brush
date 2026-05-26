@@ -701,7 +701,7 @@ export function buildSidebar(app) {
       </div>
       <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
-        <button id="btnResetDefaults" class="reset-btn">🏭 Factory Reset</button>
+        <button id="btnResetDefaults" class="reset-btn">🧼 Fresh Start</button>
       </div>
     </div>
     <div id="simControlStore" style="display:none" aria-hidden="true">
@@ -885,7 +885,7 @@ export function buildSidebar(app) {
     app.resetPerformanceTelemetry();
   });
   document.getElementById('btnResetDefaults')?.addEventListener('click', async () => {
-    if (confirm('Reset all controls to factory defaults?')) {
+    if (confirm('Delete all saved app data, presets, and settings, then reload fresh?')) {
       await app.reloadAppWithCacheBust({ wipeSession: true });
     }
   });

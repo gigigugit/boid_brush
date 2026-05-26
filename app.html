@@ -45,6 +45,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #sidebar,#sidebar *{touch-action:pan-y;}
 #antMathPanel,#antMathPanel *{touch-action:pan-y;}
 #simOverlaySidebar,#simOverlaySidebar *{touch-action:pan-y;}
+#simFormatMenu,#simFormatMenu *{touch-action:pan-y;}
 #topbar,#topbar *{touch-action:pan-x;}
 
 /* ---- Canvas Area ---- */
@@ -195,6 +196,22 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-pill.warn:hover{background:rgba(255,59,48,0.4);color:#fff;}
 .sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
 .sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
+#simPlaybackBar{position:fixed;left:50%;bottom:calc(var(--status-h) + 14px);transform:translate(-50%,12px);z-index:19;display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:min(94vw,960px);padding:9px 12px;border:1px solid var(--line-0);border-radius:16px;background:rgba(14,18,28,0.92);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);}
+#simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
+#simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
+#simPlaybackBar .sim-status{padding:0 6px;white-space:nowrap;}
+.sim-playback-divider{width:1px;height:22px;background:rgba(255,255,255,0.08);}
+.sim-playback-readout{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border-radius:999px;background:rgba(6,10,18,0.9);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03);color:#dfe7f8;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-variant-numeric:tabular-nums;white-space:nowrap;}
+#simRecordBtn.recording{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.52);color:#fff;box-shadow:0 0 10px rgba(224,80,80,0.32);animation:simRecordPulse 1.05s ease-in-out infinite;}
+#simExportBtn:disabled,#simResetBtn:disabled{opacity:0.48;cursor:not-allowed;box-shadow:none;}
+#simExportBtn:disabled:hover,#simResetBtn:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
+@keyframes simRecordPulse{0%,100%{box-shadow:0 0 0 0 rgba(224,80,80,0.08),0 0 10px rgba(224,80,80,0.32);}50%{box-shadow:0 0 0 8px rgba(224,80,80,0),0 0 16px rgba(224,80,80,0.48);}}
+@media (max-width: 760px){
+  #simPlaybackBar{left:10px;right:10px;bottom:calc(var(--status-h) + 10px);transform:translateY(12px);max-width:none;}
+  #simPlaybackBar.open{transform:translateY(0);}
+  #simPlaybackBar .sim-pill{flex:1 1 auto;}
+  .sim-playback-divider{display:none;}
+}
 
 /* Preset buttons */
 .preset-item{display:flex;align-items:center;gap:4px;margin:2px 0;}
@@ -283,6 +300,60 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-inspector-value{font-size:9px;color:#8e98aa;white-space:nowrap;}
 .sim-inspector-list{display:flex;flex-wrap:wrap;gap:4px;}
 .sim-inspector-divider{height:1px;background:rgba(255,255,255,0.08);margin:10px 0;}
+.sim-guide-panel-summary{font-size:10px;line-height:1.4;color:#a9b3c5;padding:8px 10px;border:1px solid rgba(255,255,255,0.06);border-radius:10px;background:rgba(255,255,255,0.03);margin-bottom:6px;}
+.sim-guide-layer-list{display:grid;gap:6px;}
+.sim-guide-layer{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:9px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);cursor:pointer;transition:background 140ms ease,border-color 140ms ease,transform 140ms ease,opacity 140ms ease;}
+.sim-guide-layer:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.16);transform:translateY(-1px);}
+.sim-guide-layer.active{background:rgba(58,106,232,0.22);border-color:rgba(117,162,255,0.48);box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset;}
+.sim-guide-layer.disabled{opacity:0.62;}
+.sim-guide-layer-icon{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.08);color:#f1f5ff;font-size:13px;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.05);}
+.sim-guide-layer-main{min-width:0;display:grid;gap:2px;}
+.sim-guide-layer-title{font-size:11px;font-weight:700;color:#eef3ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sim-guide-layer-meta{font-size:9px;color:#8e98aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sim-guide-layer-actions{display:flex;align-items:center;gap:6px;}
+.sim-guide-layer-toggle,.sim-guide-layer-delete{min-width:30px;padding:4px 7px!important;border-radius:999px!important;font-size:9px!important;letter-spacing:.04em;text-transform:uppercase;}
+.sim-guide-layer-toggle.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b))!important;border-color:rgba(117,162,255,0.55)!important;color:#fff!important;}
+.sim-guide-layer-delete{background:rgba(138,52,52,0.72)!important;border-color:rgba(225,99,99,0.28)!important;color:#ffd6d6!important;}
+.sim-guide-layer-delete:hover{background:rgba(255,59,48,0.38)!important;color:#fff!important;}
+#simFormatMenu{position:fixed;top:calc(var(--topbar-h) + 18px);right:calc(min(296px, 92vw) + 18px);width:max-content;max-width:none;overflow:visible;display:none;z-index:23;padding:0;border-radius:12px;background:rgba(12,15,22,0.96);backdrop-filter:blur(20px);border:1px solid var(--line-1);box-shadow:var(--shadow-lg);cursor:grab;}
+#simFormatMenu.open{display:block;}
+#simFormatMenu.dragging{cursor:grabbing;user-select:none;}
+#simFormatMenu::-webkit-scrollbar{width:5px;}
+#simFormatMenu::-webkit-scrollbar-track{background:transparent;}
+#simFormatMenu::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+.sim-format-shell{padding:6px;width:max-content;}
+.sim-format-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow:visible;width:max-content;max-width:none;cursor:grab;}
+.sim-format-row > *{flex:0 0 auto;}
+.sim-format-chip,.sim-format-color,.sim-format-reset,.sim-format-close{min-height:28px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.05);color:#edf2ff;font-size:10px;}
+.sim-format-chip{position:relative;display:inline-flex;align-items:center;gap:4px;padding:3px 6px;cursor:grab;}
+.sim-format-chip-label{font-size:10px;color:#9fb0cf;font-weight:700;letter-spacing:.01em;white-space:nowrap;}
+.sim-format-number,.sim-format-select{height:22px;min-width:52px;background:rgba(6,10,18,0.92);color:var(--select-text);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:2px 6px;font-size:10px;line-height:1.1;}
+.sim-format-number{width:56px;}
+.sim-format-select{padding-right:22px;color-scheme:dark;}
+.sim-format-trigger{width:20px;height:22px;padding:0!important;border-radius:6px!important;border:1px solid rgba(255,255,255,0.1)!important;background:rgba(255,255,255,0.07)!important;color:#dbe5ff!important;font-size:10px!important;line-height:1!important;}
+.sim-format-trigger:hover{background:rgba(255,255,255,0.12)!important;}
+.sim-format-color{width:28px;min-width:28px;height:28px;border:2px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;background:transparent;}
+.sim-format-color:hover{border-color:rgba(255,255,255,0.35);}
+.sim-format-color::-webkit-color-swatch-wrapper{padding:1px;}
+.sim-format-color::-webkit-color-swatch{border:none;border-radius:6px;}
+.sim-format-color::-moz-color-swatch{border:none;border-radius:6px;}
+.sim-format-chip-toggle{padding-right:4px;}
+.sim-format-chip-toggle input[type="checkbox"]{margin:0;width:14px;height:14px;accent-color:#6f9cff;}
+.sim-format-reset,.sim-format-close{display:inline-flex;align-items:center;justify-content:center;padding:0 9px!important;font-size:10px!important;font-weight:700;white-space:nowrap;}
+.sim-format-reset{background:rgba(255,255,255,0.08)!important;color:#f2f6ff!important;}
+.sim-format-close{width:28px;padding:0!important;background:rgba(128,48,48,0.75)!important;color:#ffe3e3!important;border-color:rgba(255,99,99,0.22)!important;}
+.sim-format-popover{position:absolute;left:50%;top:calc(100% + 8px);bottom:auto;transform:translateX(-50%);display:none;z-index:40;padding:8px 6px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,14,22,0.97);box-shadow:0 18px 34px rgba(0,0,0,0.42);cursor:default;pointer-events:auto;}
+.sim-format-popover.open{display:block;}
+.sim-format-popover.above{top:auto;bottom:calc(100% + 8px);}
+.sim-format-slider-popover{width:44px;height:164px;}
+.sim-format-slider-wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;overflow:hidden;}
+.sim-format-slider{width:124px;height:22px;transform:rotate(-90deg);accent-color:#78a7ff;}
+@media (max-width: 1180px){
+  #simFormatMenu{right:16px;top:calc(var(--topbar-h) + 18px);}
+}
+@media (max-width: 760px){
+  #simFormatMenu{top:auto;right:10px;left:10px;bottom:calc(var(--status-h) + 10px);}
+}
 .sim-help-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:120;}
 .sim-help-modal.open{display:flex;}
 .sim-help-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);}
@@ -293,6 +364,27 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-help-panel ul{margin:6px 0 0 16px;padding:0;}
 .sim-help-close{position:absolute;top:10px;right:12px;border:none;background:none;color:#93a0b7;font-size:20px;cursor:pointer;}
 .sim-help-close:hover{color:#fff;}
+.sim-distribute-panel{position:relative;width:min(440px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;display:grid;gap:14px;}
+.sim-distribute-panel h2{margin:0;font-size:18px;color:#fff;}
+.sim-distribute-subtitle{color:#9aa7bd;line-height:1.45;}
+.sim-distribute-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+.sim-distribute-field{display:grid;gap:6px;}
+.sim-distribute-field label{display:block;color:#aeb9cd;font-size:11px;font-weight:600;letter-spacing:.02em;}
+.sim-distribute-field input,.sim-distribute-field select{width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e8eefb;padding:8px 10px;font-size:12px;font-family:inherit;color-scheme:dark;}
+.sim-distribute-previewShell{display:grid;gap:8px;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);}
+.sim-distribute-previewHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:10px;color:#9aa7bd;text-transform:uppercase;letter-spacing:.08em;}
+.sim-distribute-preview{position:relative;height:48px;border-radius:999px;border:1px solid rgba(255,255,255,0.08);background:linear-gradient(180deg,rgba(8,12,20,0.92),rgba(14,20,32,0.86));overflow:hidden;}
+.sim-distribute-preview::before{content:'';position:absolute;left:12px;right:12px;top:50%;height:2px;transform:translateY(-50%);background:linear-gradient(90deg,rgba(120,180,255,0.2),rgba(120,180,255,0.45),rgba(120,180,255,0.2));}
+.sim-distribute-preview-dot{position:absolute;top:50%;width:12px;height:12px;border-radius:50%;transform:translate(-50%,-50%);background:#7cb8ff;border:2px solid rgba(9,14,24,0.96);box-shadow:0 0 0 2px rgba(124,184,255,0.24);}
+.sim-distribute-preview-dot.radius{background:#ff69d6;box-shadow:0 0 0 2px rgba(255,105,214,0.24);}
+.sim-distribute-preview-meta{font-size:11px;color:#c6d0e4;line-height:1.45;}
+.sim-distribute-actions{display:flex;justify-content:flex-end;gap:8px;}
+.sim-distribute-actions button{padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#e8eefb;cursor:pointer;font-size:11px;font-weight:600;}
+.sim-distribute-actions button:hover{background:rgba(255,255,255,0.12);}
+.sim-distribute-actions .primary{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+@media (max-width: 640px){
+  .sim-distribute-grid{grid-template-columns:1fr;}
+}
 
 /* Edge sliders - left side quick controls */
 #edgeSliders,#edgeSliders *{touch-action:none;}
@@ -318,6 +410,25 @@ html,body{overflow:hidden;width:100%;height:100%;
 #canvasSizeModal.open{display:flex;}
 #canvasSizeModal select{background:var(--select-bg)!important;color:var(--select-text)!important;border-color:rgba(255,255,255,0.18)!important;color-scheme:dark;}
 #canvasSizeModal select option,#canvasSizeModal select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#simExportModal{display:none;position:fixed;inset:0;z-index:201;align-items:center;justify-content:center;}
+#simExportModal.open{display:flex;}
+.sim-export-panel{width:min(468px,92vw);}
+.sim-export-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px;}
+.sim-export-field{display:grid;gap:6px;}
+.sim-export-field label{display:block;color:#aeb9cd;font-size:11px;font-weight:600;letter-spacing:.02em;}
+.sim-export-field select{width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#e8eefb;padding:8px 10px;font-size:12px;font-family:inherit;color-scheme:dark;}
+.sim-export-field select option,.sim-export-field select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+.sim-export-status{margin-top:14px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#d9e2f5;font-size:11px;line-height:1.45;}
+.sim-export-note{margin-top:10px;color:#9aa7bd;font-size:11px;line-height:1.45;}
+.sim-export-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}
+.sim-export-actions button{padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#e8eefb;cursor:pointer;font-size:11px;font-weight:600;}
+.sim-export-actions button:hover{background:rgba(255,255,255,0.12);}
+.sim-export-actions button.primary{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+.sim-export-actions button:disabled{opacity:0.48;cursor:not-allowed;}
+.sim-export-actions button:disabled:hover{background:rgba(255,255,255,0.06);}
+@media (max-width: 640px){
+  .sim-export-grid{grid-template-columns:1fr;}
+}
 #motionPathEditor{display:none;position:fixed;inset:0;z-index:205;}
 #motionPathEditor.open{display:block;}
 .motion-path-editor-backdrop{position:absolute;inset:0;background:rgba(4,8,16,0.82);backdrop-filter:blur(10px);}
@@ -509,6 +620,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </div>
     <div class="sim-hud-body" id="simHudBody">
       <div class="sim-row sim-stack" id="simToolRow">
+        <button class="sim-pill" data-sim-tool="select">Select</button>
         <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
         <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
         <button class="sim-pill" data-sim-tool="attract">Attract</button>
@@ -522,16 +634,25 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         <button class="sim-pill warn" id="simClearBtn">Clear</button>
       </div>
       <div class="sim-row sim-stack">
-        <button class="sim-pill active" id="simRunBtn">Run</button>
-        <button class="sim-pill" id="simPauseBtn">Pause</button>
-        <button class="sim-pill warn" id="simStopBtn">Stop</button>
         <button class="sim-pill" id="simStepBackBtn" type="button">Step Path -</button>
         <button class="sim-pill" id="simStepForwardBtn" type="button">Step Path +</button>
         <button class="sim-pill active" id="simInspectorToggle">Settings</button>
-        <span class="sim-status" id="simStatus">Ready</span>
       </div>
     </div>
   </div>
+</div>
+
+<div id="simPlaybackBar" aria-label="Simulation playback controls">
+  <button class="sim-pill active" id="simRunBtn" type="button">▶ Run</button>
+  <button class="sim-pill" id="simPauseBtn" type="button">⏸ Pause</button>
+  <button class="sim-pill warn" id="simStopBtn" type="button">⏹ Stop</button>
+  <button class="sim-pill" id="simResetBtn" type="button">↻ Reset</button>
+  <span class="sim-playback-divider" aria-hidden="true"></span>
+  <span class="sim-playback-readout" id="simFrameCounter">Frame 0000</span>
+  <span class="sim-playback-divider" aria-hidden="true"></span>
+  <button class="sim-pill" id="simRecordBtn" type="button">⏺ Record</button>
+  <button class="sim-pill" id="simExportBtn" type="button">Export</button>
+  <span class="sim-status" id="simStatus">Ready</span>
 </div>
 
 <!-- Left Edge Sliders -->
@@ -570,6 +691,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Simulation Overlay Sidebar ══════════ -->
 <div id="simOverlaySidebar"></div>
+<div id="simFormatMenu"></div>
 <button id="simOverlayHandle" type="button" aria-controls="simOverlaySidebar" aria-expanded="false">Simulation</button>
 
 <!-- ══════════ Ant Math Overlay Panel ══════════ -->
@@ -612,6 +734,106 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <li>Outside Simulation mode, boid and ant brushes keep using the normal sidebar settings.</li>
       <li>Simulation mode layers per-item overrides on top of those brush defaults.</li>
     </ul>
+  </div>
+</div>
+
+<div id="simDistributePointsModal" class="sim-help-modal">
+  <div class="sim-help-backdrop" id="simDistributePointsBackdrop"></div>
+  <div class="sim-distribute-panel" role="dialog" aria-modal="true" aria-labelledby="simDistributePointsTitle">
+    <button class="sim-help-close" id="simDistributePointsClose" aria-label="Close distribute points dialog">✕</button>
+    <div>
+      <h2 id="simDistributePointsTitle">Distribute Path Points</h2>
+      <p class="sim-distribute-subtitle" id="simDistributePointsSubtitle">Populate the selected path with evenly managed control points instead of placing each one by hand.</p>
+    </div>
+    <div class="sim-distribute-grid">
+      <div class="sim-distribute-field">
+        <label for="simDistributePointCount">Count</label>
+        <input id="simDistributePointCount" type="number" min="2" max="20" step="1" value="5">
+      </div>
+      <div class="sim-distribute-field">
+        <label for="simDistributePointType">Point Type</label>
+        <select id="simDistributePointType">
+          <option value="speed">Speed Points</option>
+          <option value="radius">Radius Points</option>
+        </select>
+      </div>
+      <div class="sim-distribute-field">
+        <label for="simDistributeMode">Distribution</label>
+        <select id="simDistributeMode">
+          <option value="uniform">Uniform</option>
+          <option value="gaussian">Gaussian</option>
+          <option value="random">Random</option>
+        </select>
+      </div>
+      <div class="sim-distribute-field">
+        <label for="simDistributeCurve">Curve Shape</label>
+        <select id="simDistributeCurve">
+          <option value="linear">Linear</option>
+          <option value="ease-in">Ease In</option>
+          <option value="ease-out">Ease Out</option>
+        </select>
+      </div>
+    </div>
+    <div class="sim-distribute-previewShell">
+      <div class="sim-distribute-previewHeader">
+        <span>Preview</span>
+        <span id="simDistributePreviewSummary">5 points</span>
+      </div>
+      <div class="sim-distribute-preview" id="simDistributePreview"></div>
+      <div class="sim-distribute-preview-meta" id="simDistributePreviewMeta">The current point set will be replaced on apply.</div>
+    </div>
+    <div class="sim-distribute-actions">
+      <button type="button" id="simDistributePointsCancel">Cancel</button>
+      <button type="button" class="primary" id="simDistributePointsApply">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="simExportModal">
+  <div class="ai-modal-backdrop" id="simExportBackdrop"></div>
+  <div class="ai-modal-panel sim-export-panel" role="dialog" aria-modal="true" aria-labelledby="simExportTitle">
+    <button class="ai-modal-close" id="simExportClose">✕</button>
+    <h2 id="simExportTitle">Simulation Export</h2>
+    <div class="ai-subtitle">Record the composite simulation playback and export the captured clip.</div>
+    <div class="sim-export-grid">
+      <div class="sim-export-field">
+        <label for="simExportFormat">Format</label>
+        <select id="simExportFormat">
+          <option value="webm">WebM</option>
+          <option value="gif">GIF</option>
+          <option value="mp4">MP4</option>
+        </select>
+      </div>
+      <div class="sim-export-field">
+        <label for="simExportFrameRate">Frame Rate</label>
+        <select id="simExportFrameRate">
+          <option value="12">12 FPS</option>
+          <option value="24">24 FPS</option>
+          <option value="30" selected>30 FPS</option>
+          <option value="60">60 FPS</option>
+        </select>
+      </div>
+      <div class="sim-export-field">
+        <label for="simExportQuality">Quality</label>
+        <select id="simExportQuality">
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high" selected>High</option>
+        </select>
+      </div>
+      <div class="sim-export-field">
+        <label for="simExportSource">Source</label>
+        <select id="simExportSource" disabled>
+          <option value="composite" selected>Composite Canvas</option>
+        </select>
+      </div>
+    </div>
+    <div class="sim-export-status" id="simExportStatusText">No recording captured yet.</div>
+    <div class="sim-export-note">Recording is captured internally as WebM from the visible simulation canvas. GIF and MP4 exports are transcoded client-side on demand.</div>
+    <div class="sim-export-actions">
+      <button id="simExportRecordAction" type="button">Start Recording</button>
+      <button id="simExportDownloadBtn" class="primary" type="button">Export Latest</button>
+    </div>
   </div>
 </div>
 
