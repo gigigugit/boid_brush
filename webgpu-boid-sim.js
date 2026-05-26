@@ -1,12 +1,17 @@
 import { BoidSim } from './wasm-bridge.js';
 
 const AGENT_STRIDE = 24;
-const PARAMS_LEN = 67;
+const PARAMS_LEN = 71;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
 const STAGING_BUFFER_COUNT = 2;
 const MAX_GPU_SIM_POINT_GUIDES = 32;
 const MAX_GPU_SIM_PATH_TARGETS = 16;
+const SUBGROUP_MEMBERSHIP_RULES = Object.freeze({
+  fluid: 0,
+  sticky: 1,
+  locked: 2,
+});
 
 function fillParamsArray(target, p, targetX, targetY, time) {
   target[0]  = p.seek ?? 0.4;
@@ -76,6 +81,10 @@ function fillParamsArray(target, p, targetX, targetY, time) {
   target[64] = p.leader?.satVar ?? 0;
   target[65] = p.leader?.litVar ?? 0;
   target[66] = p.leader?.simBoundsMargin ?? -1;
+  target[67] = SUBGROUP_MEMBERSHIP_RULES[p.subgroupMembershipRule] ?? SUBGROUP_MEMBERSHIP_RULES.fluid;
+  target[68] = p.subgroupCrossCohesion ?? 1;
+  target[69] = p.subgroupCrossAlignment ?? 1;
+  target[70] = p.subgroupCrossSeparation ?? 1;
 }
 
 function packMeta(agentCount, width, height) {
@@ -101,11 +110,6 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  if ((p?.subgroupMembershipRule || 'fluid') !== 'fluid') return false;
-  if ((p?.subgroupEntryRule || 'new') !== 'new') return false;
-  if (Math.abs((p?.subgroupCrossCohesion ?? 1) - 1) > 1e-6) return false;
-  if (Math.abs((p?.subgroupCrossAlignment ?? 1) - 1) > 1e-6) return false;
-  if (Math.abs((p?.subgroupCrossSeparation ?? 1) - 1) > 1e-6) return false;
   return true;
 }
 
@@ -137,15 +141,18 @@ export class WebGPUBoidSim {
     this.device = null;
     this.pipeline = null;
     this.quorumPipeline = null;
+    this.subgroupPipeline = null;
     this.paramsBuffer = null;
     this.metaBuffer = null;
     this.guideMetaBuffer = null;
     this.pointGuideBuffer = null;
     this.pathTargetBuffer = null;
     this.quorumBuffer = null;
+    this.subgroupBuffer = null;
     this.agentBuffers = [];
     this.bindGroups = [];
     this.quorumBindGroups = [];
+    this.subgroupBindGroups = [];
     this.sensingTexture = null;
     this.sensingTextureView = null;
     this._sensingTextureWidth = 0;
@@ -199,6 +206,10 @@ export class WebGPUBoidSim {
       size: this.maxAgents * Uint32Array.BYTES_PER_ELEMENT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+    this.subgroupBuffer = this.device.createBuffer({
+      size: this.maxAgents * Uint32Array.BYTES_PER_ELEMENT,
+      usage: GPUBufferUsage.STORAGE,
+    });
     this._ensureSensingTexture(1, 1);
     this.device.queue.writeTexture(
       { texture: this.sensingTexture },
@@ -217,6 +228,18 @@ export class WebGPUBoidSim {
       });
     }
 
+    _createSubgroupBindGroup(inputIndex) {
+      return this.device.createBindGroup({
+        layout: this.subgroupPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.agentBuffers[inputIndex] } },
+          { binding: 1, resource: { buffer: this.paramsBuffer } },
+          { binding: 2, resource: { buffer: this.metaBuffer } },
+          { binding: 3, resource: { buffer: this.subgroupBuffer } },
+        ],
+      });
+    }
+
     this.pipeline = this.device.createComputePipeline({
       layout: 'auto',
       compute: {
@@ -231,6 +254,13 @@ export class WebGPUBoidSim {
         entryPoint: 'main',
       },
     });
+    this.subgroupPipeline = this.device.createComputePipeline({
+      layout: 'auto',
+      compute: {
+        module: this.device.createShaderModule({ code: this._subgroupShaderCode() }),
+        entryPoint: 'main',
+      },
+    });
     this.bindGroups = [
       this._createBindGroup(0, 1),
       this._createBindGroup(1, 0),
@@ -238,6 +268,10 @@ export class WebGPUBoidSim {
     this.quorumBindGroups = [
       this._createQuorumBindGroup(0),
       this._createQuorumBindGroup(1),
+    ];
+    this.subgroupBindGroups = [
+      this._createSubgroupBindGroup(0),
+      this._createSubgroupBindGroup(1),
     ];
     this.ready = true;
   }
@@ -255,6 +289,7 @@ export class WebGPUBoidSim {
           { binding: 6, resource: { buffer: this.guideMetaBuffer } },
           { binding: 7, resource: this.sensingTextureView },
           { binding: 8, resource: { buffer: this.quorumBuffer } },
+          { binding: 9, resource: { buffer: this.subgroupBuffer } },
         ],
       });
   }
@@ -318,6 +353,7 @@ const SPD_M : u32 = 16u;
 const SEEK_M : u32 = 17u;
 const COH_M : u32 = 18u;
 const SEP_M : u32 = 19u;
+const GROUP_ID : u32 = 23u;
 const FLAG_ALIVE : u32 = 1u;
 const FLAG_LEADER : u32 = 2u;
 const PI : f32 = 3.141592653589793;
@@ -360,6 +396,7 @@ struct GuideMeta {
 @group(0) @binding(6) var<uniform> guideMeta : GuideMeta;
 @group(0) @binding(7) var sensingTex : texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> quorumMembers : array<u32>;
+@group(0) @binding(9) var<storage, read> subgroupIds : array<u32>;
 
 fn agentIndex(agent : u32, field : u32) -> u32 {
   return agent * STRIDE + field;
@@ -468,10 +505,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let boundsMargin = select(params.values[33], params.values[66], isLeader);
   let simSpeed = max(params.values[34], 0.0);
   let leaderPull = clamp(params.values[35], 0.0, 1.0);
+  let subgroupCrossCohesion = clamp(params.values[68], 0.0, 1.0);
+  let subgroupCrossAlignment = clamp(params.values[69], 0.0, 1.0);
+  let subgroupCrossSeparation = clamp(params.values[70], 0.0, 1.0);
 
   let xi = agentValue(i, X);
   let yi = agentValue(i, Y);
   let focalQuorum = quorumEnabled && quorumMembers[i] != 0u;
+  let focalGroup = subgroupIds[i];
   var vx = agentValue(i, VX);
   var vy = agentValue(i, VY);
   var wa = agentValue(i, WA);
@@ -611,18 +652,21 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   let nd2 = neighborRadius * neighborRadius;
   let sd2 = separationRadius * separationRadius;
-  var cx = 0.0;
-  var cy = 0.0;
-  var cc = 0u;
-  var avx = 0.0;
-  var avy = 0.0;
-  var ac = 0u;
-  var sx = 0.0;
-  var sy = 0.0;
-  var qcx = 0.0;
-  var qcy = 0.0;
-  var qvx = 0.0;
-  var qvy = 0.0;
+  var cohesionX = 0.0;
+  var cohesionY = 0.0;
+  var cohesionWeight = 0.0;
+  var alignmentVx = 0.0;
+  var alignmentVy = 0.0;
+  var alignmentWeight = 0.0;
+  var separationX = 0.0;
+  var separationY = 0.0;
+  var compositeCohesionX = 0.0;
+  var compositeCohesionY = 0.0;
+  var compositeCohesionWeight = 0.0;
+  var compositeAlignmentVx = 0.0;
+  var compositeAlignmentVy = 0.0;
+  var compositeAlignmentWeight = 0.0;
+  var compositeSeparationWeight = 0.0;
   var qc = 0u;
   var leaderCx = 0.0;
   var leaderCy = 0.0;
@@ -651,51 +695,63 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       leaderCy = leaderCy + oy;
       leaderCount = leaderCount + 1u;
     }
+    let neighborGroup = subgroupIds[j];
+    let sameGroup = focalGroup == 0u || neighborGroup == 0u || focalGroup == neighborGroup;
+    let cohesionScale = select(subgroupCrossCohesion, 1.0, sameGroup);
+    let alignmentScale = select(subgroupCrossAlignment, 1.0, sameGroup);
+    let separationScale = select(subgroupCrossSeparation, 1.0, sameGroup);
     let neighborQuorum = quorumEnabled && quorumMembers[j] != 0u;
 
     if (focalQuorum) {
       if (neighborQuorum) {
-        if (d2 < nd2) {
-          cx = cx + ox;
-          cy = cy + oy;
-          cc = cc + 1u;
-          avx = avx + agentValue(j, VX);
-          avy = avy + agentValue(j, VY);
-          ac = ac + 1u;
+        if (d2 < nd2 && cohesionScale > 0.0) {
+          cohesionX = cohesionX + ox * cohesionScale;
+          cohesionY = cohesionY + oy * cohesionScale;
+          cohesionWeight = cohesionWeight + cohesionScale;
         }
-        if (d2 < sd2 && d2 > 0.0) {
+        if (d2 < nd2 && alignmentScale > 0.0) {
+          alignmentVx = alignmentVx + agentValue(j, VX) * alignmentScale;
+          alignmentVy = alignmentVy + agentValue(j, VY) * alignmentScale;
+          alignmentWeight = alignmentWeight + alignmentScale;
+        }
+        if (d2 < sd2 && d2 > 0.0 && separationScale > 0.0) {
           let d = sqrt(d2);
-          sx = sx - dx / d;
-          sy = sy - dy / d;
+          separationX = separationX - (dx / d) * separationScale;
+          separationY = separationY - (dy / d) * separationScale;
         }
       }
     } else if (neighborQuorum) {
       if (d2 < nd2 || d2 < sd2) {
-        qcx = qcx + ox;
-        qcy = qcy + oy;
-        qvx = qvx + agentValue(j, VX);
-        qvy = qvy + agentValue(j, VY);
+        compositeCohesionX = compositeCohesionX + ox * cohesionScale;
+        compositeCohesionY = compositeCohesionY + oy * cohesionScale;
+        compositeCohesionWeight = compositeCohesionWeight + cohesionScale;
+        compositeAlignmentVx = compositeAlignmentVx + agentValue(j, VX) * alignmentScale;
+        compositeAlignmentVy = compositeAlignmentVy + agentValue(j, VY) * alignmentScale;
+        compositeAlignmentWeight = compositeAlignmentWeight + alignmentScale;
+        compositeSeparationWeight = compositeSeparationWeight + separationScale;
         qc = qc + 1u;
       }
     } else {
-      if (d2 < nd2) {
-        cx = cx + ox;
-        cy = cy + oy;
-        cc = cc + 1u;
-        avx = avx + agentValue(j, VX);
-        avy = avy + agentValue(j, VY);
-        ac = ac + 1u;
+      if (d2 < nd2 && cohesionScale > 0.0) {
+        cohesionX = cohesionX + ox * cohesionScale;
+        cohesionY = cohesionY + oy * cohesionScale;
+        cohesionWeight = cohesionWeight + cohesionScale;
       }
-      if (d2 < sd2 && d2 > 0.0) {
+      if (d2 < nd2 && alignmentScale > 0.0) {
+        alignmentVx = alignmentVx + agentValue(j, VX) * alignmentScale;
+        alignmentVy = alignmentVy + agentValue(j, VY) * alignmentScale;
+        alignmentWeight = alignmentWeight + alignmentScale;
+      }
+      if (d2 < sd2 && d2 > 0.0 && separationScale > 0.0) {
         let d = sqrt(d2);
-        sx = sx - dx / d;
-        sy = sy - dy / d;
+        separationX = separationX - (dx / d) * separationScale;
+        separationY = separationY - (dy / d) * separationScale;
       }
     }
   }
 
-  if (cc > 0u && cohesion > 0.0) {
-    let groupCenter = vec2f(cx / f32(cc), cy / f32(cc));
+  if (cohesionWeight > 0.0 && cohesion > 0.0) {
+    let groupCenter = vec2f(cohesionX / cohesionWeight, cohesionY / cohesionWeight);
     let toGroup = groupCenter - vec2f(xi, yi);
     let groupDist = max(length(toGroup), 1.0);
     let groupDesired = (toGroup / groupDist) * agentMaxSpeed;
@@ -703,19 +759,22 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     ay = ay + (groupDesired.y - vy) * cohesion * cohMul;
   }
 
-  if (ac > 0u && alignment > 0.0) {
-    ax = ax + ((avx / f32(ac)) - vx) * alignment;
-    ay = ay + ((avy / f32(ac)) - vy) * alignment;
+  if (alignmentWeight > 0.0 && alignment > 0.0) {
+    ax = ax + ((alignmentVx / alignmentWeight) - vx) * alignment;
+    ay = ay + ((alignmentVy / alignmentWeight) - vy) * alignment;
   }
 
   if (separation > 0.0) {
-    ax = ax + sx * separation * sepMul;
-    ay = ay + sy * separation * sepMul;
+    ax = ax + separationX * separation * sepMul;
+    ay = ay + separationY * separation * sepMul;
   }
 
   if (!focalQuorum && qc > 0u && quorumCompositeStrength > 0.0) {
-    let compositeCenter = vec2f(qcx / f32(qc), qcy / f32(qc));
-    if (cohesion > 0.0) {
+    let compositeCenter = vec2f(
+      select(0.0, compositeCohesionX / compositeCohesionWeight, compositeCohesionWeight > 0.0),
+      select(0.0, compositeCohesionY / compositeCohesionWeight, compositeCohesionWeight > 0.0),
+    );
+    if (cohesion > 0.0 && compositeCohesionWeight > 0.0) {
       let toComposite = compositeCenter - vec2f(xi, yi);
       let compositeDist = max(length(toComposite), 1.0);
       let compositeDesired = (toComposite / compositeDist) * agentMaxSpeed;
@@ -723,10 +782,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       ay = ay + (compositeDesired.y - vy) * cohesion * cohMul * quorumCompositeStrength;
     }
 
-    if (alignment > 0.0) {
-      let compositeSpeed = length(vec2f(qvx, qvy));
-      var compositeVx = qvx;
-      var compositeVy = qvy;
+    if (alignment > 0.0 && compositeAlignmentWeight > 0.0) {
+      let compositeSpeed = length(vec2f(compositeAlignmentVx, compositeAlignmentVy));
+      var compositeVx = compositeAlignmentVx;
+      var compositeVy = compositeAlignmentVy;
       if (compositeSpeed > agentMaxSpeed && compositeSpeed > 0.0) {
         let compositeScale = agentMaxSpeed / compositeSpeed;
         compositeVx = compositeVx * compositeScale;
@@ -741,13 +800,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       let compositeDist2 = dot(compositeDelta, compositeDelta);
       if (compositeDist2 < sd2 && compositeDist2 > 0.0) {
         let compositeDist = sqrt(compositeDist2);
-        ax = ax - (compositeDelta.x / compositeDist) * separation * sepMul * quorumCompositeStrength;
-        ay = ay - (compositeDelta.y / compositeDist) * separation * sepMul * quorumCompositeStrength;
+        let compositeSeparationScale = clamp(compositeSeparationWeight / f32(qc), 0.0, 1.0);
+        ax = ax - (compositeDelta.x / compositeDist) * separation * sepMul * quorumCompositeStrength * compositeSeparationScale;
+        ay = ay - (compositeDelta.y / compositeDist) * separation * sepMul * quorumCompositeStrength * compositeSeparationScale;
       }
     }
   }
 
-  if (!isLeader && !focalQuorum && leaderPull > 0.0 && leaderCount > 0u) {
+  if (!isLeader && leaderPull > 0.0 && leaderCount > 0u) {
     let leaderCenter = vec2f(leaderCx / f32(leaderCount), leaderCy / f32(leaderCount));
     let toLeader = leaderCenter - vec2f(xi, yi);
     let leaderDist = max(length(toLeader), 1.0);
@@ -807,6 +867,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   outAgents[agentIndex(i, AY)] = ay;
   outAgents[agentIndex(i, WA)] = wa;
   outAgents[agentIndex(i, LIFE)] = agentValue(i, LIFE) + 1.0;
+  outAgents[agentIndex(i, GROUP_ID)] = f32(focalGroup);
 }
 `;
   }
@@ -922,6 +983,172 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   quorumMembers[i] = 0u;
+}
+`;
+  }
+
+  _subgroupShaderCode() {
+    return `
+const STRIDE : u32 = ${AGENT_STRIDE}u;
+const X : u32 = 0u;
+const Y : u32 = 1u;
+const VX : u32 = 2u;
+const VY : u32 = 3u;
+const FLAGS : u32 = 15u;
+const GROUP_ID : u32 = 23u;
+const FLAG_ALIVE : u32 = 1u;
+const FLAG_LEADER : u32 = 2u;
+const PI : f32 = 3.141592653589793;
+const TAU : f32 = 6.283185307179586;
+const SUBGROUP_MEMBERSHIP_FLUID : u32 = 0u;
+const SUBGROUP_MEMBERSHIP_STICKY : u32 = 1u;
+const SUBGROUP_MEMBERSHIP_LOCKED : u32 = 2u;
+
+struct ParamsBuffer {
+  values : array<f32, ${PARAMS_LEN}>,
+}
+
+struct SimMeta {
+  agentCount : u32,
+  _pad0 : u32,
+  width : f32,
+  height : f32,
+}
+
+@group(0) @binding(0) var<storage, read> inAgents : array<f32>;
+@group(0) @binding(1) var<storage, read> params : ParamsBuffer;
+@group(0) @binding(2) var<uniform> simMeta : SimMeta;
+@group(0) @binding(3) var<storage, read_write> subgroupIds : array<u32>;
+
+fn agentIndex(agent : u32, field : u32) -> u32 {
+  return agent * STRIDE + field;
+}
+
+fn agentValue(agent : u32, field : u32) -> f32 {
+  return inAgents[agentIndex(agent, field)];
+}
+
+fn inFov(xi : f32, yi : f32, vx : f32, vy : f32, ox : f32, oy : f32, fovRad : f32) -> bool {
+  if (fovRad >= TAU - 0.001) {
+    return true;
+  }
+  let speed = length(vec2f(vx, vy));
+  if (speed <= 0.0001) {
+    return true;
+  }
+  let toOther = vec2f(ox - xi, oy - yi);
+  let dist = length(toOther);
+  if (dist <= 0.0001) {
+    return true;
+  }
+  let dir = vec2f(vx, vy) / speed;
+  let toDir = toOther / dist;
+  return dot(dir, toDir) >= cos(fovRad * 0.5);
+}
+
+@compute @workgroup_size(${WORKGROUP_SIZE})
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let i = gid.x;
+  if (i >= simMeta.agentCount) {
+    return;
+  }
+
+  let flags = u32(max(agentValue(i, FLAGS), 0.0));
+  let isLeader = (flags & FLAG_LEADER) != 0u;
+  let currentGroup = u32(max(agentValue(i, GROUP_ID), 0.0));
+  if ((flags & FLAG_ALIVE) == 0u) {
+    subgroupIds[i] = currentGroup;
+    return;
+  }
+
+  let subgroupMembershipRule = u32(clamp(params.values[67], 0.0, 2.0));
+  if (subgroupMembershipRule == SUBGROUP_MEMBERSHIP_LOCKED) {
+    subgroupIds[i] = currentGroup;
+    return;
+  }
+
+  let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
+  let neighborRadius2 = neighborRadius * neighborRadius;
+  let fovRad = select(params.values[12], params.values[48], isLeader) * PI / 180.0;
+  let xi = agentValue(i, X);
+  let yi = agentValue(i, Y);
+  let vx = agentValue(i, VX);
+  let vy = agentValue(i, VY);
+  var dominantGroup = 0u;
+  var dominantCount = 0u;
+  var currentCount = 0u;
+  var groups : array<u32, 16>;
+  var counts : array<u32, 16>;
+  var used = 0u;
+
+  for (var j = 0u; j < simMeta.agentCount; j = j + 1u) {
+    if (j == i) {
+      continue;
+    }
+    let otherFlags = u32(max(agentValue(j, FLAGS), 0.0));
+    if ((otherFlags & FLAG_ALIVE) == 0u) {
+      continue;
+    }
+    let ox = agentValue(j, X);
+    let oy = agentValue(j, Y);
+    if (!inFov(xi, yi, vx, vy, ox, oy, fovRad)) {
+      continue;
+    }
+    let dx = ox - xi;
+    let dy = oy - yi;
+    if (dx * dx + dy * dy >= neighborRadius2) {
+      continue;
+    }
+    let groupId = u32(max(agentValue(j, GROUP_ID), 0.0));
+    if (groupId == 0u) {
+      continue;
+    }
+    var count = 1u;
+    var found = false;
+    for (var groupIndex = 0u; groupIndex < used; groupIndex = groupIndex + 1u) {
+      if (groups[groupIndex] == groupId) {
+        counts[groupIndex] = counts[groupIndex] + 1u;
+        count = counts[groupIndex];
+        found = true;
+        break;
+      }
+    }
+    if (!found && used < 16u) {
+      groups[used] = groupId;
+      counts[used] = 1u;
+      used = used + 1u;
+    }
+    if (groupId == currentGroup) {
+      currentCount = count;
+    }
+    if (count > dominantCount) {
+      dominantCount = count;
+      dominantGroup = groupId;
+    }
+  }
+
+  var nextGroup = currentGroup;
+  if (dominantGroup != 0u && dominantGroup != currentGroup) {
+    if (subgroupMembershipRule == SUBGROUP_MEMBERSHIP_STICKY) {
+      if (currentGroup == 0u) {
+        if (dominantCount >= 2u) {
+          nextGroup = dominantGroup;
+        }
+      } else if (dominantCount >= currentCount + 2u && dominantCount >= 3u) {
+        nextGroup = dominantGroup;
+      }
+    } else {
+      if (currentGroup == 0u) {
+        if (dominantCount >= 1u) {
+          nextGroup = dominantGroup;
+        }
+      } else if (dominantCount > currentCount) {
+        nextGroup = dominantGroup;
+      }
+    }
+  }
+
+  subgroupIds[i] = nextGroup;
 }
 `;
   }
@@ -1071,6 +1298,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     quorumPass.setBindGroup(0, this.quorumBindGroups[this._activeBufferIndex]);
     quorumPass.dispatchWorkgroups(Math.ceil(read.count / WORKGROUP_SIZE));
     quorumPass.end();
+    const subgroupPass = encoder.beginComputePass();
+    subgroupPass.setPipeline(this.subgroupPipeline);
+    subgroupPass.setBindGroup(0, this.subgroupBindGroups[this._activeBufferIndex]);
+    subgroupPass.dispatchWorkgroups(Math.ceil(read.count / WORKGROUP_SIZE));
+    subgroupPass.end();
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroups[this._activeBufferIndex]);
@@ -1127,6 +1359,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   setLeaderRange(startIndex, endIndex, leaderCount) {
     this.helper.setLeaderRange(startIndex, endIndex, leaderCount);
+    this._markStateDirty();
+  }
+
+  setGroupRange(startIndex, endIndex, groupId) {
+    this.helper.setGroupRange(startIndex, endIndex, groupId);
     this._markStateDirty();
   }
 
