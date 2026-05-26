@@ -208,7 +208,7 @@ export class WebGPUBoidSim {
     });
     this.subgroupBuffer = this.device.createBuffer({
       size: this.maxAgents * Uint32Array.BYTES_PER_ELEMENT,
-      usage: GPUBufferUsage.STORAGE,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     this._ensureSensingTexture(1, 1);
     this.device.queue.writeTexture(
@@ -225,18 +225,6 @@ export class WebGPUBoidSim {
         }),
         busy: false,
         ready: null,
-      });
-    }
-
-    _createSubgroupBindGroup(inputIndex) {
-      return this.device.createBindGroup({
-        layout: this.subgroupPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: this.agentBuffers[inputIndex] } },
-          { binding: 1, resource: { buffer: this.paramsBuffer } },
-          { binding: 2, resource: { buffer: this.metaBuffer } },
-          { binding: 3, resource: { buffer: this.subgroupBuffer } },
-        ],
       });
     }
 
@@ -302,6 +290,18 @@ export class WebGPUBoidSim {
         { binding: 1, resource: { buffer: this.paramsBuffer } },
         { binding: 2, resource: { buffer: this.metaBuffer } },
         { binding: 3, resource: { buffer: this.quorumBuffer } },
+      ],
+    });
+  }
+
+  _createSubgroupBindGroup(inputIndex) {
+    return this.device.createBindGroup({
+      layout: this.subgroupPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.agentBuffers[inputIndex] } },
+        { binding: 1, resource: { buffer: this.paramsBuffer } },
+        { binding: 2, resource: { buffer: this.metaBuffer } },
+        { binding: 3, resource: { buffer: this.subgroupBuffer } },
       ],
     });
   }
