@@ -21,6 +21,7 @@
  * @property {function(): {buffer: Float32Array, count: number, stride: number}} readAgents
  * @property {function(number, number): number} spawnAgent
  * @property {function(number, number, number, number, number, number, number): void} spawnBatch
+ * @property {function(number, number, number): void} setLeaderRange
  * @property {function(number): void} removeAgent
  * @property {function(): void} clearAgents
  * @property {function(Uint8Array, number, number): void} uploadSensing
@@ -162,6 +163,38 @@ export class BoidSim {
     v[31] = p.satVar ?? 0;
     v[32] = p.litVar ?? 0;
     v[33] = p.simBoundsMargin ?? -1;
+    v[34] = p.leader?.pull ?? 0;
+    v[35] = p.leader?.seek ?? (p.seek ?? 0.4);
+    v[36] = p.leader?.cohesion ?? (p.cohesion ?? 0.15);
+    v[37] = p.leader?.separation ?? (p.separation ?? 0.5);
+    v[38] = p.leader?.alignment ?? (p.alignment ?? 0.2);
+    v[39] = p.leader?.jitter ?? 0;
+    v[40] = p.leader?.wander ?? 0;
+    v[41] = p.leader?.wanderSpeed ?? (p.wanderSpeed ?? 0.3);
+    v[42] = p.leader?.maxSpeed ?? (p.maxSpeed ?? 4.0);
+    v[43] = p.leader?.damping ?? (p.damping ?? 0.95);
+    v[44] = p.leader?.flowField ?? 0;
+    v[45] = p.leader?.flowScale ?? (p.flowScale ?? 0.01);
+    v[46] = p.leader?.fleeRadius ?? 0;
+    v[47] = p.leader?.fov ?? (p.fov ?? 360);
+    v[48] = p.leader?.individuality ?? 0;
+    v[49] = p.leader?.quorumThreshold ?? 0;
+    v[50] = p.leader?.quorumCompositeStrength ?? 0.35;
+    v[51] = p.leader?.sensingEnabled ? 1 : 0;
+    v[52] = p.leader?.sensingMode === 'attract' ? 1 : 0;
+    v[53] = p.leader?.sensingStrength ?? 0.5;
+    v[54] = p.leader?.sensingRadius ?? 20;
+    v[55] = p.leader?.sensingThreshold ?? 0.1;
+    v[56] = p.leader?.neighborRadius ?? 80;
+    v[57] = p.leader?.separationRadius ?? 25;
+    v[58] = p.leader?.sizeVar ?? 0;
+    v[59] = p.leader?.opacityVar ?? 0;
+    v[60] = p.leader?.speedVar ?? 0;
+    v[61] = p.leader?.forceVar ?? 0;
+    v[62] = p.leader?.hueVar ?? 0;
+    v[63] = p.leader?.satVar ?? 0;
+    v[64] = p.leader?.litVar ?? 0;
+    v[65] = p.leader?.simBoundsMargin ?? -1;
     this._mod.set_params();
   }
 
@@ -214,6 +247,10 @@ export class BoidSim {
   spawnBatch(cx, cy, count, shape, angle, jitter, radius) {
     const shapeId = typeof shape === 'string' ? (SHAPE_MAP[shape] ?? 0) : shape;
     this._mod.spawn_batch(cx, cy, count, shapeId, angle, jitter, radius);
+  }
+
+  setLeaderRange(startIndex, endIndex, leaderCount) {
+    this._mod.set_leader_range(startIndex, endIndex, leaderCount);
   }
 
   /** Remove agent by ID. Uses swap-remove (O(1)). */

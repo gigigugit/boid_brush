@@ -11,6 +11,7 @@ import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
+import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -183,6 +184,19 @@ function _getSimulationSpawnAppearance(brush, index, p) {
     ? Math.max(0, Math.min(1, brush._agentSpawnOpacity[index]))
     : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
   return { color, opacity };
+}
+
+function _resolveLeaderParams(p) {
+  const leaderConfig = p?.leaderConfig;
+  const leader = {
+    count: Math.max(0, Math.min(Math.round(leaderConfig?.count || 0), Math.round(p?.count || 0))),
+    pull: Number.isFinite(leaderConfig?.pull) ? Math.max(0, leaderConfig.pull) : 0,
+  };
+  for (const field of LEADER_OVERRIDE_FIELDS) {
+    const override = leaderConfig?.overrides?.[field.key];
+    leader[field.key] = override?.enabled ? override.value : p[field.key];
+  }
+  return leader;
 }
 
 class StampInstanceBuffer {
@@ -1205,20 +1219,22 @@ export class BoidBrush {
    * Returns `p` unchanged when simulation is not enabled.
    */
   _applySimVars(p) {
-    if (!this.app.simulation?.enabled) {
-      return Object.assign({}, p, { simBoundsMargin: -1 });
-    }
-    const vars = this.app.simulation.vars;
-    if (!vars) return p;
-    const next = Object.assign({}, p, {
+    const next = !this.app.simulation?.enabled
+      ? Object.assign({}, p, { simBoundsMargin: -1 })
+      : Object.assign({}, p);
+    const vars = this.app.simulation?.vars;
+    if (this.app.simulation?.enabled && vars) {
+      Object.assign(next, {
       seek: Number.isFinite(vars.seek) ? vars.seek : 0,
       simBoundsMargin: p.simBoundsMargin,
-    });
-    if (Number.isFinite(vars.cohesion)) next.cohesion = vars.cohesion;
-    if (Number.isFinite(vars.separation)) next.separation = vars.separation;
-    if (Number.isFinite(vars.alignment)) next.alignment = vars.alignment;
-    if (Number.isFinite(vars.maxSpeed)) next.maxSpeed = vars.maxSpeed;
-    if (Number.isFinite(vars.damping)) next.damping = vars.damping;
+      });
+      if (Number.isFinite(vars.cohesion)) next.cohesion = vars.cohesion;
+      if (Number.isFinite(vars.separation)) next.separation = vars.separation;
+      if (Number.isFinite(vars.alignment)) next.alignment = vars.alignment;
+      if (Number.isFinite(vars.maxSpeed)) next.maxSpeed = vars.maxSpeed;
+      if (Number.isFinite(vars.damping)) next.damping = vars.damping;
+    }
+    next.leader = _resolveLeaderParams(next);
     return next;
   }
 
@@ -1248,6 +1264,7 @@ export class BoidBrush {
       distribution: p.spawnDistribution || 'uniform',
       noiseScale: p.spawnNoiseScale || 1,
     }, x, y);
+    this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
     _setSimulationSpawnAppearanceRange(this, spawnInfo, {
       color: p.color,
       opacity: p.stampOpacity,
@@ -1989,6 +2006,7 @@ export class BoidBrush {
       if (spawn === primary || spawn.enabled === false) continue;
       const config = this.app._resolveSimulationSpawnConfig(spawn, p);
       const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
+      this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
       _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
     }
   }

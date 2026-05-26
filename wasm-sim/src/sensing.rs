@@ -9,7 +9,7 @@
 // =============================================================================
 
 use crate::boid::*;
-use crate::params::SimParams;
+use crate::params::AgentParams;
 use core::f32::consts::PI;
 
 /// Sensing buffer: single-channel luminance at (sensing_w × sensing_h).
@@ -73,7 +73,7 @@ impl SensingMap {
 pub fn apply_sensing_force(
     buf: &mut [f32],
     base: usize,
-    p: &SimParams,
+    p: &AgentParams,
     map: &SensingMap,
 ) {
     if !p.sensing_enabled || map.data.is_empty() {

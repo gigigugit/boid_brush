@@ -77,6 +77,8 @@ export function init_sensing(w: number, h: number): void;
  */
 export function remove_agent(id: number): void;
 
+export function set_leader_range(start_index: number, end_index: number, leader_count: number): void;
+
 /**
  * Write simulation parameters from JS. Call before `step()`.
  *
@@ -169,15 +171,16 @@ export interface InitOutput {
     readonly sim_init: (a: number, b: number, c: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly update_sensing: () => void;
-    readonly fluid_clear_particles: (a: number) => void;
-    readonly fluid_destroy_simulator: (a: number) => void;
+    readonly set_leader_range: (a: number, b: number, c: number) => void;
     readonly fluid_get_particle_count: (a: number) => number;
-    readonly clear_agents: () => void;
     readonly fluid_step: (a: number, b: number) => void;
-    readonly step: (a: number) => void;
-    readonly get_agent_count: () => number;
-    readonly spawn_agent: (a: number, b: number) => number;
+    readonly fluid_destroy_simulator: (a: number) => void;
+    readonly fluid_clear_particles: (a: number) => void;
     readonly set_params: () => void;
+    readonly spawn_agent: (a: number, b: number) => number;
+    readonly get_agent_count: () => number;
+    readonly step: (a: number) => void;
+    readonly clear_agents: () => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
