@@ -297,6 +297,7 @@ export function buildSidebar(app) {
       <label>Render <select id="motionPathRenderMode">
         <option value="ribbon" selected>Ribbon</option>
         <option value="stamps">Stamps</option>
+        <option value="tree">Tree</option>
       </select></label>
       ${sliderRow('motionPathAgentCount', 'Agents', 1, MAX_SWARM_COUNT, 12)}
       ${sliderRow('motionPathScale', 'Scale', 10, 1000, 100, v => (v / 100).toFixed(2))}
@@ -309,6 +310,22 @@ export function buildSidebar(app) {
       ${sliderRow('motionPathAngleSmoothing', 'Angle Smooth', 0, 100, 90, v => (v / 100).toFixed(2), 'Higher values damp graph rotation changes more strongly')}
       ${sliderRow('motionPathMovementSmoothing', 'Move Smooth', 0, 100, 65, v => (v / 100).toFixed(2), 'Higher values low-pass each agent\'s resolved canvas movement after the graph motion is applied')}
       <span class="slider-desc">Scale enlarges the authored graph on canvas. These are graph-wide defaults until per-agent motion overrides are added in the editor.</span>
+    </div>
+
+    <div class="section-header" data-brushes="motionPath" data-section="motionTree">Motion Tree <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="motionPath">
+      ${sliderRow('motionTreeLevels', 'Levels', 1, 6, 3)}
+      ${sliderRow('motionTreeBranchAngle', 'Branch Angle', 0, 85, 28, v => v + '°')}
+      ${sliderRow('motionTreeBranchLength', 'Branch Length', 20, 150, 75, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeLengthDecay', 'Length Decay', 30, 95, 72, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeWidthDecay', 'Width Decay', 30, 95, 78, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeJitter', 'Jitter', 0, 100, 18, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeRootOffset', 'Root Offset', 0, 80, 22, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeCurve', 'Curve', 0, 60, 12, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeAlphaDecay', 'Alpha Decay', 0, 60, 12, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeShade', 'Shade', 0, 60, 14, v => (v / 100).toFixed(2))}
+      ${sliderRow('motionTreeSamples', 'Samples / Seg', 2, 12, 6)}
+      <span class="slider-desc">Tree mode grows a tapered branching canopy from each motion agent. WebGPU drives the branch generation when available.</span>
     </div>
 
     <!-- Bristle Shape (bristle only) -->
@@ -1280,6 +1297,15 @@ const _sliderFormats = {
   motionPathPathSmoothing: v => (v / 100).toFixed(2),
   motionPathAngleSmoothing: v => (v / 100).toFixed(2),
   motionPathMovementSmoothing: v => (v / 100).toFixed(2),
+  motionTreeBranchAngle: v => v + '°',
+  motionTreeBranchLength: v => (v / 100).toFixed(2),
+  motionTreeLengthDecay: v => (v / 100).toFixed(2),
+  motionTreeWidthDecay: v => (v / 100).toFixed(2),
+  motionTreeJitter: v => (v / 100).toFixed(2),
+  motionTreeRootOffset: v => (v / 100).toFixed(2),
+  motionTreeCurve: v => (v / 100).toFixed(2),
+  motionTreeAlphaDecay: v => (v / 100).toFixed(2),
+  motionTreeShade: v => (v / 100).toFixed(2),
   lbmStrokePull: v => (v / 100).toFixed(2),
   lbmStrokeRake: v => (v / 100).toFixed(2),
   lbmStrokeJitter: v => (v / 100).toFixed(2),

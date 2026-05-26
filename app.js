@@ -65,6 +65,17 @@ const FACTORY_DEFAULTS = Object.freeze({
   motionPathAngleSmoothing: 90,
   motionPathMovementSmoothing: 65,
   motionPathPathSmoothing: 35,
+  motionTreeLevels: 3,
+  motionTreeBranchAngle: 28,
+  motionTreeBranchLength: 75,
+  motionTreeLengthDecay: 72,
+  motionTreeWidthDecay: 78,
+  motionTreeJitter: 18,
+  motionTreeRootOffset: 22,
+  motionTreeCurve: 12,
+  motionTreeAlphaDecay: 12,
+  motionTreeShade: 14,
+  motionTreeSamples: 6,
   strokeAngleMode: 'auto',
   bristleCount: 30,
   bristleWidth: 30,
@@ -1609,6 +1620,7 @@ export class App {
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+        motionPath: { spawns: [], points: [], paths: [] },
       },
       // Scene-level variable overrides (applied during simulation playback).
       // seek defaults to 0 so boids follow guides instead of the cursor.
@@ -2969,6 +2981,17 @@ export class App {
       motionPathAngleSmoothing: (val('motionPathAngleSmoothing') || 90) / 100,
       motionPathMovementSmoothing: (val('motionPathMovementSmoothing') || 65) / 100,
       motionPathPathSmoothing: (val('motionPathPathSmoothing') || 35) / 100,
+      motionTreeLevels: Math.max(1, Math.min(6, Math.round(val('motionTreeLevels') || 3))),
+      motionTreeBranchAngle: ((val('motionTreeBranchAngle') || 28) * Math.PI) / 180,
+      motionTreeBranchLength: (val('motionTreeBranchLength') || 75) / 100,
+      motionTreeLengthDecay: (val('motionTreeLengthDecay') || 72) / 100,
+      motionTreeWidthDecay: (val('motionTreeWidthDecay') || 78) / 100,
+      motionTreeJitter: (val('motionTreeJitter') || 18) / 100,
+      motionTreeRootOffset: (val('motionTreeRootOffset') || 22) / 100,
+      motionTreeCurve: (val('motionTreeCurve') || 12) / 100,
+      motionTreeAlphaDecay: (val('motionTreeAlphaDecay') || 12) / 100,
+      motionTreeShade: (val('motionTreeShade') || 14) / 100,
+      motionTreeSamples: Math.max(2, Math.min(12, Math.round(val('motionTreeSamples') || 6))),
       // Stamp
       stampSize: Math.max(1, Math.round(val('stampSize') * scale)),
       stampOpacity: val('stampOpacity') / 100,
@@ -3157,7 +3180,7 @@ export class App {
   // ========================================================
 
   _isMotionBrush(name = this.activeBrush) {
-    return name === 'boid' || name === 'ant';
+    return name === 'boid' || name === 'ant' || name === 'motionPath';
   }
 
   _getSimulationBrushData(brush = this.activeBrush) {
@@ -3180,7 +3203,13 @@ export class App {
   }
 
   _normalizeSimulationData() {
-    for (const brush of ['boid', 'ant']) {
+    if (!this.simulation.brushData || typeof this.simulation.brushData !== 'object') {
+      this.simulation.brushData = {};
+    }
+    if (!this.simulation.brushData.boid) this.simulation.brushData.boid = { spawns: [], points: [], paths: [] };
+    if (!this.simulation.brushData.ant) this.simulation.brushData.ant = { spawns: [], points: [], edges: [], pheromonePaths: [] };
+    if (!this.simulation.brushData.motionPath) this.simulation.brushData.motionPath = { spawns: [], points: [], paths: [] };
+    for (const brush of ['boid', 'ant', 'motionPath']) {
       const data = this._getSimulationBrushData(brush);
       if (!data) continue;
 
@@ -3217,7 +3246,7 @@ export class App {
         hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : undefined,
       }));
 
-      if (brush === 'boid') {
+      if (brush === 'boid' || brush === 'motionPath') {
         const legacyPaths = [];
         if (Array.isArray(data.path) && data.path.length >= 2) legacyPaths.push({ points: data.path });
         if (Array.isArray(data.paths)) legacyPaths.push(...data.paths);
@@ -3404,8 +3433,8 @@ export class App {
     return { x: sx / activeSpawns.length, y: sy / activeSpawns.length };
   }
 
-  _getBoidGuideFollowTargets(p = this.getP(), advancePaths = false, elapsed = 0) {
-    const data = this._getSimulationBrushData('boid');
+  _getPathGuideFollowTargets(brush = this.activeBrush, p = this.getP(), advancePaths = false, elapsed = 0) {
+    const data = this._getSimulationBrushData(brush);
     if (!data) return [];
     const targets = [];
 
@@ -3426,6 +3455,10 @@ export class App {
     }
 
     return targets;
+  }
+
+  _getBoidGuideFollowTargets(p = this.getP(), advancePaths = false, elapsed = 0) {
+    return this._getPathGuideFollowTargets('boid', p, advancePaths, elapsed);
   }
 
   _getBoidGuideFollowSeek(p = this.getP()) {
@@ -4026,8 +4059,8 @@ export class App {
   }
 
   _addSimulationPathPrimitive(kind) {
-    if (this.activeBrush !== 'boid') return;
-    const data = this._getSimulationBrushData('boid');
+    if (this.activeBrush !== 'boid' && this.activeBrush !== 'motionPath') return;
+    const data = this._getSimulationBrushData(this.activeBrush);
     if (!data) return;
     const entry = this._createSimulationPathPrimitive(kind);
     if (!entry) return;
@@ -4141,6 +4174,7 @@ export class App {
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+      motionPath: { spawns: [], points: [], paths: [] },
     };
     this.simulation.nextId = 1;
     this.simulation.selected = null;
@@ -4178,6 +4212,7 @@ export class App {
     this._normalizeSimulationData();
     this._constrainSimulationDataToBounds('boid');
     this._constrainSimulationDataToBounds('ant');
+    this._constrainSimulationDataToBounds('motionPath');
     this._ensureSimulationSpawns();
     this._renderSimulationInspector();
     this.saveSession();
@@ -4215,6 +4250,9 @@ export class App {
       if (this.simulation.selected && !selected) this.simulation.selected = null;
       const p = this.getP();
       const isBoid = this.activeBrush === 'boid';
+      const isAnt = this.activeBrush === 'ant';
+      const isPathBrush = this.activeBrush === 'boid' || this.activeBrush === 'motionPath';
+      const brushLabel = this.activeBrush === 'motionPath' ? 'Motion Path' : (isBoid ? 'Boid' : 'Ant');
       const isSectionOpen = sectionId => this.simulation.inspectorSections?.[sectionId] !== false;
       const renderSection = (sectionId, title, body, { collapsed = false } = {}) => {
         const openSection = collapsed ? false : isSectionOpen(sectionId);
@@ -4235,9 +4273,9 @@ export class App {
       { collection: 'spawns', kind: 'spawn', label: 'Spawn', items: data.spawns || [] },
       { collection: 'points', kind: 'point', label: 'Attract Point', items: attractPoints },
       { collection: 'points', kind: 'point', label: 'Repel Point', items: repelPoints },
-      ...(isBoid ? [{ collection: 'paths', kind: 'path', label: 'Path Guide', items: data.paths || [] }] : []),
-      ...(!isBoid ? [{ collection: 'edges', kind: 'edge', label: 'Edge Barrier', items: data.edges || [] }] : []),
-      ...(!isBoid ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone Trail', items: data.pheromonePaths || [] }] : []),
+      ...(isPathBrush ? [{ collection: 'paths', kind: 'path', label: 'Path Guide', items: data.paths || [] }] : []),
+      ...(isAnt ? [{ collection: 'edges', kind: 'edge', label: 'Edge Barrier', items: data.edges || [] }] : []),
+      ...(isAnt ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone Trail', items: data.pheromonePaths || [] }] : []),
     ];
     const describeSimulationItem = (group, item, idx) => {
       const parts = [`${group.label} ${idx + 1}`];
@@ -4412,7 +4450,7 @@ export class App {
         value: Math.round(p.simPointRadius),
         desc: 'Attract and repel points share these defaults until an item override is set.',
       })}`;
-    const pathSettingsBody = isBoid
+    const pathSettingsBody = isPathBrush
       ? `${simPanelSlider({
           id: 'simPathSpeed',
           label: 'Path Speed',
@@ -4421,13 +4459,13 @@ export class App {
           value: Math.round(p.simPathSpeed),
           desc: 'How many pixels per second animated path guides travel, regardless of path length.',
         })}
-        <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint.</div>`
+        <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate the motion anchor along the guide stroke while the brush paints.</div>`
       : '';
-    const pathPrimitiveButtons = isBoid
+    const pathPrimitiveButtons = isPathBrush
       ? `<div class="sim-inspector-actions" style="margin-top:4px">${SIM_PATH_PRIMITIVE_KINDS.map(kind => `<button data-sim-add-path-primitive="${kind}">${kind[0].toUpperCase()}${kind.slice(1)}</button>`).join('')}</div>
          <div class="sim-inspector-note">Insert reusable path primitives directly onto the canvas, then drag the teal size handle to resize them.</div>`
       : '';
-    const edgeSettingsBody = !isBoid
+    const edgeSettingsBody = isAnt
       ? `${simPanelSlider({
           id: 'simEdgeForce',
           label: 'Edge Force',
@@ -4443,7 +4481,7 @@ export class App {
           value: Math.round(p.simEdgeRadius),
         })}`
       : '';
-    const pheromoneSettingsBody = !isBoid
+    const pheromoneSettingsBody = isAnt
       ? `${simPanelSlider({
           id: 'simPheroPaintRadius',
           label: 'Phero Radius',
@@ -4489,7 +4527,7 @@ export class App {
       renderInspectorSubgroup('Attract Points', renderItemButtonList(groupBySectionKey.attractPoints)),
       renderInspectorSubgroup('Repel Points', renderItemButtonList(groupBySectionKey.repelPoints)),
     ]);
-    const pathSection = isBoid
+    const pathSection = isPathBrush
       ? renderTypeSection('paths', 'Paths', [
           renderInspectorSubgroup('Add Primitive', pathPrimitiveButtons),
           renderInspectorSubgroup('Defaults', pathSettingsBody),
@@ -4500,13 +4538,13 @@ export class App {
       `<div class="sim-inspector-note">Select a spawn to override its count, shape, radius, and other per-spawn behavior. Shared brush spawn settings still live in the main sidebar.</div>`,
       renderInspectorSubgroup('Spawn Items', renderItemButtonList(groupBySectionKey.spawns)),
     ]);
-    const edgeSection = !isBoid
+    const edgeSection = isAnt
       ? renderTypeSection('edges', 'Edge Barriers', [
           renderInspectorSubgroup('Defaults', edgeSettingsBody),
           renderInspectorSubgroup('Barrier Items', renderItemButtonList(groupBySectionKey.edges)),
         ])
       : '';
-    const pheromoneSection = !isBoid
+    const pheromoneSection = isAnt
       ? renderTypeSection('pheromonePaths', 'Pheromone Trails', [
           renderInspectorSubgroup('Defaults', pheromoneSettingsBody),
           renderInspectorSubgroup('Trail Items', renderItemButtonList(groupBySectionKey.pheromonePaths)),
@@ -4517,7 +4555,7 @@ export class App {
       <div class="sim-inspector-header">
         <div>
           <div class="sim-inspector-title">Simulation Inspector</div>
-          <div class="sim-inspector-subtitle">${isBoid ? 'Boid' : 'Ant'} simulation overrides live here.</div>
+          <div class="sim-inspector-subtitle">${brushLabel} simulation overrides live here.</div>
         </div>
         <div class="sim-inspector-actions">
           <button data-sim-collapse="1">Collapse</button>
@@ -4536,7 +4574,7 @@ export class App {
       ${spawnSection}
       ${edgeSection}
       ${pheromoneSection}
-      ${renderSection('sceneVariables', isBoid ? 'Sessions' : 'Scene Variables', `<div class="sim-inspector-note">${isBoid ? 'Save and restore the current simulation scene and runtime overrides.' : 'Override brush parameters for simulation playback. Seek defaults to 0 so agents follow guides instead of the cursor.'}</div>
+      ${renderSection('sceneVariables', isBoid || this.activeBrush === 'motionPath' ? 'Sessions' : 'Scene Variables', `<div class="sim-inspector-note">${isBoid || this.activeBrush === 'motionPath' ? 'Save and restore the current simulation scene and runtime overrides.' : 'Override brush parameters for simulation playback. Seek defaults to 0 so agents follow guides instead of the cursor.'}</div>
         <div class="sim-inspector-actions" style="margin-top:10px">
           <button data-sim-new-session="1">New Session</button>
           <button data-sim-save-session="1">Save Session</button>
@@ -4781,6 +4819,7 @@ export class App {
         if (paramId === 'simBoundsMargin') {
           this._constrainSimulationDataToBounds('boid');
           this._constrainSimulationDataToBounds('ant');
+          this._constrainSimulationDataToBounds('motionPath');
         }
       };
       el.addEventListener('input', () => {
@@ -4992,6 +5031,7 @@ export class App {
     if (next) {
       this._constrainSimulationDataToBounds('boid');
       this._constrainSimulationDataToBounds('ant');
+      this._constrainSimulationDataToBounds('motionPath');
     }
     this._ensureSimulationSpawns();
     this._syncSimulationUI();
@@ -5005,9 +5045,9 @@ export class App {
   }
 
   _syncSimulationUI() {
-    if (this.activeBrush === 'boid' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
+    if ((this.activeBrush === 'boid' || this.activeBrush === 'motionPath') && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
-    if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
+    if ((this.activeBrush === 'boid' || this.activeBrush === 'motionPath') && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
     const hudCollapseBtn = document.getElementById('simHudCollapseBtn');
@@ -5016,11 +5056,11 @@ export class App {
     const stepForwardBtn = document.getElementById('simStepForwardBtn');
     const handle = document.getElementById('simOverlayHandle');
     const isMotion = this._isMotionBrush();
-    const boidPaths = this.activeBrush === 'boid'
-      ? (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
+    const boidPaths = (this.activeBrush === 'boid' || this.activeBrush === 'motionPath')
+      ? (this._getSimulationBrushData(this.activeBrush)?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
       : [];
     const canStepPaths = boidPaths.length > 0;
-    const showPathStepButtons = this.activeBrush === 'boid' && !!this.simulation.heatmapVisible;
+    const showPathStepButtons = (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') && !!this.simulation.heatmapVisible;
     if (btn) {
       btn.style.display = isMotion ? '' : 'none';
       btn.classList.toggle('active', !!this.simulation.enabled);
@@ -5045,9 +5085,9 @@ export class App {
       toolRow.querySelectorAll('[data-sim-tool]').forEach(el => {
         const tool = el.dataset.simTool;
         const hide =
-          (this.activeBrush === 'boid' && tool === 'edge') ||
+          ((this.activeBrush === 'boid' || this.activeBrush === 'motionPath') && tool === 'edge') ||
           (this.activeBrush === 'ant' && tool === 'path') ||
-          (this.activeBrush === 'boid' && tool === 'pheromone');
+          ((this.activeBrush === 'boid' || this.activeBrush === 'motionPath') && tool === 'pheromone');
         el.style.display = hide ? 'none' : '';
         el.classList.toggle('active', this.simulation.editorTool === tool);
       });
@@ -5098,8 +5138,8 @@ export class App {
   }
 
   _stepSimulationPathPosition(direction = 1) {
-    if (!this.simulation.enabled || this.activeBrush !== 'boid') return;
-    const paths = (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
+    if (!this.simulation.enabled || (this.activeBrush !== 'boid' && this.activeBrush !== 'motionPath')) return;
+    const paths = (this._getSimulationBrushData(this.activeBrush)?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
     if (!paths.length) return;
     const p = this.getP();
     const delta = Math.max(4, (p.simPathSpeed || 0) * 0.25) * (direction < 0 ? -1 : 1);
@@ -5126,8 +5166,8 @@ export class App {
     this.simulation.running = true;
     this.simulation.paused = false;
     this.simulation.pathDistance = 0;
-    if (this.activeBrush === 'boid') {
-      for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') {
+      for (const pathItem of this._getSimulationBrushData(this.activeBrush)?.paths || []) {
         pathItem.travelDistance = 0;
       }
     }
@@ -5183,7 +5223,7 @@ export class App {
     y = clampedPoint.y;
     const tool = this.simulation.editorTool;
     const isPathCreationTool =
-      (tool === 'path' && this.activeBrush === 'boid') ||
+      (tool === 'path' && (this.activeBrush === 'boid' || this.activeBrush === 'motionPath')) ||
       (tool === 'edge' && this.activeBrush === 'ant') ||
       (tool === 'pheromone' && this.activeBrush === 'ant');
 
@@ -5242,7 +5282,7 @@ export class App {
         kind: tool,
         points: [{ x, y }],
       };
-    } else if ((tool === 'path' && this.activeBrush === 'boid') || (tool === 'edge' && this.activeBrush === 'ant')) {
+    } else if ((tool === 'path' && (this.activeBrush === 'boid' || this.activeBrush === 'motionPath')) || (tool === 'edge' && this.activeBrush === 'ant')) {
       this.simulation.drawingPath = {
         kind: tool,
         points: [{ x, y }],
@@ -5320,7 +5360,7 @@ export class App {
       const path = this.simulation.drawingPath.points.filter((pt, i, arr) => i === 0 || Math.hypot(pt.x - arr[i - 1].x, pt.y - arr[i - 1].y) > 1);
       const data = this._getSimulationBrushData();
       if (data && path.length >= 2) {
-        if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') {
+        if (this.simulation.drawingPath.kind === 'path' && (this.activeBrush === 'boid' || this.activeBrush === 'motionPath')) {
           const entry = {
             id: this.simulation.nextId++,
             points: path,
@@ -5381,7 +5421,7 @@ export class App {
     if (!data) return;
     data.spawns = [];
     data.points = [];
-    if (this.activeBrush === 'boid') data.paths = [];
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') data.paths = [];
     if (this.activeBrush === 'ant') {
       data.edges = [];
       data.pheromonePaths = [];
@@ -5436,7 +5476,7 @@ export class App {
       value += sign * config.strength * simSpeed * guideSpeedScale * shaped * 0.85;
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') {
       for (const pathItem of data.paths || []) {
         if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
@@ -5494,7 +5534,7 @@ export class App {
       }
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') {
       for (const pathItem of data.paths || []) {
         if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
@@ -5607,7 +5647,7 @@ export class App {
       if (Math.hypot(x - point.x, y - point.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'point', target: point, collection: 'points' };
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') {
       for (const pathItem of data.paths || []) {
         const del = checkDelete(pathItem, 'paths', 'path');
         if (del) return del;
@@ -5639,8 +5679,8 @@ export class App {
 
   _updateSimulationLeader(elapsed, p) {
     const center = this._getSimulationSpawnCenter();
-    if (this.activeBrush === 'boid') {
-      const targets = this._getBoidGuideFollowTargets(p, true, elapsed);
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') {
+      const targets = this._getPathGuideFollowTargets(this.activeBrush, p, true, elapsed);
         if (targets.length) {
           let sx = 0;
           let sy = 0;
@@ -5862,7 +5902,7 @@ export class App {
       ctx.restore();
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this.activeBrush === 'boid' || this.activeBrush === 'motionPath') {
       for (const pathItem of data.paths || []) {
         if (!pathItem.points?.length) continue;
         const config = this._resolveSimulationPathConfig(pathItem, p);

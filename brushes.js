@@ -11,6 +11,7 @@ import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
+import { WebGPUTreeMotionGenerator } from './webgpu-tree-motion.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
@@ -585,6 +586,69 @@ function _renderProceduralBatchToTarget(brush, targetCtx, batch, p, { allowAlpha
   }
   if (visibilityProbe && brush.renderer.activeKind !== 'canvas' && !stampBitmap && !_batchHasVisiblePixels(targetCtx, batch, brush.app.DPR || 1)) {
     _noteProceduralGpuFailure(brush, 'GPU procedural-stamp visibility probe failed');
+    return false;
+  }
+  _resetProceduralGpuFailure(brush);
+  return true;
+}
+
+function _renderPreparedWebGpuToTarget(brush, targetCtx, prepared, p, { allowAlphaLock = false } = {}) {
+  const renderer = brush.renderer?.webgpu;
+  const layer = brush.app.getActiveLayer();
+  if (!renderer?.ready || !prepared?.instanceBuffer || prepared.count <= 0 || !layer) return false;
+  const previewAllowed = _canUseProceduralGpuPreview(brush, targetCtx, p);
+  if (brush._gpuPreviewActive && (!previewAllowed || brush._gpuPreviewRenderer !== renderer)) {
+    _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock });
+  }
+  if (previewAllowed) {
+    const needsFreshSurface = !brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer;
+    renderer.onPreviewUpdated = (canvas) => {
+      if (!canvas) return;
+      if (!brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer) return;
+      layer.gpuPreviewCanvas = canvas;
+      layer.dirty = true;
+      brush.app.compositeAllLayers();
+    };
+    if (needsFreshSurface) {
+      renderer.invalidatePreview?.();
+      brush._gpuPreviewActive = true;
+      brush._gpuPreviewLayer = layer;
+      brush._gpuPreviewRenderer = renderer;
+      layer.gpuPreviewCanvas = _getProceduralGpuPreviewCanvas(renderer);
+    }
+    const ok = renderer.renderPreparedBuffer({
+      instanceBuffer: prepared.instanceBuffer,
+      count: prepared.count,
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      dpr: brush.app.DPR,
+      copyToTarget: false,
+      clear: needsFreshSurface,
+    });
+    if (!ok) {
+      _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock });
+      _clearProceduralGpuPreview(brush);
+      _noteProceduralGpuFailure(brush, renderer.lastRenderFailureReason || 'WebGPU prepared tree render failed');
+      return false;
+    }
+    layer.gpuPreviewCanvas = _getProceduralGpuPreviewCanvas(renderer);
+    layer.dirty = true;
+    _setProceduralRenderBackend(brush, renderer.kind);
+    _resetProceduralGpuFailure(brush);
+    return true;
+  }
+  const ok = renderer.renderPreparedBuffer({
+    instanceBuffer: prepared.instanceBuffer,
+    count: prepared.count,
+    targetCtx,
+    targetWidthPx: targetCtx?.canvas?.width || 0,
+    targetHeightPx: targetCtx?.canvas?.height || 0,
+    dpr: brush.app.DPR,
+    compositeOperation: _resolveBatchCompositeOperation(brush, p, layer, allowAlphaLock),
+  });
+  _setProceduralRenderBackend(brush, ok ? renderer.kind : 'legacy', ok ? '' : brush.renderer.legacyReason);
+  if (!ok) {
+    _noteProceduralGpuFailure(brush, renderer.lastRenderFailureReason || brush.renderer.legacyReason || 'WebGPU prepared tree render failed');
     return false;
   }
   _resetProceduralGpuFailure(brush);
@@ -6300,6 +6364,8 @@ export class MotionPathBrush {
   constructor(app) {
     this.app = app;
     this.renderer = createBoidStampRenderer();
+    this._treeGenerator = null;
+    this._treeCalcBackend = 'cpu';
     this._active = false;
     this._originX = 0;
     this._originY = 0;
@@ -6323,6 +6389,159 @@ export class MotionPathBrush {
     this._lastInputX = 0;
     this._lastInputY = 0;
     _ensureProceduralStampRendererInit(this);
+  }
+
+  _ensureTreeGenerator() {
+    if (!this.renderer?.webgpu?.ready || !this.renderer.webgpu.device) return false;
+    if (!this._treeGenerator) this._treeGenerator = new WebGPUTreeMotionGenerator();
+    return this._treeGenerator.init(this.renderer.webgpu.device);
+  }
+
+  _buildTreePreparedRender(agentData, agentCount, p, color, opacity) {
+    if (!agentCount || !this._ensureTreeGenerator()) return null;
+    try {
+      const prepared = this._treeGenerator.generate(agentData, {
+        branchLevels: p.motionTreeLevels,
+        samplesPerSegment: p.motionTreeSamples,
+        branchAngle: p.motionTreeBranchAngle,
+        branchLength: p.motionTreeBranchLength,
+        lengthDecay: p.motionTreeLengthDecay,
+        widthDecay: p.motionTreeWidthDecay,
+        jitter: p.motionTreeJitter,
+        rootOffset: p.motionTreeRootOffset,
+        curve: p.motionTreeCurve,
+        alphaDecay: p.motionTreeAlphaDecay,
+        shade: p.motionTreeShade,
+        colorR: color.r / 255,
+        colorG: color.g / 255,
+        colorB: color.b / 255,
+        colorA: opacity,
+      });
+      if (prepared) this._treeCalcBackend = 'webgpu';
+      return prepared;
+    } catch {
+      return null;
+    }
+  }
+
+  _emitTreeSegmentInstances(instances, p, color, opacity, startX, startY, startSize, endX, endY, endSize, depth, seedBase) {
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const length = Math.max(1e-4, Math.hypot(dx, dy));
+    const nx = -dy / length;
+    const ny = dx / length;
+    const shade = Math.min(0.75, depth * p.motionTreeShade);
+    const shadedColor = {
+      r: Math.round(color.r * (1 - shade)),
+      g: Math.round(color.g * (1 - shade * 0.85)),
+      b: Math.round(color.b * (1 - shade * 0.55)),
+    };
+    const alpha = opacity * Math.max(0.08, 1 - depth * p.motionTreeAlphaDecay);
+    const samples = Math.max(2, p.motionTreeSamples || 2);
+    for (let sampleIndex = 0; sampleIndex < samples; sampleIndex++) {
+      const t = (sampleIndex + 0.5) / samples;
+      const seed = Math.sin((seedBase + sampleIndex + 1) * 12.9898) * 43758.5453123;
+      const jitter = ((seed - Math.floor(seed)) * 2 - 1) * p.motionTreeJitter * length * (0.18 + depth * 0.05);
+      const x = startX + dx * t + nx * jitter;
+      const y = startY + dy * t + ny * jitter;
+      const size = Math.max(0.45, startSize + ((endSize - startSize) * t));
+      _emitBatchStampInstances(this.app, instances, p, x, y, size, shadedColor, alpha, Math.atan2(dy, dx));
+    }
+  }
+
+  _buildTreeCpuBatch(agentData, agentCount, p, color, opacity) {
+    const instances = new StampInstanceBuffer(Math.max(64, agentCount * Math.max(6, p.motionTreeSamples * 4)));
+    for (let i = 0; i < agentCount; i++) {
+      const base = i * 6;
+      const prevX = agentData[base + 0];
+      const prevY = agentData[base + 1];
+      const x = agentData[base + 2];
+      const y = agentData[base + 3];
+      const size = Math.max(0.5, agentData[base + 4]);
+      const prevSize = Math.max(0.5, agentData[base + 5]);
+      const trunkDx = x - prevX;
+      const trunkDy = y - prevY;
+      const trunkLength = Math.max(Math.hypot(trunkDx, trunkDy), Math.max(size, prevSize) * 1.35);
+      const trunkAngle = Math.atan2(trunkDy || -1, trunkDx || 0);
+      const trunkDirX = Math.cos(trunkAngle);
+      const trunkDirY = Math.sin(trunkAngle);
+      this._emitTreeSegmentInstances(instances, p, color, opacity, prevX, prevY, prevSize, x, y, size, 0, (i + 1) * 17);
+      for (let level = 0; level < p.motionTreeLevels; level++) {
+        for (const side of [-1, 1]) {
+          let branchStartX = x - trunkDirX * (trunkLength * p.motionTreeRootOffset);
+          let branchStartY = y - trunkDirY * (trunkLength * p.motionTreeRootOffset);
+          let branchDirX = trunkDirX;
+          let branchDirY = trunkDirY;
+          let branchLength = trunkLength * p.motionTreeBranchLength;
+          for (let stage = 0; stage <= level; stage++) {
+            const bend = p.motionTreeBranchAngle * side * (1 + p.motionTreeCurve * stage);
+            const cos = Math.cos(bend);
+            const sin = Math.sin(bend);
+            const nextDirX = branchDirX * cos - branchDirY * sin;
+            const nextDirY = branchDirX * sin + branchDirY * cos;
+            branchDirX = nextDirX;
+            branchDirY = nextDirY;
+            const branchEndX = branchStartX + branchDirX * branchLength;
+            const branchEndY = branchStartY + branchDirY * branchLength;
+            if (stage === level) {
+              const depth = level + 1;
+              const branchStartSize = Math.max(0.45, size * Math.pow(p.motionTreeWidthDecay, depth - 1));
+              const branchEndSize = Math.max(0.35, size * Math.pow(p.motionTreeWidthDecay, depth));
+              this._emitTreeSegmentInstances(instances, p, color, opacity, branchStartX, branchStartY, branchStartSize, branchEndX, branchEndY, branchEndSize, depth, (i + 1) * 101 + (depth * 29) + (side > 0 ? 7 : 13));
+            } else {
+              branchStartX += (branchEndX - branchStartX) * 0.74;
+              branchStartY += (branchEndY - branchStartY) * 0.74;
+              branchLength *= p.motionTreeLengthDecay;
+            }
+          }
+        }
+      }
+    }
+    return { instances: instances.finish(), count: instances.count };
+  }
+
+  _paintTreeCpuBatch(batch) {
+    const layer = this.app.getActiveLayer();
+    if (!layer?.ctx || !batch?.instances || batch.count <= 0) return;
+    const stride = 8;
+    for (let i = 0; i < batch.count; i++) {
+      const base = i * stride;
+      const x = batch.instances[base + 0];
+      const y = batch.instances[base + 1];
+      const size = batch.instances[base + 2];
+      const color = `rgb(${Math.round(batch.instances[base + 4] * 255)},${Math.round(batch.instances[base + 5] * 255)},${Math.round(batch.instances[base + 6] * 255)})`;
+      const alpha = Math.max(0, Math.min(1, batch.instances[base + 7]));
+      this.app.symStamp(layer.ctx, x, y, size, color, alpha);
+    }
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+  }
+
+  _renderTreeInstances(agentData, agentCount, p) {
+    const layer = this.app.getActiveLayer();
+    if (!layer || !agentCount) return;
+    const color = hexToRGB(p.color);
+    let opacity = p.stampOpacity;
+    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    opacity = Math.min(opacity, 1);
+    const batchSupport = _getProceduralBatchRendererSupport(this, p, false);
+    const prepared = !p.stampImageCanvas && batchSupport.ok
+      ? this._buildTreePreparedRender(agentData, agentCount, p, color, opacity)
+      : null;
+    if (prepared && _renderPreparedWebGpuToTarget(this, layer.ctx, prepared, p, { allowAlphaLock: true })) {
+      layer.dirty = true;
+      if (!this._gpuPreviewActive) this.app.compositeAllLayers();
+      return;
+    }
+    const batch = this._buildTreeCpuBatch(agentData, agentCount, p, color, opacity);
+    this._treeCalcBackend = 'cpu';
+    if (batch.count > 0 && batchSupport.ok && _renderProceduralBatchToTarget(this, layer.ctx, batch, p, { allowAlphaLock: true, visibilityProbe: false })) {
+      layer.dirty = true;
+      if (!this._gpuPreviewActive) this.app.compositeAllLayers();
+      return;
+    }
+    _setProceduralRenderBackend(this, 'legacy', batchSupport.reason || 'Motion tree CPU fallback');
+    this._paintTreeCpuBatch(batch);
   }
 
   _updateGraphAngle(p, x = this._lastInputX, y = this._lastInputY, { hasPathSample = false, fallbackAngle = this._graphAngle } = {}) {
@@ -6608,6 +6827,7 @@ export class MotionPathBrush {
   onDown(x, y, pressure = 1) {
     const p = this.app.getP();
     if (this._gpuPreviewActive) _commitProceduralGpuPreviewToLayer(this, { allowAlphaLock: true });
+    this._treeCalcBackend = 'cpu';
     this._active = true;
     this._originX = x;
     this._originY = y;
@@ -6642,9 +6862,21 @@ export class MotionPathBrush {
     this._resetRuntime(false);
   }
 
+  configureSimulation() {
+    this._treeCalcBackend = 'cpu';
+  }
+
   onFrame(elapsed) {
     if (!this._active) return;
     const p = this.app.getP();
+    if (this.app.simulation?.running && this.app.activeBrush === 'motionPath') {
+      const simX = Number.isFinite(this.app.leaderX) ? this.app.leaderX : this._originX;
+      const simY = Number.isFinite(this.app.leaderY) ? this.app.leaderY : this._originY;
+      const moved = Math.hypot(simX - this._originX, simY - this._originY) > 0.001;
+      this._originX = simX;
+      this._originY = simY;
+      this._updateGraphAngle(p, simX, simY, { hasPathSample: moved });
+    }
     this._updateGraphAngle(p, this._lastInputX, this._lastInputY, { hasPathSample: false });
     const compiled = this._ensureCompiledGraph(p);
     if (!compiled?.paths?.length || !this._runtimeAgents.length) return;
@@ -6660,6 +6892,7 @@ export class MotionPathBrush {
     const baseSeparation = (p.stampSize || 1) * Math.max(0.08, p.stampSeparation || 0.15) * 0.5;
     const separation = Math.max(0.2, baseSeparation * Math.max(0.05, p.motionPathSpacing || 0.35));
     const useRibbon = (p.motionPathRenderMode || 'ribbon') === 'ribbon';
+    const useTree = (p.motionPathRenderMode || 'ribbon') === 'tree';
     const graphAngle = this._graphAngle || 0;
     const graphCos = Math.cos(graphAngle);
     const graphSin = Math.sin(graphAngle);
@@ -6668,6 +6901,8 @@ export class MotionPathBrush {
     const instances = new StampInstanceBuffer(Math.max(32, this._runtimeAgents.length * 6));
     const cpuFallbackPoints = [];
     const ribbonSegments = [];
+    const treeAgentData = useTree ? new Float32Array(Math.max(6, this._runtimeAgents.length * 6)) : null;
+    let treeAgentCount = 0;
     this._overlayPoints = [];
 
     let baseSize = p.stampSize;
@@ -6766,6 +7001,30 @@ export class MotionPathBrush {
         p,
       );
       this._overlayPoints.push({ x: worldX, y: worldY, size: stampSize });
+
+      if (useTree) {
+        const startX = Number.isFinite(agent.prevX) && !agent.discontinuousStep ? agent.prevX : (rawPrevWorld?.x ?? worldX);
+        const startY = Number.isFinite(agent.prevY) && !agent.discontinuousStep ? agent.prevY : (rawPrevWorld?.y ?? worldY);
+        const startSize = Number.isFinite(agent.prevSize) ? agent.prevSize : prevStampSize;
+        const treeBase = treeAgentCount * 6;
+        treeAgentData[treeBase + 0] = startX;
+        treeAgentData[treeBase + 1] = startY;
+        treeAgentData[treeBase + 2] = worldX;
+        treeAgentData[treeBase + 3] = worldY;
+        treeAgentData[treeBase + 4] = stampSize;
+        treeAgentData[treeBase + 5] = startSize;
+        treeAgentCount++;
+        agent.prevX = worldX;
+        agent.prevY = worldY;
+        agent.prevSize = stampSize;
+        agent.spacingDistance = agent.distance;
+        agent.spacingX = worldX;
+        agent.spacingY = worldY;
+        agent.spacingSize = stampSize;
+        agent.respawnSnapToTrack = false;
+        agent.respawnOffsetBlend = Math.min(1, (Number.isFinite(agent.respawnOffsetBlend) ? agent.respawnOffsetBlend : 1) + (delta * 7));
+        continue;
+      }
 
       if (useRibbon) {
         const hasPrevWorld = Number.isFinite(agent.prevX) && Number.isFinite(agent.prevY);
@@ -6881,6 +7140,10 @@ export class MotionPathBrush {
 
     const layer = this.app.getActiveLayer();
     if (!layer) return;
+    if (useTree && treeAgentCount > 0) {
+      this._renderTreeInstances(treeAgentData.subarray(0, treeAgentCount * 6), treeAgentCount, p);
+      return;
+    }
     if (useRibbon && ribbonSegments.length) {
       _setProceduralRenderBackend(this, 'ribbon');
       this._cpuRenderRibbonSegments(ribbonSegments, p);
@@ -6924,14 +7187,19 @@ export class MotionPathBrush {
   getStatusInfo() {
     const doc = this.app._getActiveMotionPathDocument?.();
     if (!doc) return 'Motion Path · no graph';
+    const p = this.app.getP();
     const legacyReason = this._renderBackend === 'legacy'
-      ? (_getProceduralBatchRendererSupport(this, this.app.getP(), false).reason || this.renderer.legacyReason || this._renderLegacyReason)
+      ? (_getProceduralBatchRendererSupport(this, p, false).reason || this.renderer.legacyReason || this._renderLegacyReason)
       : '';
-    return `Motion Path · ${doc.name} · ${doc.paths.length} paths · ${this._runtimeAgents.length || this.app.getP().motionPathAgentCount} agents · Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+    const treeMode = (p.motionPathRenderMode || 'ribbon') === 'tree'
+      ? ` · Tree: ${this._treeCalcBackend}`
+      : '';
+    return `Motion Path · ${doc.name} · ${doc.paths.length} paths · ${this._runtimeAgents.length || p.motionPathAgentCount} agents · Render: ${this._renderBackend}${treeMode}${legacyReason ? ` (${legacyReason})` : ''}`;
   }
 
   deactivate() {
     if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
+    this._treeCalcBackend = 'cpu';
     this._active = false;
     this._resetRuntime(true);
   }
