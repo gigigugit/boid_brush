@@ -11,7 +11,6 @@ import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
-import { WebGPUTreeMotionGenerator } from './webgpu-tree-motion.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
@@ -83,6 +82,18 @@ const DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT = (() => {
     return false;
   }
 })();
+
+let _treeMotionModulePromise = null;
+function _loadTreeMotionModule() {
+  if (!_treeMotionModulePromise) {
+    _treeMotionModulePromise = import('./webgpu-tree-motion.js')
+      .catch(error => {
+        console.warn('Motion tree WebGPU module unavailable — falling back to CPU tree generation.', error);
+        return null;
+      });
+  }
+  return _treeMotionModulePromise;
+}
 
 // ---- Hex → HSL / HSL → CSS helpers ----
 function hexToHSL(hex) {
@@ -6364,6 +6375,8 @@ export class MotionPathBrush {
   constructor(app) {
     this.app = app;
     this.renderer = createBoidStampRenderer();
+    this._TreeGeneratorClass = null;
+    this._treeGeneratorModuleRequested = false;
     this._treeGenerator = null;
     this._treeCalcBackend = 'cpu';
     this._active = false;
@@ -6388,12 +6401,25 @@ export class MotionPathBrush {
     this._hasGraphAngle = false;
     this._lastInputX = 0;
     this._lastInputY = 0;
+    this._requestTreeGeneratorModule();
     _ensureProceduralStampRendererInit(this);
   }
 
+  _requestTreeGeneratorModule() {
+    if (this._treeGeneratorModuleRequested) return;
+    this._treeGeneratorModuleRequested = true;
+    _loadTreeMotionModule().then(mod => {
+      if (mod?.WebGPUTreeMotionGenerator) {
+        this._TreeGeneratorClass = mod.WebGPUTreeMotionGenerator;
+      }
+    });
+  }
+
   _ensureTreeGenerator() {
+    this._requestTreeGeneratorModule();
+    if (!this._TreeGeneratorClass) return false;
     if (!this.renderer?.webgpu?.ready || !this.renderer.webgpu.device) return false;
-    if (!this._treeGenerator) this._treeGenerator = new WebGPUTreeMotionGenerator();
+    if (!this._treeGenerator) this._treeGenerator = new this._TreeGeneratorClass();
     return this._treeGenerator.init(this.renderer.webgpu.device);
   }
 
