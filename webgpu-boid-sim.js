@@ -1,7 +1,7 @@
 import { BoidSim } from './wasm-bridge.js';
 
 const AGENT_STRIDE = 23;
-const PARAMS_LEN = 35;
+const PARAMS_LEN = 67;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
 const STAGING_BUFFER_COUNT = 2;
@@ -44,6 +44,38 @@ function fillParamsArray(target, p, targetX, targetY, time) {
   target[32] = p.litVar ?? 0;
   target[33] = p.simBoundsMargin ?? -1;
   target[34] = p.simSpeed ?? 1;
+  target[35] = p.leader?.pull ?? 0;
+  target[36] = p.leader?.seek ?? (p.seek ?? 0.4);
+  target[37] = p.leader?.cohesion ?? (p.cohesion ?? 0.15);
+  target[38] = p.leader?.separation ?? (p.separation ?? 0.5);
+  target[39] = p.leader?.alignment ?? (p.alignment ?? 0.2);
+  target[40] = p.leader?.jitter ?? 0;
+  target[41] = p.leader?.wander ?? 0;
+  target[42] = p.leader?.wanderSpeed ?? (p.wanderSpeed ?? 0.3);
+  target[43] = p.leader?.maxSpeed ?? (p.maxSpeed ?? 4.0);
+  target[44] = p.leader?.damping ?? (p.damping ?? 0.95);
+  target[45] = p.leader?.flowField ?? 0;
+  target[46] = p.leader?.flowScale ?? (p.flowScale ?? 0.01);
+  target[47] = p.leader?.fleeRadius ?? 0;
+  target[48] = p.leader?.fov ?? (p.fov ?? 360);
+  target[49] = p.leader?.individuality ?? 0;
+  target[50] = p.leader?.quorumThreshold ?? 0;
+  target[51] = p.leader?.quorumCompositeStrength ?? 0.35;
+  target[52] = p.leader?.sensingEnabled ? 1 : 0;
+  target[53] = p.leader?.sensingMode === 'attract' ? 1 : 0;
+  target[54] = p.leader?.sensingStrength ?? 0.5;
+  target[55] = p.leader?.sensingRadius ?? 20;
+  target[56] = p.leader?.sensingThreshold ?? 0.1;
+  target[57] = p.leader?.neighborRadius ?? 80;
+  target[58] = p.leader?.separationRadius ?? 25;
+  target[59] = p.leader?.sizeVar ?? 0;
+  target[60] = p.leader?.opacityVar ?? 0;
+  target[61] = p.leader?.speedVar ?? 0;
+  target[62] = p.leader?.forceVar ?? 0;
+  target[63] = p.leader?.hueVar ?? 0;
+  target[64] = p.leader?.satVar ?? 0;
+  target[65] = p.leader?.litVar ?? 0;
+  target[66] = p.leader?.simBoundsMargin ?? -1;
 }
 
 function packMeta(agentCount, width, height) {
@@ -69,7 +101,8 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  return true;
+  const leaderCount = p?.leader?.count ?? p?.leaderConfig?.count ?? 0;
+  return leaderCount <= 0;
 }
 
 export class WebGPUBoidSim {
@@ -1062,6 +1095,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   spawnBatch(cx, cy, count, shape, angle, jitter, radius) {
     this.helper.spawnBatch(cx, cy, count, shape, angle, jitter, radius);
+    this._markStateDirty();
+  }
+
+  setLeaderRange(startIndex, endIndex, leaderCount) {
+    this.helper.setLeaderRange(startIndex, endIndex, leaderCount);
     this._markStateDirty();
   }
 

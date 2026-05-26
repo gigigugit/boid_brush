@@ -7,7 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders } from './ui.js';
+import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, LEADER_OVERRIDE_FIELDS } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -15,6 +15,14 @@ import { BlobStroke } from './blob-stroke.js';
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-06-cache-check-1';
+const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
+  acc[field.id] = field.defaultValue;
+  acc[field.overrideId] = false;
+  return acc;
+}, {
+  leaderCount: 0,
+  leaderPull: 35,
+}));
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
   fillTolerance: 32,
@@ -45,6 +53,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   litVar: 0,
   maxSpeed: 22,
   damping: 95,
+  ...LEADER_FACTORY_DEFAULTS,
   motionPathAgentCount: 12,
   motionPathRenderMode: 'ribbon',
   motionPathScale: 100,
@@ -442,6 +451,21 @@ function _normalizeSimulationVars(value) {
     alignment: Number.isFinite(value?.alignment) ? value.alignment : undefined,
     maxSpeed: Number.isFinite(value?.maxSpeed) ? value.maxSpeed : undefined,
     damping: Number.isFinite(value?.damping) ? value.damping : undefined,
+  };
+}
+
+function _readLeaderOverrideConfig({ val, chk, sel }) {
+  const overrides = {};
+  for (const field of LEADER_OVERRIDE_FIELDS) {
+    overrides[field.key] = {
+      enabled: chk(field.overrideId),
+      value: field.readControl({ val, chk, sel }),
+    };
+  }
+  return {
+    count: Math.max(0, Math.round(val('leaderCount') || 0)),
+    pull: val('leaderPull') / 100,
+    overrides,
   };
 }
 
@@ -3123,6 +3147,7 @@ export class App {
       simEdgeRadius: val('simEdgeRadius') || 28,
       simPheroPaintRadius: val('simPheroPaintRadius') || 18,
       simPheroPaintStrength: (val('simPheroPaintStrength') || 55) / 100,
+      leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
     return this._cachedP;
   }

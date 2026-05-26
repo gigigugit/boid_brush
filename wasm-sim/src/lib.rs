@@ -133,6 +133,11 @@ pub fn spawn_batch(cx: f32, cy: f32, count: u32, shape: u32, angle: f32, jitter:
     with_sim(|sim| sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius));
 }
 
+#[wasm_bindgen]
+pub fn set_leader_range(start_index: u32, end_index: u32, leader_count: u32) {
+    with_sim(|sim| sim.set_leader_range(start_index, end_index, leader_count));
+}
+
 /// Remove an agent by ID. Uses swap-remove (O(1), may reorder).
 #[wasm_bindgen]
 pub fn remove_agent(id: u32) {
@@ -422,7 +427,8 @@ mod tests {
         sim.buf[base + boid::AX] = 0.0;
         sim.buf[base + boid::AY] = 0.0;
 
-        crate::sensing::apply_sensing_force(&mut sim.buf, base, &sim.params, &sim.sensing);
+        let params = sim.params.params_for(false);
+        crate::sensing::apply_sensing_force(&mut sim.buf, base, &params, &sim.sensing);
 
         // Agent should be pushed LEFT (negative x) away from bright right side
         assert!(
@@ -441,6 +447,63 @@ mod tests {
         assert_eq!(sim.agent_count, 50);
         sim.clear_agents();
         assert_eq!(sim.agent_count, 0);
+    }
+
+    #[test]
+    fn test_set_leader_range_marks_requested_agents() {
+        let mut sim = Simulation::new(120, 80, 8);
+        for x in [20.0, 30.0, 40.0, 50.0] {
+            sim.spawn_one(x, 40.0);
+        }
+
+        sim.set_leader_range(1, 4, 2);
+
+        assert!(!boid::has_flag(&sim.buf, 0, boid::FLAG_LEADER));
+        assert!(boid::has_flag(&sim.buf, STRIDE, boid::FLAG_LEADER));
+        assert!(boid::has_flag(&sim.buf, STRIDE * 2, boid::FLAG_LEADER));
+        assert!(!boid::has_flag(&sim.buf, STRIDE * 3, boid::FLAG_LEADER));
+    }
+
+    #[test]
+    fn test_followers_accelerate_toward_nearby_leaders() {
+        let mut sim = Simulation::new(160, 120, 4);
+        sim.spawn_one(80.0, 60.0);
+        sim.spawn_one(100.0, 60.0);
+        sim.set_leader_range(1, 2, 1);
+
+        sim.buf[0 + boid::AX] = 0.0;
+        sim.buf[0 + boid::AY] = 0.0;
+        sim.buf[0 + boid::VX] = 0.0;
+        sim.buf[0 + boid::VY] = 0.0;
+        sim.buf[STRIDE + boid::VX] = 0.0;
+        sim.buf[STRIDE + boid::VY] = 0.0;
+        sim.buf[0 + boid::COH_M] = 1.0;
+        sim.buf[0 + boid::SEP_M] = 1.0;
+        sim.buf[STRIDE + boid::COH_M] = 1.0;
+        sim.buf[STRIDE + boid::SEP_M] = 1.0;
+
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.alignment = 0.0;
+        sim.params.leader_cohesion = 0.0;
+        sim.params.leader_separation = 0.0;
+        sim.params.leader_alignment = 0.0;
+        sim.params.leader_pull = 1.0;
+        sim.params.neighbor_radius = 40.0;
+        sim.params.leader_neighbor_radius = 40.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+        sim.params.leader_fov_rad = core::f32::consts::PI * 2.0;
+
+        crate::forces::apply_neighbor_forces(&mut sim.buf, sim.agent_count, &sim.params);
+
+        assert!(
+            sim.buf[boid::AX] > 0.0,
+            "follower should accelerate toward the leader on its right"
+        );
+        assert!(
+            sim.buf[STRIDE + boid::AX].abs() < 1e-4,
+            "leader pull should not self-apply to the leader agent"
+        );
     }
 
     #[test]

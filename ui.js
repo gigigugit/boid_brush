@@ -95,6 +95,86 @@ function _nudgeRangeValue(target, delta) {
   _updateSliderValue(target, (Number(target?.value) || 0) + delta);
 }
 
+export const LEADER_OVERRIDE_FIELDS = Object.freeze([
+  { key: 'seek', sourceId: 'seek', id: 'leaderSeek', overrideId: 'leaderOverrideSeek', type: 'range', label: 'Seek', min: 0, max: 100, defaultValue: 75, readControl: ({ val }) => val('leaderSeek') / 100 },
+  { key: 'cohesion', sourceId: 'cohesion', id: 'leaderCohesion', overrideId: 'leaderOverrideCohesion', type: 'range', label: 'Cohesion', min: 0, max: 100, defaultValue: 37, readControl: ({ val }) => val('leaderCohesion') / 100 },
+  { key: 'separation', sourceId: 'separation', id: 'leaderSeparation', overrideId: 'leaderOverrideSeparation', type: 'range', label: 'Separation', min: 0, max: 100, defaultValue: 15, readControl: ({ val }) => val('leaderSeparation') / 100 },
+  { key: 'alignment', sourceId: 'alignment', id: 'leaderAlignment', overrideId: 'leaderOverrideAlignment', type: 'range', label: 'Alignment', min: 0, max: 100, defaultValue: 22, readControl: ({ val }) => val('leaderAlignment') / 100 },
+  { key: 'jitter', sourceId: 'jitter', id: 'leaderJitter', overrideId: 'leaderOverrideJitter', type: 'range', label: 'Jitter', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderJitter') / 100 },
+  { key: 'wander', sourceId: 'wander', id: 'leaderWander', overrideId: 'leaderOverrideWander', type: 'range', label: 'Wander', min: 0, max: 100, defaultValue: 6, readControl: ({ val }) => val('leaderWander') / 100 },
+  { key: 'wanderSpeed', sourceId: 'wanderSpeed', id: 'leaderWanderSpeed', overrideId: 'leaderOverrideWanderSpeed', type: 'range', label: 'Wander Spd', min: 1, max: 100, defaultValue: 30, readControl: ({ val }) => val('leaderWanderSpeed') / 100 },
+  { key: 'fov', sourceId: 'fov', id: 'leaderFov', overrideId: 'leaderOverrideFov', type: 'range', label: 'FOV', min: 30, max: 360, defaultValue: 115, readControl: ({ val }) => val('leaderFov') || 360 },
+  { key: 'flowField', sourceId: 'flowField', id: 'leaderFlowField', overrideId: 'leaderOverrideFlowField', type: 'range', label: 'Flow', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderFlowField') / 100 },
+  { key: 'flowScale', sourceId: 'flowScale', id: 'leaderFlowScale', overrideId: 'leaderOverrideFlowScale', type: 'range', label: 'Flow Scale', min: 1, max: 100, defaultValue: 10, readControl: ({ val }) => val('leaderFlowScale') / 1000 },
+  { key: 'fleeRadius', sourceId: 'fleeRadius', id: 'leaderFleeRadius', overrideId: 'leaderOverrideFleeRadius', type: 'range', label: 'Flee R', min: 0, max: 150, defaultValue: 0, readControl: ({ val }) => val('leaderFleeRadius') },
+  { key: 'individuality', sourceId: 'individuality', id: 'leaderIndividuality', overrideId: 'leaderOverrideIndividuality', type: 'range', label: 'Individ.', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderIndividuality') / 100 },
+  { key: 'quorumThreshold', sourceId: 'quorumThreshold', id: 'leaderQuorumThreshold', overrideId: 'leaderOverrideQuorumThreshold', type: 'range', label: 'Quorum Threshold', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => Math.max(0, Math.round(val('leaderQuorumThreshold') || 0)) },
+  { key: 'quorumCompositeStrength', sourceId: 'quorumCompositeStrength', id: 'leaderQuorumCompositeStrength', overrideId: 'leaderOverrideQuorumCompositeStrength', type: 'range', label: 'Quorum Composite', min: 0, max: 100, defaultValue: 35, readControl: ({ val }) => val('leaderQuorumCompositeStrength') / 100 },
+  { key: 'sizeVar', sourceId: 'sizeVar', id: 'leaderSizeVar', overrideId: 'leaderOverrideSizeVar', type: 'range', label: 'Size Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderSizeVar') / 100 },
+  { key: 'opacityVar', sourceId: 'opacityVar', id: 'leaderOpacityVar', overrideId: 'leaderOverrideOpacityVar', type: 'range', label: 'Opac Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderOpacityVar') / 100 },
+  { key: 'speedVar', sourceId: 'speedVar', id: 'leaderSpeedVar', overrideId: 'leaderOverrideSpeedVar', type: 'range', label: 'Speed Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderSpeedVar') / 100 },
+  { key: 'forceVar', sourceId: 'forceVar', id: 'leaderForceVar', overrideId: 'leaderOverrideForceVar', type: 'range', label: 'Force Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderForceVar') / 100 },
+  { key: 'hueVar', sourceId: 'hueVar', id: 'leaderHueVar', overrideId: 'leaderOverrideHueVar', type: 'range', label: 'Hue Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderHueVar') / 100 },
+  { key: 'satVar', sourceId: 'satVar', id: 'leaderSatVar', overrideId: 'leaderOverrideSatVar', type: 'range', label: 'Satur Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderSatVar') / 100 },
+  { key: 'litVar', sourceId: 'litVar', id: 'leaderLitVar', overrideId: 'leaderOverrideLitVar', type: 'range', label: 'Light Var', min: 0, max: 100, defaultValue: 0, readControl: ({ val }) => val('leaderLitVar') / 100 },
+  { key: 'maxSpeed', sourceId: 'maxSpeed', id: 'leaderMaxSpeed', overrideId: 'leaderOverrideMaxSpeed', type: 'range', label: 'Max Speed', min: 1, max: 30, defaultValue: 22, readControl: ({ val }) => val('leaderMaxSpeed') / 2 },
+  { key: 'damping', sourceId: 'damping', id: 'leaderDamping', overrideId: 'leaderOverrideDamping', type: 'range', label: 'Damping', min: 80, max: 100, defaultValue: 95, readControl: ({ val }) => val('leaderDamping') / 100 },
+  { key: 'sensingEnabled', sourceId: 'sensingEnabled', id: 'leaderSensingEnabled', overrideId: 'leaderOverrideSensingEnabled', type: 'checkbox', label: 'Sensing', defaultValue: false, readControl: ({ chk }) => chk('leaderSensingEnabled') },
+  { key: 'sensingMode', sourceId: 'sensingMode', id: 'leaderSensingMode', overrideId: 'leaderOverrideSensingMode', type: 'select', label: 'Sensing Mode', defaultValue: 'avoid', options: [{ value: 'avoid', label: 'Avoid' }, { value: 'attract', label: 'Attract' }], readControl: ({ sel }) => sel('leaderSensingMode') || 'avoid' },
+  { key: 'sensingStrength', sourceId: 'sensingStrength', id: 'leaderSensingStrength', overrideId: 'leaderOverrideSensingStrength', type: 'range', label: 'Sensing Strength', min: 0, max: 100, defaultValue: 50, readControl: ({ val }) => val('leaderSensingStrength') / 100 },
+  { key: 'sensingRadius', sourceId: 'sensingRadius', id: 'leaderSensingRadius', overrideId: 'leaderOverrideSensingRadius', type: 'range', label: 'Sensing Radius', min: 0, max: 200, defaultValue: 20, readControl: ({ val }) => val('leaderSensingRadius') },
+  { key: 'sensingThreshold', sourceId: 'sensingThreshold', id: 'leaderSensingThreshold', overrideId: 'leaderOverrideSensingThreshold', type: 'range', label: 'Sensing Threshold', min: 0, max: 100, defaultValue: 10, readControl: ({ val }) => val('leaderSensingThreshold') / 100 },
+  { key: 'neighborRadius', sourceId: 'am_neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
+  { key: 'separationRadius', sourceId: 'am_separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
+  { key: 'simBoundsMargin', sourceId: 'simBoundsMargin', id: 'leaderSimBoundsMargin', overrideId: 'leaderOverrideSimBoundsMargin', type: 'range', label: 'Bounds Margin', min: 0, max: 240, defaultValue: 0, readControl: ({ val }) => Math.max(0, val('leaderSimBoundsMargin') || 0) },
+]);
+
+function _buildLeaderOverrideControl(field) {
+  if (field.type === 'checkbox') {
+    return `<label style="margin:4px 0 0 0;">Enabled <input type="checkbox" id="${field.id}"></label>`;
+  }
+  if (field.type === 'select') {
+    return `<label style="margin:4px 0 0 0;">Mode <select id="${field.id}">${field.options.map(option => `<option value="${option.value}">${option.label}</option>`).join('')}</select></label>`;
+  }
+  return `<label style="margin:4px 0 0 0;">${field.label} <span id="v_${field.id}">${field.defaultValue}</span><input type="range" id="${field.id}" min="${field.min}" max="${field.max}" value="${field.defaultValue}"></label>`;
+}
+
+function _buildLeaderOverrideRows() {
+  return LEADER_OVERRIDE_FIELDS.map(field => `
+    <div data-leader-field="${field.key}" style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;">
+        <span>${field.label}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#9fb0c6;">Override <input type="checkbox" id="${field.overrideId}" data-leader-target="${field.id}" data-leader-source="${field.sourceId}"></span>
+      </label>
+      ${_buildLeaderOverrideControl(field)}
+    </div>
+  `).join('');
+}
+
+function _syncLeaderOverrideControlState(field) {
+  const toggle = document.getElementById(field.overrideId);
+  const target = document.getElementById(field.id);
+  const row = document.querySelector(`[data-leader-field="${field.key}"]`);
+  const enabled = !!toggle?.checked;
+  if (target) target.disabled = !enabled;
+  if (row) row.style.opacity = enabled ? '1' : '0.6';
+}
+
+function _copyLeaderOverrideFromSource(field) {
+  const source = document.getElementById(field.sourceId);
+  const target = document.getElementById(field.id);
+  if (!source || !target) return;
+  if (target.type === 'checkbox') target.checked = source.checked;
+  else target.value = source.value;
+  const span = document.getElementById('v_' + field.id);
+  const fmt = _sliderFormats[field.id];
+  if (span && target.type === 'range') span.textContent = fmt ? fmt(+target.value) : target.value;
+}
+
+function _syncLeaderOverrideUI() {
+  LEADER_OVERRIDE_FIELDS.forEach(_syncLeaderOverrideControlState);
+}
+
 // ── Build sidebar DOM ───────────────────────────────────────
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
@@ -185,6 +265,14 @@ export function buildSidebar(app) {
     <div class="section-body" data-brushes="boid ant">
       ${sliderRow('maxSpeed', 'Max Speed', 1, 30, 8, v => (v/2).toFixed(1))}
       ${sliderRow('damping', 'Damping', 80, 100, 95, v => (v/100).toFixed(2))}
+    </div>
+
+    <div class="section-header closed" data-brushes="boid" data-section="leaders">Leader Boids <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid">
+      ${sliderRow('leaderCount', 'Leader Count', 0, MAX_SWARM_COUNT, 0)}
+      ${sliderRow('leaderPull', 'Leader Pull', 0, 100, 35, v => (v / 100).toFixed(2), 'Extra pull followers feel toward nearby leaders')}
+      <span class="slider-desc">The first N boids in each spawned batch become leaders. Enable an override to decouple that leader setting from the main boid controls.</span>
+      ${_buildLeaderOverrideRows()}
     </div>
 
     <!-- Motion Path Graph -->
@@ -700,6 +788,15 @@ export function buildSidebar(app) {
     el.addEventListener('change', () => app.invalidateParams());
   });
 
+  LEADER_OVERRIDE_FIELDS.forEach(field => {
+    document.getElementById(field.overrideId)?.addEventListener('change', (event) => {
+      if (event.target.checked) _copyLeaderOverrideFromSource(field);
+      _syncLeaderOverrideUI();
+      app.invalidateParams();
+    });
+  });
+  _syncLeaderOverrideUI();
+
   // ── Canvas texture upload ──
   const _texFileInput = document.createElement('input');
   _texFileInput.type = 'file';
@@ -1083,6 +1180,7 @@ export function syncUI(app) {
   syncTextureUI(app);
   syncStampImageUI(app);
   syncEdgeSliders(app);
+  _syncLeaderOverrideUI();
   app._syncMotionPathUI?.();
 }
 
@@ -1158,6 +1256,7 @@ const _sliderFormats = {
   brushScale: v => (v / 100).toFixed(1),
   spawnAngle: v => v + '°',
   spawnJitter: v => (v / 100).toFixed(2),
+  leaderPull: v => (v / 100).toFixed(2),
   seek: v => (v / 100).toFixed(2),
   cohesion: v => (v / 100).toFixed(2),
   separation: v => (v / 100).toFixed(2),
@@ -1277,6 +1376,12 @@ const _sliderFormats = {
   simEdgeForce: v => (v / 100).toFixed(2),
   simPheroPaintStrength: v => (v / 100).toFixed(2),
 };
+
+LEADER_OVERRIDE_FIELDS.forEach(field => {
+  if (field.type === 'range' && !_sliderFormats[field.id] && _sliderFormats[field.sourceId]) {
+    _sliderFormats[field.id] = _sliderFormats[field.sourceId];
+  }
+});
 
 let _edgeSliderApp = null;
 

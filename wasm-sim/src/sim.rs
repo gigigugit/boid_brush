@@ -12,7 +12,7 @@
 use crate::boid::*;
 use crate::forces::{self, Rng};
 use crate::noise::SimplexNoise;
-use crate::params::{SimParams, PARAMS_LEN};
+use crate::params::{AgentParams, SimParams, PARAMS_LEN};
 use crate::sensing::{self, SensingMap};
 use crate::spawn::{self, SpawnShape};
 
@@ -73,6 +73,40 @@ impl Simulation {
         self.params = SimParams::from_raw(&self.params_buf);
     }
 
+    fn generate_agent_traits(&mut self, params: &AgentParams) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) {
+        let sm_base = 0.7 + self.rng.next_f32() * 0.6;
+        let om_base = 0.6 + self.rng.next_f32() * 0.8;
+        let sv = params.size_var.max(params.individuality);
+        let ov = params.opacity_var.max(params.individuality);
+        let sm = sm_base * (1.0 + (self.rng.next_f32() - 0.5) * 2.0 * sv);
+        let om = om_base * (1.0 + (self.rng.next_f32() - 0.5) * 2.0 * ov);
+
+        let spv = params.speed_var.max(params.individuality);
+        let fv = params.force_var.max(params.individuality);
+        let spd_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * spv;
+        let seek_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * fv;
+        let coh_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * fv;
+        let sep_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * fv;
+
+        let hue = (self.rng.next_f32() - 0.5) * 2.0 * 180.0 * params.hue_var;
+        let sat = (self.rng.next_f32() - 0.5) * 2.0 * 50.0 * params.sat_var;
+        let lit = (self.rng.next_f32() - 0.5) * 2.0 * 30.0 * params.lit_var;
+        (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit)
+    }
+
+    fn apply_agent_traits(&mut self, base: usize, params: &AgentParams) {
+        let (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit) = self.generate_agent_traits(params);
+        self.buf[base + SM] = sm;
+        self.buf[base + OM] = om;
+        self.buf[base + SPD_M] = spd_m;
+        self.buf[base + SEEK_M] = seek_m;
+        self.buf[base + COH_M] = coh_m;
+        self.buf[base + SEP_M] = sep_m;
+        self.buf[base + HUE] = hue;
+        self.buf[base + SAT] = sat;
+        self.buf[base + LIT] = lit;
+    }
+
     /// Spawn a single agent at (x, y). Returns the agent index (ID).
     /// Per-agent multipliers are randomized based on variance params.
     pub fn spawn_one(&mut self, x: f32, y: f32) -> u32 {
@@ -81,7 +115,7 @@ impl Simulation {
         }
         let idx = self.agent_count;
         let base = idx * STRIDE;
-        let p = &self.params;
+        let params = self.params.params_for(false);
 
         let vx = (self.rng.next_f32() - 0.5) * 2.0;
         let vy = (self.rng.next_f32() - 0.5) * 2.0;
@@ -89,40 +123,31 @@ impl Simulation {
         let nx = self.rng.next_f32() * 1000.0;
         let ny = self.rng.next_f32() * 1000.0;
 
-        // Base sm/om (always have some natural variance)
-        let sm_base = 0.7 + self.rng.next_f32() * 0.6;
-        let om_base = 0.6 + self.rng.next_f32() * 0.8;
-
-        // Apply per-param variance: size_var and opacity_var scale the
-        // randomization range. At 0 → no extra variance. At 1 → ±100%.
-        let sv = p.size_var.max(p.individuality);
-        let ov = p.opacity_var.max(p.individuality);
-        let sm = sm_base * (1.0 + (self.rng.next_f32() - 0.5) * 2.0 * sv);
-        let om = om_base * (1.0 + (self.rng.next_f32() - 0.5) * 2.0 * ov);
-
-        // Per-agent behavioral multipliers (centered at 1.0)
-        let spv = p.speed_var.max(p.individuality);
-        let fv = p.force_var.max(p.individuality);
-        let spd_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * spv;
-        let seek_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * fv;
-        let coh_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * fv;
-        let sep_m = 1.0 + (self.rng.next_f32() - 0.5) * 2.0 * fv;
-
-        // Per-agent color modifiers (set once at spawn)
-        // hue: offset in degrees, ±180 at max variance
-        let hv = p.hue_var;
-        let hue = (self.rng.next_f32() - 0.5) * 2.0 * 180.0 * hv;
-        // sat: additive offset to saturation (0-100%), ±50 at max
-        let satv = p.sat_var;
-        let sat = (self.rng.next_f32() - 0.5) * 2.0 * 50.0 * satv;
-        // lit: additive offset to lightness (0-100%), ±30 at max
-        let litv = p.lit_var;
-        let lit = (self.rng.next_f32() - 0.5) * 2.0 * 30.0 * litv;
+        let (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit) = self.generate_agent_traits(&params);
 
         init_agent(&mut self.buf, base, x, y, vx, vy, sm, om, wa, nx, ny,
                     spd_m, seek_m, coh_m, sep_m, hue, sat, lit);
         self.agent_count += 1;
         idx as u32
+    }
+
+    pub fn set_leader_range(&mut self, start_index: u32, end_index: u32, leader_count: u32) {
+        let start = (start_index as usize).min(self.agent_count);
+        let end = (end_index as usize).min(self.agent_count);
+        let leader_limit = leader_count as usize;
+        if start >= end {
+            return;
+        }
+        let leader_params = self.params.params_for(true);
+        for (offset, agent_index) in (start..end).enumerate() {
+            let base = agent_index * STRIDE;
+            if offset < leader_limit {
+                set_flag(&mut self.buf, base, FLAG_LEADER);
+                self.apply_agent_traits(base, &leader_params);
+            } else {
+                clear_flag(&mut self.buf, base, FLAG_LEADER);
+            }
+        }
     }
 
     /// Batch-spawn agents in a given shape centered at (cx, cy).
@@ -194,7 +219,6 @@ impl Simulation {
     /// Call set_params() before this to update forces/target.
     pub fn step(&mut self, _dt: f32) {
         let p = &self.params;
-        let ms = p.max_speed;
 
         // Phase 1: Zero accelerations and apply per-agent forces
         //          (seek, flee, jitter, wander, flow, sensing)
@@ -203,10 +227,12 @@ impl Simulation {
             if !has_flag(&self.buf, base, FLAG_ALIVE) {
                 continue;
             }
+            let is_leader = has_flag(&self.buf, base, FLAG_LEADER);
+            let agent_params = p.params_for(is_leader);
 
             // Per-agent multipliers
-            let agent_ms = ms * self.buf[base + SPD_M];
-            let agent_seek = p.seek * self.buf[base + SEEK_M];
+            let agent_ms = agent_params.max_speed * self.buf[base + SPD_M];
+            let agent_seek = agent_params.seek * self.buf[base + SEEK_M];
 
             // Zero accel
             self.buf[base + AX] = 0.0;
@@ -216,19 +242,19 @@ impl Simulation {
             forces::seek(&mut self.buf, base, p.target_x, p.target_y, agent_seek, agent_ms);
 
             // Flee cursor
-            if p.flee_radius > 0.0 {
-                forces::flee(&mut self.buf, base, p.target_x, p.target_y, p.flee_radius, agent_ms);
+            if agent_params.flee_radius > 0.0 {
+                forces::flee(&mut self.buf, base, p.target_x, p.target_y, agent_params.flee_radius, agent_ms);
             }
 
             // Jitter
-            forces::jitter(&mut self.buf, base, p.jitter, agent_ms, &mut self.rng);
+            forces::jitter(&mut self.buf, base, agent_params.jitter, agent_ms, &mut self.rng);
 
             // Wander
             forces::wander(
                 &mut self.buf,
                 base,
-                p.wander,
-                p.wander_speed,
+                agent_params.wander,
+                agent_params.wander_speed,
                 agent_ms,
                 &mut self.rng,
             );
@@ -237,15 +263,15 @@ impl Simulation {
             forces::flow_field(
                 &mut self.buf,
                 base,
-                p.flow_field,
-                p.flow_scale,
+                agent_params.flow_field,
+                agent_params.flow_scale,
                 agent_ms,
                 p.time,
                 &self.noise,
             );
 
             // Sensing
-            sensing::apply_sensing_force(&mut self.buf, base, p, &self.sensing);
+            sensing::apply_sensing_force(&mut self.buf, base, &agent_params, &self.sensing);
         }
 
         // Phase 2: Neighbor forces (cohesion, separation, alignment)
@@ -259,8 +285,8 @@ impl Simulation {
             self.spatial_grid.build(
                 &self.buf,
                 self.agent_count,
-                self.params.neighbor_radius,
-                self.params.separation_radius,
+                self.params.max_neighbor_radius(),
+                self.params.max_separation_radius(),
                 self.width,
                 self.height,
             );
@@ -275,29 +301,30 @@ impl Simulation {
         forces::apply_neighbor_forces(&mut self.buf, self.agent_count, &self.params);
 
         // Phase 3: Integrate (uses per-agent speed multiplier)
-        let bounds_margin = p.boundary_margin;
-        let (min_x, min_y, max_x, max_y) = if bounds_margin >= 0.0 {
-            (
-                -bounds_margin,
-                -bounds_margin,
-                self.width as f32 + bounds_margin,
-                self.height as f32 + bounds_margin,
-            )
-        } else {
-            // Disabled sentinel: integrate() skips clamping when min > max.
-            (1.0, 1.0, 0.0, 0.0)
-        };
         for i in 0..self.agent_count {
             let base = i * STRIDE;
             if !has_flag(&self.buf, base, FLAG_ALIVE) {
                 continue;
             }
-            let agent_ms = ms * self.buf[base + SPD_M];
+            let is_leader = has_flag(&self.buf, base, FLAG_LEADER);
+            let agent_params = p.params_for(is_leader);
+            let agent_ms = agent_params.max_speed * self.buf[base + SPD_M];
+            let bounds_margin = agent_params.boundary_margin;
+            let (min_x, min_y, max_x, max_y) = if bounds_margin >= 0.0 {
+                (
+                    -bounds_margin,
+                    -bounds_margin,
+                    self.width as f32 + bounds_margin,
+                    self.height as f32 + bounds_margin,
+                )
+            } else {
+                (1.0, 1.0, 0.0, 0.0)
+            };
             forces::integrate(
                 &mut self.buf,
                 base,
                 agent_ms,
-                p.damping,
+                agent_params.damping,
                 min_x,
                 min_y,
                 max_x,

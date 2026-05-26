@@ -22,7 +22,7 @@
 //  12    | lsx         | last stamp x (for interpolated stamping)
 //  13    | lsy         | last stamp y (for interpolated stamping)
 //  14    | hs          | has-stamped flag (0.0 = no, 1.0 = yes)
-//  15    | flags       | bitfield as f32: alive(bit0), active(bit1)
+//  15    | flags       | bitfield as f32: alive(bit0), leader(bit1)
 //  16    | spd_m       | per-agent max-speed multiplier (set at spawn)
 //  17    | seek_m      | per-agent seek weight multiplier (set at spawn)
 //  18    | coh_m       | per-agent cohesion multiplier (set at spawn)
@@ -62,6 +62,7 @@ pub const LIT: usize = 22;
 
 // Flag bits (stored as f32, cast to u32 for bit ops)
 pub const FLAG_ALIVE: u32 = 1;
+pub const FLAG_LEADER: u32 = 1 << 1;
 
 /// Read a flag bit from the agent's flags field.
 #[inline]

@@ -207,6 +207,15 @@ export function remove_agent(id) {
 }
 
 /**
+ * @param {number} start_index
+ * @param {number} end_index
+ * @param {number} leader_count
+ */
+export function set_leader_range(start_index, end_index, leader_count) {
+    wasm.set_leader_range(start_index, end_index, leader_count);
+}
+
+/**
  * Write simulation parameters from JS. Call before `step()`.
  *
  * ```js

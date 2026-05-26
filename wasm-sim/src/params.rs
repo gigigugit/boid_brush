@@ -1,52 +1,45 @@
 // =============================================================================
 // params.rs — Simulation parameters struct
-//
-// JS writes a Float32Array of 32 floats into WASM memory before each step().
-// This module reads those raw floats into a typed struct.
-//
-// PARAMS BUFFER LAYOUT (Float32Array, 34 floats = 136 bytes)
-// Offset | Param            | JS source (from getP())
-// -------|------------------|------------------------
-//   0    | seek             | p.seek  (0-1)
-//   1    | cohesion         | p.cohesion (0-1, pre-scaled)
-//   2    | separation       | p.separation (0-1, pre-scaled)
-//   3    | alignment        | p.alignment (0-1)
-//   4    | jitter           | p.jitter (0-1)
-//   5    | wander           | p.wander (0-1)
-//   6    | wander_speed     | p.wanderSpeed (0-1)
-//   7    | max_speed        | p.maxSpeed (already halved)
-//   8    | damping          | p.damping (0-1, e.g. 0.95)
-//   9    | flow_field       | p.flowField (0-1)
-//  10    | flow_scale       | p.flowScale (small, e.g. 0.01)
-//  11    | flee_radius      | p.fleeRadius (pixels)
-//  12    | fov              | p.fov (degrees, converted to radians in Rust)
-//  13    | individuality    | p.individuality (0-1)
-//  14    | quorum_threshold | neighbor count needed to mark a local quorum; 0 disables
-//  15    | quorum_composite | how strongly a quorum influences outgroup boids as one composite
-//  16    | sensing_enabled  | 0.0 or 1.0
-//  17    | sensing_mode     | 0.0 = avoid, 1.0 = attract
-//  18    | sensing_strength | p.sensingStrength (0-1)
-//  19    | sensing_radius   | p.sensingRadius (pixels)
-//  20    | sensing_threshold| p.sensingThreshold (0-1)
-//  21    | target_x         | cursor x (canvas coords)
-//  22    | target_y         | cursor y (canvas coords)
-//  23    | time             | elapsed time (seconds or ms, for flow field)
-//  24    | neighbor_radius  | default 80.0
-//  25    | separation_radius| default 25.0
-//  26    | size_var         | per-boid size variance (0-1)
-//  27    | opacity_var      | per-boid opacity variance (0-1)
-//  28    | speed_var        | per-boid speed variance (0-1)
-//  29    | force_var        | per-boid force weight variance (0-1)
-//  30    | hue_var          | per-boid hue offset variance (0-1)
-//  31    | sat_var          | per-boid saturation offset variance (0-1)
-//  32    | lit_var          | per-boid lightness offset variance (0-1)
-//  33    | boundary_margin  | simulation bounds margin in px; negative disables bounds
 // =============================================================================
 
 use core::f32::consts::PI;
 
-/// Total number of f32s in the params buffer.
-pub const PARAMS_LEN: usize = 34;
+pub const PARAMS_LEN: usize = 66;
+
+#[derive(Clone, Copy, Debug)]
+pub struct AgentParams {
+    pub seek: f32,
+    pub cohesion: f32,
+    pub separation: f32,
+    pub alignment: f32,
+    pub jitter: f32,
+    pub wander: f32,
+    pub wander_speed: f32,
+    pub max_speed: f32,
+    pub damping: f32,
+    pub flow_field: f32,
+    pub flow_scale: f32,
+    pub flee_radius: f32,
+    pub fov_rad: f32,
+    pub individuality: f32,
+    pub quorum_threshold: u32,
+    pub quorum_composite_strength: f32,
+    pub sensing_enabled: bool,
+    pub sensing_attract: bool,
+    pub sensing_strength: f32,
+    pub sensing_radius: f32,
+    pub sensing_threshold: f32,
+    pub neighbor_radius: f32,
+    pub separation_radius: f32,
+    pub size_var: f32,
+    pub opacity_var: f32,
+    pub speed_var: f32,
+    pub force_var: f32,
+    pub hue_var: f32,
+    pub sat_var: f32,
+    pub lit_var: f32,
+    pub boundary_margin: f32,
+}
 
 #[derive(Clone, Debug)]
 pub struct SimParams {
@@ -62,12 +55,12 @@ pub struct SimParams {
     pub flow_field: f32,
     pub flow_scale: f32,
     pub flee_radius: f32,
-    pub fov_rad: f32, // stored in radians
+    pub fov_rad: f32,
     pub individuality: f32,
     pub quorum_threshold: u32,
     pub quorum_composite_strength: f32,
     pub sensing_enabled: bool,
-    pub sensing_attract: bool, // false = avoid, true = attract
+    pub sensing_attract: bool,
     pub sensing_strength: f32,
     pub sensing_radius: f32,
     pub sensing_threshold: f32,
@@ -84,6 +77,38 @@ pub struct SimParams {
     pub sat_var: f32,
     pub lit_var: f32,
     pub boundary_margin: f32,
+    pub leader_pull: f32,
+    pub leader_seek: f32,
+    pub leader_cohesion: f32,
+    pub leader_separation: f32,
+    pub leader_alignment: f32,
+    pub leader_jitter: f32,
+    pub leader_wander: f32,
+    pub leader_wander_speed: f32,
+    pub leader_max_speed: f32,
+    pub leader_damping: f32,
+    pub leader_flow_field: f32,
+    pub leader_flow_scale: f32,
+    pub leader_flee_radius: f32,
+    pub leader_fov_rad: f32,
+    pub leader_individuality: f32,
+    pub leader_quorum_threshold: u32,
+    pub leader_quorum_composite_strength: f32,
+    pub leader_sensing_enabled: bool,
+    pub leader_sensing_attract: bool,
+    pub leader_sensing_strength: f32,
+    pub leader_sensing_radius: f32,
+    pub leader_sensing_threshold: f32,
+    pub leader_neighbor_radius: f32,
+    pub leader_separation_radius: f32,
+    pub leader_size_var: f32,
+    pub leader_opacity_var: f32,
+    pub leader_speed_var: f32,
+    pub leader_force_var: f32,
+    pub leader_hue_var: f32,
+    pub leader_sat_var: f32,
+    pub leader_lit_var: f32,
+    pub leader_boundary_margin: f32,
 }
 
 impl Default for SimParams {
@@ -123,12 +148,131 @@ impl Default for SimParams {
             sat_var: 0.0,
             lit_var: 0.0,
             boundary_margin: -1.0,
+            leader_pull: 0.35,
+            leader_seek: 0.4,
+            leader_cohesion: 0.15,
+            leader_separation: 0.5,
+            leader_alignment: 0.2,
+            leader_jitter: 0.0,
+            leader_wander: 0.0,
+            leader_wander_speed: 0.3,
+            leader_max_speed: 4.0,
+            leader_damping: 0.95,
+            leader_flow_field: 0.0,
+            leader_flow_scale: 0.01,
+            leader_flee_radius: 0.0,
+            leader_fov_rad: 2.0 * PI,
+            leader_individuality: 0.0,
+            leader_quorum_threshold: 0,
+            leader_quorum_composite_strength: 0.35,
+            leader_sensing_enabled: false,
+            leader_sensing_attract: false,
+            leader_sensing_strength: 0.5,
+            leader_sensing_radius: 20.0,
+            leader_sensing_threshold: 0.1,
+            leader_neighbor_radius: 80.0,
+            leader_separation_radius: 25.0,
+            leader_size_var: 0.0,
+            leader_opacity_var: 0.0,
+            leader_speed_var: 0.0,
+            leader_force_var: 0.0,
+            leader_hue_var: 0.0,
+            leader_sat_var: 0.0,
+            leader_lit_var: 0.0,
+            leader_boundary_margin: -1.0,
         }
     }
 }
 
 impl SimParams {
-    /// Parse from a raw f32 slice (at least PARAMS_LEN elements).
+    fn leader_params(&self) -> AgentParams {
+        AgentParams {
+            seek: self.leader_seek,
+            cohesion: self.leader_cohesion,
+            separation: self.leader_separation,
+            alignment: self.leader_alignment,
+            jitter: self.leader_jitter,
+            wander: self.leader_wander,
+            wander_speed: self.leader_wander_speed,
+            max_speed: self.leader_max_speed,
+            damping: self.leader_damping,
+            flow_field: self.leader_flow_field,
+            flow_scale: self.leader_flow_scale,
+            flee_radius: self.leader_flee_radius,
+            fov_rad: self.leader_fov_rad,
+            individuality: self.leader_individuality,
+            quorum_threshold: self.leader_quorum_threshold,
+            quorum_composite_strength: self.leader_quorum_composite_strength,
+            sensing_enabled: self.leader_sensing_enabled,
+            sensing_attract: self.leader_sensing_attract,
+            sensing_strength: self.leader_sensing_strength,
+            sensing_radius: self.leader_sensing_radius,
+            sensing_threshold: self.leader_sensing_threshold,
+            neighbor_radius: self.leader_neighbor_radius,
+            separation_radius: self.leader_separation_radius,
+            size_var: self.leader_size_var,
+            opacity_var: self.leader_opacity_var,
+            speed_var: self.leader_speed_var,
+            force_var: self.leader_force_var,
+            hue_var: self.leader_hue_var,
+            sat_var: self.leader_sat_var,
+            lit_var: self.leader_lit_var,
+            boundary_margin: self.leader_boundary_margin,
+        }
+    }
+
+    fn follower_params(&self) -> AgentParams {
+        AgentParams {
+            seek: self.seek,
+            cohesion: self.cohesion,
+            separation: self.separation,
+            alignment: self.alignment,
+            jitter: self.jitter,
+            wander: self.wander,
+            wander_speed: self.wander_speed,
+            max_speed: self.max_speed,
+            damping: self.damping,
+            flow_field: self.flow_field,
+            flow_scale: self.flow_scale,
+            flee_radius: self.flee_radius,
+            fov_rad: self.fov_rad,
+            individuality: self.individuality,
+            quorum_threshold: self.quorum_threshold,
+            quorum_composite_strength: self.quorum_composite_strength,
+            sensing_enabled: self.sensing_enabled,
+            sensing_attract: self.sensing_attract,
+            sensing_strength: self.sensing_strength,
+            sensing_radius: self.sensing_radius,
+            sensing_threshold: self.sensing_threshold,
+            neighbor_radius: self.neighbor_radius,
+            separation_radius: self.separation_radius,
+            size_var: self.size_var,
+            opacity_var: self.opacity_var,
+            speed_var: self.speed_var,
+            force_var: self.force_var,
+            hue_var: self.hue_var,
+            sat_var: self.sat_var,
+            lit_var: self.lit_var,
+            boundary_margin: self.boundary_margin,
+        }
+    }
+
+    pub fn params_for(&self, is_leader: bool) -> AgentParams {
+        if is_leader {
+            self.leader_params()
+        } else {
+            self.follower_params()
+        }
+    }
+
+    pub fn max_neighbor_radius(&self) -> f32 {
+        self.neighbor_radius.max(self.leader_neighbor_radius)
+    }
+
+    pub fn max_separation_radius(&self) -> f32 {
+        self.separation_radius.max(self.leader_separation_radius)
+    }
+
     pub fn from_raw(raw: &[f32]) -> Self {
         assert!(raw.len() >= PARAMS_LEN);
         Self {
@@ -144,7 +288,7 @@ impl SimParams {
             flow_field: raw[9],
             flow_scale: raw[10],
             flee_radius: raw[11],
-            fov_rad: raw[12] * PI / 180.0, // degrees → radians
+            fov_rad: raw[12] * PI / 180.0,
             individuality: raw[13],
             quorum_threshold: raw[14].max(0.0).round() as u32,
             quorum_composite_strength: raw[15].clamp(0.0, 1.0),
@@ -166,6 +310,38 @@ impl SimParams {
             sat_var: raw[31],
             lit_var: raw[32],
             boundary_margin: raw[33],
+            leader_pull: raw[34].clamp(0.0, 1.0),
+            leader_seek: raw[35],
+            leader_cohesion: raw[36],
+            leader_separation: raw[37],
+            leader_alignment: raw[38],
+            leader_jitter: raw[39],
+            leader_wander: raw[40],
+            leader_wander_speed: raw[41],
+            leader_max_speed: raw[42],
+            leader_damping: raw[43],
+            leader_flow_field: raw[44],
+            leader_flow_scale: raw[45],
+            leader_flee_radius: raw[46],
+            leader_fov_rad: raw[47] * PI / 180.0,
+            leader_individuality: raw[48],
+            leader_quorum_threshold: raw[49].max(0.0).round() as u32,
+            leader_quorum_composite_strength: raw[50].clamp(0.0, 1.0),
+            leader_sensing_enabled: raw[51] > 0.5,
+            leader_sensing_attract: raw[52] > 0.5,
+            leader_sensing_strength: raw[53],
+            leader_sensing_radius: if raw[54] > 0.0 { raw[54] } else { 20.0 },
+            leader_sensing_threshold: raw[55],
+            leader_neighbor_radius: if raw[56] > 0.0 { raw[56] } else { 80.0 },
+            leader_separation_radius: if raw[57] > 0.0 { raw[57] } else { 25.0 },
+            leader_size_var: raw[58],
+            leader_opacity_var: raw[59],
+            leader_speed_var: raw[60],
+            leader_force_var: raw[61],
+            leader_hue_var: raw[62],
+            leader_sat_var: raw[63],
+            leader_lit_var: raw[64],
+            leader_boundary_margin: raw[65],
         }
     }
 }
