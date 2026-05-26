@@ -101,8 +101,7 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  const leaderCount = p?.leader?.count ?? p?.leaderConfig?.count ?? 0;
-  return leaderCount <= 0;
+  return true;
 }
 
 export class WebGPUBoidSim {
@@ -315,6 +314,7 @@ const SEEK_M : u32 = 17u;
 const COH_M : u32 = 18u;
 const SEP_M : u32 = 19u;
 const FLAG_ALIVE : u32 = 1u;
+const FLAG_LEADER : u32 = 2u;
 const PI : f32 = 3.141592653589793;
 const TAU : f32 = 6.283185307179586;
 
@@ -427,6 +427,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   let flags = u32(max(agentValue(i, FLAGS), 0.0));
+  let isLeader = (flags & FLAG_LEADER) != 0u;
   for (var field : u32 = 0u; field < STRIDE; field = field + 1u) {
     outAgents[agentIndex(i, field)] = inAgents[agentIndex(i, field)];
   }
@@ -434,32 +435,34 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     return;
   }
 
-  let seek = params.values[0];
-  let cohesion = params.values[1];
-  let separation = params.values[2];
-  let alignment = params.values[3];
-  let jitter = params.values[4];
-  let wander = params.values[5];
-  let wanderSpeed = params.values[6];
-  let maxSpeed = params.values[7];
-  let damping = params.values[8];
-  let flowField = params.values[9];
-  let flowScale = params.values[10];
-  let fleeRadius = params.values[11];
-  let fovRad = params.values[12] * PI / 180.0;
-  let quorumEnabled = params.values[14] >= 2.0;
-  let quorumCompositeStrength = clamp(params.values[15], 0.0, 1.0);
-  let sensingEnabled = params.values[16] > 0.5;
-  let sensingAttract = params.values[17] > 0.5;
-  let sensingStrength = params.values[18];
-  let sensingRadius = params.values[19];
-  let sensingThreshold = params.values[20];
+  let seek = select(params.values[0], params.values[36], isLeader);
+  let cohesion = select(params.values[1], params.values[37], isLeader);
+  let separation = select(params.values[2], params.values[38], isLeader);
+  let alignment = select(params.values[3], params.values[39], isLeader);
+  let jitter = select(params.values[4], params.values[40], isLeader);
+  let wander = select(params.values[5], params.values[41], isLeader);
+  let wanderSpeed = select(params.values[6], params.values[42], isLeader);
+  let maxSpeed = select(params.values[7], params.values[43], isLeader);
+  let damping = select(params.values[8], params.values[44], isLeader);
+  let flowField = select(params.values[9], params.values[45], isLeader);
+  let flowScale = select(params.values[10], params.values[46], isLeader);
+  let fleeRadius = select(params.values[11], params.values[47], isLeader);
+  let fovRad = select(params.values[12], params.values[48], isLeader) * PI / 180.0;
+  let quorumThreshold = max(select(params.values[14], params.values[50], isLeader), 0.0);
+  let quorumEnabled = quorumThreshold >= 2.0;
+  let quorumCompositeStrength = clamp(select(params.values[15], params.values[51], isLeader), 0.0, 1.0);
+  let sensingEnabled = select(params.values[16], params.values[52], isLeader) > 0.5;
+  let sensingAttract = select(params.values[17], params.values[53], isLeader) > 0.5;
+  let sensingStrength = select(params.values[18], params.values[54], isLeader);
+  let sensingRadius = select(params.values[19], params.values[55], isLeader);
+  let sensingThreshold = select(params.values[20], params.values[56], isLeader);
   let goalPos = vec2f(params.values[21], params.values[22]);
   let time = params.values[23];
-  let neighborRadius = max(params.values[24], 1.0);
-  let separationRadius = max(params.values[25], 1.0);
-  let boundsMargin = params.values[33];
+  let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
+  let separationRadius = max(select(params.values[25], params.values[58], isLeader), 1.0);
+  let boundsMargin = select(params.values[33], params.values[66], isLeader);
   let simSpeed = max(params.values[34], 0.0);
+  let leaderPull = clamp(params.values[35], 0.0, 1.0);
 
   let xi = agentValue(i, X);
   let yi = agentValue(i, Y);
@@ -616,6 +619,9 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var qvx = 0.0;
   var qvy = 0.0;
   var qc = 0u;
+  var leaderCx = 0.0;
+  var leaderCy = 0.0;
+  var leaderCount = 0u;
 
   for (var j = 0u; j < simMeta.agentCount; j = j + 1u) {
     if (j == i) {
@@ -635,6 +641,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let dx = ox - xi;
     let dy = oy - yi;
     let d2 = dx * dx + dy * dy;
+    if (!isLeader && (otherFlags & FLAG_LEADER) != 0u && d2 < nd2) {
+      leaderCx = leaderCx + ox;
+      leaderCy = leaderCy + oy;
+      leaderCount = leaderCount + 1u;
+    }
     let neighborQuorum = quorumEnabled && quorumMembers[j] != 0u;
 
     if (focalQuorum) {
@@ -731,6 +742,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     }
   }
 
+  if (!isLeader && !focalQuorum && leaderPull > 0.0 && leaderCount > 0u) {
+    let leaderCenter = vec2f(leaderCx / f32(leaderCount), leaderCy / f32(leaderCount));
+    let toLeader = leaderCenter - vec2f(xi, yi);
+    let leaderDist = max(length(toLeader), 1.0);
+    let leaderDesired = (toLeader / leaderDist) * agentMaxSpeed;
+    ax = ax + (leaderDesired.x - vx) * leaderPull;
+    ay = ay + (leaderDesired.y - vy) * leaderPull;
+  }
+
   vx = vx + ax;
   vy = vy + ay;
   let speed = length(vec2f(vx, vy));
@@ -795,6 +815,7 @@ const VX : u32 = 2u;
 const VY : u32 = 3u;
 const FLAGS : u32 = 15u;
 const FLAG_ALIVE : u32 = 1u;
+const FLAG_LEADER : u32 = 2u;
 const PI : f32 = 3.141592653589793;
 const TAU : f32 = 6.283185307179586;
 
@@ -848,20 +869,21 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   let flags = u32(max(agentValue(i, FLAGS), 0.0));
+  let isLeader = (flags & FLAG_LEADER) != 0u;
   if ((flags & FLAG_ALIVE) == 0u) {
     quorumMembers[i] = 0u;
     return;
   }
 
-  let threshold = u32(max(params.values[14], 0.0));
+  let threshold = u32(max(select(params.values[14], params.values[50], isLeader), 0.0));
   if (threshold < 2u) {
     quorumMembers[i] = 0u;
     return;
   }
 
-  let neighborRadius = max(params.values[24], 1.0);
+  let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
   let neighborRadius2 = neighborRadius * neighborRadius;
-  let fovRad = params.values[12] * PI / 180.0;
+  let fovRad = select(params.values[12], params.values[48], isLeader) * PI / 180.0;
   let xi = agentValue(i, X);
   let yi = agentValue(i, Y);
   let vx = agentValue(i, VX);
