@@ -138,6 +138,11 @@ pub fn set_leader_range(start_index: u32, end_index: u32, leader_count: u32) {
     with_sim(|sim| sim.set_leader_range(start_index, end_index, leader_count));
 }
 
+#[wasm_bindgen]
+pub fn set_group_range(start_index: u32, end_index: u32, group_id: u32) {
+    with_sim(|sim| sim.set_group_range(start_index, end_index, group_id));
+}
+
 /// Remove an agent by ID. Uses swap-remove (O(1), may reorder).
 #[wasm_bindgen]
 pub fn remove_agent(id: u32) {
@@ -465,6 +470,21 @@ mod tests {
     }
 
     #[test]
+    fn test_set_group_range_marks_requested_agents() {
+        let mut sim = Simulation::new(120, 80, 8);
+        for x in [20.0, 30.0, 40.0, 50.0] {
+            sim.spawn_one(x, 40.0);
+        }
+
+        sim.set_group_range(1, 4, 7);
+
+        assert_eq!(sim.buf[boid::GROUP_ID], 0.0);
+        assert_eq!(sim.buf[STRIDE + boid::GROUP_ID], 7.0);
+        assert_eq!(sim.buf[STRIDE * 2 + boid::GROUP_ID], 7.0);
+        assert_eq!(sim.buf[STRIDE * 3 + boid::GROUP_ID], 7.0);
+    }
+
+    #[test]
     fn test_followers_accelerate_toward_nearby_leaders() {
         let mut sim = Simulation::new(160, 120, 4);
         sim.spawn_one(80.0, 60.0);
@@ -503,6 +523,82 @@ mod tests {
         assert!(
             sim.buf[STRIDE + boid::AX].abs() < 1e-4,
             "leader pull should not self-apply to the leader agent"
+        );
+    }
+
+    #[test]
+    fn test_locked_subgroup_membership_preserves_existing_group() {
+        let mut sim = Simulation::new(200, 120, 8);
+        for x in [10.0, 20.0, 30.0] {
+            sim.spawn_one(x, 60.0);
+        }
+        sim.set_group_range(0, 1, 1);
+        sim.set_group_range(1, 3, 2);
+        sim.params.seek = 0.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.alignment = 0.0;
+        sim.params.max_speed = 0.0;
+        sim.params.leader_max_speed = 0.0;
+        sim.params.neighbor_radius = 40.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+        sim.params.subgroup_membership_rule = crate::params::SUBGROUP_MEMBERSHIP_LOCKED;
+
+        sim.step(1.0 / 60.0);
+
+        assert_eq!(sim.buf[boid::GROUP_ID], 1.0);
+    }
+
+    #[test]
+    fn test_fluid_subgroup_membership_joins_local_majority() {
+        let mut sim = Simulation::new(200, 120, 8);
+        for x in [10.0, 20.0, 30.0] {
+            sim.spawn_one(x, 60.0);
+        }
+        sim.set_group_range(0, 1, 1);
+        sim.set_group_range(1, 3, 2);
+        sim.params.seek = 0.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.alignment = 0.0;
+        sim.params.max_speed = 0.0;
+        sim.params.leader_max_speed = 0.0;
+        sim.params.neighbor_radius = 40.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+        sim.params.subgroup_membership_rule = crate::params::SUBGROUP_MEMBERSHIP_FLUID;
+
+        sim.step(1.0 / 60.0);
+
+        assert_eq!(sim.buf[boid::GROUP_ID], 2.0);
+    }
+
+    #[test]
+    fn test_cross_subgroup_alignment_can_be_disabled() {
+        let mut sim = Simulation::new(160, 120, 4);
+        sim.spawn_one(80.0, 60.0);
+        sim.spawn_one(100.0, 60.0);
+        sim.set_group_range(0, 1, 1);
+        sim.set_group_range(1, 2, 2);
+        sim.buf[0 + boid::AX] = 0.0;
+        sim.buf[0 + boid::AY] = 0.0;
+        sim.buf[0 + boid::VX] = 0.0;
+        sim.buf[0 + boid::VY] = 0.0;
+        sim.buf[STRIDE + boid::VX] = 4.0;
+        sim.buf[STRIDE + boid::VY] = 0.0;
+        sim.params.cohesion = 0.0;
+        sim.params.separation = 0.0;
+        sim.params.alignment = 1.0;
+        sim.params.neighbor_radius = 40.0;
+        sim.params.separation_radius = 10.0;
+        sim.params.max_speed = 8.0;
+        sim.params.fov_rad = core::f32::consts::PI * 2.0;
+        sim.params.subgroup_cross_alignment = 0.0;
+
+        crate::forces::apply_neighbor_forces(&mut sim.buf, sim.agent_count, &sim.params);
+
+        assert!(
+            sim.buf[boid::AX].abs() < 1e-4,
+            "different subgroups should not align when cross alignment is zero"
         );
     }
 

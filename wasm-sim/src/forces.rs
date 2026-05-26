@@ -109,22 +109,25 @@ pub fn in_fov(buf: &[f32], base: usize, ox: f32, oy: f32, fov_rad: f32) -> bool 
 
 #[derive(Clone, Copy, Default)]
 struct DirectNeighborAccum {
-    cx: f32,
-    cy: f32,
-    cc: u32,
-    sx: f32,
-    sy: f32,
-    avx: f32,
-    avy: f32,
-    ac: u32,
+    cohesion_x: f32,
+    cohesion_y: f32,
+    cohesion_weight: f32,
+    separation_x: f32,
+    separation_y: f32,
+    alignment_vx: f32,
+    alignment_vy: f32,
+    alignment_weight: f32,
 }
 
 #[derive(Clone, Copy, Default)]
 struct CompositeNeighborAccum {
-    cx: f32,
-    cy: f32,
-    vx: f32,
-    vy: f32,
+    cohesion_x: f32,
+    cohesion_y: f32,
+    cohesion_weight: f32,
+    alignment_vx: f32,
+    alignment_vy: f32,
+    alignment_weight: f32,
+    separation_weight: f32,
     count: u32,
 }
 
@@ -146,6 +149,18 @@ fn agent_params(p: &SimParams, buf: &[f32], base: usize) -> AgentParams {
 }
 
 #[inline]
+fn subgroup_id(buf: &[f32], base: usize) -> u32 {
+    buf[base + GROUP_ID].max(0.0).round() as u32
+}
+
+#[inline]
+fn same_subgroup(buf: &[f32], base_a: usize, base_b: usize) -> bool {
+    let group_a = subgroup_id(buf, base_a);
+    let group_b = subgroup_id(buf, base_b);
+    group_a == 0 || group_b == 0 || group_a == group_b
+}
+
+#[inline]
 fn accumulate_direct_neighbor(
     accum: &mut DirectNeighborAccum,
     dx: f32,
@@ -157,20 +172,26 @@ fn accumulate_direct_neighbor(
     vyj: f32,
     nd2: f32,
     sd2: f32,
+    cohesion_weight: f32,
+    alignment_weight: f32,
+    separation_weight: f32,
 ) {
-    if d2 < nd2 {
-        accum.cx += xj;
-        accum.cy += yj;
-        accum.cc += 1;
-        accum.avx += vxj;
-        accum.avy += vyj;
-        accum.ac += 1;
+    if d2 < nd2 && cohesion_weight > 0.0 {
+        accum.cohesion_x += xj * cohesion_weight;
+        accum.cohesion_y += yj * cohesion_weight;
+        accum.cohesion_weight += cohesion_weight;
     }
 
-    if d2 < sd2 && d2 > 0.0 {
+    if d2 < nd2 && alignment_weight > 0.0 {
+        accum.alignment_vx += vxj * alignment_weight;
+        accum.alignment_vy += vyj * alignment_weight;
+        accum.alignment_weight += alignment_weight;
+    }
+
+    if d2 < sd2 && d2 > 0.0 && separation_weight > 0.0 {
         let d = d2.sqrt();
-        accum.sx -= dx / d;
-        accum.sy -= dy / d;
+        accum.separation_x -= (dx / d) * separation_weight;
+        accum.separation_y -= (dy / d) * separation_weight;
     }
 }
 
@@ -184,12 +205,18 @@ fn accumulate_composite_neighbor(
     d2: f32,
     nd2: f32,
     sd2: f32,
+    cohesion_weight: f32,
+    alignment_weight: f32,
+    separation_weight: f32,
 ) {
     if d2 < nd2 || d2 < sd2 {
-        accum.cx += xj;
-        accum.cy += yj;
-        accum.vx += vxj;
-        accum.vy += vyj;
+        accum.cohesion_x += xj * cohesion_weight;
+        accum.cohesion_y += yj * cohesion_weight;
+        accum.cohesion_weight += cohesion_weight;
+        accum.alignment_vx += vxj * alignment_weight;
+        accum.alignment_vy += vyj * alignment_weight;
+        accum.alignment_weight += alignment_weight;
+        accum.separation_weight += separation_weight;
         accum.count += 1;
     }
 }
@@ -211,24 +238,24 @@ fn apply_accumulated_neighbor_forces(
     max_speed: f32,
     direct: &DirectNeighborAccum,
 ) {
-    if direct.cc > 0 && params.cohesion > 0.0 {
-        let gx = direct.cx / direct.cc as f32;
-        let gy = direct.cy / direct.cc as f32;
+    if direct.cohesion_weight > 0.0 && params.cohesion > 0.0 {
+        let gx = direct.cohesion_x / direct.cohesion_weight;
+        let gy = direct.cohesion_y / direct.cohesion_weight;
         let agent_coh = params.cohesion * buf[base + COH_M];
         seek(buf, base, gx, gy, agent_coh, max_speed);
     }
 
-    if direct.ac > 0 && params.alignment > 0.0 {
-        let avg_vx = direct.avx / direct.ac as f32;
-        let avg_vy = direct.avy / direct.ac as f32;
+    if direct.alignment_weight > 0.0 && params.alignment > 0.0 {
+        let avg_vx = direct.alignment_vx / direct.alignment_weight;
+        let avg_vy = direct.alignment_vy / direct.alignment_weight;
         buf[base + AX] += (avg_vx - buf[base + VX]) * params.alignment;
         buf[base + AY] += (avg_vy - buf[base + VY]) * params.alignment;
     }
 
     if params.separation > 0.0 {
         let agent_sep = params.separation * buf[base + SEP_M];
-        buf[base + AX] += direct.sx * agent_sep;
-        buf[base + AY] += direct.sy * agent_sep;
+        buf[base + AX] += direct.separation_x * agent_sep;
+        buf[base + AY] += direct.separation_y * agent_sep;
     }
 }
 
@@ -252,17 +279,25 @@ fn apply_composite_neighbor_force(
         return;
     }
 
-    let cx = composite.cx / composite.count as f32;
-    let cy = composite.cy / composite.count as f32;
+    let cx = if composite.cohesion_weight > 0.0 {
+        composite.cohesion_x / composite.cohesion_weight
+    } else {
+        0.0
+    };
+    let cy = if composite.cohesion_weight > 0.0 {
+        composite.cohesion_y / composite.cohesion_weight
+    } else {
+        0.0
+    };
 
-    if params.cohesion > 0.0 {
+    if params.cohesion > 0.0 && composite.cohesion_weight > 0.0 {
         let agent_coh = params.cohesion * buf[base + COH_M] * strength;
         seek(buf, base, cx, cy, agent_coh, max_speed);
     }
 
-    if params.alignment > 0.0 {
-        let mut composite_vx = composite.vx;
-        let mut composite_vy = composite.vy;
+    if params.alignment > 0.0 && composite.alignment_weight > 0.0 {
+        let mut composite_vx = composite.alignment_vx / composite.alignment_weight;
+        let mut composite_vy = composite.alignment_vy / composite.alignment_weight;
         let composite_speed = (composite_vx * composite_vx + composite_vy * composite_vy).sqrt();
         if composite_speed > max_speed {
             let scale = max_speed / composite_speed;
@@ -279,7 +314,8 @@ fn apply_composite_neighbor_force(
         let d2 = dx * dx + dy * dy;
         if d2 < sd2 && d2 > 0.0 {
             let d = d2.sqrt();
-            let agent_sep = params.separation * buf[base + SEP_M] * strength;
+            let composite_sep = (composite.separation_weight / composite.count as f32).clamp(0.0, 1.0);
+            let agent_sep = params.separation * buf[base + SEP_M] * strength * composite_sep;
             buf[base + AX] -= (dx / d) * agent_sep;
             buf[base + AY] -= (dy / d) * agent_sep;
         }
@@ -457,6 +493,10 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
             if !focal_is_leader && has_flag(buf, bj, FLAG_LEADER) {
                 accumulate_leader_neighbor(&mut leaders, xj, yj, d2, nd2);
             }
+            let same_group = same_subgroup(buf, bi, bj);
+            let cohesion_weight = if same_group { 1.0 } else { focal_params.subgroup_cross_cohesion };
+            let alignment_weight = if same_group { 1.0 } else { focal_params.subgroup_cross_alignment };
+            let separation_weight = if same_group { 1.0 } else { focal_params.subgroup_cross_separation };
 
             let neighbor_quorum = quorum_members.as_ref().is_some_and(|members| members[j]);
             if focal_quorum {
@@ -472,6 +512,9 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
                         buf[bj + VY],
                         nd2,
                         sd2,
+                        cohesion_weight,
+                        alignment_weight,
+                        separation_weight,
                     );
                 }
             } else if neighbor_quorum {
@@ -484,6 +527,9 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
                     d2,
                     nd2,
                     sd2,
+                    cohesion_weight,
+                    alignment_weight,
+                    separation_weight,
                 );
             } else {
                 accumulate_direct_neighbor(
@@ -497,6 +543,9 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
                     buf[bj + VY],
                     nd2,
                     sd2,
+                    cohesion_weight,
+                    alignment_weight,
+                    separation_weight,
                 );
             }
         }
@@ -562,6 +611,10 @@ pub fn apply_neighbor_forces_grid(
                     if !focal_is_leader && has_flag(buf, bj, FLAG_LEADER) {
                         accumulate_leader_neighbor(&mut leaders, xj, yj, d2, nd2);
                     }
+                    let same_group = same_subgroup(buf, bi, bj);
+                    let cohesion_weight = if same_group { 1.0 } else { focal_params.subgroup_cross_cohesion };
+                    let alignment_weight = if same_group { 1.0 } else { focal_params.subgroup_cross_alignment };
+                    let separation_weight = if same_group { 1.0 } else { focal_params.subgroup_cross_separation };
 
                     let neighbor_quorum = quorum_members.as_ref().is_some_and(|members| members[j]);
                     if focal_quorum {
@@ -577,6 +630,9 @@ pub fn apply_neighbor_forces_grid(
                                 buf[bj + VY],
                                 nd2,
                                 sd2,
+                                cohesion_weight,
+                                alignment_weight,
+                                separation_weight,
                             );
                         }
                     } else if neighbor_quorum {
@@ -589,6 +645,9 @@ pub fn apply_neighbor_forces_grid(
                             d2,
                             nd2,
                             sd2,
+                            cohesion_weight,
+                            alignment_weight,
+                            separation_weight,
                         );
                     } else {
                         accumulate_direct_neighbor(
@@ -602,6 +661,9 @@ pub fn apply_neighbor_forces_grid(
                             buf[bj + VY],
                             nd2,
                             sd2,
+                            cohesion_weight,
+                            alignment_weight,
+                            separation_weight,
                         );
                     }
                 }

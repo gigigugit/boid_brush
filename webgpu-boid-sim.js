@@ -1,6 +1,6 @@
 import { BoidSim } from './wasm-bridge.js';
 
-const AGENT_STRIDE = 23;
+const AGENT_STRIDE = 24;
 const PARAMS_LEN = 67;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
@@ -101,6 +101,11 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
+  if ((p?.subgroupMembershipRule || 'fluid') !== 'fluid') return false;
+  if ((p?.subgroupEntryRule || 'new') !== 'new') return false;
+  if (Math.abs((p?.subgroupCrossCohesion ?? 1) - 1) > 1e-6) return false;
+  if (Math.abs((p?.subgroupCrossAlignment ?? 1) - 1) > 1e-6) return false;
+  if (Math.abs((p?.subgroupCrossSeparation ?? 1) - 1) > 1e-6) return false;
   return true;
 }
 

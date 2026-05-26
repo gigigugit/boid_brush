@@ -22,6 +22,7 @@
  * @property {function(number, number): number} spawnAgent
  * @property {function(number, number, number, number, number, number, number): void} spawnBatch
  * @property {function(number, number, number): void} setLeaderRange
+ * @property {function(number, number, number): void} setGroupRange
  * @property {function(number): void} removeAgent
  * @property {function(): void} clearAgents
  * @property {function(Uint8Array, number, number): void} uploadSensing
@@ -37,6 +38,11 @@ const SHAPE_MAP = {
 };
 
 const RETRYABLE_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const SUBGROUP_MEMBERSHIP_RULES = Object.freeze({
+  fluid: 0,
+  sticky: 1,
+  locked: 2,
+});
 
 function _sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -195,6 +201,10 @@ export class BoidSim {
     v[63] = p.leader?.satVar ?? 0;
     v[64] = p.leader?.litVar ?? 0;
     v[65] = p.leader?.simBoundsMargin ?? -1;
+    v[66] = SUBGROUP_MEMBERSHIP_RULES[p.subgroupMembershipRule] ?? SUBGROUP_MEMBERSHIP_RULES.fluid;
+    v[67] = p.subgroupCrossCohesion ?? 1;
+    v[68] = p.subgroupCrossAlignment ?? 1;
+    v[69] = p.subgroupCrossSeparation ?? 1;
     this._mod.set_params();
   }
 
@@ -251,6 +261,10 @@ export class BoidSim {
 
   setLeaderRange(startIndex, endIndex, leaderCount) {
     this._mod.set_leader_range(startIndex, endIndex, leaderCount);
+  }
+
+  setGroupRange(startIndex, endIndex, groupId) {
+    this._mod.set_group_range(startIndex, endIndex, groupId);
   }
 
   /** Remove agent by ID. Uses swap-remove (O(1)). */

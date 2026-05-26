@@ -4,7 +4,10 @@
 
 use core::f32::consts::PI;
 
-pub const PARAMS_LEN: usize = 66;
+pub const PARAMS_LEN: usize = 70;
+pub const SUBGROUP_MEMBERSHIP_FLUID: u32 = 0;
+pub const SUBGROUP_MEMBERSHIP_STICKY: u32 = 1;
+pub const SUBGROUP_MEMBERSHIP_LOCKED: u32 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AgentParams {
@@ -39,6 +42,10 @@ pub struct AgentParams {
     pub sat_var: f32,
     pub lit_var: f32,
     pub boundary_margin: f32,
+    pub subgroup_membership_rule: u32,
+    pub subgroup_cross_cohesion: f32,
+    pub subgroup_cross_alignment: f32,
+    pub subgroup_cross_separation: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -77,6 +84,10 @@ pub struct SimParams {
     pub sat_var: f32,
     pub lit_var: f32,
     pub boundary_margin: f32,
+    pub subgroup_membership_rule: u32,
+    pub subgroup_cross_cohesion: f32,
+    pub subgroup_cross_alignment: f32,
+    pub subgroup_cross_separation: f32,
     pub leader_pull: f32,
     pub leader_seek: f32,
     pub leader_cohesion: f32,
@@ -148,6 +159,10 @@ impl Default for SimParams {
             sat_var: 0.0,
             lit_var: 0.0,
             boundary_margin: -1.0,
+            subgroup_membership_rule: SUBGROUP_MEMBERSHIP_FLUID,
+            subgroup_cross_cohesion: 1.0,
+            subgroup_cross_alignment: 1.0,
+            subgroup_cross_separation: 1.0,
             leader_pull: 0.35,
             leader_seek: 0.4,
             leader_cohesion: 0.15,
@@ -218,6 +233,10 @@ impl SimParams {
             sat_var: self.leader_sat_var,
             lit_var: self.leader_lit_var,
             boundary_margin: self.leader_boundary_margin,
+            subgroup_membership_rule: self.subgroup_membership_rule,
+            subgroup_cross_cohesion: self.subgroup_cross_cohesion,
+            subgroup_cross_alignment: self.subgroup_cross_alignment,
+            subgroup_cross_separation: self.subgroup_cross_separation,
         }
     }
 
@@ -254,6 +273,10 @@ impl SimParams {
             sat_var: self.sat_var,
             lit_var: self.lit_var,
             boundary_margin: self.boundary_margin,
+            subgroup_membership_rule: self.subgroup_membership_rule,
+            subgroup_cross_cohesion: self.subgroup_cross_cohesion,
+            subgroup_cross_alignment: self.subgroup_cross_alignment,
+            subgroup_cross_separation: self.subgroup_cross_separation,
         }
     }
 
@@ -310,6 +333,10 @@ impl SimParams {
             sat_var: raw[31],
             lit_var: raw[32],
             boundary_margin: raw[33],
+            subgroup_membership_rule: (raw[66].max(0.0).round() as u32).min(SUBGROUP_MEMBERSHIP_LOCKED),
+            subgroup_cross_cohesion: raw[67].clamp(0.0, 1.0),
+            subgroup_cross_alignment: raw[68].clamp(0.0, 1.0),
+            subgroup_cross_separation: raw[69].clamp(0.0, 1.0),
             leader_pull: raw[34].clamp(0.0, 1.0),
             leader_seek: raw[35],
             leader_cohesion: raw[36],

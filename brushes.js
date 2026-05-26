@@ -55,6 +55,7 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+const AGENT_GROUP_ID = 23;
 // Predefined hue anchors used to visually separate detected boid quorum groups.
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
@@ -197,6 +198,11 @@ function _resolveLeaderParams(p) {
     leader[field.key] = override?.enabled ? override.value : p[field.key];
   }
   return leader;
+}
+
+function _readAgentSubgroupId(buffer, base) {
+  const raw = Math.round(buffer?.[base + AGENT_GROUP_ID] || 0);
+  return raw > 0 ? raw : 0;
 }
 
 class StampInstanceBuffer {
@@ -1088,6 +1094,7 @@ export class BoidBrush {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._debugMaxEvents = 120;
+    this._nextSubgroupId = 1;
     _resetSimulationSpawnAppearance(this);
   }
 
@@ -1125,6 +1132,7 @@ export class BoidBrush {
       this._gpuBatchVisibilityVerified = false;
       this._rendererChainPatched = false;
       this._gpuPreviewRenderer = null;
+      this._nextSubgroupId = 1;
       _resetSimulationSpawnAppearance(this);
     }
     if (this.app.sharedMotionSim) {
@@ -1207,6 +1215,7 @@ export class BoidBrush {
   _clearAgents() {
     if (!this.sim) return;
     this.sim.clearAgents();
+    this._nextSubgroupId = 1;
     _resetSimulationSpawnAppearance(this);
     this._clearGpuPreview({ composite: true });
     this._resetInterpolationState();
@@ -1238,6 +1247,65 @@ export class BoidBrush {
     return next;
   }
 
+  _syncNextSubgroupId() {
+    if (!this.sim) {
+      this._nextSubgroupId = Math.max(1, this._nextSubgroupId || 1);
+      return;
+    }
+    const { buffer, count, stride } = this.sim.readAgents();
+    let next = Math.max(1, this._nextSubgroupId || 1);
+    for (let i = 0; i < count; i++) {
+      next = Math.max(next, _readAgentSubgroupId(buffer, i * stride) + 1);
+    }
+    this._nextSubgroupId = next;
+  }
+
+  _allocateSubgroupId() {
+    this._syncNextSubgroupId();
+    const id = Math.max(1, this._nextSubgroupId || 1);
+    this._nextSubgroupId = id + 1;
+    return id;
+  }
+
+  _selectSpawnSubgroupId(x, y, p) {
+    const entryRule = p?.subgroupEntryRule || 'new';
+    if (!this.sim || entryRule === 'new') return this._allocateSubgroupId();
+    const { buffer, count, stride } = this.sim.readAgents();
+    if (!count) return this._allocateSubgroupId();
+    const searchRadius = Math.max((p?.spawnRadius || 0) * 2, p?.neighborRadius || 0, 24);
+    const searchRadius2 = searchRadius * searchRadius;
+    let nearestId = 0;
+    let nearestDist2 = Infinity;
+    const dominantCounts = new Map();
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const groupId = _readAgentSubgroupId(buffer, base);
+      if (!groupId) continue;
+      const dx = buffer[base + AGENT_X] - x;
+      const dy = buffer[base + AGENT_Y] - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > searchRadius2) continue;
+      if (d2 < nearestDist2) {
+        nearestDist2 = d2;
+        nearestId = groupId;
+      }
+      dominantCounts.set(groupId, (dominantCounts.get(groupId) || 0) + 1);
+    }
+    if (entryRule === 'nearest' && nearestId) return nearestId;
+    if (entryRule === 'dominant' && dominantCounts.size) {
+      let dominantId = 0;
+      let dominantCount = -1;
+      for (const [groupId, groupCount] of dominantCounts.entries()) {
+        if (groupCount > dominantCount) {
+          dominantId = groupId;
+          dominantCount = groupCount;
+        }
+      }
+      if (dominantId) return dominantId;
+    }
+    return this._allocateSubgroupId();
+  }
+
   _spawnAgents(x, y, p, pressure = 1, useHoverAngle = false) {
     if (!this.sim) return false;
     let spawnAngle = p.spawnAngle;
@@ -1264,7 +1332,9 @@ export class BoidBrush {
       distribution: p.spawnDistribution || 'uniform',
       noiseScale: p.spawnNoiseScale || 1,
     }, x, y);
+    const subgroupId = this._selectSpawnSubgroupId(x, y, p);
     this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
+    this.sim.setGroupRange?.(spawnInfo.startIndex, spawnInfo.endIndex, subgroupId);
     _setSimulationSpawnAppearanceRange(this, spawnInfo, {
       color: p.color,
       opacity: p.stampOpacity,

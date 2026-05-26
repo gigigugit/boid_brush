@@ -12,7 +12,10 @@
 use crate::boid::*;
 use crate::forces::{self, Rng};
 use crate::noise::SimplexNoise;
-use crate::params::{AgentParams, SimParams, PARAMS_LEN};
+use crate::params::{
+    AgentParams, SimParams, PARAMS_LEN, SUBGROUP_MEMBERSHIP_FLUID, SUBGROUP_MEMBERSHIP_LOCKED,
+    SUBGROUP_MEMBERSHIP_STICKY,
+};
 use crate::sensing::{self, SensingMap};
 use crate::spawn::{self, SpawnShape};
 
@@ -146,6 +149,199 @@ impl Simulation {
                 self.apply_agent_traits(base, &leader_params);
             } else {
                 clear_flag(&mut self.buf, base, FLAG_LEADER);
+            }
+        }
+
+        pub fn set_group_range(&mut self, start_index: u32, end_index: u32, group_id: u32) {
+            let start = (start_index as usize).min(self.agent_count);
+            let end = (end_index as usize).min(self.agent_count);
+            if start >= end {
+                return;
+            }
+            let group_value = group_id.max(1) as f32;
+            for agent_index in start..end {
+                let base = agent_index * STRIDE;
+                self.buf[base + GROUP_ID] = group_value;
+            }
+        }
+
+        fn should_switch_subgroup(
+            mode: u32,
+            current_group: u32,
+            dominant_group: u32,
+            dominant_count: u32,
+            current_count: u32,
+        ) -> bool {
+            if dominant_group == 0 || dominant_group == current_group {
+                return false;
+            }
+            match mode {
+                SUBGROUP_MEMBERSHIP_LOCKED => false,
+                SUBGROUP_MEMBERSHIP_STICKY => {
+                    if current_group == 0 {
+                        dominant_count >= 2
+                    } else {
+                        dominant_count >= current_count.saturating_add(2) && dominant_count >= 3
+                    }
+                }
+                SUBGROUP_MEMBERSHIP_FLUID => {
+                    if current_group == 0 {
+                        dominant_count >= 1
+                    } else {
+                        dominant_count > current_count
+                    }
+                }
+                _ => false,
+            }
+        }
+
+        fn update_subgroup_counts(
+            counts: &mut Vec<(u32, u32)>,
+            group_id: u32,
+            current_group: u32,
+            current_count: &mut u32,
+            dominant_group: &mut u32,
+            dominant_count: &mut u32,
+        ) {
+            if group_id == 0 {
+                return;
+            }
+            let mut next_count = 1;
+            if let Some((_, count)) = counts.iter_mut().find(|(candidate, _)| *candidate == group_id) {
+                *count += 1;
+                next_count = *count;
+            } else {
+                counts.push((group_id, 1));
+            }
+            if group_id == current_group {
+                *current_count = next_count;
+            }
+            if next_count > *dominant_count {
+                *dominant_count = next_count;
+                *dominant_group = group_id;
+            }
+        }
+
+        #[cfg(not(feature = "spatial-hash"))]
+        fn update_subgroup_membership(&mut self) {
+            let mode = self.params.subgroup_membership_rule;
+            if mode == SUBGROUP_MEMBERSHIP_LOCKED || self.agent_count == 0 {
+                return;
+            }
+            let mut next_groups = vec![0u32; self.agent_count];
+            for i in 0..self.agent_count {
+                let bi = i * STRIDE;
+                if !has_flag(&self.buf, bi, FLAG_ALIVE) {
+                    continue;
+                }
+                let focal_params = self.params.params_for(has_flag(&self.buf, bi, FLAG_LEADER));
+                let xi = self.buf[bi + X];
+                let yi = self.buf[bi + Y];
+                let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
+                let current_group = self.buf[bi + GROUP_ID].max(0.0).round() as u32;
+                let mut counts = Vec::new();
+                let mut dominant_group = 0u32;
+                let mut dominant_count = 0u32;
+                let mut current_count = 0u32;
+                for j in 0..self.agent_count {
+                    if i == j {
+                        continue;
+                    }
+                    let bj = j * STRIDE;
+                    if !has_flag(&self.buf, bj, FLAG_ALIVE) {
+                        continue;
+                    }
+                    let xj = self.buf[bj + X];
+                    let yj = self.buf[bj + Y];
+                    if !forces::in_fov(&self.buf, bi, xj, yj, focal_params.fov_rad) {
+                        continue;
+                    }
+                    let dx = xj - xi;
+                    let dy = yj - yi;
+                    if dx * dx + dy * dy >= nd2 {
+                        continue;
+                    }
+                    Self::update_subgroup_counts(
+                        &mut counts,
+                        self.buf[bj + GROUP_ID].max(0.0).round() as u32,
+                        current_group,
+                        &mut current_count,
+                        &mut dominant_group,
+                        &mut dominant_count,
+                    );
+                }
+                next_groups[i] = if Self::should_switch_subgroup(mode, current_group, dominant_group, dominant_count, current_count) {
+                    dominant_group
+                } else {
+                    current_group
+                };
+            }
+            for (i, group_id) in next_groups.into_iter().enumerate() {
+                let base = i * STRIDE;
+                self.buf[base + GROUP_ID] = group_id as f32;
+            }
+        }
+
+        #[cfg(feature = "spatial-hash")]
+        fn update_subgroup_membership_grid(&mut self) {
+            let mode = self.params.subgroup_membership_rule;
+            if mode == SUBGROUP_MEMBERSHIP_LOCKED || self.agent_count == 0 {
+                return;
+            }
+            let mut next_groups = vec![0u32; self.agent_count];
+            for i in 0..self.agent_count {
+                let bi = i * STRIDE;
+                if !has_flag(&self.buf, bi, FLAG_ALIVE) {
+                    continue;
+                }
+                let focal_params = self.params.params_for(has_flag(&self.buf, bi, FLAG_LEADER));
+                let xi = self.buf[bi + X];
+                let yi = self.buf[bi + Y];
+                let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
+                let current_group = self.buf[bi + GROUP_ID].max(0.0).round() as u32;
+                let mut counts = Vec::new();
+                let mut dominant_group = 0u32;
+                let mut dominant_count = 0u32;
+                let mut current_count = 0u32;
+                let (cell_xi, cell_yi) = self.spatial_grid.agent_cell(i);
+                for ndy in -1i32..=1 {
+                    for ndx in -1i32..=1 {
+                        for &j_u32 in self.spatial_grid.cell_agents(cell_xi + ndx, cell_yi + ndy) {
+                            let j = j_u32 as usize;
+                            if i == j {
+                                continue;
+                            }
+                            let bj = j * STRIDE;
+                            let xj = self.buf[bj + X];
+                            let yj = self.buf[bj + Y];
+                            if !forces::in_fov(&self.buf, bi, xj, yj, focal_params.fov_rad) {
+                                continue;
+                            }
+                            let dx = xj - xi;
+                            let dy = yj - yi;
+                            if dx * dx + dy * dy >= nd2 {
+                                continue;
+                            }
+                            Self::update_subgroup_counts(
+                                &mut counts,
+                                self.buf[bj + GROUP_ID].max(0.0).round() as u32,
+                                current_group,
+                                &mut current_count,
+                                &mut dominant_group,
+                                &mut dominant_count,
+                            );
+                        }
+                    }
+                }
+                next_groups[i] = if Self::should_switch_subgroup(mode, current_group, dominant_group, dominant_count, current_count) {
+                    dominant_group
+                } else {
+                    current_group
+                };
+            }
+            for (i, group_id) in next_groups.into_iter().enumerate() {
+                let base = i * STRIDE;
+                self.buf[base + GROUP_ID] = group_id as f32;
             }
         }
     }
@@ -290,6 +486,7 @@ impl Simulation {
                 self.width,
                 self.height,
             );
+            self.update_subgroup_membership_grid();
             forces::apply_neighbor_forces_grid(
                 &mut self.buf,
                 self.agent_count,
@@ -298,7 +495,10 @@ impl Simulation {
             );
         }
         #[cfg(not(feature = "spatial-hash"))]
-        forces::apply_neighbor_forces(&mut self.buf, self.agent_count, &self.params);
+        {
+            self.update_subgroup_membership();
+            forces::apply_neighbor_forces(&mut self.buf, self.agent_count, &self.params);
+        }
 
         // Phase 3: Integrate (uses per-agent speed multiplier)
         for i in 0..self.agent_count {

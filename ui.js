@@ -248,6 +248,26 @@ export function buildSidebar(app) {
       ${sliderRow('quorumCompositeStrength', 'Composite', 0, 100, 35, v => (v/100).toFixed(2), 'How strongly quorum groups affect outgroup boids as one composite')}
     </div>
 
+    <!-- Boid Subgroups -->
+    <div class="section-header closed" data-brushes="boid" data-section="boidSubgroups">Boid Subgroups <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid">
+      <label>Membership <select id="subgroupMembershipRule">
+        <option value="fluid">Fluid reassignment</option>
+        <option value="sticky">Sticky majority</option>
+        <option value="locked">Locked after spawn</option>
+      </select></label>
+      <span class="slider-desc">Controls how readily individual boids switch to a nearby subgroup majority after they have spawned.</span>
+      <label>Spawn Entry <select id="subgroupEntryRule">
+        <option value="new">Always create a new subgroup</option>
+        <option value="nearest">Join nearest nearby subgroup</option>
+        <option value="dominant">Join dominant nearby subgroup</option>
+      </select></label>
+      <span class="slider-desc">Controls whether each new spawned batch starts a fresh subgroup or joins an existing nearby one.</span>
+      ${sliderRow('subgroupCrossCohesion', 'Cross Cohesion', 0, 100, 100, v => (v / 100).toFixed(2), 'How strongly different subgroups pull toward each other without changing subgroup IDs')}
+      ${sliderRow('subgroupCrossAlignment', 'Cross Align', 0, 100, 100, v => (v / 100).toFixed(2), 'How much heading alignment carries across subgroup boundaries')}
+      ${sliderRow('subgroupCrossSeparation', 'Cross Separate', 0, 100, 100, v => (v / 100).toFixed(2), 'How much spacing force remains between different subgroups')}
+    </div>
+
     <!-- Variance (boid + ant) -->
     <div class="section-header closed" data-brushes="boid ant" data-section="variance">Variance <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="boid ant">
@@ -1269,6 +1289,9 @@ const _sliderFormats = {
   flowScale: v => (v / 1000).toFixed(3),
   individuality: v => (v / 100).toFixed(2),
   quorumCompositeStrength: v => (v / 100).toFixed(2),
+  subgroupCrossCohesion: v => (v / 100).toFixed(2),
+  subgroupCrossAlignment: v => (v / 100).toFixed(2),
+  subgroupCrossSeparation: v => (v / 100).toFixed(2),
   maxSpeed: v => (v / 2).toFixed(1),
   damping: v => (v / 100).toFixed(2),
   motionPathScale: v => (v / 100).toFixed(2),

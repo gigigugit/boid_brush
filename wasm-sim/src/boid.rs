@@ -2,7 +2,7 @@
 // boid.rs — Agent memory layout constants and per-agent helpers
 //
 // PACKED AGENT LAYOUT (Float32Array-compatible)
-// Fixed stride of 23 floats (92 bytes) per agent. JS creates a typed view:
+// Fixed stride of 24 floats (96 bytes) per agent. JS creates a typed view:
 //   new Float32Array(wasm.memory.buffer, ptr, count * STRIDE)
 //
 // Offset | Field       | Description
@@ -30,10 +30,11 @@
 //  20    | hue         | per-agent hue offset in degrees (set at spawn)
 //  21    | sat         | per-agent saturation offset 0-1 (set at spawn)
 //  22    | lit         | per-agent lightness offset 0-1 (set at spawn)
+//  23    | group_id    | persistent subgroup identifier (0 = unassigned)
 // =============================================================================
 
 /// Number of f32 values per agent in the packed buffer.
-pub const STRIDE: usize = 23;
+pub const STRIDE: usize = 24;
 
 // Field offsets within each agent's STRIDE-sized slice.
 pub const X: usize = 0;
@@ -59,6 +60,7 @@ pub const SEP_M: usize = 19;
 pub const HUE: usize = 20;
 pub const SAT: usize = 21;
 pub const LIT: usize = 22;
+pub const GROUP_ID: usize = 23;
 
 // Flag bits (stored as f32, cast to u32 for bit ops)
 pub const FLAG_ALIVE: u32 = 1;
@@ -129,4 +131,5 @@ pub fn init_agent(
     buf[base + HUE] = hue;
     buf[base + SAT] = sat;
     buf[base + LIT] = lit;
+    buf[base + GROUP_ID] = 0.0;
 }
