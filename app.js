@@ -6207,6 +6207,7 @@ export class App {
     }
 
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
+    document.getElementById('simHudRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
@@ -9662,8 +9663,13 @@ export class App {
       if (this.simulation.paused) this.resumeSimulation();
       else this.startSimulation();
     });
+    document.getElementById('simHudRunBtn')?.addEventListener('click', () => {
+      if (this.simulation.paused) this.resumeSimulation();
+      else this.startSimulation();
+    });
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('simHudStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simResetBtn')?.addEventListener('click', () => this.resetSimulationPlayback());
     document.getElementById('simRecordBtn')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
     document.getElementById('simExportBtn')?.addEventListener('click', () => this._showSimulationExportModal());
