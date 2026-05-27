@@ -1135,6 +1135,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     this._markStateDirty();
   }
 
+  setDisplaySize(displayWidth, displayHeight) {
+    this.width = Math.max(1, Math.round(displayWidth || 1));
+    this.height = Math.max(1, Math.round(displayHeight || 1));
+    this.helper.setDisplaySize?.(this.width, this.height);
+    this._markStateDirty();
+  }
+
   uploadSensing(luminance, w, h) {
     this.helper.uploadSensing(luminance, w, h);
     if (!this.ready) return;

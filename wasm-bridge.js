@@ -263,6 +263,12 @@ export class BoidSim {
     this._mod.clear_agents();
   }
 
+  setDisplaySize(displayWidth, displayHeight) {
+    const width = Math.max(1, Math.round(displayWidth || 1));
+    const height = Math.max(1, Math.round(displayHeight || 1));
+    this._mod.sim_resize(width, height);
+  }
+
   /**
    * Upload a downsampled luminance map for pixel sensing.
    *
