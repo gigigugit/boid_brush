@@ -106,6 +106,8 @@ export function set_params(): void;
  */
 export function sim_init(width: number, height: number, max_agents: number): void;
 
+export function sim_resize(width: number, height: number): void;
+
 /**
  * Spawn a single agent at (x, y). Returns the agent ID (index).
  *
@@ -169,6 +171,7 @@ export interface InitOutput {
     readonly init_sensing: (a: number, b: number) => void;
     readonly remove_agent: (a: number) => void;
     readonly sim_init: (a: number, b: number, c: number) => void;
+    readonly sim_resize: (a: number, b: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly update_sensing: () => void;
     readonly set_leader_range: (a: number, b: number, c: number) => void;

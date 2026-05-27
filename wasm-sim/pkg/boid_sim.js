@@ -250,6 +250,14 @@ export function sim_init(width, height, max_agents) {
 }
 
 /**
+ * @param {number} width
+ * @param {number} height
+ */
+export function sim_resize(width, height) {
+    wasm.sim_resize(width, height);
+}
+
+/**
  * Spawn a single agent at (x, y). Returns the agent ID (index).
  *
  * For batch spawning, prefer `spawn_batch()` which is far more efficient.

@@ -1867,6 +1867,7 @@ export class App {
         transformEl.style.width = this.W + 'px';
         transformEl.style.height = this.H + 'px';
       }
+      this.sharedMotionSim?.setDisplaySize?.(this.W, this.H);
       this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
       this.lctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
       this._applyViewTransform();
@@ -1876,6 +1877,7 @@ export class App {
     const rect = document.getElementById('canvasArea').getBoundingClientRect();
     this.W = Math.floor(rect.width);
     this.H = Math.floor(rect.height);
+    this.sharedMotionSim?.setDisplaySize?.(this.W, this.H);
 
     for (const c of [this.compositeCanvas, this.liveCanvas, this.interactionCanvas]) {
       c.width = this.W * this.DPR;

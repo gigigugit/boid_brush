@@ -73,6 +73,17 @@ impl Simulation {
         self.params = SimParams::from_raw(&self.params_buf);
     }
 
+    pub fn resize_canvas(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        if self.sensing.width > 0 && self.sensing.height > 0 {
+            // Preserve the existing sensing buffer resolution and data, but
+            // refresh its canvas-to-sensing scale factors for the new display size.
+            self.sensing
+                .resize(self.sensing.width, self.sensing.height, width, height);
+        }
+    }
+
     fn generate_agent_traits(&mut self, params: &AgentParams) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) {
         let sm_base = 0.7 + self.rng.next_f32() * 0.6;
         let om_base = 0.6 + self.rng.next_f32() * 0.8;

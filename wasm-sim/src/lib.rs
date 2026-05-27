@@ -91,6 +91,11 @@ pub fn sim_init(width: u32, height: u32, max_agents: u32) {
     });
 }
 
+#[wasm_bindgen]
+pub fn sim_resize(width: u32, height: u32) {
+    with_sim(|sim| sim.resize_canvas(width, height));
+}
+
 /// Advance the simulation by one frame.
 ///
 /// Call `set_params()` before this to update forces, cursor position, and time.
