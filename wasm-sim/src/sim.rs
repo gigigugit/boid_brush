@@ -77,6 +77,8 @@ impl Simulation {
         self.width = width;
         self.height = height;
         if self.sensing.width > 0 && self.sensing.height > 0 {
+            // Preserve the existing sensing buffer resolution and data, but
+            // refresh its canvas-to-sensing scale factors for the new display size.
             self.sensing
                 .resize(self.sensing.width, self.sensing.height, width, height);
         }
