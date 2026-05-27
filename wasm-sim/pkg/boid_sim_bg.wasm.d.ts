@@ -15,6 +15,7 @@ export const get_stride: () => number;
 export const init_sensing: (a: number, b: number) => void;
 export const remove_agent: (a: number) => void;
 export const sim_init: (a: number, b: number, c: number) => void;
+export const sim_resize: (a: number, b: number) => void;
 export const spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const update_sensing: () => void;
 export const set_leader_range: (a: number, b: number, c: number) => void;
