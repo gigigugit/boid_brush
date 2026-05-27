@@ -1039,16 +1039,12 @@ async function _createSharedMotionSim(app) {
   const height = app.H || 600;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      const sim = await WebGPUBoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
-      sim.setDisplaySize?.(width, height);
-      return sim;
+      return await WebGPUBoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
   }
-  const sim = await BoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
-  sim.setDisplaySize?.(width, height);
-  return sim;
+  return await BoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
 }
 
 export class BoidBrush {
