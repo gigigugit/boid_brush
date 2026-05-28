@@ -11,10 +11,15 @@ import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSlider
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
+import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-05-06-cache-check-1';
+const APP_BUILD_ID = '2026-05-26-sim-phase4-playback-export-1';
+const SIM_EXPORT_TIMESLICE_MS = 250;
+const SIM_EXPORT_FFMPEG_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+const SIM_EXPORT_FFMPEG_UTIL_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
+const SIM_EXPORT_FFMPEG_CORE_BASE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -253,7 +258,6 @@ const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
-const DEFAULT_STAMP_IMAGE_PATH = './circle.png';
 const RETRYABLE_STARTUP_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const PAPER_TEXTURE_FLECK_SCALE = 3.2;
 const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
@@ -283,11 +287,11 @@ const SIM_SPAWN_SHAPES = [
 ];
 const DUPLICATE_OFFSET = 14;
 const ANGLE_PRECISION = 10;
-const SIM_POINT_HIT_RADIUS = 14;
+const SIM_POINT_HIT_RADIUS = 24;
 const SIM_LINE_HIT_RADIUS = 12;
 const SIM_DELETE_HIT_RADIUS = 10;
 const SIM_PARAM_HANDLE_RADIUS = 8;
-const SIM_PARAM_HIT_RADIUS = 12;
+const SIM_PARAM_HIT_RADIUS = 20;
 const SIM_OVERLAY_ACTION_HIT_RADIUS = 12;
 const SIM_POINT_STRENGTH_HANDLE_OFFSET = 22;
 const SIM_POINT_STRENGTH_HANDLE_SCALE = 60;
@@ -298,6 +302,22 @@ const SIM_PATH_SPEED_ADD_BUTTON_OFFSET_Y = 28;
 const SIM_PATH_SPEED_ADD_BUTTON_WIDTH = 88;
 const SIM_PATH_SPEED_ADD_BUTTON_HEIGHT = 22;
 const SIM_PATH_SPEED_DELETE_OFFSET = 14;
+const SIM_PATH_RADIUS_ADD_BUTTON_OFFSET_Y = 54;
+const SIM_PATH_OVERLAY_ROW_GAP = 4;
+const SIM_PATH_OVERLAY_STACK_GAP = 10;
+const SIM_PATH_OVERLAY_SAFE_MARGIN = 14;
+const SIM_PATH_RADIUS_HANDLE_OFFSET = 10;
+const SIM_PATH_RADIUS_HANDLE_SCALE = 0.3;
+const SIM_PATH_POSITION_HANDLE_RADIUS = 12;
+const SIM_PATH_FORMAT_BUTTON_OFFSET_Y = 82;
+const SIM_PATH_FORMAT_BUTTON_WIDTH = 72;
+const SIM_PATH_FORMAT_BUTTON_HEIGHT = 22;
+const SIM_PATH_RADIUS_HANDLE_COLOR = 'rgba(255,105,214,0.98)';
+const SIM_PATH_POSITION_HANDLE_COLOR = 'rgba(255,214,120,0.98)';
+const SIM_PATH_FORMAT_BUTTON_COLOR = 'rgba(255,214,120,0.92)';
+const SIM_SPAWN_FORMAT_BUTTON_OFFSET_Y = 26;
+const SIM_SPAWN_FORMAT_BUTTON_WIDTH = 72;
+const SIM_SPAWN_FORMAT_BUTTON_HEIGHT = 22;
 const SIM_SPAWN_MASK_CELL_SIZE_MIN = 2;
 const SIM_SPAWN_MASK_CELL_SIZE_MAX = 6;
 const SIM_SPAWN_MASK_MAX_DIM = 160;
@@ -1389,11 +1409,92 @@ function _normalizeSimulationPathSpeedPoints(points, nextIdRef) {
     .sort((left, right) => left.t - right.t);
 }
 
+function _normalizeSimulationPathRadiusPoints(points, nextIdRef, fallbackRadius = DEFAULT_PATH_RADIUS) {
+  const rawPoints = Array.isArray(points) ? points : [];
+  return rawPoints
+    .filter(point => Number.isFinite(point?.t) || Number.isFinite(point?.radius))
+    .map(point => ({
+      id: Number.isFinite(point?.id) ? point.id : nextIdRef(),
+      t: _clamp01(Number.isFinite(point?.t) ? point.t : 0.5),
+      radius: Math.max(1, Number.isFinite(point?.radius) ? point.radius : fallbackRadius),
+    }))
+    .sort((left, right) => left.t - right.t);
+}
+
+function _getNextSimulationPathControlPointT(points, closed = false) {
+  const values = (Array.isArray(points) ? points : [])
+    .map(point => _clamp01(Number.isFinite(point?.t) ? point.t : NaN))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  if (!values.length) return 0.5;
+  const epsilon = 1e-4;
+
+  if (closed) {
+    let bestStart = values[0];
+    let bestSpan = -1;
+    for (let index = 0; index < values.length; index++) {
+      const start = values[index];
+      const end = index === values.length - 1 ? values[0] + 1 : values[index + 1];
+      const span = end - start;
+      if (span > bestSpan) {
+        bestSpan = span;
+        bestStart = start;
+      }
+    }
+    if (!(bestSpan > epsilon)) return _wrapIndex(values[values.length - 1] + 0.15, 1);
+    return _wrapIndex(bestStart + (bestSpan * 0.5), 1);
+  }
+
+  const nodes = [0, ...values, 1];
+  let bestStart = 0;
+  let bestEnd = 1;
+  let bestSpan = -1;
+  for (let index = 1; index < nodes.length; index++) {
+    const start = nodes[index - 1];
+    const end = nodes[index];
+    const span = end - start;
+    if (span > bestSpan) {
+      bestSpan = span;
+      bestStart = start;
+      bestEnd = end;
+    }
+  }
+  if (!(bestSpan > epsilon)) return _clamp01(values[values.length - 1] + 0.15);
+  return _clamp01(bestStart + ((bestEnd - bestStart) * 0.5));
+}
+
+function _sanitizeSimulationHandles(handles) {
+  return (Array.isArray(handles) ? handles : []).filter(handle => (
+    Number.isFinite(handle?.x) &&
+    Number.isFinite(handle?.y) &&
+    Number.isFinite(Number.isFinite(handle?.anchorX) ? handle.anchorX : handle?.x) &&
+    Number.isFinite(Number.isFinite(handle?.anchorY) ? handle.anchorY : handle?.y)
+  ));
+}
+
 function _getSimulationPathSpeedAt(pathItem, pathT, baseSpeed = DEFAULT_SIM_PATH_SPEED, closed = false) {
   const points = Array.isArray(pathItem?.speedPoints) ? pathItem.speedPoints.slice().sort((left, right) => left.t - right.t) : [];
   const fallbackSpeed = _normalizeSimulationPathSpeed(baseSpeed);
   if (!points.length) return fallbackSpeed;
   const t = closed ? _wrapIndex(pathT, 1) : _clamp01(pathT);
+  if (closed) {
+    if (points.length === 1) return points[0].speed;
+    for (let index = 0; index < points.length - 1; index++) {
+      const start = points[index];
+      const next = points[index + 1];
+      if (t < start.t || t > next.t) continue;
+      const span = Math.max(1e-6, next.t - start.t);
+      const mix = _smoothstep01((t - start.t) / span);
+      return _lerp(start.speed, next.speed, mix);
+    }
+    const start = points[points.length - 1];
+    const next = points[0];
+    const sampleT = t < next.t ? t + 1 : t;
+    const endT = next.t + 1;
+    const span = Math.max(1e-6, endT - start.t);
+    const mix = _smoothstep01((sampleT - start.t) / span);
+    return _lerp(start.speed, next.speed, mix);
+  }
   const nodes = [{ t: 0, speed: fallbackSpeed }, ...points, { t: 1, speed: fallbackSpeed }];
   for (let index = 1; index < nodes.length; index++) {
     const start = nodes[index - 1];
@@ -1404,6 +1505,41 @@ function _getSimulationPathSpeedAt(pathItem, pathT, baseSpeed = DEFAULT_SIM_PATH
     return _lerp(start.speed, end.speed, mix);
   }
   return nodes[nodes.length - 1].speed;
+}
+
+function _getSimulationPathRadiusAt(pathItem, pathT, baseRadius = DEFAULT_PATH_RADIUS, closed = false) {
+  const points = Array.isArray(pathItem?.radiusPoints) ? pathItem.radiusPoints.slice().sort((left, right) => left.t - right.t) : [];
+  const fallbackRadius = Math.max(1, Number.isFinite(baseRadius) ? baseRadius : DEFAULT_PATH_RADIUS);
+  if (!points.length) return fallbackRadius;
+  const t = closed ? _wrapIndex(pathT, 1) : _clamp01(pathT);
+  if (closed) {
+    if (points.length === 1) return Math.max(1, points[0].radius);
+    for (let index = 0; index < points.length - 1; index++) {
+      const start = points[index];
+      const next = points[index + 1];
+      if (t < start.t || t > next.t) continue;
+      const span = Math.max(1e-6, next.t - start.t);
+      const mix = _smoothstep01((t - start.t) / span);
+      return Math.max(1, _lerp(start.radius, next.radius, mix));
+    }
+    const start = points[points.length - 1];
+    const next = points[0];
+    const sampleT = t < next.t ? t + 1 : t;
+    const endT = next.t + 1;
+    const span = Math.max(1e-6, endT - start.t);
+    const mix = _smoothstep01((sampleT - start.t) / span);
+    return Math.max(1, _lerp(start.radius, next.radius, mix));
+  }
+  const nodes = [{ t: 0, radius: fallbackRadius }, ...points, { t: 1, radius: fallbackRadius }];
+  for (let index = 1; index < nodes.length; index++) {
+    const start = nodes[index - 1];
+    const end = nodes[index];
+    if (t > end.t && index < nodes.length - 1) continue;
+    const span = Math.max(1e-6, end.t - start.t);
+    const mix = _smoothstep01((t - start.t) / span);
+    return Math.max(1, _lerp(start.radius, end.radius, mix));
+  }
+  return Math.max(1, nodes[nodes.length - 1].radius);
 }
 
 /**
@@ -1600,6 +1736,7 @@ export class App {
       enabled: false,
       running: false,
       paused: false,
+      frameCount: 0,
       guidesVisible: true,
       heatmapVisible: false,
       hudCollapsed: false,
@@ -1624,6 +1761,16 @@ export class App {
     };
     this.motionPath = this._createDefaultMotionPathState();
     this.motionPathEditor = this._createMotionPathEditorState();
+    this._simFormatMenuUi = {
+      activePopover: null,
+      position: null,
+      dragPointerId: null,
+      dragOffsetX: 0,
+      dragOffsetY: 0,
+    };
+    this._simPathOverlayUi = {
+      preferredSideByPath: new Map(),
+    };
 
     // Color
     this.primaryEl = document.getElementById('primaryColor');
@@ -1634,6 +1781,7 @@ export class App {
     this._colorHistory = [];
     this._maxColorHistory = 16;
     this._fluidInteractionState = { emitters: [], influences: [], scalarFields: [] };
+    this._simulationExport = this._createSimulationExportState();
 
     // Frame loop
     this._rafId = null;
@@ -1719,6 +1867,7 @@ export class App {
         transformEl.style.width = this.W + 'px';
         transformEl.style.height = this.H + 'px';
       }
+      this.sharedMotionSim?.setDisplaySize?.(this.W, this.H);
       this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
       this.lctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
       this._applyViewTransform();
@@ -1728,6 +1877,7 @@ export class App {
     const rect = document.getElementById('canvasArea').getBoundingClientRect();
     this.W = Math.floor(rect.width);
     this.H = Math.floor(rect.height);
+    this.sharedMotionSim?.setDisplaySize?.(this.W, this.H);
 
     for (const c of [this.compositeCanvas, this.liveCanvas, this.interactionCanvas]) {
       c.width = this.W * this.DPR;
@@ -1875,6 +2025,345 @@ export class App {
 
   _hideCanvasSizeModal() {
     document.getElementById('canvasSizeModal')?.classList.remove('open');
+  }
+
+  _createSimulationExportState() {
+    return {
+      armedOnStart: false,
+      recording: false,
+      exportBusy: false,
+      format: 'webm',
+      frameRate: 30,
+      quality: 'high',
+      mimeType: '',
+      recorder: null,
+      stream: null,
+      chunks: [],
+      blob: null,
+      stopPromise: null,
+      resolveStop: null,
+      stopAnnounce: false,
+      ffmpeg: null,
+      fetchFile: null,
+      ffmpegLoaded: false,
+      ffmpegLoadPromise: null,
+    };
+  }
+
+  _showSimulationExportModal() {
+    const modal = document.getElementById('simExportModal');
+    if (!modal) return;
+    const state = this._simulationExport;
+    const formatEl = document.getElementById('simExportFormat');
+    const fpsEl = document.getElementById('simExportFrameRate');
+    const qualityEl = document.getElementById('simExportQuality');
+    if (formatEl) formatEl.value = state.format;
+    if (fpsEl) fpsEl.value = String(state.frameRate);
+    if (qualityEl) qualityEl.value = state.quality;
+    modal.classList.add('open');
+    this._refreshSimulationExportUi();
+  }
+
+  _hideSimulationExportModal() {
+    document.getElementById('simExportModal')?.classList.remove('open');
+  }
+
+  _readSimulationExportOptionsFromUi() {
+    const state = this._simulationExport;
+    const format = document.getElementById('simExportFormat')?.value || state.format;
+    const frameRate = Math.max(1, Number(document.getElementById('simExportFrameRate')?.value || state.frameRate || 30));
+    const quality = document.getElementById('simExportQuality')?.value || state.quality;
+    state.format = format;
+    state.frameRate = frameRate;
+    state.quality = quality;
+    return { format, frameRate, quality };
+  }
+
+  _formatSimulationFrameCounter() {
+    return `Frame ${String(Math.max(0, Math.round(this.simulation.frameCount || 0))).padStart(4, '0')}`;
+  }
+
+  _refreshSimulationExportUi() {
+    const state = this._simulationExport;
+    const options = this._readSimulationExportOptionsFromUi();
+    const recordBtn = document.getElementById('simRecordBtn');
+    if (recordBtn) {
+      recordBtn.classList.toggle('recording', state.recording);
+      recordBtn.classList.toggle('active', state.recording || state.armedOnStart);
+      recordBtn.textContent = state.recording ? '⏺ Stop Rec' : (state.armedOnStart ? '⏺ Armed' : '⏺ Record');
+      recordBtn.disabled = state.exportBusy;
+    }
+    const exportBtn = document.getElementById('simExportBtn');
+    if (exportBtn) {
+      exportBtn.textContent = state.exportBusy ? 'Exporting…' : 'Export';
+      exportBtn.disabled = state.exportBusy;
+    }
+    const frameCounter = document.getElementById('simFrameCounter');
+    if (frameCounter) frameCounter.textContent = this._formatSimulationFrameCounter();
+    const recordActionBtn = document.getElementById('simExportRecordAction');
+    if (recordActionBtn) {
+      recordActionBtn.textContent = state.recording ? 'Stop Recording' : (state.armedOnStart ? 'Cancel Auto-Record' : 'Start Recording');
+      recordActionBtn.disabled = state.exportBusy;
+    }
+    const downloadBtn = document.getElementById('simExportDownloadBtn');
+    if (downloadBtn) {
+      downloadBtn.textContent = state.exportBusy ? 'Exporting…' : 'Export Latest';
+      downloadBtn.disabled = state.exportBusy || (!state.blob && !state.recording);
+    }
+    const status = document.getElementById('simExportStatusText');
+    if (status) {
+      if (state.exportBusy) {
+        status.textContent = `Exporting ${options.format.toUpperCase()} at ${options.frameRate} FPS (${options.quality})…`;
+      } else if (state.recording) {
+        status.textContent = `Recording in progress · ${options.frameRate} FPS · ${options.quality} quality · target ${options.format.toUpperCase()}`;
+      } else if (state.armedOnStart) {
+        status.textContent = `Auto-record armed · recording will start with the next simulation run · ${options.frameRate} FPS · ${options.quality} quality · target ${options.format.toUpperCase()}`;
+      } else if (state.blob) {
+        status.textContent = `Latest capture ready · ${(state.blob.size / (1024 * 1024)).toFixed(2)} MB · export ${options.format.toUpperCase()} at ${options.frameRate} FPS (${options.quality})`;
+      } else {
+        status.textContent = `No recording captured yet · ${options.frameRate} FPS · ${options.quality} quality · target ${options.format.toUpperCase()}`;
+      }
+    }
+  }
+
+  async _toggleSimulationRecordingRequest() {
+    const state = this._simulationExport;
+    if (state.recording) {
+      await this._stopSimulationRecording();
+      return;
+    }
+    if (state.armedOnStart) {
+      state.armedOnStart = false;
+      this._syncSimulationUI();
+      this.showToast('Recording arm cleared');
+      return;
+    }
+    if (this.simulation.running || this.simulation.paused) {
+      await this._startSimulationRecording();
+      return;
+    }
+    state.armedOnStart = true;
+    this._syncSimulationUI();
+    this.showToast('⏺ Recording armed for next run');
+  }
+
+  _getSimulationRecordingMimeType() {
+    if (typeof MediaRecorder === 'undefined') return '';
+    const candidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    return candidates.find(type => typeof MediaRecorder.isTypeSupported !== 'function' || MediaRecorder.isTypeSupported(type)) || '';
+  }
+
+  _getSimulationRecordingBitrate(quality = 'high', frameRate = 30) {
+    const base = quality === 'low' ? 4_000_000 : quality === 'medium' ? 7_000_000 : 12_000_000;
+    return Math.max(2_500_000, Math.round(base * Math.max(0.5, frameRate / 30)));
+  }
+
+  async _startSimulationRecording(options = this._readSimulationExportOptionsFromUi()) {
+    const state = this._simulationExport;
+    if (state.recording) return true;
+    if (typeof MediaRecorder === 'undefined' || typeof this.compositeCanvas?.captureStream !== 'function') {
+      this.showToast('⚠ Browser recording is unavailable');
+      return false;
+    }
+    const mimeType = this._getSimulationRecordingMimeType();
+    if (!mimeType) {
+      this.showToast('⚠ No supported recording codec found');
+      return false;
+    }
+    state.blob = null;
+    state.chunks = [];
+    state.armedOnStart = false;
+    state.format = options.format;
+    state.frameRate = options.frameRate;
+    state.quality = options.quality;
+    state.mimeType = mimeType;
+    const stream = this.compositeCanvas.captureStream(options.frameRate);
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: this._getSimulationRecordingBitrate(options.quality, options.frameRate),
+    });
+    state.stream = stream;
+    state.recorder = recorder;
+    state.recording = true;
+    state.stopAnnounce = false;
+    state.stopPromise = new Promise(resolve => {
+      state.resolveStop = resolve;
+    });
+    recorder.ondataavailable = event => {
+      if (event.data && event.data.size > 0) state.chunks.push(event.data);
+    };
+    recorder.onerror = () => {
+      this.showToast('⚠ Recording failed');
+    };
+    recorder.onstop = () => {
+      const blob = state.chunks.length ? new Blob(state.chunks, { type: state.mimeType || 'video/webm' }) : null;
+      state.blob = blob && blob.size ? blob : null;
+      state.chunks = [];
+      state.recording = false;
+      state.recorder = null;
+      for (const track of state.stream?.getTracks?.() || []) track.stop();
+      state.stream = null;
+      const resolve = state.resolveStop;
+      state.resolveStop = null;
+      state.stopPromise = null;
+      if (state.stopAnnounce) this.showToast('⏹ Recording stopped');
+      state.stopAnnounce = false;
+      this._syncSimulationUI();
+      if (resolve) resolve(state.blob);
+    };
+    recorder.start(SIM_EXPORT_TIMESLICE_MS);
+    this.showToast('⏺ Recording started');
+    this._syncSimulationUI();
+    return true;
+  }
+
+  async _stopSimulationRecording({ announce = true } = {}) {
+    const state = this._simulationExport;
+    if (!state.recording) return state.blob;
+    state.stopAnnounce = announce;
+    const stopPromise = state.stopPromise;
+    try {
+      state.recorder?.stop();
+    } catch {
+      state.recording = false;
+      state.recorder = null;
+      for (const track of state.stream?.getTracks?.() || []) track.stop();
+      state.stream = null;
+      const resolve = state.resolveStop;
+      state.resolveStop = null;
+      state.stopPromise = null;
+      if (resolve) resolve(state.blob);
+    }
+    this._syncSimulationUI();
+    return stopPromise;
+  }
+
+  async _ensureSimulationRecordingBlob() {
+    if (this._simulationExport.recording) return this._stopSimulationRecording({ announce: false });
+    return this._simulationExport.blob;
+  }
+
+  async _loadSimulationExportFfmpeg() {
+    const state = this._simulationExport;
+    if (state.ffmpegLoaded && state.ffmpeg && state.fetchFile) return state;
+    if (!state.ffmpegLoadPromise) {
+      state.ffmpegLoadPromise = (async () => {
+        const ffmpegModule = await import(SIM_EXPORT_FFMPEG_URL);
+        const utilModule = await import(SIM_EXPORT_FFMPEG_UTIL_URL);
+        const ffmpeg = new ffmpegModule.FFmpeg();
+        const coreURL = await utilModule.toBlobURL(`${SIM_EXPORT_FFMPEG_CORE_BASE_URL}/ffmpeg-core.js`, 'text/javascript');
+        const wasmURL = await utilModule.toBlobURL(`${SIM_EXPORT_FFMPEG_CORE_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm');
+        const workerURL = await utilModule.toBlobURL(`${SIM_EXPORT_FFMPEG_CORE_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript');
+        await ffmpeg.load({ coreURL, wasmURL, workerURL });
+        state.ffmpeg = ffmpeg;
+        state.fetchFile = utilModule.fetchFile;
+        state.ffmpegLoaded = true;
+      })();
+    }
+    try {
+      await state.ffmpegLoadPromise;
+    } finally {
+      state.ffmpegLoadPromise = null;
+    }
+    return state;
+  }
+
+  async _transcodeSimulationRecording(blob, options) {
+    if (!blob) return null;
+    if (options.format === 'webm') {
+      return { blob, extension: 'webm', mimeType: blob.type || 'video/webm' };
+    }
+    const state = await this._loadSimulationExportFfmpeg();
+    const ffmpeg = state.ffmpeg;
+    const fetchFile = state.fetchFile;
+    const inputName = 'simulation-input.webm';
+    const outputName = options.format === 'gif' ? 'simulation-output.gif' : 'simulation-output.mp4';
+    await ffmpeg.writeFile(inputName, await fetchFile(blob));
+    try {
+      if (options.format === 'gif') {
+        const gifFps = Math.min(options.frameRate, options.quality === 'low' ? 12 : options.quality === 'medium' ? 16 : 20);
+        const gifScale = options.quality === 'low'
+          ? 'trunc(iw*0.7/2)*2'
+          : options.quality === 'medium'
+            ? 'trunc(iw*0.85/2)*2'
+            : 'iw';
+        await ffmpeg.exec([
+          '-i', inputName,
+          '-vf', `fps=${gifFps},scale=${gifScale}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`,
+          outputName,
+        ]);
+        const data = await ffmpeg.readFile(outputName);
+        return { blob: new Blob([data], { type: 'image/gif' }), extension: 'gif', mimeType: 'image/gif' };
+      }
+      const mp4Quality = options.quality === 'low' ? '12' : options.quality === 'medium' ? '8' : '5';
+      await ffmpeg.exec([
+        '-i', inputName,
+        '-r', String(options.frameRate),
+        '-c:v', 'mpeg4',
+        '-q:v', mp4Quality,
+        '-pix_fmt', 'yuv420p',
+        outputName,
+      ]);
+      const data = await ffmpeg.readFile(outputName);
+      return { blob: new Blob([data], { type: 'video/mp4' }), extension: 'mp4', mimeType: 'video/mp4' };
+    } finally {
+      try { await ffmpeg.deleteFile(inputName); } catch {}
+      try { await ffmpeg.deleteFile(outputName); } catch {}
+    }
+  }
+
+  _downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2500);
+  }
+
+  async _exportSimulationRecording() {
+    const state = this._simulationExport;
+    if (state.exportBusy) return;
+    const options = this._readSimulationExportOptionsFromUi();
+    const sourceBlob = await this._ensureSimulationRecordingBlob();
+    if (!sourceBlob) {
+      this.showToast('⚠ Record a simulation first');
+      this._refreshSimulationExportUi();
+      return;
+    }
+    state.exportBusy = true;
+    this._syncSimulationUI();
+    try {
+      const exported = await this._transcodeSimulationRecording(sourceBlob, options);
+      if (!exported?.blob) throw new Error('No export output produced');
+      const stamp = new Date().toISOString().replace(/[.:]/g, '-');
+      this._downloadBlob(exported.blob, `simulation-${stamp}.${exported.extension}`);
+      this.showToast(`💾 Exported ${exported.extension.toUpperCase()}`);
+    } catch (error) {
+      console.error('Simulation export failed:', error);
+      this.showToast(options.format === 'webm' ? '⚠ Export failed' : '⚠ Export failed — try WebM');
+    } finally {
+      state.exportBusy = false;
+      this._syncSimulationUI();
+    }
+  }
+
+  resetSimulationPlayback() {
+    void this._stopSimulationRecording({ announce: false });
+    this.stopSimulation(false);
+    this.simulation.frameCount = 0;
+    this.simulation.pathDistance = 0;
+    for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
+      pathItem.travelDistance = 0;
+    }
+    this._syncSimulationUI();
+    this.showToast('Simulation reset');
   }
 
   _onCanvasSizePresetChange() {
@@ -2323,12 +2812,14 @@ export class App {
     this.showToast('Texture reset to built-in paper grain');
   }
 
-  async _setCustomStampImageFromDataUrl(dataUrl, name = 'Custom Stamp', { silent = false } = {}) {
+  async _setCustomStampImageFromDataUrl(dataUrl, name = 'Custom Stamp', { silent = false, id = 'custom-stamp', sourceType = 'upload', licenseLabel = '', sourceUrl = '' } = {}) {
     const canvas = await this._canvasFromDataUrl(dataUrl);
     this._customStampImage = {
-      id: 'custom-stamp',
+      id,
       name,
-      sourceType: 'upload',
+      sourceType,
+      licenseLabel,
+      sourceUrl,
       canvas,
       dataUrl,
       width: canvas.width,
@@ -2357,6 +2848,26 @@ export class App {
     }
   }
 
+  async loadBuiltinStampPreset(id, { enable = true, silent = false } = {}) {
+    const preset = getBuiltinStampPreset(id);
+    if (!preset) return false;
+    await this._setCustomStampImageFromDataUrl(preset.dataUrl, preset.name, {
+      silent: true,
+      id: preset.id,
+      sourceType: preset.sourceType,
+      licenseLabel: preset.licenseLabel || '',
+      sourceUrl: preset.sourceUrl || '',
+    });
+    if (enable) {
+      const enableEl = document.getElementById('stampImageEnabled');
+      if (enableEl) enableEl.checked = true;
+    }
+    if (document.getElementById('sidebar')) syncUI(this);
+    if (!silent) this.showToast(`🖼 Stamp preset: ${preset.name}`);
+    this._maybeAutoSaveSession();
+    return true;
+  }
+
   clearCustomStampImage({ silent = false } = {}) {
     this._customStampImage = null;
     this.invalidateParams();
@@ -2371,28 +2882,54 @@ export class App {
       id: this._customStampImage.id,
       name: this._customStampImage.name,
       sourceType: this._customStampImage.sourceType,
+      licenseLabel: this._customStampImage.licenseLabel || '',
+      sourceUrl: this._customStampImage.sourceUrl || '',
       width: this._customStampImage.width,
       height: this._customStampImage.height,
       canvas: this._customStampImage.canvas,
     };
   }
 
+  getAvailableStampImagePresets() {
+    return BUILTIN_STAMP_IMAGE_PRESETS.map(preset => ({
+      id: preset.id,
+      name: preset.name,
+      sourceType: preset.sourceType,
+      licenseLabel: preset.licenseLabel || '',
+      previewDataUrl: preset.dataUrl,
+    }));
+  }
+
   _serializeCustomStampImageState() {
     return this._customStampImage
       ? {
+          id: this._customStampImage.id,
           name: this._customStampImage.name,
+          sourceType: this._customStampImage.sourceType,
           dataUrl: this._customStampImage.dataUrl,
         }
       : null;
   }
 
   async _restoreCustomStampImageState(state) {
-    if (!state?.dataUrl) {
+    if (!state) {
       this._customStampImage = null;
       return;
     }
     try {
-      await this._setCustomStampImageFromDataUrl(state.dataUrl, state.name || 'Custom Stamp', { silent: true });
+      if (state.sourceType === 'builtin' && state.id) {
+        const restored = await this.loadBuiltinStampPreset(state.id, { enable: false, silent: true });
+        if (restored) return;
+      }
+      if (!state?.dataUrl) {
+        this._customStampImage = null;
+        return;
+      }
+      await this._setCustomStampImageFromDataUrl(state.dataUrl, state.name || 'Custom Stamp', {
+        silent: true,
+        id: state.id || 'custom-stamp',
+        sourceType: state.sourceType || 'upload',
+      });
     } catch {
       this._customStampImage = null;
       this.showToast('⚠ Saved custom stamp could not be restored');
@@ -2400,31 +2937,7 @@ export class App {
   }
 
   async _loadDefaultStampImage({ enable = false } = {}) {
-    let response;
-    try {
-      response = await _fetchWithRetry(DEFAULT_STAMP_IMAGE_PATH);
-    } catch {
-      // Network unavailable or persistent 425 Too Early (TLS 0-RTT) — skip default stamp silently.
-      // The user can still load a custom stamp at any time.
-      return;
-    }
-    if (!response.ok) {
-      // Non-retryable error (e.g. 404 in local dev) — degrade gracefully.
-      return;
-    }
-    const blob = await response.blob();
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = evt => resolve(evt.target.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    await this._setCustomStampImageFromDataUrl(dataUrl, 'circle.png', { silent: true });
-    if (enable) {
-      const enableEl = document.getElementById('stampImageEnabled');
-      if (enableEl) enableEl.checked = true;
-      this.invalidateParams();
-    }
+    await this.loadBuiltinStampPreset(DEFAULT_STAMP_PRESET_ID, { enable, silent: true });
   }
 
   hasActiveStampImage(p = this._cachedP || this.getP()) {
@@ -2832,20 +3345,45 @@ export class App {
   // UNDO / REDO
   // ========================================================
 
+  _captureSimulationUndoState() {
+    return {
+      brushData: _deepClone(this.simulation.brushData),
+      selected: this.simulation.selected ? { ...this.simulation.selected } : null,
+      nextId: this.simulation.nextId,
+    };
+  }
+
   _captureState() {
-    return this.layers.map(l => ({
-      data: l.ctx.getImageData(0, 0, l.canvas.width, l.canvas.height),
-      name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
-      isBackground: !!l.isBackground
-    }));
+    return {
+      layers: this.layers.map(l => ({
+        data: (l.canvas.width > 0 && l.canvas.height > 0)
+          ? l.ctx.getImageData(0, 0, l.canvas.width, l.canvas.height)
+          : null,
+        name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
+        isBackground: !!l.isBackground
+      })),
+      simulation: this._captureSimulationUndoState(),
+    };
+  }
+
+  _restoreSimulationUndoState(state) {
+    if (!state) return;
+    this.simulation.brushData = _deepClone(state.brushData || this.simulation.brushData);
+    this.simulation.selected = state.selected ? { ...state.selected } : null;
+    if (Number.isFinite(state.nextId)) this.simulation.nextId = state.nextId;
+    this._normalizeSimulationData();
+    this._constrainSimulationDataToBounds('boid');
+    this._constrainSimulationDataToBounds('ant');
+    this._renderSimulationInspector();
   }
 
   _restoreState(state) {
+    const layerState = Array.isArray(state) ? state : (state?.layers || []);
     for (const l of this.layers) this.compositor?.deleteLayerTex(l);
-    this.layers = state.map(s => {
+    this.layers = layerState.map(s => {
       const { canvas, ctx } = this.makeLayerCanvas();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.putImageData(s.data, 0, 0);
+      if (s.data) ctx.putImageData(s.data, 0, 0);
       ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
       return this._createLayerRecord(canvas, ctx, {
         name: s.name,
@@ -2862,10 +3400,13 @@ export class App {
     }
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    if (!Array.isArray(state) && state?.simulation) {
+      this._restoreSimulationUndoState(state.simulation);
+    }
   }
 
-  pushUndo() {
-    this.undoStack.push({ s: this._captureState(), i: this.activeLayerIdx });
+  pushUndo(capturedState = null) {
+    this.undoStack.push({ s: capturedState || this._captureState(), i: this.activeLayerIdx });
     if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
     this.redoStack = [];
   }
@@ -2886,6 +3427,26 @@ export class App {
     this.activeLayerIdx = r.i;
     this._restoreState(r.s);
     this.showToast('↪ Redo');
+  }
+
+  // ========================================================
+  // SIMULATION GUIDE UNDO/REDO
+  // ========================================================
+
+  pushUndoForSimulationGuideChange() {
+    this.pushUndo();
+  }
+
+  doUndoSimulationGuide() {
+    this.doUndo();
+  }
+
+  doRedoSimulationGuide() {
+    this.doRedo();
+  }
+
+  _restoreSimulationState(simState) {
+    this._restoreSimulationUndoState(simState);
   }
 
   // ========================================================
@@ -3250,6 +3811,7 @@ export class App {
               : undefined,
             speed: _normalizeSimulationPathSpeed(pathItem?.speed),
             speedPoints: _normalizeSimulationPathSpeedPoints(pathItem?.speedPoints, () => this.simulation.nextId++),
+            radiusPoints: _normalizeSimulationPathRadiusPoints(pathItem?.radiusPoints, () => this.simulation.nextId++, pathItem?.radius),
             travelDistance: Number.isFinite(pathItem?.travelDistance) ? pathItem.travelDistance : 0,
           };
           if (primitiveKind) {
@@ -3365,9 +3927,26 @@ export class App {
     }
     const sample = _samplePolylinePointAtDistance(renderPoints, distanceAlongPath, config.closed);
     if (!sample) return null;
-    const pathT = totalLength > 1e-6 ? _clamp01(distanceAlongPath / totalLength) : 0;
+    const pathT = totalLength > 1e-6
+      ? (config.closed ? _wrapIndex(distanceAlongPath / totalLength, 1) : _clamp01(distanceAlongPath / totalLength))
+      : 0;
     const speed = _getSimulationPathSpeedAt(pathItem, pathT, config.speed, config.closed);
-    return { ...sample, config, renderPoints, totalLength, startDistance, distanceAlongPath, pathT, speed };
+    const radius = _getSimulationPathRadiusAt(pathItem, pathT, config.radius, config.closed);
+    return {
+      ...sample,
+      config: {
+        ...config,
+        radius,
+        influenceRadius: Math.max(radius, Number.isFinite(config.influenceRadius) ? config.influenceRadius : radius),
+      },
+      renderPoints,
+      totalLength,
+      startDistance,
+      distanceAlongPath,
+      pathT,
+      speed,
+      radius,
+    };
   }
 
   _getAnimatedSimulationPathTarget(pathItem, p = this.getP(), traveledDistance = null) {
@@ -3433,6 +4012,7 @@ export class App {
   }
 
   _setSimulationSelection(selection) {
+    this._simFormatMenuUi.activePopover = null;
     this.simulation.selected = selection
       ? {
           brush: this.activeBrush,
@@ -3441,7 +4021,122 @@ export class App {
           id: selection.target?.id ?? selection.id,
         }
       : null;
+    const distributeModal = document.getElementById('simDistributePointsModal');
+    if (distributeModal?.classList.contains('open')) {
+      const pathId = Number(distributeModal.dataset.pathId || 0);
+      const selectedId = this.simulation.selected?.kind === 'path' ? this.simulation.selected.id : 0;
+      if (!selectedId || selectedId !== pathId) this._closeSimulationDistributeDialog();
+    }
     this._renderSimulationInspector();
+  }
+
+  _clampSimulationFormatMenuPosition(left, top, width = 0, height = 0) {
+    const topbarHeight = document.getElementById('topbarWrap')?.offsetHeight || 44;
+    const statusHeight = document.getElementById('status')?.offsetHeight || 24;
+    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const minTop = topbarHeight + 8;
+    const maxTop = Math.max(minTop, window.innerHeight - statusHeight - height - 8);
+    return {
+      left: _clamp(left, 8, maxLeft),
+      top: _clamp(top, minTop, maxTop),
+    };
+  }
+
+  _applySimulationFormatMenuPosition() {
+    const panel = document.getElementById('simFormatMenu');
+    if (!panel) return;
+    if (!this._simFormatMenuUi.position) {
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.right = '';
+      panel.style.bottom = '';
+      return;
+    }
+    const pos = this._clampSimulationFormatMenuPosition(
+      this._simFormatMenuUi.position.left,
+      this._simFormatMenuUi.position.top,
+      panel.offsetWidth || 0,
+      panel.offsetHeight || 0,
+    );
+    this._simFormatMenuUi.position = pos;
+    panel.style.left = `${Math.round(pos.left)}px`;
+    panel.style.top = `${Math.round(pos.top)}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    this._positionSimulationFormatMenuPopovers();
+  }
+
+  _positionSimulationFormatMenuPopovers() {
+    const panel = document.getElementById('simFormatMenu');
+    if (!panel?.classList.contains('open')) return;
+    const topbarHeight = document.getElementById('topbarWrap')?.offsetHeight || 44;
+    const statusHeight = document.getElementById('status')?.offsetHeight || 24;
+    const canvasTop = topbarHeight;
+    const canvasBottom = window.innerHeight - statusHeight;
+    panel.querySelectorAll('[data-sim-format-popover]').forEach(popover => {
+      popover.classList.remove('above');
+      if (!popover.classList.contains('open')) return;
+      const chip = popover.closest('[data-sim-format-chip]');
+      if (!chip) return;
+      const chipRect = chip.getBoundingClientRect();
+      const popoverHeight = popover.offsetHeight || 0;
+      const gap = 8;
+      const wouldOverflowBelow = (chipRect.bottom + gap + popoverHeight) > canvasBottom;
+      const fitsAbove = (chipRect.top - gap - popoverHeight) >= canvasTop;
+      if (wouldOverflowBelow && fitsAbove) popover.classList.add('above');
+    });
+  }
+
+  _toggleSimulationFormatMenuPopover(key) {
+    this._simFormatMenuUi.activePopover = this._simFormatMenuUi.activePopover === key ? null : key;
+    this._renderSimulationInspector();
+  }
+
+  _closeSimulationFormatMenuPopover({ rerender = true } = {}) {
+    if (!this._simFormatMenuUi.activePopover) return;
+    this._simFormatMenuUi.activePopover = null;
+    if (rerender) this._renderSimulationInspector();
+  }
+
+  _handleSimulationFormatMenuPointerDown(event) {
+    const panel = document.getElementById('simFormatMenu');
+    if (!panel?.classList.contains('open')) return;
+    if (event.button !== 0) return;
+    if (event.target.closest('input,button,select,option,[data-sim-format-popover]')) return;
+    const rect = panel.getBoundingClientRect();
+    this._simFormatMenuUi.dragPointerId = event.pointerId;
+    this._simFormatMenuUi.dragOffsetX = event.clientX - rect.left;
+    this._simFormatMenuUi.dragOffsetY = event.clientY - rect.top;
+    this._simFormatMenuUi.position = { left: rect.left, top: rect.top };
+    panel.setPointerCapture?.(event.pointerId);
+    panel.classList.add('dragging');
+  }
+
+  _handleSimulationFormatMenuPointerMove(event) {
+    if (this._simFormatMenuUi.dragPointerId !== event.pointerId) return;
+    event.preventDefault();
+    this._simFormatMenuUi.position = this._clampSimulationFormatMenuPosition(
+      event.clientX - this._simFormatMenuUi.dragOffsetX,
+      event.clientY - this._simFormatMenuUi.dragOffsetY,
+      document.getElementById('simFormatMenu')?.offsetWidth || 0,
+      document.getElementById('simFormatMenu')?.offsetHeight || 0,
+    );
+    this._applySimulationFormatMenuPosition();
+  }
+
+  _handleSimulationFormatMenuPointerUp(event) {
+    if (this._simFormatMenuUi.dragPointerId !== event.pointerId) return;
+    const panel = document.getElementById('simFormatMenu');
+    panel?.releasePointerCapture?.(event.pointerId);
+    panel?.classList.remove('dragging');
+    this._simFormatMenuUi.dragPointerId = null;
+  }
+
+  _handleSimulationFormatMenuGlobalPointerDown(event) {
+    const activeKey = this._simFormatMenuUi.activePopover;
+    if (!activeKey) return;
+    if (event.target.closest('#simFormatMenu')) return;
+    this._closeSimulationFormatMenuPopover();
   }
 
   _getSelectedSimulationEntry() {
@@ -3678,7 +4373,7 @@ export class App {
     if (kind === 'spawn') {
       if (target.mask) return [];
       const config = this._resolveSimulationSpawnConfig(target, p);
-      return [{
+      return _sanitizeSimulationHandles([{
         kind: 'paramHandle',
         handleType: 'radius',
         selectionKind: kind,
@@ -3687,11 +4382,11 @@ export class App {
         target,
         x: target.x + Math.max(10, config.radius),
         y: target.y,
-      }];
+      }]);
     }
     if (kind === 'point') {
       const config = this._resolveSimulationPointConfig(target, p);
-      return [
+      return _sanitizeSimulationHandles([
         {
           kind: 'paramHandle',
           handleType: 'radius',
@@ -3712,7 +4407,7 @@ export class App {
           x: target.x,
           y: target.y - (SIM_POINT_STRENGTH_HANDLE_OFFSET + config.strength * SIM_POINT_STRENGTH_HANDLE_SCALE),
         },
-      ];
+      ]);
     }
     if (kind === 'path') {
       const sample = this._getSimulationPathSample(target, 0, p);
@@ -3720,6 +4415,18 @@ export class App {
       const bounds = _getSimulationPathBounds(target.points);
       const directionSign = sample.config.direction === 'reverse' ? -1 : 1;
       const handles = [
+        {
+          kind: 'paramHandle',
+          handleType: 'pathPosition',
+          selectionKind: kind,
+          field: 'points',
+          collection: entry.collection,
+          target,
+          x: bounds?.centerX ?? sample.x,
+          y: bounds?.centerY ?? sample.y,
+          anchorX: bounds?.centerX ?? sample.x,
+          anchorY: bounds?.centerY ?? sample.y,
+        },
         {
           kind: 'paramHandle',
           handleType: 'pathStart',
@@ -3793,9 +4500,57 @@ export class App {
           });
         }
       }
-      return handles;
+      if (Array.isArray(target.radiusPoints) && sample.totalLength > 1e-6) {
+        for (const radiusPoint of target.radiusPoints) {
+          const pointSample = _samplePolylinePointAtDistance(sample.renderPoints, sample.totalLength * _clamp01(radiusPoint.t), sample.config.closed);
+          if (!pointSample) continue;
+          const normalX = -pointSample.tangentY;
+          const normalY = pointSample.tangentX;
+          const offset = SIM_PATH_RADIUS_HANDLE_OFFSET + (Math.max(1, radiusPoint.radius) * SIM_PATH_RADIUS_HANDLE_SCALE);
+          handles.push({
+            kind: 'paramHandle',
+            handleType: 'pathRadius',
+            selectionKind: kind,
+            field: 'radiusPoints',
+            collection: entry.collection,
+            target,
+            radiusPointId: radiusPoint.id,
+            anchorX: pointSample.x,
+            anchorY: pointSample.y,
+            x: pointSample.x - (normalX * offset),
+            y: pointSample.y - (normalY * offset),
+          });
+        }
+      }
+      return _sanitizeSimulationHandles(handles);
     }
     return [];
+  }
+
+  _getSimulationSpawnOverlayControls(target, p = this.getP()) {
+    if (!target) return { formatButton: null };
+    const config = this._resolveSimulationSpawnConfig(target, p);
+    const anchor = target.mask?.bounds
+      ? {
+          x: target.mask.bounds.minX + (target.mask.bounds.width * 0.5),
+          y: target.mask.bounds.minY,
+        }
+      : {
+          x: target.x,
+          y: target.y - Math.max(14, config.radius) - SIM_SPAWN_FORMAT_BUTTON_OFFSET_Y,
+        };
+    return {
+      formatButton: {
+        kind: 'overlayAction',
+        action: 'showFormat',
+        target,
+        collection: 'spawns',
+        x: anchor.x,
+        y: anchor.y,
+        width: SIM_SPAWN_FORMAT_BUTTON_WIDTH,
+        height: SIM_SPAWN_FORMAT_BUTTON_HEIGHT,
+      },
+    };
   }
 
   _applySimulationParameterHandleDrag(handle, x, y) {
@@ -3803,6 +4558,16 @@ export class App {
     if (handle.handleType === 'radius') {
       const radius = Math.max(1, Math.min(300, Math.hypot(x - handle.target.x, y - handle.target.y)));
       handle.target.radius = radius;
+      return;
+    }
+    if (handle.handleType === 'pathPosition') {
+      const lastX = Number.isFinite(handle.lastDragX) ? handle.lastDragX : handle.x;
+      const lastY = Number.isFinite(handle.lastDragY) ? handle.lastDragY : handle.y;
+      this._translateSimulationTarget(handle.target, x - lastX, y - lastY);
+      handle.lastDragX = x;
+      handle.lastDragY = y;
+      handle.x = x;
+      handle.y = y;
       return;
     }
     if (handle.handleType === 'strength') {
@@ -3864,6 +4629,23 @@ export class App {
       speedPoint.t = _clamp01(closest.distanceAlongPath / closest.totalLength);
       speedPoint.speed = _normalizeSimulationPathSpeed((offset - SIM_PATH_SPEED_HANDLE_OFFSET) / SIM_PATH_SPEED_HANDLE_SCALE);
       handle.target.speedPoints.sort((left, right) => left.t - right.t);
+      return;
+    }
+    if (handle.handleType === 'pathRadius') {
+      const radiusPoint = Array.isArray(handle.target.radiusPoints)
+        ? handle.target.radiusPoints.find(point => point.id === handle.radiusPointId)
+        : null;
+      if (!radiusPoint) return;
+      const config = this._resolveSimulationPathConfig(handle.target);
+      const renderPoints = this._getSimulationPathRenderPoints(handle.target);
+      const closest = _getClosestPolylineDistance(renderPoints, x, y, config.closed);
+      if (!closest || closest.totalLength <= 1e-6) return;
+      const normalX = -closest.tangentY;
+      const normalY = closest.tangentX;
+      const offset = Math.abs(((x - closest.x) * normalX) + ((y - closest.y) * normalY));
+      radiusPoint.t = _clamp01(closest.distanceAlongPath / closest.totalLength);
+      radiusPoint.radius = Math.max(1, (offset - SIM_PATH_RADIUS_HANDLE_OFFSET) / SIM_PATH_RADIUS_HANDLE_SCALE);
+      handle.target.radiusPoints.sort((left, right) => left.t - right.t);
     }
   }
 
@@ -4014,6 +4796,7 @@ export class App {
       strength: DEFAULT_PATH_STRENGTH,
       speed: DEFAULT_SIM_PATH_SPEED,
       speedPoints: [],
+      radiusPoints: [],
       closed: true,
       startOffset: 0,
       direction: 'forward',
@@ -4031,6 +4814,7 @@ export class App {
     if (!data) return;
     const entry = this._createSimulationPathPrimitive(kind);
     if (!entry) return;
+    this.pushUndo();
     data.paths.push(entry);
     this._setSimulationSelection({ collection: 'paths', kind: 'path', target: entry });
     this._renderSimulationInspector();
@@ -4041,9 +4825,7 @@ export class App {
   _addSimulationPathSpeedPoint(target) {
     if (!target) return;
     if (!Array.isArray(target.speedPoints)) target.speedPoints = [];
-    const t = target.speedPoints.length
-      ? _clamp01(target.speedPoints[target.speedPoints.length - 1].t + 0.15)
-      : 0.5;
+    const t = _getNextSimulationPathControlPointT(target.speedPoints, !!target.closed);
     target.speedPoints.push({
       id: this.simulation.nextId++,
       t,
@@ -4052,22 +4834,25 @@ export class App {
     target.speedPoints.sort((left, right) => left.t - right.t);
   }
 
+  _addSimulationPathRadiusPoint(target) {
+    if (!target) return;
+    if (!Array.isArray(target.radiusPoints)) target.radiusPoints = [];
+    const t = _getNextSimulationPathControlPointT(target.radiusPoints, !!target.closed);
+    target.radiusPoints.push({
+      id: this.simulation.nextId++,
+      t,
+      radius: Math.max(1, Number.isFinite(target.radius) ? target.radius : DEFAULT_PATH_RADIUS),
+    });
+    target.radiusPoints.sort((left, right) => left.t - right.t);
+  }
+
   _getSimulationPathSpeedOverlayControls(target, p = this.getP()) {
-    if (!target?.points?.length) return { addButton: null, deleteButtons: [] };
+    if (!target?.points?.length) return { addButton: null, radiusAddButton: null, formatButton: null, deleteButtons: [], radiusDeleteButtons: [] };
     const bounds = _getSimulationPathBounds(target.points);
-    const handles = this._getSimulationParameterHandles({ kind: 'path', collection: 'paths', target }, p)
-      .filter(handle => handle.handleType === 'pathSpeed');
-    const addButton = bounds ? {
-      kind: 'overlayAction',
-      action: 'addSpeedPoint',
-      target,
-      collection: 'paths',
-      x: bounds.centerX,
-      y: bounds.minY - SIM_PATH_SPEED_ADD_BUTTON_OFFSET_Y,
-      width: SIM_PATH_SPEED_ADD_BUTTON_WIDTH,
-      height: SIM_PATH_SPEED_ADD_BUTTON_HEIGHT,
-    } : null;
-    const deleteButtons = handles.map(handle => ({
+    const allHandles = this._getSimulationParameterHandles({ kind: 'path', collection: 'paths', target }, p);
+    const handles = allHandles
+      .filter(handle => handle.handleType === 'pathSpeed' || handle.handleType === 'pathRadius');
+    const deleteButtons = handles.filter(handle => handle.handleType === 'pathSpeed').map(handle => ({
       kind: 'overlayAction',
       action: 'deleteSpeedPoint',
       target,
@@ -4076,12 +4861,101 @@ export class App {
       x: handle.x + SIM_PATH_SPEED_DELETE_OFFSET,
       y: handle.y - SIM_PATH_SPEED_DELETE_OFFSET,
     }));
-    return { addButton, deleteButtons };
+    const radiusDeleteButtons = handles.filter(handle => handle.handleType === 'pathRadius').map(handle => ({
+      kind: 'overlayAction',
+      action: 'deleteRadiusPoint',
+      target,
+      collection: 'paths',
+      radiusPointId: handle.radiusPointId,
+      x: handle.x + SIM_PATH_SPEED_DELETE_OFFSET,
+      y: handle.y - SIM_PATH_SPEED_DELETE_OFFSET,
+    }));
+    const makeOverlayButton = (action, x, y, width, height) => ({
+      kind: 'overlayAction',
+      action,
+      target,
+      collection: 'paths',
+      x,
+      y,
+      width,
+      height,
+    });
+    let addButton = null;
+    let radiusAddButton = null;
+    let formatButton = null;
+    if (bounds) {
+      const maxChipWidth = Math.max(SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_WIDTH);
+      const centerX = _clamp(
+        bounds.centerX,
+        (maxChipWidth * 0.5) + SIM_PATH_OVERLAY_SAFE_MARGIN,
+        this.W - (maxChipWidth * 0.5) - SIM_PATH_OVERLAY_SAFE_MARGIN,
+      );
+      const occupiedTop = Math.min(
+        bounds.minY,
+        ...allHandles.map(handle => handle.y - SIM_PARAM_HIT_RADIUS),
+        ...deleteButtons.map(button => button.y - SIM_OVERLAY_ACTION_HIT_RADIUS),
+        ...radiusDeleteButtons.map(button => button.y - SIM_OVERLAY_ACTION_HIT_RADIUS),
+      );
+      const occupiedBottom = Math.max(
+        bounds.maxY,
+        ...allHandles.map(handle => handle.y + SIM_PARAM_HIT_RADIUS),
+        ...deleteButtons.map(button => button.y + SIM_OVERLAY_ACTION_HIT_RADIUS),
+        ...radiusDeleteButtons.map(button => button.y + SIM_OVERLAY_ACTION_HIT_RADIUS),
+      );
+      const stackHeight = (SIM_PATH_FORMAT_BUTTON_HEIGHT * 3) + (SIM_PATH_OVERLAY_ROW_GAP * 2);
+      const minTop = SIM_PATH_OVERLAY_SAFE_MARGIN;
+      const maxTop = Math.max(minTop, this.H - SIM_PATH_OVERLAY_SAFE_MARGIN - stackHeight);
+      const aboveTop = occupiedTop - SIM_PATH_OVERLAY_STACK_GAP - stackHeight;
+      const belowTop = occupiedBottom + SIM_PATH_OVERLAY_STACK_GAP;
+      const fitsAbove = aboveTop >= minTop;
+      const fitsBelow = belowTop <= maxTop;
+      const pathKey = `${this.activeBrush}:${target.id}`;
+      const preferredSide = this._simPathOverlayUi.preferredSideByPath.get(pathKey);
+      let placeBelow = false;
+      if (preferredSide === 'below' && fitsBelow) {
+        placeBelow = true;
+      } else if (preferredSide === 'above' && fitsAbove) {
+        placeBelow = false;
+      } else if (fitsAbove) {
+        placeBelow = false;
+      } else if (fitsBelow) {
+        placeBelow = true;
+      } else {
+        placeBelow = belowTop > maxTop && aboveTop >= belowTop ? false : belowTop <= aboveTop;
+      }
+      this._simPathOverlayUi.preferredSideByPath.set(pathKey, placeBelow ? 'below' : 'above');
+      const stackTop = _clamp(placeBelow ? belowTop : aboveTop, minTop, maxTop);
+      const rowCenters = [];
+      let nextTop = stackTop;
+      for (let rowIndex = 0; rowIndex < 3; rowIndex++) {
+        rowCenters.push(nextTop + (SIM_PATH_FORMAT_BUTTON_HEIGHT * 0.5));
+        nextTop += SIM_PATH_FORMAT_BUTTON_HEIGHT + SIM_PATH_OVERLAY_ROW_GAP;
+      }
+      if (placeBelow) {
+        [addButton, radiusAddButton, formatButton] = [
+          makeOverlayButton('addSpeedPoint', centerX, rowCenters[0], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
+          makeOverlayButton('addRadiusPoint', centerX, rowCenters[1], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
+          makeOverlayButton('showFormat', centerX, rowCenters[2], SIM_PATH_FORMAT_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_HEIGHT),
+        ];
+      } else {
+        [formatButton, radiusAddButton, addButton] = [
+          makeOverlayButton('showFormat', centerX, rowCenters[0], SIM_PATH_FORMAT_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_HEIGHT),
+          makeOverlayButton('addRadiusPoint', centerX, rowCenters[1], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
+          makeOverlayButton('addSpeedPoint', centerX, rowCenters[2], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
+        ];
+      }
+    }
+    return { addButton, radiusAddButton, formatButton, deleteButtons, radiusDeleteButtons };
   }
 
   _removeSimulationPathSpeedPoint(target, speedPointId) {
     if (!target || !Array.isArray(target.speedPoints)) return;
     target.speedPoints = target.speedPoints.filter(point => point.id !== speedPointId);
+  }
+
+  _removeSimulationPathRadiusPoint(target, radiusPointId) {
+    if (!target || !Array.isArray(target.radiusPoints)) return;
+    target.radiusPoints = target.radiusPoints.filter(point => point.id !== radiusPointId);
   }
 
   _duplicateSelectedSimulationItem() {
@@ -4098,6 +4972,9 @@ export class App {
       }
       if (Array.isArray(clone.speedPoints)) {
         clone.speedPoints = clone.speedPoints.map(point => ({ ...point, id: this.simulation.nextId++ }));
+      }
+      if (Array.isArray(clone.radiusPoints)) {
+        clone.radiusPoints = clone.radiusPoints.map(point => ({ ...point, id: this.simulation.nextId++ }));
       }
     } else if (clone.mask?.bounds) {
       clone.x += DUPLICATE_OFFSET;
@@ -4118,6 +4995,7 @@ export class App {
       clone.y += DUPLICATE_OFFSET;
     }
     this._constrainSimulationTargetToBounds(clone);
+    this.pushUndo();
     items.push(clone);
     this._setSimulationSelection({ collection: entry.collection, kind: entry.kind, target: clone });
     this._maybeAutoSaveSession();
@@ -4130,6 +5008,144 @@ export class App {
 
   _closeSimulationHelp() {
     document.getElementById('simHelpModal')?.classList.remove('open');
+  }
+
+  _getSimulationDistributeDialogTarget() {
+    const modal = document.getElementById('simDistributePointsModal');
+    const pathId = Number(modal?.dataset.pathId || 0);
+    if (!pathId) return null;
+    return (this._getSimulationBrushData('boid')?.paths || []).find(pathItem => pathItem.id === pathId) || null;
+  }
+
+  _mapSimulationDistributionCurve(t, curve) {
+    const value = _clamp01(t);
+    if (curve === 'ease-in') return value ** 1.65;
+    if (curve === 'ease-out') return 1 - ((1 - value) ** 1.65);
+    return value;
+  }
+
+  _buildSimulationDistributedTs(count, distribution = 'uniform', curve = 'linear') {
+    const total = Math.max(2, Math.min(20, Math.round(count || 2)));
+    if (total === 2) return [0, 1];
+    let values = [];
+    if (distribution === 'random') {
+      values = [0];
+      for (let index = 1; index < total - 1; index++) {
+        const raw = Math.sin((index + 1) * 12.9898 + total * 78.233) * 43758.5453;
+        values.push(raw - Math.floor(raw));
+      }
+      values.push(1);
+      values.sort((left, right) => left - right);
+    } else if (distribution === 'gaussian') {
+      const normalizer = Math.tanh(1.75);
+      values = Array.from({ length: total }, (_, index) => {
+        const base = index / (total - 1);
+        const centered = (base * 2) - 1;
+        return 0.5 + (Math.tanh(centered * 1.75) / (2 * normalizer));
+      });
+    } else {
+      values = Array.from({ length: total }, (_, index) => index / (total - 1));
+    }
+    return values
+      .map((value, index) => {
+        if (index === 0) return 0;
+        if (index === values.length - 1) return 1;
+        return this._mapSimulationDistributionCurve(value, curve);
+      })
+      .sort((left, right) => left - right)
+      .map(value => _clamp01(value));
+  }
+
+  _renderSimulationDistributeDialogPreview() {
+    const preview = document.getElementById('simDistributePreview');
+    const summary = document.getElementById('simDistributePreviewSummary');
+    const meta = document.getElementById('simDistributePreviewMeta');
+    const typeSelect = document.getElementById('simDistributePointType');
+    const countInput = document.getElementById('simDistributePointCount');
+    const modeSelect = document.getElementById('simDistributeMode');
+    const curveSelect = document.getElementById('simDistributeCurve');
+    const pathItem = this._getSimulationDistributeDialogTarget();
+    if (!preview || !summary || !meta || !typeSelect || !countInput || !modeSelect || !curveSelect) return;
+    const pointType = typeSelect.value === 'radius' ? 'radius' : 'speed';
+    const count = Math.max(2, Math.min(20, Math.round(+countInput.value || 2)));
+    countInput.value = String(count);
+    const distribution = modeSelect.value || 'uniform';
+    const curve = curveSelect.value || 'linear';
+    const values = this._buildSimulationDistributedTs(count, distribution, curve);
+    preview.innerHTML = values.map(t => `<span class="sim-distribute-preview-dot ${pointType === 'radius' ? 'radius' : ''}" style="left:${(t * 100).toFixed(4)}%;"></span>`).join('');
+    summary.textContent = `${count} ${pointType} point${count === 1 ? '' : 's'}`;
+    const existingCount = pathItem
+      ? (pointType === 'radius' ? (pathItem.radiusPoints?.length || 0) : (pathItem.speedPoints?.length || 0))
+      : 0;
+    meta.textContent = pathItem
+      ? `Apply will replace ${existingCount} existing ${pointType} point${existingCount === 1 ? '' : 's'} on the selected path.`
+      : 'Select a path to distribute points.';
+  }
+
+  _openSimulationDistributeDialog(pointType = 'speed') {
+    const entry = this._getSelectedSimulationEntry();
+    if (!entry || entry.kind !== 'path') return;
+    const modal = document.getElementById('simDistributePointsModal');
+    const subtitle = document.getElementById('simDistributePointsSubtitle');
+    const typeSelect = document.getElementById('simDistributePointType');
+    const countInput = document.getElementById('simDistributePointCount');
+    if (!modal || !subtitle || !typeSelect || !countInput) return;
+    modal.dataset.pathId = String(entry.target.id);
+    modal.classList.add('open');
+    typeSelect.value = pointType === 'radius' ? 'radius' : 'speed';
+    const existingCount = pointType === 'radius'
+      ? Math.max(2, entry.target.radiusPoints?.length || 5)
+      : Math.max(2, entry.target.speedPoints?.length || 5);
+    countInput.value = String(Math.min(20, existingCount));
+    subtitle.textContent = pointType === 'radius'
+      ? 'Populate the selected path with radius points so thickness changes can be blocked in quickly.'
+      : 'Populate the selected path with speed points so motion changes can be blocked in quickly.';
+    this._renderSimulationDistributeDialogPreview();
+  }
+
+  _closeSimulationDistributeDialog() {
+    const modal = document.getElementById('simDistributePointsModal');
+    if (!modal) return;
+    modal.classList.remove('open');
+    delete modal.dataset.pathId;
+  }
+
+  _distributeSimulationPathPoints(pathItem, pointType, { count, distribution, curve }) {
+    if (!pathItem) return;
+    const values = this._buildSimulationDistributedTs(count, distribution, curve);
+    const config = this._resolveSimulationPathConfig(pathItem);
+    if (pointType === 'radius') {
+      pathItem.radiusPoints = values.map(t => ({
+        id: this.simulation.nextId++,
+        t,
+        radius: _getSimulationPathRadiusAt(pathItem, t, config.radius, !!pathItem.closed),
+      }));
+      return;
+    }
+    pathItem.speedPoints = values.map(t => ({
+      id: this.simulation.nextId++,
+      t,
+      speed: _getSimulationPathSpeedAt(pathItem, t, config.speed, !!pathItem.closed),
+    }));
+  }
+
+  _applySimulationDistributeDialog() {
+    const pathItem = this._getSimulationDistributeDialogTarget();
+    const typeSelect = document.getElementById('simDistributePointType');
+    const countInput = document.getElementById('simDistributePointCount');
+    const modeSelect = document.getElementById('simDistributeMode');
+    const curveSelect = document.getElementById('simDistributeCurve');
+    if (!pathItem || !typeSelect || !countInput || !modeSelect || !curveSelect) return;
+    const pointType = typeSelect.value === 'radius' ? 'radius' : 'speed';
+    this.pushUndo();
+    this._distributeSimulationPathPoints(pathItem, pointType, {
+      count: +countInput.value || 2,
+      distribution: modeSelect.value || 'uniform',
+      curve: curveSelect.value || 'linear',
+    });
+    this._renderSimulationInspector();
+    this._maybeAutoSaveSession();
+    this._closeSimulationDistributeDialog();
   }
 
   _maybeAutoSaveSession() {
@@ -4197,18 +5213,28 @@ export class App {
 
   _renderSimulationInspector() {
     const panel = document.getElementById('simOverlaySidebar');
+    const formatPanel = document.getElementById('simFormatMenu');
     if (!panel) return;
     try {
-      const open = this.simulation.enabled && this._isMotionBrush() && !this.simulation.inspectorCollapsed;
+      const uiEnabled = this.simulation.enabled && this._isMotionBrush();
+      const open = uiEnabled && !this.simulation.inspectorCollapsed;
       panel.classList.toggle('open', open);
-      if (!open) {
+      if (!uiEnabled) {
         panel.innerHTML = '';
+        if (formatPanel) {
+          formatPanel.innerHTML = '';
+          formatPanel.classList.remove('open');
+        }
         return;
       }
 
       const data = this._getSimulationBrushData();
       if (!data) {
         panel.innerHTML = '';
+        if (formatPanel) {
+          formatPanel.innerHTML = '';
+          formatPanel.classList.remove('open');
+        }
         return;
       }
       const selected = this._getSelectedSimulationEntry();
@@ -4251,6 +5277,33 @@ export class App {
       if (item.enabled === false) parts.push('Off');
       return parts.join(' · ');
     };
+    const getGuideIcon = (group, item) => {
+      if (group.kind === 'spawn') return item.mask ? '◉' : '◎';
+      if (group.kind === 'path') return item.primitiveKind ? '⬡' : '≈';
+      if (group.kind === 'edge') return '⛶';
+      if (group.kind === 'pheromonePath') return '∿';
+      return item.type === 'repel' ? '↘' : '↗';
+    };
+    const getGuideMeta = (group, item) => {
+      if (group.kind === 'spawn') {
+        if (item.mask?.bounds) return `${Math.round(item.mask.bounds.width)}×${Math.round(item.mask.bounds.height)} blob`;
+        const radius = Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : 'Brush radius';
+        const shape = item.shape || 'Brush shape';
+        return `${shape} · ${radius}`;
+      }
+      if (group.kind === 'path') {
+        const pointCount = Array.isArray(item.points) ? item.points.length : 0;
+        const speedPoints = Array.isArray(item.speedPoints) ? item.speedPoints.length : 0;
+        return `${item.closed ? 'Closed' : 'Open'} · ${pointCount} pts · ${speedPoints} speed pts`;
+      }
+      if (group.kind === 'edge') {
+        return `${Array.isArray(item.points) ? item.points.length : 0} pts · ${Math.round(item.radius || 0)}px radius`;
+      }
+      if (group.kind === 'pheromonePath') {
+        return `${Array.isArray(item.points) ? item.points.length : 0} pts · ${(item.intensity ?? 0).toFixed(2)} intensity`;
+      }
+      return `${item.type === 'repel' ? 'Repel' : 'Attract'} · ${Math.round(item.radius || 0)}px radius`;
+    };
     const sectionKeyForGroup = group => {
       if (group.kind === 'point') return group.label.toLowerCase().includes('repel') ? 'repelPoints' : 'attractPoints';
       if (group.kind === 'path') return 'paths';
@@ -4259,12 +5312,20 @@ export class App {
       return group.collection;
     };
     const groupBySectionKey = Object.fromEntries(groups.map(group => [sectionKeyForGroup(group), group]));
-    const renderItemButtonList = group => {
+    const renderGuideLayerList = group => {
       if (!group?.items?.length) return '<div class="sim-inspector-note">No items yet.</div>';
-      return `<div class="sim-inspector-list">${group.items.map((item, idx) => `
-        <button data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" class="${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''}">
-          ${_escapeHtml(describeSimulationItem(group, item, idx))}
-        </button>`).join('')}</div>`;
+      return `<div class="sim-guide-layer-list">${group.items.map((item, idx) => `
+        <div class="sim-guide-layer ${selected?.id === item.id && selected?.collection === group.collection ? 'active' : ''} ${item.enabled === false ? 'disabled' : ''}" data-sim-select="1" data-sim-collection="${group.collection}" data-sim-kind="${group.kind}" data-sim-id="${item.id}" tabindex="0" role="button" aria-pressed="${selected?.id === item.id && selected?.collection === group.collection ? 'true' : 'false'}">
+          <div class="sim-guide-layer-icon">${_escapeHtml(getGuideIcon(group, item))}</div>
+          <div class="sim-guide-layer-main">
+            <div class="sim-guide-layer-title">${_escapeHtml(describeSimulationItem(group, item, idx))}</div>
+            <div class="sim-guide-layer-meta">${_escapeHtml(getGuideMeta(group, item))}</div>
+          </div>
+          <div class="sim-guide-layer-actions">
+            <button type="button" class="sim-guide-layer-toggle ${item.enabled !== false ? 'active' : ''}" data-sim-toggle-item="1" data-sim-collection="${group.collection}" data-sim-id="${item.id}">${item.enabled !== false ? 'On' : 'Off'}</button>
+            <button type="button" class="sim-guide-layer-delete" data-sim-delete-item="1" data-sim-collection="${group.collection}" data-sim-id="${item.id}">×</button>
+          </div>
+        </div>`).join('')}</div>`;
     };
     const renderInspectorSubgroup = (title, body) => `
       <div class="sim-inspector-subgroup">
@@ -4486,38 +5547,38 @@ export class App {
       : '';
     const pointSection = renderTypeSection('pointSettings', 'Points', [
       renderInspectorSubgroup('Defaults', pointSettingsBody),
-      renderInspectorSubgroup('Attract Points', renderItemButtonList(groupBySectionKey.attractPoints)),
-      renderInspectorSubgroup('Repel Points', renderItemButtonList(groupBySectionKey.repelPoints)),
+      renderInspectorSubgroup('Attract Points', renderGuideLayerList(groupBySectionKey.attractPoints)),
+      renderInspectorSubgroup('Repel Points', renderGuideLayerList(groupBySectionKey.repelPoints)),
     ]);
     const pathSection = isBoid
       ? renderTypeSection('paths', 'Paths', [
           renderInspectorSubgroup('Add Primitive', pathPrimitiveButtons),
           renderInspectorSubgroup('Defaults', pathSettingsBody),
-          renderInspectorSubgroup('Path Guides', renderItemButtonList(groupBySectionKey.paths)),
+          renderInspectorSubgroup('Path Guides', renderGuideLayerList(groupBySectionKey.paths)),
         ])
       : '';
     const spawnSection = renderTypeSection('spawns', 'Spawns', [
       `<div class="sim-inspector-note">Select a spawn to override its count, shape, radius, and other per-spawn behavior. Shared brush spawn settings still live in the main sidebar.</div>`,
-      renderInspectorSubgroup('Spawn Items', renderItemButtonList(groupBySectionKey.spawns)),
+      renderInspectorSubgroup('Spawn Items', renderGuideLayerList(groupBySectionKey.spawns)),
     ]);
     const edgeSection = !isBoid
       ? renderTypeSection('edges', 'Edge Barriers', [
           renderInspectorSubgroup('Defaults', edgeSettingsBody),
-          renderInspectorSubgroup('Barrier Items', renderItemButtonList(groupBySectionKey.edges)),
+          renderInspectorSubgroup('Barrier Items', renderGuideLayerList(groupBySectionKey.edges)),
         ])
       : '';
     const pheromoneSection = !isBoid
       ? renderTypeSection('pheromonePaths', 'Pheromone Trails', [
           renderInspectorSubgroup('Defaults', pheromoneSettingsBody),
-          renderInspectorSubgroup('Trail Items', renderItemButtonList(groupBySectionKey.pheromonePaths)),
+          renderInspectorSubgroup('Trail Items', renderGuideLayerList(groupBySectionKey.pheromonePaths)),
         ])
       : '';
 
     let inspector = `
       <div class="sim-inspector-header">
         <div>
-          <div class="sim-inspector-title">Simulation Inspector</div>
-          <div class="sim-inspector-subtitle">${isBoid ? 'Boid' : 'Ant'} simulation overrides live here.</div>
+          <div class="sim-inspector-title">Guide Layers</div>
+          <div class="sim-inspector-subtitle">${isBoid ? 'Boid' : 'Ant'} guides behave like editable layers. Select one to open its floating format card.</div>
         </div>
         <div class="sim-inspector-actions">
           <button data-sim-collapse="1">Collapse</button>
@@ -4526,7 +5587,8 @@ export class App {
           <button data-sim-help="1">Help</button>
         </div>
       </div>
-      ${renderSection('scene', 'Scene', `<div class="sim-inspector-note">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong>. Global simulation controls live in this panel; item values only override when explicitly set here.</div>`)}
+      <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong> · ${selected ? `Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>` : 'Select a guide to edit it.'}</div>
+      ${renderSection('scene', 'Scene', `<div class="sim-inspector-note">Global simulation controls live here. Guide-specific overrides move into the floating format card so the layer list stays compact.</div>`) }
       ${renderTypeSection('playback', 'Playback & Bounds', [
         renderInspectorSubgroup('Playback', playbackSettingsBody),
       ])}
@@ -4544,11 +5606,12 @@ export class App {
         ${savedSessionsList}`)}
     `;
 
+    let formatMarkup = '';
+
     if (!selected) {
       inspector += renderSection('selection', 'No Selection', `<div class="sim-inspector-note">Select a spawn, ${isBoid ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>`, { collapsed: false });
     } else {
       const target = selected.target;
-      const checked = target.enabled !== false ? 'checked' : '';
 
       // Helper: render a slider row for a numeric override field.
       // Slider value = stored value / scale  (e.g. scale=0.01 → slider 0-200 maps to stored 0-2.0).
@@ -4593,109 +5656,128 @@ export class App {
           </div>
         </div>`;
       };
-      const simColorField = (field, label, fallbackColor = p.color) => {
+      const activePopover = this._simFormatMenuUi.activePopover;
+      const compactColorControl = (field, fallbackColor = p.color) => {
         const raw = _normalizeHexColor(target[field]);
         const isSet = !!raw;
         const value = raw || _normalizeHexColor(fallbackColor, '#1a1a1a');
-        const displayVal = isSet ? value.toUpperCase() : 'Brush def.';
-        const resetOpacity = isSet ? '' : ' style="opacity:0.35"';
-        return `<div class="sim-slider-row">
-          <div class="sim-slider-header">
-            <span class="sim-slider-label">${label}</span>
-            <div class="sim-slider-meta">
-              <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
-              <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
+        return `<input class="sim-format-color" type="color" value="${value}" title="Color" data-sim-field="${field}" data-sim-type="color"${isSet ? '' : ' data-sim-unset="1"'}>`;
+      };
+      const compactNumberControl = (field, type, label, min, max, step, scale) => {
+        const raw = target[field];
+        const isSet = Number.isFinite(raw);
+        const sliderVal = isSet
+          ? (type === 'angle' ? Math.round(_formatAngleDegrees(raw)) : Math.round(raw / scale))
+          : Math.round((+min + +max) / 2);
+        const inputVal = isSet
+          ? (type === 'angle' ? Math.round(_formatAngleDegrees(raw)) : (type === 'integer' ? Math.round(raw) : formatSimInputNumber(raw, scale < 1 ? 2 : 1)))
+          : '';
+        const open = activePopover === field;
+        return `<div class="sim-format-chip sim-format-chip-number" data-sim-format-chip="${field}">
+          <span class="sim-format-chip-label">${label}:</span>
+          <input type="number" class="sim-format-number" min="${type === 'angle' ? -180 : (type === 'integer' ? Math.round(min * scale) : min * scale)}" max="${type === 'angle' ? 180 : (type === 'integer' ? Math.round(max * scale) : max * scale)}" step="${type === 'integer' ? 1 : (type === 'angle' ? 1 : scale < 1 ? scale : step * scale)}" value="${inputVal}" placeholder="--"
+                 data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}" data-sim-input-kind="number">
+          <button type="button" class="sim-format-trigger" data-sim-format-toggle="${field}" aria-expanded="${open ? 'true' : 'false'}">▾</button>
+          <div class="sim-format-popover sim-format-slider-popover ${open ? 'open' : ''}" data-sim-format-popover="${field}">
+            <div class="sim-format-slider-wrap">
+              <input type="range" class="sim-format-slider" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
+                     data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}" data-sim-input-kind="range"${isSet ? '' : ' data-sim-unset="1"'}>
             </div>
-          </div>
-          <div class="sim-slider-controls">
-            <input type="color" value="${value}" data-sim-field="${field}" data-sim-type="color"${isSet ? '' : ' data-sim-unset="1"'}>
           </div>
         </div>`;
       };
+      const compactChoiceControl = (field, label, options, value = '') => `
+        <label class="sim-format-chip sim-format-chip-select">
+          <span class="sim-format-chip-label">${label}:</span>
+          <select class="sim-format-select" data-sim-field="${field}" data-sim-type="select">
+            ${options.map(option => `<option value="${option.value}" ${String(value) === String(option.value) ? 'selected' : ''}>${_escapeHtml(option.label)}</option>`).join('')}
+          </select>
+        </label>`;
+      const compactToggleControl = (field, label, checkedValue) => `
+        <label class="sim-format-chip sim-format-chip-toggle">
+          <span class="sim-format-chip-label">${label}</span>
+          <input type="checkbox" data-sim-field="${field}" data-sim-type="bool" ${checkedValue ? 'checked' : ''}>
+        </label>`;
 
-      let selectionBody = `
-        <div class="sim-inspector-row">
-          <label>Enabled</label>
-          <input type="checkbox" data-sim-field="enabled" data-sim-type="bool" ${checked}>
-        </div>
-        <div class="sim-inspector-actions">
-          <button data-sim-duplicate="1">Duplicate</button>
-          <button class="danger" data-sim-delete="1">Delete</button>
-        </div>
-      `;
+      const compactControls = [];
+      const resetFields = [];
       if (selected.kind === 'spawn') {
-        selectionBody += target.mask
-          ? `
-          <div class="sim-inspector-note" style="margin-top:10px"><strong>Spawn Blob</strong></div>
-          <div class="sim-inspector-note">Painted spawn blobs use their alpha mask for placement. Count, color, opacity, and distribution stay editable here.</div>
-          ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
-          ${simColorField('color', 'Color')}
-          ${simSlider('opacity', 'number', 'Opacity', 0, 100, 1, 0.01)}
-          <div class="sim-inspector-row"><label>Distribution<select data-sim-field="distribution" data-sim-type="select">
-            ${SIM_SPAWN_DISTRIBUTION_MODES.map(mode => `<option value="${mode}" ${((target.distribution || 'uniform') === mode) ? 'selected' : ''}>${mode}</option>`).join('')}
-          </select></label></div>
-          ${simSlider('noiseScale', 'number', 'Noise Scale', 20, 300, 5, 0.01)}`
-          : `
-          <div class="sim-inspector-note" style="margin-top:10px"><strong>Spawn Overrides</strong></div>
-          <div class="sim-inspector-note">Move a slider or pick a color to override; press × to restore brush default.</div>
-          ${simSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1, true)}
-          ${simColorField('color', 'Color')}
-          ${simSlider('opacity', 'number', 'Opacity', 0, 100, 1, 0.01)}
-          <div class="sim-inspector-row"><label>Shape<select data-sim-field="shape" data-sim-type="select">
-            <option value="">Brush default</option>
-            ${SIM_SPAWN_SHAPES.map(shape => `<option value="${shape}" ${target.shape === shape ? 'selected' : ''}>${shape}</option>`).join('')}
-          </select></label></div>
-          ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-          ${simSlider('angle', 'angle', 'Angle', -180, 180, 1, 1)}
-          ${simSlider('jitter', 'number', 'Jitter', 0, 100, 1, 0.01)}`;
+        compactControls.push(compactColorControl('color'));
+        compactControls.push(compactNumberControl('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1));
+        compactControls.push(compactNumberControl('opacity', 'number', 'Opacity', 0, 100, 1, 0.01));
+        resetFields.push('color', 'count', 'opacity');
+        if (target.mask) {
+          compactControls.push(compactChoiceControl('distribution', 'Mode', SIM_SPAWN_DISTRIBUTION_MODES.map(mode => ({ value: mode, label: mode })), target.distribution || 'uniform'));
+          compactControls.push(compactNumberControl('noiseScale', 'number', 'Noise', 20, 300, 5, 0.01));
+          resetFields.push('distribution', 'noiseScale');
+        } else {
+          compactControls.push(compactChoiceControl('shape', 'Shape', [{ value: '', label: 'Default' }, ...SIM_SPAWN_SHAPES.map(shape => ({ value: shape, label: shape }))], target.shape || ''));
+          compactControls.push(compactNumberControl('radius', 'integer', 'Size', 1, 300, 1, 1));
+          compactControls.push(compactNumberControl('angle', 'angle', 'Angle', -180, 180, 1, 1));
+          compactControls.push(compactNumberControl('jitter', 'number', 'Jitter', 0, 100, 1, 0.01));
+          resetFields.push('shape', 'radius', 'angle', 'jitter');
+        }
       } else if (selected.kind === 'point') {
-        selectionBody += `
-          <div class="sim-inspector-note" style="margin-top:10px"><strong>${target.type === 'repel' ? 'Repulsion' : 'Attraction'} Overrides</strong></div>
-          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-          ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
-          ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-          ${target.type === 'repel' ? simSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1) : ''}`;
+        compactControls.push(compactNumberControl('strength', 'number', 'Strength', 0, 200, 5, 0.01));
+        compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 300, 1, 1));
+        resetFields.push('strength', 'radius');
+        if (target.type === 'repel') {
+          compactControls.push(compactNumberControl('hardness', 'number', 'Hardness', 1, 100, 5, 0.1));
+          resetFields.push('hardness');
+        }
       } else if (selected.kind === 'path') {
         const pathConfig = this._resolveSimulationPathConfig(target, p);
-        const speedPointRows = Array.isArray(target.speedPoints) && target.speedPoints.length
-          ? target.speedPoints.map((point, index) => `
-            <div class="sim-inspector-row">
-              <label>Speed Point ${index + 1} · ${Math.round(point.t * 100)}% · ${_normalizeSimulationPathSpeed(point.speed).toFixed(2)}×</label>
-              <button type="button" data-sim-del-speed-point="${point.id}">Remove</button>
-            </div>`).join('')
-          : '<div class="sim-inspector-note">No speed points yet. Add one, then drag its teal handle along and away from the path to vary speed smoothly.</div>';
-        selectionBody += `
-          <div class="sim-inspector-note" style="margin-top:10px"><strong>Path Attraction</strong></div>
-          <div class="sim-inspector-note">Each enabled path animates its own attraction point along the stroke. Drag the green start handle to move the starting location, the teal size handle to scale the path, and the pill toggle to switch closed/open.</div>
-          <div class="sim-inspector-note">Current start: <strong>${Math.round(pathConfig.startOffset * 100)}%</strong> · Direction: <strong>${_getSimulationPathDirectionLabel(pathConfig.direction)}</strong> · Speed: <strong>${pathConfig.speed.toFixed(2)}×</strong> · Falloff: <strong>${Math.round(pathConfig.influenceRadius)}px</strong></div>
-          <div class="sim-inspector-row"><label>Direction<select data-sim-field="direction" data-sim-type="select">
-            <option value="forward" ${pathConfig.direction === 'forward' ? 'selected' : ''}>Forward</option>
-            <option value="reverse" ${pathConfig.direction === 'reverse' ? 'selected' : ''}>Reverse</option>
-          </select></label></div>
-          ${simSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01)}
-          ${simSlider('radius', 'integer', 'Radius', 1, 300, 1, 1)}
-          ${simSlider('influenceRadius', 'integer', 'Falloff Radius', 1, 600, 1, 1)}
-          ${simSlider('speed', 'number', 'Path Speed', 10, 400, 5, 0.01)}
-          <div class="sim-inspector-row"><label>Closed</label><input type="checkbox" data-sim-field="closed" data-sim-type="bool" ${target.closed ? 'checked' : ''}></div>
-          <div class="sim-inspector-actions" style="margin-top:8px"><button type="button" data-sim-add-speed-point="1">Add Speed Point</button></div>
-          ${speedPointRows}`;
+        compactControls.push(compactNumberControl('strength', 'number', 'Strength', 0, 200, 5, 0.01));
+        compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 300, 1, 1));
+        compactControls.push(compactNumberControl('influenceRadius', 'integer', 'Falloff', 1, 600, 1, 1));
+        compactControls.push(compactNumberControl('speed', 'number', 'Speed', 10, 400, 5, 0.01));
+        compactControls.push('<button type="button" class="sim-format-reset" data-sim-add-speed-point="1">+Speed Pt</button>');
+        compactControls.push('<button type="button" class="sim-format-reset" data-sim-add-radius-point="1">+Radius Pt</button>');
+        compactControls.push('<button type="button" class="sim-format-reset" data-sim-distribute-points="speed">Dist Speed</button>');
+        compactControls.push('<button type="button" class="sim-format-reset" data-sim-distribute-points="radius">Dist Radius</button>');
+        compactControls.push(compactChoiceControl('direction', 'Dir', [
+          { value: 'forward', label: 'Forward' },
+          { value: 'reverse', label: 'Reverse' },
+        ], pathConfig.direction));
+        compactControls.push(compactToggleControl('closed', 'Loop', !!target.closed));
+        resetFields.push('strength', 'radius', 'influenceRadius', 'speed', 'direction', 'closed');
       } else if (selected.kind === 'edge') {
-        selectionBody += `
-          <div class="sim-inspector-note" style="margin-top:10px"><strong>Edge Barrier</strong></div>
-          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-          ${simSlider('strength', 'number', 'Force', 0, 200, 5, 0.01)}
-          ${simSlider('radius', 'integer', 'Radius', 0, 300, 1, 1)}`;
+        compactControls.push(compactNumberControl('strength', 'number', 'Force', 0, 200, 5, 0.01));
+        compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 0, 300, 1, 1));
+        resetFields.push('strength', 'radius');
       } else if (selected.kind === 'pheromonePath') {
-        selectionBody += `
-          <div class="sim-inspector-note" style="margin-top:10px"><strong>Pheromone Trail</strong></div>
-          <div class="sim-inspector-note">Move a slider to override; press × to restore brush default.</div>
-          ${simSlider('radius', 'integer', 'Radius', 1, 80, 1, 1)}
-          ${simSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01)}`;
+        compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 80, 1, 1));
+        compactControls.push(compactNumberControl('intensity', 'number', 'Intensity', 0, 100, 5, 0.01));
+        resetFields.push('radius', 'intensity');
       }
-      inspector += renderSection('selection', `Selected ${selected.kind === 'point' ? target.type : selected.kind}`, selectionBody);
+
+      formatMarkup = `
+        <div class="sim-format-shell">
+          <div class="sim-format-row" data-sim-format-drag-root="1">
+            ${compactControls.join('')}
+            <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
+            <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
+          </div>
+        </div>`;
     }
 
     panel.innerHTML = inspector;
+    if (formatPanel) {
+      if (formatMarkup) {
+        formatPanel.innerHTML = formatMarkup;
+        formatPanel.classList.add('open');
+        this._applySimulationFormatMenuPosition();
+        this._positionSimulationFormatMenuPopovers();
+      } else {
+        formatPanel.innerHTML = '';
+        formatPanel.classList.remove('open');
+        formatPanel.classList.remove('dragging');
+      }
+    }
+
+    const interactionRoots = [panel, formatPanel].filter(Boolean);
+    const queryAllInRoots = selector => interactionRoots.flatMap(root => Array.from(root.querySelectorAll(selector)));
+    const getRootForControl = control => interactionRoots.find(root => root.contains(control)) || panel;
 
     panel.querySelectorAll('[data-sim-section-toggle]').forEach(header => {
       header.addEventListener('click', () => {
@@ -4713,6 +5795,36 @@ export class App {
           id: +btn.dataset.simId,
         });
       });
+      if (btn.tagName !== 'BUTTON') {
+        btn.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          btn.click();
+        });
+      }
+    });
+    panel.querySelectorAll('[data-sim-toggle-item]').forEach(btn => {
+      btn.addEventListener('click', event => {
+        event.stopPropagation();
+        const collection = btn.dataset.simCollection;
+        const id = +btn.dataset.simId;
+        const item = this._getSimulationCollection(collection).find(candidate => candidate.id === id);
+        if (!item) return;
+        this.pushUndo();
+        item.enabled = item.enabled === false;
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
+    });
+    panel.querySelectorAll('[data-sim-delete-item]').forEach(btn => {
+      btn.addEventListener('click', event => {
+        event.stopPropagation();
+        const collection = btn.dataset.simCollection;
+        const id = +btn.dataset.simId;
+        const item = this._getSimulationCollection(collection).find(candidate => candidate.id === id);
+        if (!item) return;
+        this._deleteSimulationItem({ collection, target: item });
+      });
     });
     panel.querySelector('[data-sim-collapse]')?.addEventListener('click', () => {
       this.simulation.inspectorCollapsed = true;
@@ -4720,30 +5832,85 @@ export class App {
     });
     panel.querySelector('[data-sim-clear-canvas]')?.addEventListener('click', () => this.clearActiveLayer());
     panel.querySelector('[data-sim-help]')?.addEventListener('click', () => this._openSimulationHelp());
-    panel.querySelector('[data-sim-clear-selection]')?.addEventListener('click', () => this._setSimulationSelection(null));
-    panel.querySelector('[data-sim-duplicate]')?.addEventListener('click', () => this._duplicateSelectedSimulationItem());
+    queryAllInRoots('[data-sim-clear-selection]').forEach(button => {
+      button.addEventListener('click', () => this._setSimulationSelection(null));
+    });
+    queryAllInRoots('[data-sim-format-toggle]').forEach(button => {
+      button.addEventListener('click', event => {
+        event.stopPropagation();
+        this._toggleSimulationFormatMenuPopover(button.dataset.simFormatToggle);
+      });
+    });
+    queryAllInRoots('[data-sim-reset-all]').forEach(button => {
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry) return;
+        const fields = (button.dataset.simResetAll || '').split(',').map(field => field.trim()).filter(Boolean);
+        if (!fields.length) return;
+        this.pushUndo();
+        fields.forEach(field => delete entry.target[field]);
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
+    });
+    queryAllInRoots('[data-sim-duplicate]').forEach(button => {
+      button.addEventListener('click', () => this._duplicateSelectedSimulationItem());
+    });
     panel.querySelectorAll('[data-sim-add-path-primitive]').forEach(btn => {
       btn.addEventListener('click', () => this._addSimulationPathPrimitive(btn.dataset.simAddPathPrimitive));
     });
-    panel.querySelector('[data-sim-add-speed-point]')?.addEventListener('click', () => {
-      const entry = this._getSelectedSimulationEntry();
-      if (!entry || entry.kind !== 'path') return;
-      this._addSimulationPathSpeedPoint(entry.target);
-      this._renderSimulationInspector();
-      this._maybeAutoSaveSession();
+    queryAllInRoots('[data-sim-add-speed-point]').forEach(button => {
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry || entry.kind !== 'path') return;
+        this.pushUndo();
+        this._addSimulationPathSpeedPoint(entry.target);
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
     });
-    panel.querySelectorAll('[data-sim-del-speed-point]').forEach(btn => {
+    queryAllInRoots('[data-sim-del-speed-point]').forEach(btn => {
       btn.addEventListener('click', () => {
         const entry = this._getSelectedSimulationEntry();
         if (!entry || entry.kind !== 'path') return;
+        this.pushUndo();
         this._removeSimulationPathSpeedPoint(entry.target, +btn.dataset.simDelSpeedPoint);
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
     });
-    panel.querySelector('[data-sim-delete]')?.addEventListener('click', () => {
-      const entry = this._getSelectedSimulationEntry();
-      if (entry) this._deleteSimulationItem(entry);
+    queryAllInRoots('[data-sim-add-radius-point]').forEach(button => {
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry || entry.kind !== 'path') return;
+        this.pushUndo();
+        this._addSimulationPathRadiusPoint(entry.target);
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
+    });
+    queryAllInRoots('[data-sim-del-radius-point]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry || entry.kind !== 'path') return;
+        this.pushUndo();
+        this._removeSimulationPathRadiusPoint(entry.target, +btn.dataset.simDelRadiusPoint);
+        this._renderSimulationInspector();
+        this._maybeAutoSaveSession();
+      });
+    });
+    queryAllInRoots('[data-sim-distribute-points]').forEach(button => {
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (!entry || entry.kind !== 'path') return;
+        this._openSimulationDistributeDialog(button.dataset.simDistributePoints || 'speed');
+      });
+    });
+    queryAllInRoots('[data-sim-delete]').forEach(button => {
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        if (entry) this._deleteSimulationItem(entry);
+      });
     });
     panel.querySelectorAll('[data-sim-param]').forEach(el => {
       const paramId = el.dataset.simParam;
@@ -4808,7 +5975,7 @@ export class App {
       });
       el.addEventListener('change', () => forward('change'));
     });
-    panel.querySelectorAll('[data-sim-field]').forEach(el => {
+    queryAllInRoots('[data-sim-field]').forEach(el => {
       const field = el.dataset.simField;
       const type = el.dataset.simType || 'number';
       const scale = parseFloat(el.dataset.simScale || '1');
@@ -4861,7 +6028,8 @@ export class App {
       // Live label update for range sliders (no re-render while dragging).
       if (el.type === 'range') {
         el.addEventListener('input', () => {
-          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
+          const controlRoot = getRootForControl(el);
+          const lbl = controlRoot.querySelector(`[data-sim-val-label="${field}"]`);
           if (!lbl) return;
           const liveValue = type === 'angle'
             ? Math.round(+el.value)
@@ -4871,26 +6039,28 @@ export class App {
           if (type === 'angle') lbl.textContent = `${liveValue}°`;
           else if (type === 'integer') lbl.textContent = String(liveValue);
           else lbl.textContent = liveValue.toFixed(scale < 1 ? 2 : 1);
-          const numberInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
+          const numberInput = Array.from(controlRoot.querySelectorAll(`[data-sim-field="${field}"]`))
             .find(candidate => candidate !== el && candidate.type === 'number');
           if (numberInput) numberInput.value = String(liveValue);
           // Restore reset-button opacity once the user moves the slider.
-          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          const resetBtn = controlRoot.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
           if (resetBtn) resetBtn.style.opacity = '1';
         });
       } else if (el.type === 'color') {
         el.addEventListener('input', () => {
-          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
-          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          const controlRoot = getRootForControl(el);
+          const lbl = controlRoot.querySelector(`[data-sim-val-label="${field}"]`);
+          const resetBtn = controlRoot.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
           const normalized = _normalizeHexColor(el.value, '#000000');
           if (lbl) lbl.textContent = normalized.toUpperCase();
           if (resetBtn) resetBtn.style.opacity = '1';
         });
       } else if (el.type === 'number') {
         el.addEventListener('input', () => {
-          const lbl = panel.querySelector(`[data-sim-val-label="${field}"]`);
-          const resetBtn = panel.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
-          const rangeInput = Array.from(panel.querySelectorAll(`[data-sim-field="${field}"]`))
+          const controlRoot = getRootForControl(el);
+          const lbl = controlRoot.querySelector(`[data-sim-val-label="${field}"]`);
+          const resetBtn = controlRoot.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
+          const rangeInput = Array.from(controlRoot.querySelectorAll(`[data-sim-field="${field}"]`))
             .find(candidate => candidate !== el && candidate.type === 'range');
           if (el.value === '') {
             if (lbl) lbl.textContent = 'Brush def.';
@@ -4912,19 +6082,20 @@ export class App {
 
       // Commit on change + trigger re-render.
       const applyField = () => {
+        this.pushUndo();
         if (!writeField()) return;
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       };
-      el.addEventListener('change', applyField);
-      if (el.type === 'checkbox') el.addEventListener('input', applyField);
+      el.addEventListener(el.type === 'checkbox' ? 'input' : 'change', applyField);
     });
 
     // Reset buttons — clear an override field and re-render.
-    panel.querySelectorAll('[data-sim-reset]').forEach(btn => {
+    queryAllInRoots('[data-sim-reset]').forEach(btn => {
       btn.addEventListener('click', () => {
         const entry = this._getSelectedSimulationEntry();
         if (!entry) return;
+        this.pushUndo();
         delete entry.target[btn.dataset.simReset];
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
@@ -4975,8 +6146,10 @@ export class App {
     const next = typeof force === 'boolean' ? force : !this.simulation.enabled;
     if (!next) {
       this.stopSimulation(false);
+      this.simulation.frameCount = 0;
       this.simulation.selected = null;
       this._closeSimulationHelp();
+      this._hideSimulationExportModal();
     } else {
       const brush = this.getCurrentBrush();
       if (brush?.deactivate) brush.deactivate();
@@ -5010,6 +6183,7 @@ export class App {
     if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
+    const playbackBar = document.getElementById('simPlaybackBar');
     const hudCollapseBtn = document.getElementById('simHudCollapseBtn');
     const heatmapBtn = document.getElementById('simHeatmapToggle');
     const stepBackBtn = document.getElementById('simStepBackBtn');
@@ -5028,6 +6202,9 @@ export class App {
     if (hud) {
       hud.classList.toggle('open', !!this.simulation.enabled && isMotion);
       hud.classList.toggle('collapsed', !!this.simulation.hudCollapsed);
+    }
+    if (playbackBar) {
+      playbackBar.classList.toggle('open', !!this.simulation.enabled && isMotion);
     }
     if (hudCollapseBtn) {
       const expanded = !this.simulation.hudCollapsed;
@@ -5054,7 +6231,10 @@ export class App {
     }
 
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
+    document.getElementById('simHudRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
+    const resetBtn = document.getElementById('simResetBtn');
+    if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
     document.getElementById('simInspectorToggle')?.classList.toggle('active', !this.simulation.inspectorCollapsed);
     const guidesBtn = document.getElementById('simGuidesToggle');
     if (guidesBtn) {
@@ -5077,8 +6257,13 @@ export class App {
     const status = document.getElementById('simStatus');
     if (status) {
       const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
-      status.textContent = this.simulation.heatmapVisible ? `${base} · Heatmap` : base;
+      const extras = [];
+      if (this.simulation.heatmapVisible) extras.push('Heatmap');
+      if (this._simulationExport.armedOnStart) extras.push('REC Armed');
+      if (this._simulationExport.recording) extras.push('REC');
+      status.textContent = extras.length ? `${base} · ${extras.join(' · ')}` : base;
     }
+    this._refreshSimulationExportUi();
     syncEdgeSliders(this);
     this._renderSimulationInspector();
   }
@@ -5125,7 +6310,9 @@ export class App {
     this.stopSimulation(false);
     this.simulation.running = true;
     this.simulation.paused = false;
+    this.simulation.frameCount = 0;
     this.simulation.pathDistance = 0;
+    if (this._simulationExport.armedOnStart) void this._startSimulationRecording();
     if (this.activeBrush === 'boid') {
       for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
         pathItem.travelDistance = 0;
@@ -5163,6 +6350,7 @@ export class App {
   stopSimulation(showToast = true) {
     const brush = this.getCurrentBrush();
     const wasActive = this.simulation.running || this.simulation.paused;
+    void this._stopSimulationRecording({ announce: false });
     if (this.simulation.running && brush?.onUp) {
       brush.onUp(this.leaderX, this.leaderY);
     }
@@ -5193,28 +6381,38 @@ export class App {
       return true;
     }
     if (hit?.kind === 'overlayAction') {
-      this._setSimulationSelection({ collection: hit.collection, kind: 'path', target: hit.target });
+      const selectionKind = hit.collection === 'spawns' ? 'spawn' : 'path';
+      this._setSimulationSelection({ collection: hit.collection, kind: selectionKind, target: hit.target });
       if (hit.action === 'addSpeedPoint') {
+        this.pushUndo();
         this._addSimulationPathSpeedPoint(hit.target);
+      } else if (hit.action === 'addRadiusPoint') {
+        this.pushUndo();
+        this._addSimulationPathRadiusPoint(hit.target);
       } else if (hit.action === 'deleteSpeedPoint') {
+        this.pushUndo();
         this._removeSimulationPathSpeedPoint(hit.target, hit.speedPointId);
+      } else if (hit.action === 'deleteRadiusPoint') {
+        this.pushUndo();
+        this._removeSimulationPathRadiusPoint(hit.target, hit.radiusPointId);
       }
       this._renderSimulationInspector();
       this._maybeAutoSaveSession();
       return true;
     }
     if (hit?.kind === 'paramHandle' && hit.handleType === 'pathClosed') {
+      this.pushUndo();
       hit.target.closed = !hit.target.closed;
       this._setSimulationSelection({ collection: hit.collection, kind: hit.selectionKind || 'path', target: hit.target });
       this._renderSimulationInspector();
       this._maybeAutoSaveSession();
       return true;
     }
-    if (hit?.kind && (!isPathCreationTool || hit.kind === 'paramHandle')) {
+    if (hit?.kind) {
       this._setSimulationSelection(hit.kind === 'paramHandle'
         ? { collection: hit.collection, kind: hit.selectionKind || 'point', target: hit.target }
         : hit);
-      this.simulation.dragTarget = { ...hit, lastX: x, lastY: y };
+      this.simulation.dragTarget = { ...hit, lastX: x, lastY: y, undoState: this._captureState() };
       return true;
     }
 
@@ -5224,6 +6422,7 @@ export class App {
     this._setSimulationSelection(null);
 
     if (tool === 'spawn') {
+      this.pushUndo();
       const spawn = { id: this.simulation.nextId++, x, y, enabled: true };
       data.spawns.push(spawn);
       this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
@@ -5233,6 +6432,7 @@ export class App {
       stroke.begin(x, y, { radius: Math.max(8, p.spawnRadius) });
       this.simulation.drawingBlob = { stroke };
     } else if (tool === 'attract' || tool === 'repel') {
+      this.pushUndo();
       const point = { id: this.simulation.nextId++, x, y, type: tool, enabled: true };
       data.points.push(point);
       this._setSimulationSelection({ collection: 'points', kind: 'point', target: point });
@@ -5290,6 +6490,7 @@ export class App {
     if (!this.simulation.enabled || !this._isMotionBrush()) return false;
     const hadMoved = !!this.simulation.dragTarget?.moved;
     const dragKind = this.simulation.dragTarget?.kind;
+    const dragUndoState = this.simulation.dragTarget?.undoState || null;
     this.simulation.dragTarget = null;
     if (this.simulation.drawingBlob?.stroke) {
       const data = this._getSimulationBrushData();
@@ -5298,6 +6499,7 @@ export class App {
         noiseScale: 1,
       });
       if (data && mask) {
+        this.pushUndo();
         const spawn = {
           id: this.simulation.nextId++,
           x: mask.bounds.minX + (mask.bounds.width * 0.5),
@@ -5320,6 +6522,7 @@ export class App {
       const path = this.simulation.drawingPath.points.filter((pt, i, arr) => i === 0 || Math.hypot(pt.x - arr[i - 1].x, pt.y - arr[i - 1].y) > 1);
       const data = this._getSimulationBrushData();
       if (data && path.length >= 2) {
+        this.pushUndo();
         if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') {
           const entry = {
             id: this.simulation.nextId++,
@@ -5333,6 +6536,7 @@ export class App {
             startOffset: 0,
             speed: DEFAULT_SIM_PATH_SPEED,
             speedPoints: [],
+            radiusPoints: [],
             travelDistance: 0,
           };
           data.paths.push(entry);
@@ -5355,6 +6559,9 @@ export class App {
       return true;
     }
     if (hadMoved) {
+      if (dragUndoState && (dragKind === 'paramHandle' || dragKind === 'spawn' || dragKind === 'point' || dragKind === 'path' || dragKind === 'edge' || dragKind === 'pheromonePath')) {
+        this.pushUndo(dragUndoState);
+      }
       if (dragKind === 'paramHandle') this._renderSimulationInspector();
       this._maybeAutoSaveSession();
     }
@@ -5366,6 +6573,7 @@ export class App {
     if (!data) return;
     const collection = hit.collection;
     if (!collection || !Array.isArray(data[collection])) return;
+    this.pushUndoForSimulationGuideChange('deleteGuide', this.activeBrush, { collection, id: hit.target?.id });
     data[collection] = data[collection].filter(item => item.id !== hit.target?.id);
     if (collection === 'spawns') this._ensureSimulationSpawns();
     const selected = this._getSelectedSimulationEntry();
@@ -5379,6 +6587,14 @@ export class App {
   clearSimulationGuides() {
     const data = this._getSimulationBrushData();
     if (!data) return;
+    const hasGuides = !!(
+      (data.spawns && data.spawns.length) ||
+      (data.points && data.points.length) ||
+      (data.paths && data.paths.length) ||
+      (data.edges && data.edges.length) ||
+      (data.pheromonePaths && data.pheromonePaths.length)
+    );
+    if (hasGuides) this.pushUndo();
     data.spawns = [];
     data.points = [];
     if (this.activeBrush === 'boid') data.paths = [];
@@ -5572,9 +6788,16 @@ export class App {
             return speedControls.addButton;
           }
         }
-        for (const button of speedControls.deleteButtons) {
-          if (Math.hypot(x - button.x, y - button.y) <= SIM_OVERLAY_ACTION_HIT_RADIUS) {
-            return button;
+        if (speedControls.radiusAddButton) {
+          const halfWidth = speedControls.radiusAddButton.width * 0.5;
+          const halfHeight = speedControls.radiusAddButton.height * 0.5;
+          if (
+            x >= speedControls.radiusAddButton.x - halfWidth &&
+            x <= speedControls.radiusAddButton.x + halfWidth &&
+            y >= speedControls.radiusAddButton.y - halfHeight &&
+            y <= speedControls.radiusAddButton.y + halfHeight
+          ) {
+            return speedControls.radiusAddButton;
           }
         }
       }
@@ -5582,6 +6805,44 @@ export class App {
       for (const handle of handles) {
         if (Math.hypot(x - handle.x, y - handle.y) <= SIM_PARAM_HIT_RADIUS) {
           return handle;
+        }
+      }
+      if (selected.kind === 'spawn') {
+        const spawnControls = this._getSimulationSpawnOverlayControls(selected.target);
+        if (spawnControls.formatButton) {
+          const halfWidth = spawnControls.formatButton.width * 0.5;
+          const halfHeight = spawnControls.formatButton.height * 0.5;
+          if (
+            x >= spawnControls.formatButton.x - halfWidth &&
+            x <= spawnControls.formatButton.x + halfWidth &&
+            y >= spawnControls.formatButton.y - halfHeight &&
+            y <= spawnControls.formatButton.y + halfHeight
+          ) return spawnControls.formatButton;
+        }
+      }
+      if (selected.kind === 'path') {
+        const speedControls = this._getSimulationPathSpeedOverlayControls(selected.target);
+        if (speedControls.formatButton) {
+          const halfWidth = speedControls.formatButton.width * 0.5;
+          const halfHeight = speedControls.formatButton.height * 0.5;
+          if (
+            x >= speedControls.formatButton.x - halfWidth &&
+            x <= speedControls.formatButton.x + halfWidth &&
+            y >= speedControls.formatButton.y - halfHeight &&
+            y <= speedControls.formatButton.y + halfHeight
+          ) {
+            return speedControls.formatButton;
+          }
+        }
+        for (const button of speedControls.deleteButtons) {
+          if (Math.hypot(x - button.x, y - button.y) <= SIM_OVERLAY_ACTION_HIT_RADIUS) {
+            return button;
+          }
+        }
+        for (const button of speedControls.radiusDeleteButtons) {
+          if (Math.hypot(x - button.x, y - button.y) <= SIM_OVERLAY_ACTION_HIT_RADIUS) {
+            return button;
+          }
         }
       }
     }
@@ -5691,9 +6952,12 @@ export class App {
       const width = button.width || 22;
       const height = button.height || 22;
       const radius = Math.min(9, height * 0.5);
+      const strokeStyle = button.strokeStyle || 'rgba(126,206,255,0.7)';
+      const fillStyle = button.fillStyle || 'rgba(12,18,30,0.82)';
+      const textStyle = button.textStyle || 'rgba(214,240,255,0.96)';
       ctx.save();
-      ctx.fillStyle = 'rgba(12,18,30,0.82)';
-      ctx.strokeStyle = 'rgba(126,206,255,0.7)';
+      ctx.fillStyle = fillStyle;
+      ctx.strokeStyle = strokeStyle;
       ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.moveTo(button.x - width * 0.5 + radius, button.y - height * 0.5);
@@ -5708,7 +6972,7 @@ export class App {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = 'rgba(214,240,255,0.96)';
+      ctx.fillStyle = textStyle;
       ctx.font = width > 30 ? '11px Segoe UI, sans-serif' : '10px Segoe UI, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -5720,9 +6984,14 @@ export class App {
       if (!handle?.target) return;
       const anchorX = Number.isFinite(handle.anchorX) ? handle.anchorX : handle.target.x;
       const anchorY = Number.isFinite(handle.anchorY) ? handle.anchorY : handle.target.y;
+      const handleColor = handle.handleType === 'pathRadius'
+        ? SIM_PATH_RADIUS_HANDLE_COLOR
+        : handle.handleType === 'pathPosition'
+          ? SIM_PATH_POSITION_HANDLE_COLOR
+          : color;
       ctx.save();
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
+      ctx.strokeStyle = handleColor;
+      ctx.fillStyle = handleColor;
       ctx.lineWidth = 1.75;
       if (Number.isFinite(anchorX) && Number.isFinite(anchorY) && (Math.abs(handle.x - anchorX) > 0.5 || Math.abs(handle.y - anchorY) > 0.5)) {
         ctx.beginPath();
@@ -5762,6 +7031,18 @@ export class App {
         ctx.moveTo(handle.x, handle.y - 4);
         ctx.lineTo(handle.x, handle.y + 4);
         ctx.stroke();
+      } else if (handle.handleType === 'pathPosition') {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PATH_POSITION_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(12,18,30,0.9)';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(handle.x - 5, handle.y);
+        ctx.lineTo(handle.x + 5, handle.y);
+        ctx.moveTo(handle.x, handle.y - 5);
+        ctx.lineTo(handle.x, handle.y + 5);
+        ctx.stroke();
       } else if (handle.handleType === 'pathClosed') {
         const width = 18;
         const height = 12;
@@ -5778,6 +7059,15 @@ export class App {
         ctx.lineTo(handle.x - 4, handle.y + 1);
         ctx.closePath();
         ctx.fill();
+      } else if (handle.handleType === 'pathRadius') {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, 4.2, 0, Math.PI * 2);
+        ctx.stroke();
       } else {
         ctx.beginPath();
         ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS, 0, Math.PI * 2);
@@ -5831,7 +7121,17 @@ export class App {
       ctx.arc(spawn.x, spawn.y, 5, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.fill();
-      if (isSelected('spawns', spawn)) drawSelectedHandles(spawn, 'rgba(140,196,255,0.98)');
+      if (isSelected('spawns', spawn)) {
+        drawSelectedHandles(spawn, 'rgba(140,196,255,0.98)');
+        const spawnControls = this._getSimulationSpawnOverlayControls(spawn, p);
+        if (spawnControls.formatButton) {
+          drawOverlayChip({
+            ...spawnControls.formatButton,
+            strokeStyle: 'rgba(140,196,255,0.9)',
+            textStyle: 'rgba(220,244,255,0.98)',
+          }, 'Format');
+        }
+      }
       const deleteAnchor = this._getSimulationDeleteAnchor(spawn, 'spawn');
       drawDelete(deleteAnchor.x, deleteAnchor.y);
       ctx.restore();
@@ -5881,13 +7181,40 @@ export class App {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.globalAlpha *= 0.16;
-        ctx.lineWidth = config.radius * 2;
-        ctx.stroke();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const radiusPointCount = Array.isArray(pathItem.radiusPoints) ? pathItem.radiusPoints.length : 0;
+        if (radiusPointCount && renderPoints.length >= 2) {
+          let traveled = 0;
+          const totalLength = _buildPolylineSegments(renderPoints, config.closed).totalLength;
+          const segmentCount = config.closed ? renderPoints.length : renderPoints.length - 1;
+          for (let index = 0; index < segmentCount; index++) {
+            const start = renderPoints[index];
+            const end = renderPoints[(index + 1) % renderPoints.length];
+            const length = Math.hypot(end.x - start.x, end.y - start.y);
+            if (length <= 1e-6) continue;
+            const startT = totalLength > 1e-6 ? traveled / totalLength : 0;
+            const endT = totalLength > 1e-6 ? (traveled + length) / totalLength : startT;
+            const segmentRadius = Math.max(
+              _getSimulationPathRadiusAt(pathItem, startT, config.radius, config.closed),
+              _getSimulationPathRadiusAt(pathItem, endT, config.radius, config.closed),
+            );
+            ctx.lineWidth = Math.max(2, segmentRadius * 2);
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            ctx.stroke();
+            traveled += length;
+          }
+        } else {
+          ctx.lineWidth = config.radius * 2;
+          ctx.stroke();
+        }
         if (target) {
           ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
           ctx.fillStyle = isSelected('paths', pathItem) ? 'rgba(196,233,255,0.98)' : 'rgba(136,190,255,0.95)';
           ctx.beginPath();
-          ctx.arc(target.x, target.y, Math.max(5, Math.min(9, config.radius * 0.2)), 0, Math.PI * 2);
+          ctx.arc(target.x, target.y, Math.max(5, Math.min(11, (target.radius || config.radius) * 0.2)), 0, Math.PI * 2);
           ctx.fill();
         }
         if (startSample) {
@@ -5907,8 +7234,31 @@ export class App {
           drawSelectedHandles(pathItem, 'rgba(120,236,178,0.98)');
           const speedControls = this._getSimulationPathSpeedOverlayControls(pathItem, p);
           if (speedControls.addButton) drawOverlayChip(speedControls.addButton, '+ Speed');
+          if (speedControls.radiusAddButton) {
+            drawOverlayChip({
+              ...speedControls.radiusAddButton,
+              strokeStyle: 'rgba(255,105,214,0.82)',
+              textStyle: 'rgba(255,222,246,0.98)',
+            }, '+ Radius');
+          }
+          if (speedControls.formatButton) {
+            drawOverlayChip({
+              ...speedControls.formatButton,
+              strokeStyle: 'rgba(255,214,120,0.82)',
+              textStyle: 'rgba(255,240,196,0.98)',
+            }, 'Format');
+          }
           for (const button of speedControls.deleteButtons) {
             drawOverlayChip({ ...button, width: 20, height: 20 }, '×');
+          }
+          for (const button of speedControls.radiusDeleteButtons) {
+            drawOverlayChip({
+              ...button,
+              width: 20,
+              height: 20,
+              strokeStyle: 'rgba(255,105,214,0.82)',
+              textStyle: 'rgba(255,222,246,0.98)',
+            }, '×');
           }
         }
         const anchor = this._getSimulationAnchor(pathItem);
@@ -8133,6 +9483,7 @@ export class App {
 
   setBrush(name) {
     if (!this.brushes[name]) return;
+    if (this.activeBrush !== name && this._simulationExport.recording) void this._stopSimulationRecording({ announce: false });
     if (this.activeBrush !== name && (this.simulation.running || this.simulation.paused)) this.stopSimulation(false);
     this.setTool('brush'); // restore brush mode when changing brush type
     // Deactivate current
@@ -8336,8 +9687,16 @@ export class App {
       if (this.simulation.paused) this.resumeSimulation();
       else this.startSimulation();
     });
+    document.getElementById('simHudRunBtn')?.addEventListener('click', () => {
+      if (this.simulation.paused) this.resumeSimulation();
+      else this.startSimulation();
+    });
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('simHudStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('simResetBtn')?.addEventListener('click', () => this.resetSimulationPlayback());
+    document.getElementById('simRecordBtn')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
+    document.getElementById('simExportBtn')?.addEventListener('click', () => this._showSimulationExportModal());
     document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
     document.getElementById('simHeatmapToggle')?.addEventListener('click', () => this._toggleSimulationHeatmap());
     document.getElementById('simCanvasClearBtn')?.addEventListener('click', () => this.clearActiveLayer());
@@ -8356,11 +9715,28 @@ export class App {
       this.simulation.inspectorCollapsed = false;
       this._syncSimulationUI();
     });
+    document.getElementById('simFormatMenu')?.addEventListener('pointerdown', e => this._handleSimulationFormatMenuPointerDown(e));
+    window.addEventListener('pointermove', e => this._handleSimulationFormatMenuPointerMove(e), { passive: false });
+    window.addEventListener('pointerup', e => this._handleSimulationFormatMenuPointerUp(e));
+    window.addEventListener('pointercancel', e => this._handleSimulationFormatMenuPointerUp(e));
+    document.addEventListener('pointerdown', e => this._handleSimulationFormatMenuGlobalPointerDown(e), true);
+    window.addEventListener('resize', () => {
+      this._applySimulationFormatMenuPosition();
+      this._positionSimulationFormatMenuPopovers();
+    });
     document.querySelectorAll('[data-sim-tool]').forEach(el => {
       el.addEventListener('click', () => this._setSimulationTool(el.dataset.simTool));
     });
     document.getElementById('simHelpClose')?.addEventListener('click', () => this._closeSimulationHelp());
     document.getElementById('simHelpBackdrop')?.addEventListener('click', () => this._closeSimulationHelp());
+    document.getElementById('simDistributePointsClose')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
+    document.getElementById('simDistributePointsBackdrop')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
+    document.getElementById('simDistributePointsCancel')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
+    document.getElementById('simDistributePointsApply')?.addEventListener('click', () => this._applySimulationDistributeDialog());
+    ['simDistributePointCount', 'simDistributePointType', 'simDistributeMode', 'simDistributeCurve'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', () => this._renderSimulationDistributeDialogPreview());
+      document.getElementById(id)?.addEventListener('change', () => this._renderSimulationDistributeDialogPreview());
+    });
     // Copy/cut/paste
     document.getElementById('copyBtn')?.addEventListener('click', () => this.copyToClipboard());
     document.getElementById('cutBtn')?.addEventListener('click', () => this.cutToClipboard());
@@ -8377,6 +9753,15 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('simExportClose')?.addEventListener('click', () => this._hideSimulationExportModal());
+    document.getElementById('simExportBackdrop')?.addEventListener('click', () => this._hideSimulationExportModal());
+    document.getElementById('simExportRecordAction')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
+    document.getElementById('simExportDownloadBtn')?.addEventListener('click', () => {
+      void this._exportSimulationRecording();
+    });
+    ['simExportFormat', 'simExportFrameRate', 'simExportQuality'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', () => this._refreshSimulationExportUi());
+    });
     document.getElementById('canvasSizePreset')?.addEventListener('change', () => this._onCanvasSizePresetChange());
     document.getElementById('canvasSizeSwap')?.addEventListener('click', () => {
       const w = document.getElementById('canvasSizeW');
@@ -9169,8 +10554,8 @@ export class App {
     // Ctrl+N = new canvas / canvas size
     if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); this._showCanvasSizeModal(); return; }
     // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
-    if (e.ctrlKey && !e.shiftKey && e.key === 'z') { e.preventDefault(); this.doUndo(); }
-    if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); this.doRedo(); }
+    if (e.ctrlKey && !e.shiftKey && e.key === 'z') { e.preventDefault(); this.doUndoSimulationGuide(); }
+    if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); this.doRedoSimulationGuide(); }
     // Ctrl+S = save image
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); this.saveImage(); }
     // Ctrl+C = copy canvas to clipboard
@@ -9829,7 +11214,12 @@ export class App {
     }
 
     // Active brush frame (e.g. boid step)
-    if (this.simulation.running) this._updateSimulationLeader(elapsed, p);
+    if (this.simulation.running) {
+      this.simulation.frameCount += 1;
+      this._updateSimulationLeader(elapsed, p);
+      const frameCounter = document.getElementById('simFrameCounter');
+      if (frameCounter) frameCounter.textContent = this._formatSimulationFrameCounter();
+    }
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
     } else if (!this.isDrawing && !this.isTapering && brush && brush.onHoverFrame) {
@@ -11012,16 +12402,25 @@ export class App {
     } catch { /* ignore SW failures */ }
   }
 
-  _clearReloadStorageArtifacts({ wipeSession = false } = {}) {
+  _clearAppLocalStorage(namespace = 'bb_') {
     try {
-      localStorage.removeItem(BUILD_ID_STORAGE_KEY);
+      for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith(namespace)) {
+          try { localStorage.removeItem(key); } catch { /* ignore localStorage failures */ }
+        }
+      }
     } catch { /* ignore localStorage failures */ }
+  }
 
+  _clearReloadStorageArtifacts({ wipeSession = false } = {}) {
     if (wipeSession) {
-      try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore localStorage failures */ }
-      try { localStorage.removeItem('bb_autosave'); } catch { /* ignore localStorage failures */ }
-      try { localStorage.removeItem('bb_perfTelemetry'); } catch { /* ignore localStorage failures */ }
-      try { localStorage.removeItem('bb_perfWakeLock'); } catch { /* ignore localStorage failures */ }
+      // Wipe every app-owned key so the next boot behaves like a first visit.
+      this._clearAppLocalStorage();
+    } else {
+      try {
+        localStorage.removeItem(BUILD_ID_STORAGE_KEY);
+      } catch { /* ignore localStorage failures */ }
     }
 
     try { sessionStorage.clear(); } catch { /* ignore sessionStorage failures */ }
@@ -11041,7 +12440,7 @@ export class App {
   async reloadAppWithCacheBust({ wipeSession = false } = {}) {
     const btn = document.getElementById('reloadAppBtn');
     if (btn) btn.disabled = true;
-    this.setStatus('Reloading app (clearing caches)…');
+    this.setStatus(wipeSession ? 'Reloading app (clearing saved data and caches)…' : 'Reloading app (clearing caches)…');
     await this._clearReloadCaches();
     this._clearReloadStorageArtifacts({ wipeSession });
     const url = new URL(window.location.href);

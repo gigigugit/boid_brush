@@ -1039,7 +1039,7 @@ async function _createSharedMotionSim(app) {
   const height = app.H || 600;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      return await WebGPUBoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
+      return WebGPUBoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
@@ -1129,6 +1129,7 @@ export class BoidBrush {
     }
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
+      this.sim.setDisplaySize?.(this.app.W, this.app.H);
       await this.renderer.init();
       this._patchRendererChain();
       this._syncRenderBackendStatus();
@@ -2528,6 +2529,7 @@ export class AntBrush {
     _ensureProceduralStampRendererInit(this);
     if (this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
+      this.sim.setDisplaySize?.(this.app.W, this.app.H);
       this._ready = true;
       return this.sim;
     }
