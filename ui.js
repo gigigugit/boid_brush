@@ -552,6 +552,8 @@ export function buildSidebar(app) {
     <div class="section-header closed" data-brushes="boid ant bristle simple eraser motionPath" data-section="stampImage">Stamp Image <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="boid ant bristle simple eraser motionPath">
       <label>Enable <input type="checkbox" id="stampImageEnabled"></label>
+      <div id="stampPresetSwitcher" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;"></div>
+      <span class="slider-desc">Built-in free silhouettes for quick switching. Upload still works for custom stamps.</span>
       <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
         <canvas id="stampImagePreview" width="72" height="72" style="width:72px;height:72px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:#0d0d12;image-rendering:auto;"></canvas>
         <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;">
@@ -560,11 +562,11 @@ export function buildSidebar(app) {
         </div>
       </div>
       <div style="display:flex;gap:4px;align-items:center;margin:4px 0;">
-        <button id="btnUploadStampImage" style="flex:1;">📂 Load Stamp</button>
+        <button id="btnUploadStampImage" style="flex:1;">📂 Upload Stamp</button>
         <button id="btnClearStampImage" style="flex-shrink:0;">✕</button>
       </div>
       <label>Tint With Brush <input type="checkbox" id="stampImageTint" checked></label>
-      ${sliderRow('stampImageRotation', 'Rotation', 0, 360, 0, v => v + '°', 'Rotate the uploaded stamp while preserving its aspect ratio and soft alpha')}
+      ${sliderRow('stampImageRotation', 'Rotation', 0, 360, 0, v => v + '°', 'Rotate the loaded stamp while preserving its aspect ratio and soft alpha')}
     </div>
 
     <!-- Canvas Texture -->
@@ -858,6 +860,12 @@ export function buildSidebar(app) {
   document.getElementById('btnUploadStampImage')?.addEventListener('click', () => _stampFileInput.click());
   document.getElementById('btnClearStampImage')?.addEventListener('click', () => {
     app.clearCustomStampImage();
+    syncStampImageUI(app);
+  });
+  document.getElementById('stampPresetSwitcher')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-stamp-preset-id]');
+    if (!button) return;
+    await app.loadBuiltinStampPreset(button.dataset.stampPresetId);
     syncStampImageUI(app);
   });
 
@@ -1220,13 +1228,18 @@ export function syncTextureUI(app) {
 
 export function syncStampImageUI(app) {
   const meta = app.getCustomStampImageMeta();
+  _renderStampPresetSwitcher(app, meta);
   const nameEl = document.getElementById('stampImageName');
   if (nameEl) nameEl.textContent = meta?.name || 'No stamp loaded';
   const infoEl = document.getElementById('stampImageFileName');
   if (infoEl) {
-    infoEl.textContent = meta
-      ? `Custom upload · ${meta.width}×${meta.height}`
-      : 'Upload a PNG, WebP, JPEG, or similar image';
+    if (!meta) infoEl.textContent = 'Choose a built-in preset or upload a PNG, WebP, JPEG, or similar image';
+    else {
+      const kind = meta.sourceType === 'builtin'
+        ? (meta.licenseLabel ? `Built-in preset · ${meta.licenseLabel}` : 'Built-in preset')
+        : 'Custom upload';
+      infoEl.textContent = `${kind} · ${meta.width}×${meta.height}`;
+    }
   }
   const enableEl = document.getElementById('stampImageEnabled');
   if (enableEl) {
@@ -1248,6 +1261,27 @@ export function syncStampImageUI(app) {
       const drawH = aspect >= 1 ? preview.height / aspect : preview.height;
       ctx.drawImage(meta.canvas, (preview.width - drawW) / 2, (preview.height - drawH) / 2, drawW, drawH);
     }
+  }
+}
+
+function _renderStampPresetSwitcher(app, activeMeta = app.getCustomStampImageMeta()) {
+  const container = document.getElementById('stampPresetSwitcher');
+  if (!container) return;
+  const activePresetId = activeMeta?.sourceType === 'builtin' ? activeMeta.id : '';
+  container.innerHTML = '';
+  for (const preset of app.getAvailableStampImagePresets()) {
+    const btn = document.createElement('button');
+    const isActive = preset.id === activePresetId;
+    btn.type = 'button';
+    btn.dataset.stampPresetId = preset.id;
+    btn.title = preset.licenseLabel ? `${preset.name} · ${preset.licenseLabel}` : preset.name;
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    btn.style.cssText = `display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:58px;padding:6px;border-radius:8px;border:1px solid ${isActive ? 'rgba(117,162,255,0.55)' : 'rgba(255,255,255,0.12)'};background:${isActive ? 'linear-gradient(135deg, rgba(58,106,232,0.28), rgba(91,138,240,0.18))' : 'rgba(255,255,255,0.05)'};`;
+    btn.innerHTML = `
+      <img src="${preset.previewDataUrl}" alt="" style="width:24px;height:24px;object-fit:contain;filter:brightness(0) invert(1);opacity:${isActive ? '1' : '0.88'};pointer-events:none;">
+      <span style="font-size:9px;line-height:1.05;text-align:center;pointer-events:none;">${preset.name}</span>
+    `;
+    container.appendChild(btn);
   }
 }
 

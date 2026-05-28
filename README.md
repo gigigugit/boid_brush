@@ -16,6 +16,7 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 - **Pixel Sensing** – Boids can react to existing canvas content (avoid or attract based on darkness, lightness, color channels, etc.).
 - **Layer System** – Multiple layers with blend modes, opacity, reordering, merge, and flatten.
 - **Presets** – Built-in presets (Ink Wash, Charcoal, Ribbon, Galaxy, Mist, Edge Seeker, Gap Filler, Shadow Tracer) for quick experimentation.
+- **Stamp Presets** – Built-in stamp silhouettes with a quick switcher for swapping loaded stamp images without re-uploading files.
 - **Taper** – Configurable stroke tapering for natural brush-lift effects.
 - **Pressure Sensitivity** – Supports pen/stylus pressure for size and opacity.
 - **Selection & Clipboard** – Rectangular selection, cut, copy, and paste.
@@ -72,3 +73,5 @@ This project is intended as a learning sandbox and creative tool. The long-term 
 ## License
 
 This project is for personal use and experimentation.
+
+Built-in stamp preset silhouettes `Star`, `Heart`, `Cloud`, `Bolt`, `Moon`, `Fire`, and `Sparkles` are derived from Tailwind Labs' Heroicons under the MIT License. See `docs/third-party-licenses.md`.
