@@ -73,9 +73,10 @@ export async function exportPSD(app) {
     const w = app.W * app.DPR;   // physical pixel dimensions
     const h = app.H * app.DPR;
 
-    // Build PSD children array (top-to-bottom, same order as app.layers)
+    // Build PSD children array bottom-to-top for PSD layer ordering.
     const children = [];
-    for (const layer of app.layers) {
+    for (let i = app.layers.length - 1; i >= 0; i--) {
+      const layer = app.layers[i];
       // Create a clean copy of the layer canvas (without DPR transform)
       const copy = document.createElement('canvas');
       copy.width = w;
