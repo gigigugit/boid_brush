@@ -20,6 +20,8 @@ const SIM_EXPORT_TIMESLICE_MS = 250;
 const SIM_EXPORT_FFMPEG_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_UTIL_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_CORE_BASE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
+const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 2;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -204,6 +206,8 @@ const FACTORY_DEFAULTS = Object.freeze({
   simEdgeRadius: 28,
   simPheroPaintRadius: 18,
   simPheroPaintStrength: 55,
+  simEphemeralFrames: 45,
+  simEphemeralFade: 100,
   pressureSpawnRadius: false,
   bristleFanEnable: false,
   pencilAngle: true,
@@ -230,6 +234,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   showSpawn: true,
   antTrailVisible: true,
   antPheromoneToSensing: true,
+  simEphemeralMode: false,
   kmMix: false,
   impasto: false,
   perfTelemetryEnabled: false,
@@ -1724,6 +1729,7 @@ export class App {
     this._sensingCompositeCtx = null;
     this._performanceTelemetry = this._createPerformanceTelemetryState();
     this._wakeLockSentinel = null;
+    this._simEphemeralAlphaSnapSupported = true;
 
     // Internal clipboard buffer (fallback when Clipboard API unavailable)
     this._clipboardBlob = null;
@@ -3708,6 +3714,9 @@ export class App {
       simEdgeRadius: val('simEdgeRadius') || 28,
       simPheroPaintRadius: val('simPheroPaintRadius') || 18,
       simPheroPaintStrength: (val('simPheroPaintStrength') || 55) / 100,
+      simEphemeralMode: chk('simEphemeralMode'),
+      simEphemeralFrames: Math.max(1, Math.round(val('simEphemeralFrames') || 45)),
+      simEphemeralFade: (val('simEphemeralFade') || 100) / 100,
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
     return this._cachedP;
@@ -5362,7 +5371,15 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
-          return { value: raw / 100, min: 0, max: id === 'simPheroPaintStrength' ? 1 : 2, step: 0.01, digits: 2 };
+        case 'simEphemeralFade': {
+          const max = {
+            simPointStrength: 2,
+            simEdgeForce: 2,
+            simPheroPaintStrength: 1,
+            simEphemeralFade: 3,
+          }[id] ?? 2;
+          return { value: raw / 100, min: 0, max, step: 0.01, digits: 2 };
+        }
         default:
           return { value: raw, min: null, max: null, step: null, digits: Number.isInteger(raw) ? 0 : 2 };
       }
@@ -5373,6 +5390,7 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
+        case 'simEphemeralFade':
           return displayValue * 100;
         default:
           return displayValue;
@@ -5413,15 +5431,24 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
+        case 'simEphemeralFade':
           return (value / 100).toFixed(2);
         case 'simBoundsMargin':
           return `${Math.round(value)}px`;
         case 'simPathSpeed':
           return `${Math.round(value)}px/s`;
+        case 'simEphemeralFrames':
+          return `${Math.round(value)}f`;
         default:
           return String(Math.round(value));
       }
     };
+    const simPanelCheckbox = ({ id, label, desc }) => `
+      <label class="sim-inspector-row" style="margin:4px 0">
+        <span>${label}</span>
+        <input type="checkbox" data-sim-param="${id}" ${document.getElementById(id)?.checked ? 'checked' : ''}>
+      </label>
+      ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
     const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => {
       const numberMeta = getSimParamDisplayMeta(id, value);
       const numberMin = numberMeta.min ?? getSimParamDisplayMeta(id, min).value;
@@ -5441,6 +5468,11 @@ export class App {
       </div>`;
     };
     const playbackSettingsBody = `
+      ${simPanelCheckbox({
+        id: 'simEphemeralMode',
+        label: 'Ephemeral Mode',
+        desc: 'Continuously fades older simulation stamps so trails clear over time.',
+      })}
       ${simPanelSlider({
         id: 'simSpeed',
         label: 'Playback Speed',
@@ -5448,6 +5480,22 @@ export class App {
         max: 300,
         value: Math.round(p.simSpeed * 100),
         desc: 'Playback multiplier for autonomous painting.',
+      })}
+      ${simPanelSlider({
+        id: 'simEphemeralFrames',
+        label: 'Trail Length',
+        min: 1,
+        max: 240,
+        value: Math.round(p.simEphemeralFrames || 45),
+        desc: 'Approximate frame lifetime before older stamps disappear in Ephemeral Mode.',
+      })}
+      ${simPanelSlider({
+        id: 'simEphemeralFade',
+        label: 'Fade Speed',
+        min: 10,
+        max: 300,
+        value: Math.round((p.simEphemeralFade || 1) * 100),
+        desc: 'How quickly old paint fades each frame (lower = longer trails).',
       })}
       ${simPanelSlider({
         id: 'simBoundsMargin',
@@ -5915,9 +5963,14 @@ export class App {
     panel.querySelectorAll('[data-sim-param]').forEach(el => {
       const paramId = el.dataset.simParam;
       const source = document.getElementById(paramId);
+      const isBooleanParam = (el.type === 'checkbox') || (source?.type === 'checkbox');
       const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
       const peers = () => Array.from(panel.querySelectorAll(`[data-sim-param="${paramId}"]`));
       const syncParamUI = value => {
+        if (isBooleanParam) {
+          peers().forEach(peer => { peer.checked = !!value; });
+          return;
+        }
         const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
         if (label) label.textContent = formatSimPanelValue(paramId, value);
         if (paramId === 'simSpeed') {
@@ -5931,9 +5984,16 @@ export class App {
             : String(value);
         });
       };
-      syncParamUI(+el.value);
+      syncParamUI(isBooleanParam ? !!source?.checked : +el.value);
       if (!source) return;
       const forward = eventName => {
+        if (isBooleanParam) {
+          const nextChecked = !!el.checked;
+          source.checked = nextChecked;
+          syncParamUI(nextChecked);
+          source.dispatchEvent(new Event(eventName, { bubbles: true }));
+          return;
+        }
         const nextValue = el.type === 'number'
           ? simParamDisplayToRaw(paramId, Math.max(Number(el.min || Number.NEGATIVE_INFINITY), Math.min(Number(el.max || Number.POSITIVE_INFINITY), Number(el.value || getSimParamDisplayMeta(paramId, Number(source.value || 0)).value || 0))))
           : +el.value;
@@ -5951,6 +6011,10 @@ export class App {
         }
       };
       el.addEventListener('input', () => {
+        if (isBooleanParam) {
+          forward('input');
+          return;
+        }
         if (inputKind === 'range') {
           const value = +el.value;
           peers().forEach(peer => {
@@ -6233,6 +6297,13 @@ export class App {
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simHudRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
+    const ephemeralBtn = document.getElementById('simEphemeralToggle');
+    if (ephemeralBtn) {
+      const ephemeralOn = !!document.getElementById('simEphemeralMode')?.checked;
+      ephemeralBtn.classList.toggle('active', ephemeralOn);
+      ephemeralBtn.textContent = ephemeralOn ? 'Ephemeral On' : 'Ephemeral Off';
+      ephemeralBtn.setAttribute('aria-pressed', ephemeralOn ? 'true' : 'false');
+    }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
     document.getElementById('simInspectorToggle')?.classList.toggle('active', !this.simulation.inspectorCollapsed);
@@ -6361,6 +6432,53 @@ export class App {
     this.isTapering = false;
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
+  }
+
+  _applySimulationEphemeralFade(p) {
+    if (!this.simulation.running || !this.simulation.enabled || !p.simEphemeralMode) return;
+    const layer = this.getActiveLayer();
+    if (!layer?.ctx?.canvas) return;
+    const defaultFrames = Math.max(1, Number(FACTORY_DEFAULTS.simEphemeralFrames) || 45);
+    const defaultFade = Math.max(0, (Number(FACTORY_DEFAULTS.simEphemeralFade) || 100) / 100);
+    const frames = Math.max(1, Number.isFinite(p.simEphemeralFrames) ? p.simEphemeralFrames : defaultFrames);
+    const fadeSpeed = Math.max(0, Number.isFinite(p.simEphemeralFade) ? p.simEphemeralFade : defaultFade);
+    // Convert user "fade speed" into per-frame erase alpha relative to the
+    // desired trail lifetime so higher fade speeds clear old stamps sooner.
+    const fadeAlpha = Math.min(1, fadeSpeed / frames);
+    if (fadeAlpha <= 0) return;
+    const ctx = layer.ctx;
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.globalAlpha = fadeAlpha;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+    const shouldSnapResidualAlpha =
+      this._simEphemeralAlphaSnapSupported &&
+      // High fadeAlpha values already clear residual pixels quickly.
+      fadeAlpha < 0.5 &&
+      // Process in batches to reduce per-frame ImageData cost.
+      (this.simulation.frameCount % SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES === 0);
+    if (shouldSnapResidualAlpha) {
+      try {
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        let changed = false;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] > 0 && data[i] <= SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD) {
+            data[i] = 0;
+            changed = true;
+          }
+        }
+        if (changed) ctx.putImageData(imageData, 0, 0);
+      } catch (error) {
+        console.warn('Ephemeral fade alpha snap disabled:', error);
+        this._simEphemeralAlphaSnapSupported = false;
+      }
+    }
+    layer.dirty = true;
   }
 
   _handleSimulationPointerDown(x, y) {
@@ -9695,6 +9813,14 @@ export class App {
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simHudStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simResetBtn')?.addEventListener('click', () => this.resetSimulationPlayback());
+    document.getElementById('simEphemeralToggle')?.addEventListener('click', () => {
+      const source = document.getElementById('simEphemeralMode');
+      if (!source) return;
+      source.checked = !source.checked;
+      source.dispatchEvent(new Event('change', { bubbles: true }));
+      this._syncSimulationUI();
+    });
+    document.getElementById('simEphemeralMode')?.addEventListener('change', () => this._syncSimulationUI());
     document.getElementById('simRecordBtn')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
     document.getElementById('simExportBtn')?.addEventListener('click', () => this._showSimulationExportModal());
     document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
@@ -11219,6 +11345,7 @@ export class App {
       this._updateSimulationLeader(elapsed, p);
       const frameCounter = document.getElementById('simFrameCounter');
       if (frameCounter) frameCounter.textContent = this._formatSimulationFrameCounter();
+      this._applySimulationEphemeralFade(p);
     }
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
