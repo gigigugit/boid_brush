@@ -1166,6 +1166,52 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     return this.helper.wasm;
   }
 
+  destroy() {
+    const destroyBuffer = buffer => {
+      try {
+        buffer?.destroy?.();
+      } catch {}
+    };
+    for (const slot of this._stagingSlots || []) {
+      destroyBuffer(slot?.buffer);
+    }
+    this._stagingSlots = [];
+    for (const buffer of this.agentBuffers || []) {
+      destroyBuffer(buffer);
+    }
+    this.agentBuffers = [];
+    destroyBuffer(this.paramsBuffer);
+    destroyBuffer(this.metaBuffer);
+    destroyBuffer(this.guideMetaBuffer);
+    destroyBuffer(this.pointGuideBuffer);
+    destroyBuffer(this.pathTargetBuffer);
+    destroyBuffer(this.quorumBuffer);
+    this.paramsBuffer = null;
+    this.metaBuffer = null;
+    this.guideMetaBuffer = null;
+    this.pointGuideBuffer = null;
+    this.pathTargetBuffer = null;
+    this.quorumBuffer = null;
+    if (this.sensingTexture) {
+      try {
+        this.sensingTexture.destroy();
+      } catch {}
+    }
+    this.sensingTexture = null;
+    this.sensingTextureView = null;
+    this._sensingTextureWidth = 0;
+    this._sensingTextureHeight = 0;
+    this.bindGroups = [];
+    this.quorumBindGroups = [];
+    this.pipeline = null;
+    this.quorumPipeline = null;
+    this.device = null;
+    this.adapter = null;
+    this.ready = false;
+    this.helper?.destroy?.();
+    this.helper = null;
+  }
+
   get mode() {
     return this._lastMode;
   }

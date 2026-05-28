@@ -865,7 +865,8 @@ function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
   if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
-  const data = sim.brushData[app.activeBrush];
+  const brushName = app._getSimulationContextBrush?.() || app.activeBrush;
+  const data = app._getSimulationBrushData?.(brushName) || sim.brushData[brushName];
   if (!data) return { points: [], pathTargets: [], edges: [] };
   return {
     points: Array.isArray(data.points)
@@ -884,7 +885,7 @@ function _collectSimulationGuides(brush, p) {
             };
           })
       : [],
-    pathTargets: app.activeBrush === 'boid'
+    pathTargets: brushName === 'boid'
       ? (data.paths || [])
           .filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
           .map(pathItem => app._getAnimatedSimulationPathTarget(pathItem, p))
@@ -897,7 +898,7 @@ function _collectSimulationGuides(brush, p) {
             influenceRadius: target.config.influenceRadius,
           }))
       : [],
-    edges: app.activeBrush === 'ant'
+    edges: brushName === 'ant'
       ? (data.edges || [])
           .filter(edge => edge.enabled !== false && edge.points?.length >= 2)
           .map(edge => {
@@ -992,7 +993,7 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
       vy += sumY;
     }
 
-    if (app.activeBrush === 'ant' && edgeGuides.length) {
+    if ((app._getSimulationContextBrush?.() || app.activeBrush) === 'ant' && edgeGuides.length) {
       const prevX = x - vx;
       const prevY = y - vy;
       for (const edge of edgeGuides) {
@@ -1034,23 +1035,28 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   return count > 0;
 }
 
-async function _createSharedMotionSim(app) {
+async function _createMotionSim(app, maxAgents = SHARED_MOTION_SIM_MAX_AGENTS) {
   const width = app.W || 800;
   const height = app.H || 600;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      return WebGPUBoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
+      return WebGPUBoidSim.create(width, height, maxAgents);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
   }
-  return BoidSim.create(width, height, SHARED_MOTION_SIM_MAX_AGENTS);
+  return BoidSim.create(width, height, maxAgents);
+}
+
+async function _createSharedMotionSim(app) {
+  return _createMotionSim(app, SHARED_MOTION_SIM_MAX_AGENTS);
 }
 
 export class BoidBrush {
   constructor(app) {
     this.app = app;
     this.sim = null;
+    this._usingSharedSim = false;
     this.renderer = createBoidStampRenderer();
     this._ready = false;
     this._resetInterpolationState();
@@ -1068,6 +1074,7 @@ export class BoidBrush {
     // Sensing state
     this._sensingFrame = 0;
     this._sensingUploaded = false;
+    this._sensingSignature = '';
     this._sensingLum = null;
     // Trail blur offscreen canvases
     this._blurCanvas = null;
@@ -1110,11 +1117,12 @@ export class BoidBrush {
     this._rendererChainPatched = true;
   }
 
-  async init({ force = false } = {}) {
+  async init({ force = false, useShared = true } = {}) {
     if (force) {
       this._clearGpuPreview();
       this._ready = false;
       this.sim = null;
+      this._usingSharedSim = false;
       this.app.sharedMotionSim = null;
       this._resetInterpolationState();
       this._boidsSpawned = false;
@@ -1127,8 +1135,9 @@ export class BoidBrush {
       this._gpuPreviewRenderer = null;
       _resetSimulationSpawnAppearance(this);
     }
-    if (this.app.sharedMotionSim) {
+    if (useShared && this.app.sharedMotionSim) {
       this.sim = this.app.sharedMotionSim;
+      this._usingSharedSim = true;
       this.sim.setDisplaySize?.(this.app.W, this.app.H);
       await this.renderer.init();
       this._patchRendererChain();
@@ -1139,8 +1148,11 @@ export class BoidBrush {
     await this.renderer.init();
     this._patchRendererChain();
     try {
-      this.sim = await _createSharedMotionSim(this.app);
-      this.app.sharedMotionSim = this.sim;
+      this.sim = useShared
+        ? await _createSharedMotionSim(this.app)
+        : await _createMotionSim(this.app);
+      this._usingSharedSim = !!useShared;
+      if (useShared) this.app.sharedMotionSim = this.sim;
       this._syncRenderBackendStatus();
       this._ready = true;
     } catch (e) {
@@ -1161,7 +1173,7 @@ export class BoidBrush {
 
   /** Capture canvas luminance and upload to WASM for pixel sensing */
   _uploadSensing(p) {
-    const imgData = this.app.buildSensingData();
+    const imgData = this.app.buildSensingData(p);
     const rgba = imgData.data;
     const w = imgData.width;
     const h = imgData.height;
@@ -1182,22 +1194,38 @@ export class BoidBrush {
         const srcX = Math.min(Math.floor(dx * sx), w - 1);
         const idx = (srcY * w + srcX) * 4;
         const r = rgba[idx], g = rgba[idx + 1], b = rgba[idx + 2], a = rgba[idx + 3];
+        const alphaScale = a / 255;
         let v;
-        if (channel === 'red') v = r;
-        else if (channel === 'green') v = g;
-        else if (channel === 'blue') v = b;
+        if (channel === 'red') v = Math.round(r * alphaScale);
+        else if (channel === 'green') v = Math.round(g * alphaScale);
+        else if (channel === 'blue') v = Math.round(b * alphaScale);
         else if (channel === 'alpha') v = a;
-        else if (channel === 'lightness') v = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        else if (channel === 'lightness') v = Math.round((0.299 * r + 0.587 * g + 0.114 * b) * alphaScale);
         else if (channel === 'saturation') {
           const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-          v = mx === 0 ? 0 : Math.round(((mx - mn) / mx) * 255);
+          v = mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
         }
-        else /* 'darkness' */ v = 255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        else /* 'darkness' */ v = Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
         lum[dy * dw + dx] = v;
       }
     }
     this.sim.uploadSensing(lum, dw, dh);
     this._sensingUploaded = true;
+    this._sensingSignature = this._buildSensingSignature(p);
+  }
+
+  _buildSensingSignature(p) {
+    return JSON.stringify({
+      source: p.sensingSource || 'below',
+      selectedSources: this.app.getSensingSourceSelectionSignature?.() || '[]',
+      channel: p.sensingChannel || 'darkness',
+      enabled: !!p.sensingEnabled,
+      mode: p.sensingMode || 'avoid',
+      strength: Number(p.sensingStrength || 0).toFixed(4),
+      radius: Number(p.sensingRadius || 0).toFixed(2),
+      threshold: Number(p.sensingThreshold || 0).toFixed(4),
+      updateFrames: Math.max(1, Math.min(50, Math.round(p.sensingUpdateFrames || 30))),
+    });
   }
 
   _hasAgents() {
@@ -1223,7 +1251,7 @@ export class BoidBrush {
     const next = !this.app.simulation?.enabled
       ? Object.assign({}, p, { simBoundsMargin: -1 })
       : Object.assign({}, p);
-    const vars = this.app.simulation?.vars;
+    const vars = this.app._getSimulationVars?.() || this.app.simulation?.vars;
     if (this.app.simulation?.enabled && vars) {
       Object.assign(next, {
       seek: Number.isFinite(vars.seek) ? vars.seek : 0,
@@ -1234,6 +1262,14 @@ export class BoidBrush {
       if (Number.isFinite(vars.alignment)) next.alignment = vars.alignment;
       if (Number.isFinite(vars.maxSpeed)) next.maxSpeed = vars.maxSpeed;
       if (Number.isFinite(vars.damping)) next.damping = vars.damping;
+      if (typeof vars.sensingEnabled === 'boolean') next.sensingEnabled = vars.sensingEnabled;
+      if (typeof vars.sensingMode === 'string') next.sensingMode = vars.sensingMode;
+      if (typeof vars.sensingChannel === 'string') next.sensingChannel = vars.sensingChannel;
+      if (Number.isFinite(vars.sensingStrength)) next.sensingStrength = vars.sensingStrength;
+      if (Number.isFinite(vars.sensingRadius)) next.sensingRadius = vars.sensingRadius;
+      if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
+      if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
+      if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
     }
     next.leader = _resolveLeaderParams(next);
     return next;
@@ -1380,6 +1416,7 @@ export class BoidBrush {
     if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
     if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
     if (this._flatActive) return false;
+    if (this.app.simulation?.running && p?.simEphemeralMode) return false;
     if (!this._getGpuPreviewRenderer(p)) return false;
     if (p?.stampImageCanvas) return false;
     if (p?.sensingEnabled) return false;
@@ -1885,10 +1922,13 @@ export class BoidBrush {
     this.app.strokeFrame = 0;
     this._sensingFrame = 0;
     this._sensingUploaded = false;
+    this._sensingSignature = '';
+
+    const simP = this._applySimVars(p);
 
     // Upload sensing data at stroke start if enabled
-    if (p.sensingEnabled) {
-      this._uploadSensing(p);
+    if (simP.sensingEnabled) {
+      this._uploadSensing(simP);
     }
 
     // Push undo on first stroke frame that actually stamps
@@ -1939,7 +1979,7 @@ export class BoidBrush {
     if (!this._flatActive) {
       const guideState = _collectSimulationGuides(this, p);
       const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
-      this.sim.writeParams(this._applySimVars(p), x, y, 0);
+      this.sim.writeParams(simP, x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
       if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
@@ -2012,31 +2052,75 @@ export class BoidBrush {
     }
   }
 
+  ensureSimulationSpawnAppearance(p = this.app.getP()) {
+    if (!this._ready || !this.sim || !this.app.simulation?.enabled) return;
+    if (!this._agentSpawnColors || !this._agentSpawnOpacity) {
+      _resetSimulationSpawnAppearance(this);
+    }
+    const spawns = this.app._ensureSimulationSpawns('boid').filter(spawn => spawn.enabled !== false);
+    if (!spawns.length) return;
+    let cursor = 0;
+    for (const spawn of spawns) {
+      const config = this.app._resolveSimulationSpawnConfig(spawn, p);
+      const color = _normalizeBrushHexColor(config?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+      const opacity = Number.isFinite(config?.opacity)
+        ? Math.max(0, Math.min(1, config.opacity))
+        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+      const expectedCount = Math.max(0, Math.round(config?.count || 0));
+      for (let offset = 0; offset < expectedCount; offset++) {
+        const index = cursor + offset;
+        if (this._agentSpawnColors[index]) continue;
+        this._agentSpawnColors[index] = color;
+        this._agentSpawnOpacity[index] = opacity;
+      }
+      cursor += expectedCount;
+    }
+    const liveCount = this.sim.readAgents?.().count || 0;
+    if (liveCount > cursor) {
+      const fallback = this.app._resolveSimulationSpawnConfig(spawns[0], p);
+      const color = _normalizeBrushHexColor(fallback?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+      const opacity = Number.isFinite(fallback?.opacity)
+        ? Math.max(0, Math.min(1, fallback.opacity))
+        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+      for (let index = cursor; index < liveCount; index++) {
+        if (this._agentSpawnColors[index]) continue;
+        this._agentSpawnColors[index] = color;
+        this._agentSpawnOpacity[index] = opacity;
+      }
+    }
+  }
+
   onFrame(elapsed) {
     if (!this._ready) return;
     const p = this.app.getP();
+    const simP = this._applySimVars(p);
     const app = this.app;
 
-    if (p.sensingEnabled) {
-      const sensingSourceIsBelow = p.sensingSource === 'below';
-      if (!this._sensingUploaded) {
-        this._uploadSensing(p);
+    if (simP.sensingEnabled) {
+      const sensingSourceIsBelow = simP.sensingSource === 'below';
+      const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(simP.sensingUpdateFrames || 30)));
+      const sensingSignature = this._buildSensingSignature(simP);
+      if (!this._sensingUploaded || this._sensingSignature !== sensingSignature) {
+        this._uploadSensing(simP);
         this._sensingFrame = 0;
       } else if (!sensingSourceIsBelow) {
         // "Below" excludes the active stroke layer, so it stays unchanged during
         // the stroke and doesn't need the periodic refresh used by active/all.
         this._sensingFrame++;
-        if (this._sensingFrame >= 30) {
-          this._uploadSensing(p);
+        if (this._sensingFrame >= sensingUpdateFrames) {
+          this._uploadSensing(simP);
           this._sensingFrame = 0;
         }
       }
+    } else {
+      this._sensingUploaded = false;
+      this._sensingSignature = '';
     }
 
     // Write sim params and step
     const guideState = _collectSimulationGuides(this, p);
     const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
-    this.sim.writeParams(this._applySimVars(p), app.leaderX, app.leaderY, elapsed);
+    this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
     // Read agents
@@ -2440,15 +2524,48 @@ export class BoidBrush {
     this._resetInterpolationState();
     this._sensingUploaded = false;
     this._sensingFrame = 0;
+    this._sensingSignature = '';
     _resetMotionBrushPaintState(this, layer);
   }
 
-  deactivate() {
+  resetSimulationPlaybackState({ compositePreview = false, resetRenderer = false } = {}) {
     if (this.sim) this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
-    this._clearGpuPreview({ composite: true });
+    this._clearGpuPreview({ composite: compositePreview });
+    this._resetInterpolationState();
+    this._lastSpawnX = 0;
+    this._lastSpawnY = 0;
     this._boidsSpawned = false;
     this._hoverSpawned = false;
+    this._flatActive = false;
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
+    this._sensingLum = null;
+    if (resetRenderer) this.renderer.reset();
+  }
+
+  deactivate() {
+    this.resetSimulationPlaybackState({ compositePreview: true });
+  }
+
+  destroy() {
+    if (!this._usingSharedSim) {
+      this.sim?.destroy?.();
+    }
+    this.sim = null;
+    this._usingSharedSim = false;
+    this._ready = false;
+    this._boidsSpawned = false;
+    this._hoverSpawned = false;
+    this._flatActive = false;
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
+    this._gpuPreviewActive = false;
+    this._gpuPreviewLayer = null;
+    this._gpuPreviewRenderer = null;
+    this.renderer.reset();
   }
 }
 

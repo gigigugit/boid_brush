@@ -1273,6 +1273,10 @@ fn fs_main(input : VertexOutput) -> @location(0) vec4f {
     this._interopProbeCtx.restore();
     const pixel = this._interopProbeCtx.getImageData(16, 16, 1, 1).data;
     this._clearPreviewCanvas();
+    // The interop probe renders a 32x32 red test stamp into the WebGPU
+    // presentation surface. Do not let that probe frame masquerade as the
+    // first real "previous frame" for direct-to-2D copies.
+    this._hasSubmittedFrame = false;
     this._pushDebugEvent('interop-probe-result', { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] });
     // Require a meaningful alpha value so partial/broken implementations that
     // copy back only faint noise do not get treated as working WebGPU→2D interop.

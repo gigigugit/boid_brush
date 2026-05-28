@@ -1086,6 +1086,9 @@ const app = new App();
 window._app = app; // expose for debugging
 window.boidGpuDebug = () => window._app?.brushes?.boid?.getDebugState?.() || null;
 window.clearBoidGpuDebug = () => window._app?.brushes?.boid?.clearDebugState?.() || false;
+window.ephemeralGhostDebug = (options) => window._app?.captureEphemeralGhostDebug?.(options) || null;
+window.showEphemeralGhostDebug = (options) => window._app?.showEphemeralGhostDebug?.(options) || null;
+window.clearEphemeralGhostDebug = () => window._app?.clearEphemeralGhostDebugView?.() || false;
 </script>
 </body>
 </html>

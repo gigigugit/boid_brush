@@ -2,7 +2,8 @@
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
 // =============================================================================
 
-const PRESETS_KEY = 'bb_presets_v1';
+export const PRESETS_KEY = 'bb_presets_v1';
+export const AUTOSAVE_STORAGE_KEY = 'bb_autosave';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 const MAX_SWARM_COUNT = 2000;
 const NUDGE_BUTTON_STYLE = 'width:20px;height:20px;padding:0;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#ddd;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;';
@@ -627,7 +628,12 @@ export function buildSidebar(app) {
       ${sliderRow('sensingStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2))}
       ${sliderRow('sensingRadius', 'Radius', 5, 80, 20)}
       ${sliderRow('sensingThreshold', 'Threshold', 0, 100, 10, v => (v/100).toFixed(2))}
-      <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option></select></label>
+      ${sliderRow('sensingUpdateFrames', 'Update Every', 1, 50, 30, v => `${Math.round(v)}f`, 'Frames between sensing refreshes for Active and All sources')}
+      <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option><option value="selected">Selected Layers</option></select></label>
+      <div style="display:flex;gap:6px;align-items:flex-start;">
+        <button id="sensingSourceLayersBtn" type="button" style="flex:0 0 auto;padding:6px 10px;background:rgba(58,106,232,0.18);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#dce6ff;font-size:11px;cursor:pointer;">Pick Layers</button>
+        <span id="sensingSourceLayersSummary" class="slider-desc" style="margin:0;flex:1;min-width:0;">Custom: No custom sources selected</span>
+      </div>
     </div>
 
     <!-- Visual (boid + ant) -->
@@ -700,6 +706,10 @@ export function buildSidebar(app) {
       <div style="display:flex;gap:3px;margin:2px 0 4px;">
         <button id="btnCopyPerfTelemetry">📋 Copy Perf</button>
         <button id="btnResetPerfTelemetry">♻ Reset Perf</button>
+      </div>
+      <div style="display:flex;gap:3px;margin:2px 0 4px;">
+        <button id="btnImportWorkspace">📥 Import Workspace</button>
+        <button id="btnExportWorkspace">📤 Export Workspace</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
@@ -793,6 +803,18 @@ export function buildSidebar(app) {
     el.addEventListener('change', () => app.invalidateParams());
   });
 
+  const sensingSourceSelect = document.getElementById('sensingSource');
+  if (sensingSourceSelect) {
+    sensingSourceSelect.dataset.prevValue = sensingSourceSelect.value || 'below';
+    sensingSourceSelect.addEventListener('change', () => {
+      const previousValue = sensingSourceSelect.dataset.prevValue || 'below';
+      app._handleSensingSourceChange?.(sensingSourceSelect.value, previousValue);
+    });
+  }
+  document.getElementById('sensingSourceLayersBtn')?.addEventListener('click', event => {
+    app.toggleSensingSourcePicker?.(event.currentTarget);
+  });
+
   LEADER_OVERRIDE_FIELDS.forEach(field => {
     document.getElementById(field.overrideId)?.addEventListener('change', (event) => {
       if (event.target.checked) _copyLeaderOverrideFromSource(field);
@@ -879,9 +901,34 @@ export function buildSidebar(app) {
   document.getElementById('btnImportPreset')?.addEventListener('click', () => _importPreset(app));
   document.getElementById('btnExportPresets')?.addEventListener('click', () => _exportPresets(app));
 
+  const workspaceImportInput = document.createElement('input');
+  workspaceImportInput.type = 'file';
+  workspaceImportInput.accept = '.json,application/json';
+  workspaceImportInput.addEventListener('change', async () => {
+    const file = workspaceImportInput.files?.[0];
+    workspaceImportInput.value = '';
+    if (!file) return;
+    try {
+      await app.importWorkspaceSettingsText(await file.text());
+      _renderUserPresets(app);
+      syncUI(app);
+      app.showToast(`📥 Imported workspace from ${file.name}`);
+    } catch (error) {
+      console.error('Workspace settings import failed:', error);
+      app.showToast('⚠ Invalid workspace file');
+    }
+  });
+
   // Settings
   document.getElementById('btnSaveSession')?.addEventListener('click', () => {
     app.saveSession(); app.showToast('💾 Session saved');
+  });
+  document.getElementById('btnImportWorkspace')?.addEventListener('click', () => {
+    if (!confirm('Import workspace settings from a file and replace the current saved workspace settings?')) return;
+    workspaceImportInput.click();
+  });
+  document.getElementById('btnExportWorkspace')?.addEventListener('click', () => {
+    app.exportWorkspaceSettingsFile();
   });
   document.getElementById('perfTelemetryEnabled')?.addEventListener('change', e => {
     app.setPerformanceTelemetryEnabled(e.target.checked);
@@ -903,9 +950,9 @@ export function buildSidebar(app) {
   // Auto-save toggle
   const autoSaveCb = document.getElementById('autoSaveSession');
   if (autoSaveCb) {
-    autoSaveCb.checked = localStorage.getItem('bb_autosave') === '1';
+    autoSaveCb.checked = localStorage.getItem(AUTOSAVE_STORAGE_KEY) === '1';
     autoSaveCb.addEventListener('change', () => {
-      localStorage.setItem('bb_autosave', autoSaveCb.checked ? '1' : '0');
+      localStorage.setItem(AUTOSAVE_STORAGE_KEY, autoSaveCb.checked ? '1' : '0');
       app.showToast(autoSaveCb.checked ? '⏱ Auto-save enabled' : 'Auto-save disabled');
     });
     // Debounced auto-save: save session when params change
@@ -921,6 +968,7 @@ export function buildSidebar(app) {
     });
   }
   app._refreshPerformanceTelemetryUI(true);
+  app._refreshSensingLayerSourceUi?.();
 
   // Initial brush-specific visibility
   app._toggleBrushSections(app.activeBrush);
@@ -1192,6 +1240,7 @@ export function syncUI(app) {
   syncStampImageUI(app);
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
+  app._refreshSensingLayerSourceUi?.();
   app._syncMotionPathUI?.();
 }
 
@@ -1385,6 +1434,7 @@ const _sliderFormats = {
   taperCurve: v => (v / 100).toFixed(1),
   sensingStrength: v => (v / 100).toFixed(2),
   sensingThreshold: v => (v / 100).toFixed(2),
+  sensingUpdateFrames: v => `${Math.round(v)}f`,
   symmetryCenterX: v => v + '%',
   symmetryCenterY: v => v + '%',
   bristleSpread: v => (v / 100).toFixed(2),
@@ -1594,6 +1644,7 @@ function _renderLayerList(app) {
     app.compositeAllLayers();
     _refreshLayers(app);
   };
+  app._refreshSensingLayerSourceUi?.();
 }
 
 // ── Drop indicator helpers ──────────────────────────────────

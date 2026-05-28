@@ -203,6 +203,38 @@ export class Compositor {
     return px;
   }
 
+  /** Capture the current composited output as ImageData in device pixels. */
+  captureImageData() {
+    const width = this.canvas?.width || 0;
+    const height = this.canvas?.height || 0;
+    if (width <= 0 || height <= 0) return null;
+    if (!this.ready) {
+      const ctx = this.canvas.getContext('2d');
+      return ctx ? ctx.getImageData(0, 0, width, height) : null;
+    }
+    const gl = this.gl;
+    if (!gl) return null;
+    const pixels = new Uint8Array(width * height * 4);
+    const imageData = new ImageData(width, height);
+    const prevFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    try {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo[this._frontIndex]);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    } catch (error) {
+      console.warn('Compositor captureImageData failed:', error);
+      return null;
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prevFramebuffer);
+    }
+    const dest = imageData.data;
+    for (let y = 0; y < height; y++) {
+      const srcRow = (height - 1 - y) * width * 4;
+      const destRow = y * width * 4;
+      dest.set(pixels.subarray(srcRow, srcRow + width * 4), destRow);
+    }
+    return imageData;
+  }
+
   /** Clean up all GL resources. */
   destroy() {
     if (!this.gl) return;
