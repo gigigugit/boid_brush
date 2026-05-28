@@ -11,6 +11,7 @@ import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSlider
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
+import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
@@ -262,7 +263,6 @@ const WHEEL_ROTATION_DEG = 2;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
-const DEFAULT_STAMP_IMAGE_PATH = './circle.png';
 const RETRYABLE_STARTUP_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const PAPER_TEXTURE_FLECK_SCALE = 3.2;
 const PAPER_TEXTURE_FLECK_THRESHOLD = 0.84;
@@ -2818,12 +2818,14 @@ export class App {
     this.showToast('Texture reset to built-in paper grain');
   }
 
-  async _setCustomStampImageFromDataUrl(dataUrl, name = 'Custom Stamp', { silent = false } = {}) {
+  async _setCustomStampImageFromDataUrl(dataUrl, name = 'Custom Stamp', { silent = false, id = 'custom-stamp', sourceType = 'upload', licenseLabel = '', sourceUrl = '' } = {}) {
     const canvas = await this._canvasFromDataUrl(dataUrl);
     this._customStampImage = {
-      id: 'custom-stamp',
+      id,
       name,
-      sourceType: 'upload',
+      sourceType,
+      licenseLabel,
+      sourceUrl,
       canvas,
       dataUrl,
       width: canvas.width,
@@ -2852,6 +2854,26 @@ export class App {
     }
   }
 
+  async loadBuiltinStampPreset(id, { enable = true, silent = false } = {}) {
+    const preset = getBuiltinStampPreset(id);
+    if (!preset) return false;
+    await this._setCustomStampImageFromDataUrl(preset.dataUrl, preset.name, {
+      silent: true,
+      id: preset.id,
+      sourceType: preset.sourceType,
+      licenseLabel: preset.licenseLabel || '',
+      sourceUrl: preset.sourceUrl || '',
+    });
+    if (enable) {
+      const enableEl = document.getElementById('stampImageEnabled');
+      if (enableEl) enableEl.checked = true;
+    }
+    if (document.getElementById('sidebar')) syncUI(this);
+    if (!silent) this.showToast(`🖼 Stamp preset: ${preset.name}`);
+    this._maybeAutoSaveSession();
+    return true;
+  }
+
   clearCustomStampImage({ silent = false } = {}) {
     this._customStampImage = null;
     this.invalidateParams();
@@ -2866,28 +2888,54 @@ export class App {
       id: this._customStampImage.id,
       name: this._customStampImage.name,
       sourceType: this._customStampImage.sourceType,
+      licenseLabel: this._customStampImage.licenseLabel || '',
+      sourceUrl: this._customStampImage.sourceUrl || '',
       width: this._customStampImage.width,
       height: this._customStampImage.height,
       canvas: this._customStampImage.canvas,
     };
   }
 
+  getAvailableStampImagePresets() {
+    return BUILTIN_STAMP_IMAGE_PRESETS.map(preset => ({
+      id: preset.id,
+      name: preset.name,
+      sourceType: preset.sourceType,
+      licenseLabel: preset.licenseLabel || '',
+      previewDataUrl: preset.dataUrl,
+    }));
+  }
+
   _serializeCustomStampImageState() {
     return this._customStampImage
       ? {
+          id: this._customStampImage.id,
           name: this._customStampImage.name,
+          sourceType: this._customStampImage.sourceType,
           dataUrl: this._customStampImage.dataUrl,
         }
       : null;
   }
 
   async _restoreCustomStampImageState(state) {
-    if (!state?.dataUrl) {
+    if (!state) {
       this._customStampImage = null;
       return;
     }
     try {
-      await this._setCustomStampImageFromDataUrl(state.dataUrl, state.name || 'Custom Stamp', { silent: true });
+      if (state.sourceType === 'builtin' && state.id) {
+        const restored = await this.loadBuiltinStampPreset(state.id, { enable: false, silent: true });
+        if (restored) return;
+      }
+      if (!state?.dataUrl) {
+        this._customStampImage = null;
+        return;
+      }
+      await this._setCustomStampImageFromDataUrl(state.dataUrl, state.name || 'Custom Stamp', {
+        silent: true,
+        id: state.id || 'custom-stamp',
+        sourceType: state.sourceType || 'upload',
+      });
     } catch {
       this._customStampImage = null;
       this.showToast('⚠ Saved custom stamp could not be restored');
@@ -2895,31 +2943,7 @@ export class App {
   }
 
   async _loadDefaultStampImage({ enable = false } = {}) {
-    let response;
-    try {
-      response = await _fetchWithRetry(DEFAULT_STAMP_IMAGE_PATH);
-    } catch {
-      // Network unavailable or persistent 425 Too Early (TLS 0-RTT) — skip default stamp silently.
-      // The user can still load a custom stamp at any time.
-      return;
-    }
-    if (!response.ok) {
-      // Non-retryable error (e.g. 404 in local dev) — degrade gracefully.
-      return;
-    }
-    const blob = await response.blob();
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = evt => resolve(evt.target.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    await this._setCustomStampImageFromDataUrl(dataUrl, 'circle.png', { silent: true });
-    if (enable) {
-      const enableEl = document.getElementById('stampImageEnabled');
-      if (enableEl) enableEl.checked = true;
-      this.invalidateParams();
-    }
+    await this.loadBuiltinStampPreset(DEFAULT_STAMP_PRESET_ID, { enable, silent: true });
   }
 
   hasActiveStampImage(p = this._cachedP || this.getP()) {
