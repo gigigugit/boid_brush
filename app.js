@@ -1727,6 +1727,7 @@ export class App {
     this._sensingCompositeCtx = null;
     this._performanceTelemetry = this._createPerformanceTelemetryState();
     this._wakeLockSentinel = null;
+    this._simEphemeralAlphaSnapSupported = true;
 
     // Internal clipboard buffer (fallback when Clipboard API unavailable)
     this._clipboardBlob = null;
@@ -6421,6 +6422,26 @@ export class App {
     ctx.globalAlpha = fadeAlpha;
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
+    const shouldSnapResidualAlpha =
+      this._simEphemeralAlphaSnapSupported &&
+      fadeAlpha < 0.5 &&
+      (this.simulation.frameCount % 6 === 0);
+    if (shouldSnapResidualAlpha) {
+      try {
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        let changed = false;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] > 0 && data[i] <= 1) {
+            data[i] = 0;
+            changed = true;
+          }
+        }
+        if (changed) ctx.putImageData(imageData, 0, 0);
+      } catch {
+        this._simEphemeralAlphaSnapSupported = false;
+      }
+    }
     layer.dirty = true;
   }
 
