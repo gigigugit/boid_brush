@@ -203,6 +203,8 @@ const FACTORY_DEFAULTS = Object.freeze({
   simEdgeRadius: 28,
   simPheroPaintRadius: 18,
   simPheroPaintStrength: 55,
+  simEphemeralFrames: 45,
+  simEphemeralFade: 100,
   pressureSpawnRadius: false,
   bristleFanEnable: false,
   pencilAngle: true,
@@ -229,6 +231,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   showSpawn: true,
   antTrailVisible: true,
   antPheromoneToSensing: true,
+  simEphemeralMode: false,
   kmMix: false,
   impasto: false,
   perfTelemetryEnabled: false,
@@ -3684,6 +3687,9 @@ export class App {
       simEdgeRadius: val('simEdgeRadius') || 28,
       simPheroPaintRadius: val('simPheroPaintRadius') || 18,
       simPheroPaintStrength: (val('simPheroPaintStrength') || 55) / 100,
+      simEphemeralMode: chk('simEphemeralMode'),
+      simEphemeralFrames: Math.max(1, Math.round(val('simEphemeralFrames') || 45)),
+      simEphemeralFade: (val('simEphemeralFade') || 100) / 100,
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
     return this._cachedP;
@@ -5338,7 +5344,8 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
-          return { value: raw / 100, min: 0, max: id === 'simPheroPaintStrength' ? 1 : 2, step: 0.01, digits: 2 };
+        case 'simEphemeralFade':
+          return { value: raw / 100, min: 0, max: id === 'simPheroPaintStrength' ? 1 : (id === 'simEphemeralFade' ? 3 : 2), step: 0.01, digits: 2 };
         default:
           return { value: raw, min: null, max: null, step: null, digits: Number.isInteger(raw) ? 0 : 2 };
       }
@@ -5349,6 +5356,7 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
+        case 'simEphemeralFade':
           return displayValue * 100;
         default:
           return displayValue;
@@ -5389,15 +5397,24 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
+        case 'simEphemeralFade':
           return (value / 100).toFixed(2);
         case 'simBoundsMargin':
           return `${Math.round(value)}px`;
         case 'simPathSpeed':
           return `${Math.round(value)}px/s`;
+        case 'simEphemeralFrames':
+          return `${Math.round(value)}f`;
         default:
           return String(Math.round(value));
       }
     };
+    const simPanelCheckbox = ({ id, label, desc }) => `
+      <label class="sim-inspector-row" style="margin:4px 0">
+        <span>${label}</span>
+        <input type="checkbox" data-sim-param="${id}" ${document.getElementById(id)?.checked ? 'checked' : ''}>
+      </label>
+      ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
     const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => {
       const numberMeta = getSimParamDisplayMeta(id, value);
       const numberMin = numberMeta.min ?? getSimParamDisplayMeta(id, min).value;
@@ -5417,6 +5434,11 @@ export class App {
       </div>`;
     };
     const playbackSettingsBody = `
+      ${simPanelCheckbox({
+        id: 'simEphemeralMode',
+        label: 'Ephemeral Mode',
+        desc: 'Continuously fades older simulation stamps so trails clear over time.',
+      })}
       ${simPanelSlider({
         id: 'simSpeed',
         label: 'Playback Speed',
@@ -5424,6 +5446,22 @@ export class App {
         max: 300,
         value: Math.round(p.simSpeed * 100),
         desc: 'Playback multiplier for autonomous painting.',
+      })}
+      ${simPanelSlider({
+        id: 'simEphemeralFrames',
+        label: 'Trail Length',
+        min: 1,
+        max: 240,
+        value: Math.round(p.simEphemeralFrames || 45),
+        desc: 'Approximate frame lifetime before older stamps disappear in Ephemeral Mode.',
+      })}
+      ${simPanelSlider({
+        id: 'simEphemeralFade',
+        label: 'Fade Speed',
+        min: 10,
+        max: 300,
+        value: Math.round((p.simEphemeralFade || 1) * 100),
+        desc: 'How quickly old paint fades each frame (lower = longer trails).',
       })}
       ${simPanelSlider({
         id: 'simBoundsMargin',
@@ -5891,9 +5929,14 @@ export class App {
     panel.querySelectorAll('[data-sim-param]').forEach(el => {
       const paramId = el.dataset.simParam;
       const source = document.getElementById(paramId);
+      const isBooleanParam = (el.type === 'checkbox') || (source?.type === 'checkbox');
       const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
       const peers = () => Array.from(panel.querySelectorAll(`[data-sim-param="${paramId}"]`));
       const syncParamUI = value => {
+        if (isBooleanParam) {
+          peers().forEach(peer => { peer.checked = !!value; });
+          return;
+        }
         const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
         if (label) label.textContent = formatSimPanelValue(paramId, value);
         if (paramId === 'simSpeed') {
@@ -5907,9 +5950,16 @@ export class App {
             : String(value);
         });
       };
-      syncParamUI(+el.value);
+      syncParamUI(isBooleanParam ? !!source?.checked : +el.value);
       if (!source) return;
       const forward = eventName => {
+        if (isBooleanParam) {
+          const nextChecked = !!el.checked;
+          source.checked = nextChecked;
+          syncParamUI(nextChecked);
+          source.dispatchEvent(new Event(eventName, { bubbles: true }));
+          return;
+        }
         const nextValue = el.type === 'number'
           ? simParamDisplayToRaw(paramId, Math.max(Number(el.min || Number.NEGATIVE_INFINITY), Math.min(Number(el.max || Number.POSITIVE_INFINITY), Number(el.value || getSimParamDisplayMeta(paramId, Number(source.value || 0)).value || 0))))
           : +el.value;
@@ -5927,6 +5977,10 @@ export class App {
         }
       };
       el.addEventListener('input', () => {
+        if (isBooleanParam) {
+          forward('input');
+          return;
+        }
         if (inputKind === 'range') {
           const value = +el.value;
           peers().forEach(peer => {
@@ -6337,6 +6391,26 @@ export class App {
     this.isTapering = false;
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
+  }
+
+  _applySimulationEphemeralFade(p) {
+    if (!this.simulation.running || !this.simulation.enabled || !p.simEphemeralMode) return;
+    const layer = this.getActiveLayer();
+    if (!layer?.ctx?.canvas) return;
+    const frames = Math.max(1, Number.isFinite(p.simEphemeralFrames) ? p.simEphemeralFrames : 45);
+    const fadeSpeed = Math.max(0, Number.isFinite(p.simEphemeralFade) ? p.simEphemeralFade : 1);
+    const fadeAlpha = Math.min(1, fadeSpeed / frames);
+    if (fadeAlpha <= 0) return;
+    const ctx = layer.ctx;
+    const w = layer.canvas.width;
+    const h = layer.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.globalAlpha = fadeAlpha;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+    layer.dirty = true;
   }
 
   _handleSimulationPointerDown(x, y) {
@@ -11195,6 +11269,7 @@ export class App {
       this._updateSimulationLeader(elapsed, p);
       const frameCounter = document.getElementById('simFrameCounter');
       if (frameCounter) frameCounter.textContent = this._formatSimulationFrameCounter();
+      this._applySimulationEphemeralFade(p);
     }
     if (this.isDrawing && brush && brush.onFrame) {
       brush.onFrame(elapsed);
