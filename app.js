@@ -6297,6 +6297,13 @@ export class App {
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simHudRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
+    const ephemeralBtn = document.getElementById('simEphemeralToggle');
+    if (ephemeralBtn) {
+      const ephemeralOn = !!document.getElementById('simEphemeralMode')?.checked;
+      ephemeralBtn.classList.toggle('active', ephemeralOn);
+      ephemeralBtn.textContent = ephemeralOn ? 'Ephemeral On' : 'Ephemeral Off';
+      ephemeralBtn.setAttribute('aria-pressed', ephemeralOn ? 'true' : 'false');
+    }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
     document.getElementById('simInspectorToggle')?.classList.toggle('active', !this.simulation.inspectorCollapsed);
@@ -9806,6 +9813,14 @@ export class App {
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simHudStopBtn')?.addEventListener('click', () => this.stopSimulation());
     document.getElementById('simResetBtn')?.addEventListener('click', () => this.resetSimulationPlayback());
+    document.getElementById('simEphemeralToggle')?.addEventListener('click', () => {
+      const source = document.getElementById('simEphemeralMode');
+      if (!source) return;
+      source.checked = !source.checked;
+      source.dispatchEvent(new Event('change', { bubbles: true }));
+      this._syncSimulationUI();
+    });
+    document.getElementById('simEphemeralMode')?.addEventListener('change', () => this._syncSimulationUI());
     document.getElementById('simRecordBtn')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
     document.getElementById('simExportBtn')?.addEventListener('click', () => this._showSimulationExportModal());
     document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
