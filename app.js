@@ -19,6 +19,8 @@ const SIM_EXPORT_TIMESLICE_MS = 250;
 const SIM_EXPORT_FFMPEG_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_UTIL_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_CORE_BASE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
+const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 2;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -6424,21 +6426,24 @@ export class App {
     ctx.restore();
     const shouldSnapResidualAlpha =
       this._simEphemeralAlphaSnapSupported &&
+      // High fadeAlpha values already clear residual pixels quickly.
       fadeAlpha < 0.5 &&
-      (this.simulation.frameCount % 6 === 0);
+      // Process in batches to reduce per-frame ImageData cost.
+      (this.simulation.frameCount % SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES === 0);
     if (shouldSnapResidualAlpha) {
       try {
         const imageData = ctx.getImageData(0, 0, w, h);
         const data = imageData.data;
         let changed = false;
         for (let i = 3; i < data.length; i += 4) {
-          if (data[i] > 0 && data[i] <= 1) {
+          if (data[i] > 0 && data[i] <= SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD) {
             data[i] = 0;
             changed = true;
           }
         }
         if (changed) ctx.putImageData(imageData, 0, 0);
-      } catch {
+      } catch (error) {
+        console.warn('Ephemeral fade alpha snap disabled:', error);
         this._simEphemeralAlphaSnapSupported = false;
       }
     }
