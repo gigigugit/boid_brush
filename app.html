@@ -139,6 +139,12 @@ html,body{overflow:hidden;width:100%;height:100%;
 .save-btn:hover{background:rgba(52,199,89,0.5)!important;}
 .reset-btn{background:rgba(139,58,58,0.7)!important;border:1px solid rgba(255,59,48,0.3)!important;}
 .reset-btn:hover{background:rgba(255,59,48,0.4)!important;}
+#stampPresetSwitcher{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;}
+#sidebar .stamp-preset-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:58px;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);}
+#sidebar .stamp-preset-btn.active{border-color:rgba(117,162,255,0.55);background:linear-gradient(135deg, rgba(58,106,232,0.28), rgba(91,138,240,0.18));}
+#sidebar .stamp-preset-btn img{width:24px;height:24px;object-fit:contain;filter:brightness(0) invert(1);opacity:0.88;pointer-events:none;}
+#sidebar .stamp-preset-btn.active img{opacity:1;}
+#sidebar .stamp-preset-btn span{font-size:9px;line-height:1.05;text-align:center;pointer-events:none;}
 
 /* Layer items */
 #layerList{max-height:200px;overflow-y:auto;margin:4px 0;}
