@@ -1277,10 +1277,13 @@ function _renderStampPresetSwitcher(app, activeMeta = app.getCustomStampImageMet
     btn.dataset.stampPresetId = preset.id;
     btn.title = preset.licenseLabel ? `${preset.name} · ${preset.licenseLabel}` : preset.name;
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    btn.innerHTML = `
-      <img src="${preset.previewDataUrl}" alt="${preset.name} stamp preset">
-      <span>${preset.name}</span>
-    `;
+    const img = document.createElement('img');
+    img.src = preset.previewDataUrl;
+    img.alt = `${preset.name} stamp preset`;
+    const label = document.createElement('span');
+    label.textContent = preset.name;
+    btn.appendChild(img);
+    btn.appendChild(label);
     container.appendChild(btn);
   }
 }
