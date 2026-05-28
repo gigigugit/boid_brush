@@ -1278,7 +1278,7 @@ function _renderStampPresetSwitcher(app, activeMeta = app.getCustomStampImageMet
     btn.title = preset.licenseLabel ? `${preset.name} · ${preset.licenseLabel}` : preset.name;
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     btn.innerHTML = `
-      <img src="${preset.previewDataUrl}" alt="">
+      <img src="${preset.previewDataUrl}" alt="${preset.name} stamp preset">
       <span>${preset.name}</span>
     `;
     container.appendChild(btn);
