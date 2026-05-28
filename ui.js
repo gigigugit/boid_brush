@@ -552,7 +552,7 @@ export function buildSidebar(app) {
     <div class="section-header closed" data-brushes="boid ant bristle simple eraser motionPath" data-section="stampImage">Stamp Image <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="boid ant bristle simple eraser motionPath">
       <label>Enable <input type="checkbox" id="stampImageEnabled"></label>
-      <div id="stampPresetSwitcher" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;"></div>
+      <div id="stampPresetSwitcher"></div>
       <span class="slider-desc">Built-in free silhouettes for quick switching. Upload still works for custom stamps.</span>
       <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
         <canvas id="stampImagePreview" width="72" height="72" style="width:72px;height:72px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:#0d0d12;image-rendering:auto;"></canvas>
@@ -1273,13 +1273,13 @@ function _renderStampPresetSwitcher(app, activeMeta = app.getCustomStampImageMet
     const btn = document.createElement('button');
     const isActive = preset.id === activePresetId;
     btn.type = 'button';
+    btn.className = `stamp-preset-btn${isActive ? ' active' : ''}`;
     btn.dataset.stampPresetId = preset.id;
     btn.title = preset.licenseLabel ? `${preset.name} · ${preset.licenseLabel}` : preset.name;
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    btn.style.cssText = `display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:58px;padding:6px;border-radius:8px;border:1px solid ${isActive ? 'rgba(117,162,255,0.55)' : 'rgba(255,255,255,0.12)'};background:${isActive ? 'linear-gradient(135deg, rgba(58,106,232,0.28), rgba(91,138,240,0.18))' : 'rgba(255,255,255,0.05)'};`;
     btn.innerHTML = `
-      <img src="${preset.previewDataUrl}" alt="" style="width:24px;height:24px;object-fit:contain;filter:brightness(0) invert(1);opacity:${isActive ? '1' : '0.88'};pointer-events:none;">
-      <span style="font-size:9px;line-height:1.05;text-align:center;pointer-events:none;">${preset.name}</span>
+      <img src="${preset.previewDataUrl}" alt="">
+      <span>${preset.name}</span>
     `;
     container.appendChild(btn);
   }

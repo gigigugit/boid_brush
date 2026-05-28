@@ -1,3 +1,7 @@
+/**
+ * Convert inline SVG markup into a compact data URL so stamp presets can be
+ * bundled directly in source without separate asset fetches.
+ */
 function svgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.replace(/\s+/g, ' ').trim())}`;
 }
