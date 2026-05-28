@@ -5344,8 +5344,15 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
-        case 'simEphemeralFade':
-          return { value: raw / 100, min: 0, max: id === 'simPheroPaintStrength' ? 1 : (id === 'simEphemeralFade' ? 3 : 2), step: 0.01, digits: 2 };
+        case 'simEphemeralFade': {
+          const max = {
+            simPointStrength: 2,
+            simEdgeForce: 2,
+            simPheroPaintStrength: 1,
+            simEphemeralFade: 3,
+          }[id] ?? 2;
+          return { value: raw / 100, min: 0, max, step: 0.01, digits: 2 };
+        }
         default:
           return { value: raw, min: null, max: null, step: null, digits: Number.isInteger(raw) ? 0 : 2 };
       }
@@ -6397,8 +6404,12 @@ export class App {
     if (!this.simulation.running || !this.simulation.enabled || !p.simEphemeralMode) return;
     const layer = this.getActiveLayer();
     if (!layer?.ctx?.canvas) return;
-    const frames = Math.max(1, Number.isFinite(p.simEphemeralFrames) ? p.simEphemeralFrames : 45);
-    const fadeSpeed = Math.max(0, Number.isFinite(p.simEphemeralFade) ? p.simEphemeralFade : 1);
+    const defaultFrames = Math.max(1, Number(FACTORY_DEFAULTS.simEphemeralFrames) || 45);
+    const defaultFade = Math.max(0, (Number(FACTORY_DEFAULTS.simEphemeralFade) || 100) / 100);
+    const frames = Math.max(1, Number.isFinite(p.simEphemeralFrames) ? p.simEphemeralFrames : defaultFrames);
+    const fadeSpeed = Math.max(0, Number.isFinite(p.simEphemeralFade) ? p.simEphemeralFade : defaultFade);
+    // Convert user "fade speed" into per-frame erase alpha relative to the
+    // desired trail lifetime so higher fade speeds clear old stamps sooner.
     const fadeAlpha = Math.min(1, fadeSpeed / frames);
     if (fadeAlpha <= 0) return;
     const ctx = layer.ctx;
