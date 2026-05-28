@@ -9817,10 +9817,14 @@ export class App {
       const source = document.getElementById('simEphemeralMode');
       if (!source) return;
       source.checked = !source.checked;
+      this.invalidateParams();
       source.dispatchEvent(new Event('change', { bubbles: true }));
       this._syncSimulationUI();
     });
-    document.getElementById('simEphemeralMode')?.addEventListener('change', () => this._syncSimulationUI());
+    document.getElementById('simEphemeralMode')?.addEventListener('change', () => {
+      this.invalidateParams();
+      this._syncSimulationUI();
+    });
     document.getElementById('simRecordBtn')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
     document.getElementById('simExportBtn')?.addEventListener('click', () => this._showSimulationExportModal());
     document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
