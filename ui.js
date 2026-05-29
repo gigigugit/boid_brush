@@ -200,7 +200,7 @@ export function buildSidebar(app) {
 
     <!-- Spawn Shape (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant" data-section="sensing">
+    <div class="section-body" data-brushes="boid ant">
       <label>Shape <select id="spawnShape">
         <option value="circle">● Circle</option><option value="ring">◎ Ring</option>
         <option value="gaussian">☁ Gaussian</option><option value="line">═ Line</option>
@@ -221,13 +221,13 @@ export function buildSidebar(app) {
 
     <!-- Swarm (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant" data-section="sensing">
+    <div class="section-body" data-brushes="boid ant">
       ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
     </div>
 
     <!-- Forces (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="forces">Forces <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
+    <div class="section-body" data-brushes="boid ant" data-section="sensing">
       ${sliderRow('seek', 'Seek', 0, 100, 75, v => (v/100).toFixed(2))}
       ${sliderRow('cohesion', 'Cohesion', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('separation', 'Separation', 0, 100, 15, v => (v/100).toFixed(2))}
