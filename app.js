@@ -7449,6 +7449,7 @@ export class App {
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
+    const simulationSetupButton = '<button data-sim-open-routing="1" title="Open Simulation Setup Explorer">Setup</button>';
     const savedSessionControls = isBoid
       ? `
         <label class="sim-inspector-row" style="margin-top:10px">
@@ -7471,7 +7472,7 @@ export class App {
         <div class="sim-inspector-actions" style="margin-top:10px">
           <button data-sim-new-session="1">New Working Scene</button>
           <button data-sim-save-session="1">${activeSavedSession ? 'Update Session' : 'Save Session'}</button>
-          <button data-sim-open-routing="1">Setup Explorer</button>
+          ${simulationSetupButton}
           ${activeSavedSession ? '<button class="danger" data-sim-delete-active-session="1">Delete Active</button>' : ''}
         </div>
         <div class="sim-inspector-note" style="margin-top:8px">${_escapeHtml(this._buildSimulationSessionRoutingSummary())}</div>
@@ -7526,6 +7527,7 @@ export class App {
         </div>
         <div class="sim-inspector-actions">
           <button data-sim-collapse="1">Collapse</button>
+          ${isBoid ? simulationSetupButton : ''}
           <button data-sim-clear-canvas="1">Clear Canvas</button>
           ${clearSelectionBtn}
           <button data-sim-help="1">Help</button>
@@ -8148,8 +8150,10 @@ export class App {
       const nextIndex = event.target.value === '' ? -1 : Number(event.target.value);
       this._setActiveSimulationSessionIndex(nextIndex);
     });
-    panel.querySelector('[data-sim-open-routing]')?.addEventListener('click', event => {
-      this.toggleSimulationSessionRoutingPicker(event.currentTarget);
+    panel.querySelectorAll('[data-sim-open-routing]').forEach(button => {
+      button.addEventListener('click', event => {
+        this.toggleSimulationSessionRoutingPicker(event.currentTarget);
+      });
     });
     panel.querySelector('[data-sim-delete-active-session]')?.addEventListener('click', () => {
       if (this.simulation.activeSessionIndex >= 0) this._deleteSimulationSavedSession(this.simulation.activeSessionIndex);
@@ -8258,8 +8262,10 @@ export class App {
     if (ephemeralBtn) {
       const ephemeralOn = !!document.getElementById('simEphemeralMode')?.checked;
       ephemeralBtn.classList.toggle('active', ephemeralOn);
-      ephemeralBtn.textContent = ephemeralOn ? 'Ephemeral On' : 'Ephemeral Off';
       ephemeralBtn.setAttribute('aria-pressed', ephemeralOn ? 'true' : 'false');
+      const ephemeralLabel = ephemeralOn ? 'Ephemeral mode on' : 'Ephemeral mode off';
+      ephemeralBtn.setAttribute('aria-label', ephemeralLabel);
+      ephemeralBtn.title = ephemeralLabel;
     }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
@@ -11840,6 +11846,9 @@ export class App {
       this.invalidateParams();
       source.dispatchEvent(new Event('change', { bubbles: true }));
       this._syncSimulationUI();
+    });
+    document.getElementById('simSetupExplorerBtn')?.addEventListener('click', event => {
+      this.toggleSimulationSessionRoutingPicker(event.currentTarget);
     });
     document.getElementById('simEphemeralMode')?.addEventListener('change', () => {
       if (document.getElementById('simEphemeralMode')?.checked && this.simulation.running) {
