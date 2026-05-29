@@ -221,7 +221,7 @@ export function buildSidebar(app) {
 
     <!-- Swarm (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
+    <div class="section-body" data-brushes="boid ant" data-section="sensing">
       ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
     </div>
 
