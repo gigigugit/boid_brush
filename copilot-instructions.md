@@ -36,9 +36,9 @@ The scrollable `#topbar` contains buttons and controls in this left-to-right ord
 |---|---|---|
 | Brush picker | `#brushBtnWrap` > `#brushBtn` | Dropdown trigger showing active brush name+emoji. Opens `#brushDropdown` (a separate fixed div outside topbar). |
 | **--- separator ---** | `.tb-sep` | |
-| Primary color | `#primaryColor` | `<input type="color">` |
+| Primary color | `#primaryColorTrigger` | Shared app-wide color picker trigger for hidden `#primaryColor` state |
 | Swap colors | `#swapColors` | ⇄ button, swaps primary/secondary |
-| Secondary color | `#secondaryColor` | `<input type="color">` |
+| Secondary color | `#secondaryColorTrigger` | Shared app-wide color picker trigger for hidden `#secondaryColor` state |
 | **--- separator ---** | `.tb-sep` | |
 | Undo | `#undoBtn` | ↩ Undo |
 | Redo | `#redoBtn` | ↪ Redo |
@@ -59,7 +59,7 @@ The scrollable `#topbar` contains buttons and controls in this left-to-right ord
 | Layer switcher | `#layerSwitcher` | `<select>` dropdown for quick layer switching |
 | **--- separator ---** | `.tb-sep` | |
 | BG label | `.bg-label` | "BG" text |
-| BG color | `#bgColor` | `<input type="color">` for background |
+| BG color | `#bgColorTrigger` | Shared app-wide color picker trigger for hidden `#bgColor` state |
 | **--- separator ---** | `.tb-sep` | |
 | Canvas Size | `#canvasSizeBtn` | 📐 Size |
 | Clear | `#clearBtn` | 🗑 Clear |
@@ -155,7 +155,7 @@ A separate overlay panel (same dimensions/position as sidebar, z-index: 11) open
 
 ### 8. Modals
 - **AI Setup Modal** (`#aiSetupModal`): Backend selector, server URL input, test connection button, status dot. Opened by sidebar AI Setup button.
-- **Canvas Size Modal** (`#canvasSizeModal`): Preset dropdown (HD, 4K, social, print, texture sizes), custom W×H inputs, BG color picker, swap button, Apply button. Opened by `#canvasSizeBtn`.
+- **Canvas Size Modal** (`#canvasSizeModal`): Preset dropdown (HD, 4K, social, print, texture sizes), custom W×H inputs, shared color-picker trigger for hidden `#canvasSizeBg`, swap button, Apply button. Opened by `#canvasSizeBtn`.
 - **AI Prompt Popout** (`#aiPromptPopout`): Prompt textarea, negative prompt textarea, recent prompts list. Positioned near the Edit button.
 
 ### 9. Status Bar (`#status`)
@@ -239,6 +239,11 @@ Fixed notification popup (bottom: 50px, centered, z-index: 100). Shown/hidden vi
 3. Add `closed` class to header and `collapsed` class to body if it should default to collapsed.
 4. The toggle wiring is automatic — the `querySelectorAll('.section-header')` loop at the end of `buildSidebar()` handles it.
 
+### Adding a new color selector
+1. Reuse the shared app-wide picker in `app.html` (`#colorPickerPanel`) and `app.js`; do not add a new native `input[type="color"]` to the main app UI.
+2. Prefer a trigger button plus a hidden state input when other code already reads `.value` from an element.
+3. For non-topbar contexts, open the picker with a custom target object passed to `_openColorPicker(...)` so the trigger anchor, label, value getter/setter, and optional close-time commit stay local to that surface.
+
 ### Adding a new brush type
 1. Create a new brush class in `brushes.js` implementing `onDown()`, `onMove()`, `onUp()`, `frame()`.
 2. Import and instantiate it in `app.js` constructor (`this.brushes.mybrush = new MyBrush(this)`).
@@ -258,6 +263,7 @@ All shortcuts are in `_onKeyDown(e)` in `app.js` (around line 1872+). The method
 - **Don't assume external CSS**: All styles are in the `<style>` block in `app.html`. Editing a non-existent `.css` file won't work.
 - **Sidebar is dynamic**: The `#sidebar` div starts empty in HTML. Its contents are built by `buildSidebar()` in `ui.js`. To change sidebar contents, edit `ui.js`, not `app.html`.
 - **Brush dropdown is outside topbar**: `#brushDropdown` is a sibling of `#topbar`, not a child. This is intentional to avoid `backdrop-filter` clipping.
+- **Use the shared color picker**: New app UI color selectors should route through the shared picker instead of introducing new native `input[type="color"]` controls.
 - **Parameter flow**: UI controls → `app.getP()` (reads DOM values) → cached params object → brush engines. Don't set params directly on brush objects; add the value to `getP()`.
 - **data-brushes filtering**: Sidebar sections with `data-brushes` are shown/hidden by `_toggleBrushSections()` in `app.js`. The attribute value is space-separated brush names. Add your brush name there to make a section visible for it.
 - **WebGL premultiplied alpha**: The compositor uses `UNPACK_PREMULTIPLY_ALPHA_WEBGL` (not `_GL`). See memory note for details on this past bug.

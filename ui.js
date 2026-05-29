@@ -1722,8 +1722,8 @@ function _renderUserPresets(app) {
 function _applyPreset(app, values) {
   for (const [id, val] of Object.entries(values)) {
     // Handle special preset keys
-    if (id === '_primaryColor') { app.primaryEl.value = val; continue; }
-    if (id === '_secondaryColor') { app.secondaryEl.value = val; continue; }
+    if (id === '_primaryColor') { app.setColorValue?.('primary', val) ?? (app.primaryEl.value = val); continue; }
+    if (id === '_secondaryColor') { app.setColorValue?.('secondary', val) ?? (app.secondaryEl.value = val); continue; }
     if (id === '_activeBrush') { app.setBrush(val); continue; }
     if (id === '_motionPath') {
       if (val && typeof val === 'object') {

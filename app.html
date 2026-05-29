@@ -76,7 +76,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #topbarOverflowToggle:hover,#topbarOverflowToggle[aria-expanded="true"]{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 #topbarOverflowMenu{position:fixed;width:min(92vw,340px);max-height:min(70vh,520px);overflow-y:auto;display:none;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--line-1);border-radius:14px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);z-index:60;touch-action:pan-y;}
 #topbarOverflowMenu button{-webkit-user-select:none;user-select:none;touch-action:pan-y;}
-#topbarOverflowMenu select,#topbarOverflowMenu input[type="color"]{touch-action:auto;-webkit-user-select:auto;user-select:auto;}
+#topbarOverflowMenu select,#topbarOverflowMenu .topbar-color-trigger{touch-action:auto;-webkit-user-select:auto;user-select:auto;}
 #topbarOverflowMenu.open{display:flex;}
 #topbarOverflowMenu .tb-sep{display:none;}
 /* #brushBtnWrap rule only applies when the node is dynamically moved into the menu */
@@ -86,11 +86,58 @@ html,body{overflow:hidden;width:100%;height:100%;
 #topbarOverflowMenu .bg-label{display:block;font-size:10px;color:var(--ink-3);font-weight:700;letter-spacing:0.85px;text-transform:uppercase;padding:4px 2px;}
 
 /* Color pickers */
-#primaryColor,#secondaryColor,#bgColor{width:var(--tap-min);min-width:var(--tap-min);height:var(--tap-min);border:2px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;}
-#primaryColor:hover,#secondaryColor:hover,#bgColor:hover{border-color:rgba(255,255,255,0.35);}
-#primaryColor::-webkit-color-swatch-wrapper,#secondaryColor::-webkit-color-swatch-wrapper,#bgColor::-webkit-color-swatch-wrapper{padding:1px;}
-#primaryColor::-webkit-color-swatch,#secondaryColor::-webkit-color-swatch,#bgColor::-webkit-color-swatch{border:none;border-radius:6px;}
+.color-input-state{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;pointer-events:none;opacity:0;}
 .bg-label{font-size:10px;color:var(--ink-3);font-weight:700;letter-spacing:0.85px;text-transform:uppercase;}
+.topbar-color-trigger{position:relative;display:flex;align-items:center;justify-content:center;width:var(--tap-min);min-width:var(--tap-min);height:var(--tap-min);padding:0!important;border:2px solid rgba(255,255,255,0.2)!important;border-radius:10px!important;background:rgba(14,17,24,0.92)!important;overflow:hidden;}
+.topbar-color-trigger:hover{border-color:rgba(255,255,255,0.35)!important;}
+.topbar-color-trigger.active{border-color:rgba(117,162,255,0.65)!important;box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset,0 0 10px rgba(75,120,241,0.24)!important;}
+.topbar-color-chip{position:absolute;inset:3px;border-radius:6px;background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);}
+.topbar-color-trigger::after{content:'';position:absolute;inset:auto 0 0 0;height:12px;background:linear-gradient(180deg,transparent,rgba(0,0,0,0.18));pointer-events:none;}
+#topbarOverflowMenu .topbar-color-trigger{width:100%;min-width:0;justify-content:flex-start;padding:8px 10px 8px 42px!important;}
+#topbarOverflowMenu .topbar-color-trigger::before{content:attr(data-color-label);position:absolute;left:46px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--ink-1);letter-spacing:0.1px;}
+#topbarOverflowMenu .topbar-color-chip{left:8px;top:50%;right:auto;bottom:auto;width:24px;height:24px;transform:translateY(-50%);}
+.canvas-size-color-trigger{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:5px 10px;border:1px solid rgba(255,255,255,0.12);border-radius:10px;background:rgba(255,255,255,0.05);color:#e7ebf5;cursor:pointer;transition:all 140ms ease;}
+.canvas-size-color-trigger:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.18);color:#fff;}
+.canvas-size-color-trigger.active{border-color:rgba(117,162,255,0.65);box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset,0 0 10px rgba(75,120,241,0.24);}
+.canvas-size-color-chip{width:24px;height:24px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);flex:none;}
+.canvas-size-color-value{font-size:11px;font-weight:700;letter-spacing:.04em;color:#eef3ff;text-transform:uppercase;}
+
+#colorPickerPanel{position:fixed;display:none;z-index:65;width:min(92vw,360px);padding:14px;border:1px solid var(--line-1);border-radius:18px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);touch-action:pan-y;}
+#colorPickerPanel.open{display:block;}
+.color-picker-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px;}
+.color-picker-target{display:grid;gap:2px;}
+.color-picker-kicker{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.color-picker-title{font-size:15px;font-weight:700;color:var(--ink-0);}
+.color-picker-close{width:30px;min-width:30px;height:30px;min-height:30px;padding:0!important;border-radius:999px!important;}
+.color-picker-body{display:grid;gap:12px;}
+.color-picker-wheelWrap{display:grid;place-items:center;padding:10px;border-radius:16px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.035);}
+#colorWheelCanvas{width:min(232px,64vw);height:min(232px,64vw);max-width:232px;max-height:232px;touch-action:none;cursor:crosshair;display:block;}
+.color-picker-controls{display:grid;gap:10px;}
+.color-picker-sliderRow{display:grid;gap:5px;}
+.color-picker-sliderHeader{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;font-weight:600;color:var(--ink-1);}
+.color-picker-sliderValue{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.color-picker-slider{--slider-track:rgba(255,255,255,0.08);appearance:none;-webkit-appearance:none;width:100%;height:18px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:999px;box-sizing:border-box;background:var(--slider-track);outline:none;cursor:pointer;overflow:hidden;background-clip:padding-box;}
+.color-picker-slider::-webkit-slider-runnable-track{height:100%;border:none;border-radius:inherit;background:transparent;}
+.color-picker-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-1px;border-radius:50%;border:2px solid rgba(12,16,24,0.96);background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.35);}
+.color-picker-slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;border:2px solid rgba(12,16,24,0.96);background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.35);}
+.color-picker-slider::-moz-range-track{height:100%;border:none;border-radius:inherit;background:transparent;}
+.color-picker-footer{display:grid;gap:12px;align-items:stretch;}
+.color-picker-summaryRow{display:flex;align-items:center;gap:12px;min-width:0;}
+.color-picker-preview{display:flex;align-items:center;justify-content:center;padding:10px;border-radius:14px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.035);flex:none;}
+.color-picker-previewSwatch{width:52px;height:52px;border-radius:14px;border:1px solid rgba(255,255,255,0.14);background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);}
+.color-picker-hexWrap{display:flex;align-items:center;gap:8px;min-width:0;width:100%;}
+.color-picker-hexLabel{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+#colorHexInput{width:100%;min-width:0;min-height:38px;padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);background:rgba(8,12,20,0.92);color:#eef3ff;font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+#colorHexInput.invalid{border-color:rgba(224,80,80,0.55);box-shadow:0 0 0 1px rgba(224,80,80,0.18) inset;}
+#colorPickerHistory{display:flex;flex:1;flex-wrap:wrap;align-items:center;gap:6px;min-height:30px;min-width:0;}
+#colorPickerHistory::before{content:'|';margin-right:4px;color:var(--ink-3);font-size:14px;line-height:1;flex:none;}
+#colorPickerHistory:empty::before{content:none;}
+.color-picker-historySwatch{width:24px;height:24px;border-radius:7px;border:1px solid rgba(255,255,255,0.14);cursor:pointer;transition:transform 0.12s,border-color 0.12s;}
+.color-picker-historySwatch:hover{transform:translateY(-1px) scale(1.05);border-color:rgba(255,255,255,0.28);}
+@media (max-width: 760px){
+  #colorPickerPanel{width:min(94vw,360px);padding:12px;}
+  .color-picker-summaryRow{align-items:flex-start;}
+}
 #swapColors{background:none;border:none;color:var(--ink-2);font-size:15px;cursor:pointer;padding:2px 4px;transition:color 0.15s,transform 0.15s;}
 #swapColors:hover{color:#fff;transform:rotate(180deg);}
 
@@ -294,10 +341,6 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-slider-controls{display:flex;align-items:center;gap:6px;}
 .sim-slider-controls input[type="range"]{flex:1 1 auto;min-width:0;}
 #simOverlaySidebar .sim-slider-controls input[type="number"]{width:64px;background:rgba(20,25,36,0.98);color:#eef3ff;border:1px solid var(--line-1);border-radius:7px;padding:4px 6px;font-size:10px;min-height:24px;flex:0 0 64px;}
-#simOverlaySidebar .sim-slider-controls input[type="color"]{width:100%;height:28px;border:1px solid var(--line-1);border-radius:8px;background:rgba(20,25,36,0.98);padding:2px;cursor:pointer;-webkit-appearance:none;appearance:none;touch-action:auto;-webkit-user-select:auto;user-select:auto;}
-#simOverlaySidebar .sim-slider-controls input[type="color"]::-webkit-color-swatch-wrapper{padding:0;}
-#simOverlaySidebar .sim-slider-controls input[type="color"]::-webkit-color-swatch{border:none;border-radius:5px;}
-#simOverlaySidebar .sim-slider-controls input[type="color"]::-moz-color-swatch{border:none;border-radius:5px;}
 #simOverlaySidebar .sim-fld-reset{padding:0!important;width:16px!important;height:16px!important;border-radius:50%;font-size:9px;flex-shrink:0;line-height:1;}
 .sim-inspector-row input[type="number"],.sim-inspector-row select{width:100%;background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:8px;padding:6px 8px;font-size:11px;min-height:34px;}
 .sim-inspector-row select{color-scheme:dark;}
@@ -338,11 +381,10 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-format-select{padding-right:22px;color-scheme:dark;}
 .sim-format-trigger{width:20px;height:22px;padding:0!important;border-radius:6px!important;border:1px solid rgba(255,255,255,0.1)!important;background:rgba(255,255,255,0.07)!important;color:#dbe5ff!important;font-size:10px!important;line-height:1!important;}
 .sim-format-trigger:hover{background:rgba(255,255,255,0.12)!important;}
-.sim-format-color{width:28px;min-width:28px;height:28px;border:2px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;padding:0;-webkit-appearance:none;appearance:none;transition:border-color 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;background:transparent;}
+.sim-format-color{display:inline-flex;align-items:center;justify-content:center;width:28px;min-width:28px;height:28px;padding:0;border:2px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s;touch-action:auto;-webkit-user-select:auto;user-select:auto;background:rgba(14,17,24,0.92);}
 .sim-format-color:hover{border-color:rgba(255,255,255,0.35);}
-.sim-format-color::-webkit-color-swatch-wrapper{padding:1px;}
-.sim-format-color::-webkit-color-swatch{border:none;border-radius:6px;}
-.sim-format-color::-moz-color-swatch{border:none;border-radius:6px;}
+.sim-format-color.active{border-color:rgba(117,162,255,0.65);box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset,0 0 10px rgba(75,120,241,0.24);}
+.sim-format-colorChip{width:18px;height:18px;border-radius:6px;background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);pointer-events:none;}
 .sim-format-chip-toggle{padding-right:4px;}
 .sim-format-chip-toggle input[type="checkbox"]{margin:0;width:14px;height:14px;accent-color:#6f9cff;}
 .sim-format-reset,.sim-format-close{display:inline-flex;align-items:center;justify-content:center;padding:0 9px!important;font-size:10px!important;font-weight:700;white-space:nowrap;}
@@ -434,6 +476,57 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-export-actions button:disabled:hover{background:rgba(255,255,255,0.06);}
 @media (max-width: 640px){
   .sim-export-grid{grid-template-columns:1fr;}
+}
+#simSetupModal{display:none;position:fixed;inset:0;z-index:202;align-items:center;justify-content:center;}
+#simSetupModal.open{display:flex;}
+#simSetupModal .sim-setup-panel{width:max-content;max-width:calc(100vw - 24px);max-height:88vh;padding:0;overflow:hidden;background:linear-gradient(180deg,rgba(21,25,36,0.99),rgba(12,16,25,0.99));border-color:rgba(126,156,220,0.18);}
+#simSetupModal .sim-setup-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 24px 16px;border-bottom:1px solid rgba(255,255,255,0.08);}
+#simSetupModal .sim-setup-title h2{margin:0 0 5px;font-size:17px;color:#f3f6ff;letter-spacing:.01em;}
+#simSetupModal .sim-setup-title p{margin:0;color:#9cabca;font-size:12px;line-height:1.45;max-width:780px;}
+#simSetupModal .sim-setup-body{display:grid;justify-items:start;gap:12px;padding:14px 18px 16px;overflow:auto;max-height:calc(88vh - 150px);}
+#simSetupModal .sim-setup-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);background:rgba(6,11,20,0.42);}
+#simSetupModal .sim-setup-toolbar strong{color:#edf3ff;font-size:12px;}
+#simSetupModal .sim-setup-toolbar span{color:#9ba9c4;font-size:11px;line-height:1.4;}
+#simSetupModal .sim-setup-toggle{display:flex;align-items:center;gap:8px;color:#dbe6fb;font-size:11px;font-weight:650;}
+#simSetupModal .sim-setup-toggle input{accent-color:var(--accent-b);}
+#simSetupModal .sim-setup-tableWrap{width:max-content;max-width:100%;overflow:auto;border:1px solid rgba(255,255,255,0.1);background:rgba(5,9,16,0.58);}
+#simSetupModal .sim-setup-table{width:max-content;min-width:1320px;border-collapse:collapse;font-size:11px;color:#d8e2f7;}
+#simSetupModal .sim-setup-table th{position:sticky;top:0;z-index:1;background:#111827;color:#8fb0f4;text-align:left;text-transform:uppercase;letter-spacing:.08em;font-size:10px;font-weight:800;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.11);}
+#simSetupModal .sim-setup-table td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.07);vertical-align:top;}
+#simSetupModal .sim-setup-table tr:last-child td{border-bottom:none;}
+#simSetupModal .sim-setup-table tr:hover td{background:rgba(255,255,255,0.025);}
+#simSetupModal .sim-setup-sessionName{display:grid;gap:3px;min-width:180px;}
+#simSetupModal .sim-setup-sessionName strong{color:#f2f6ff;font-size:12px;}
+#simSetupModal .sim-setup-sessionName span,#simSetupModal .sim-setup-muted{color:#94a4c1;font-size:10px;line-height:1.35;}
+#simSetupModal .sim-setup-check{display:flex;align-items:center;justify-content:center;min-height:34px;}
+#simSetupModal .sim-setup-table input[type="checkbox"]{accent-color:var(--accent-b);}
+#simSetupModal .sim-setup-table select,#simSetupModal .sim-setup-table button,#simSetupModal .sim-setup-footer button,#simSetupModal .sim-setup-toolbar button{min-height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;}
+#simSetupModal .sim-setup-table select{width:100%;padding:6px 8px;color-scheme:dark;background:var(--select-bg);}
+#simSetupModal .sim-setup-table select option,#simSetupModal .sim-setup-table select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#simSetupModal .sim-setup-table button,#simSetupModal .sim-setup-footer button,#simSetupModal .sim-setup-toolbar button{padding:6px 10px;cursor:pointer;font-weight:650;}
+#simSetupModal .sim-setup-table button:hover,#simSetupModal .sim-setup-footer button:hover,#simSetupModal .sim-setup-toolbar button:hover{background:rgba(255,255,255,0.11);}
+#simSetupModal .sim-setup-multi{position:relative;display:grid;gap:6px;min-width:160px;}
+#simSetupModal .sim-setup-multi button{width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+#simSetupModal .sim-setup-multiList{display:none;position:absolute;z-index:208;min-width:220px;max-height:260px;overflow:auto;padding:8px;border:1px solid rgba(255,255,255,0.13);background:#101725;box-shadow:0 18px 44px rgba(0,0,0,0.5);}
+#simSetupModal .sim-setup-multiList.open{display:grid;gap:6px;}
+#simSetupModal .sim-setup-multiList label{display:flex;align-items:center;gap:7px;color:#d9e4f7;font-size:11px;}
+#simSetupModal .sim-setup-warning{color:#ffcf8a;font-size:10px;line-height:1.35;}
+#simSetupModal .sim-setup-future{min-width:150px;color:#9cabca;font-size:10px;line-height:1.45;}
+#simSetupModal .sim-setup-status{min-height:18px;color:#adc0e2;font-size:11px;line-height:1.45;}
+#simSetupModal .sim-setup-status.warn{color:#ffd08a;}
+#simSetupModal .sim-setup-status.error{color:#ff9e9e;}
+#simSetupModal .sim-setup-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);}
+#simSetupModal .sim-setup-footerGroup{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#simSetupModal .sim-setup-footer button.primary{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+#simSetupModal .sim-setup-footer button.warn{border-color:rgba(255,194,102,0.38);color:#ffcf8a;background:rgba(255,174,66,0.08);}
+#simSetupModal .sim-setup-footer button.danger{border-color:rgba(255,115,115,0.36);color:#ffb0b0;background:rgba(255,90,90,0.08);}
+#simSetupModal .sim-setup-empty{padding:28px;text-align:center;color:#9cabca;font-size:12px;line-height:1.5;}
+@media (max-width: 760px){
+  #simSetupModal .sim-setup-header{padding:18px 18px 14px;}
+  #simSetupModal .sim-setup-body{padding:12px;max-height:calc(88vh - 170px);}
+  #simSetupModal .sim-setup-footer{align-items:stretch;}
+  #simSetupModal .sim-setup-footerGroup{width:100%;}
+  #simSetupModal .sim-setup-footer button{flex:1;}
 }
 #motionPathEditor{display:none;position:fixed;inset:0;z-index:205;}
 #motionPathEditor.open{display:block;}
@@ -554,9 +647,11 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <button id="brushBtn" class="active">🐦 Boid</button>
   </div>
   <div class="tb-sep"></div>
-  <input type="color" id="primaryColor" class="topbar-essential" value="#1a1a1a" title="Primary">
+  <button id="primaryColorTrigger" class="topbar-color-trigger topbar-essential" data-color-target="primary" data-color-label="Primary" title="Primary color" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false"><span class="topbar-color-chip"></span></button>
   <button id="swapColors" class="topbar-essential" title="Swap">⇄</button>
-  <input type="color" id="secondaryColor" class="topbar-essential" value="#ffffff" title="Secondary">
+  <button id="secondaryColorTrigger" class="topbar-color-trigger topbar-essential" data-color-target="secondary" data-color-label="Secondary" title="Secondary color" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false"><span class="topbar-color-chip"></span></button>
+  <span class="bg-label">BG</span>
+  <button id="bgColorTrigger" class="topbar-color-trigger" data-color-target="background" data-color-label="Background" title="Background color" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false"><span class="topbar-color-chip"></span></button>
   <div class="tb-sep"></div>
   <button id="undoBtn" class="topbar-essential">↩ Undo</button>
   <button id="redoBtn" class="topbar-essential">↪ Redo</button>
@@ -578,9 +673,6 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="cutBtn" title="Cut (Ctrl+X)">✂ Cut</button>
   <button id="pasteBtn" title="Paste (Ctrl+V)">📌 Paste</button>
   <div class="tb-sep"></div>
-  <span class="bg-label">BG</span>
-  <input type="color" id="bgColor" value="#ffffff" title="Background color">
-  <div class="tb-sep"></div>
   <button id="saveBtn">💾 Save</button>
   <button id="reloadAppBtn" title="Hard reload (clear browser caches/service workers and reload)">⟳ Reload</button>
   <button id="exportPsdBtn" title="Export as Photoshop PSD">📤 Export PSD</button>
@@ -597,6 +689,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <button id="sidebarToggle">☰</button>
 </div>
 
+<input type="hidden" id="primaryColor" class="color-input-state" value="#1a1a1a">
+<input type="hidden" id="secondaryColor" class="color-input-state" value="#ffffff">
+<input type="hidden" id="bgColor" class="color-input-state" value="#ffffff">
+
 <!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
 <div id="brushDropdown">
   <button data-brush="boid" class="selected">🐦 Boid</button>
@@ -607,6 +703,49 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button data-brush="fluid3d">💧 3D Fluid</button>
   <button data-brush="simple">🖌 Simple</button>
   <button data-brush="eraser">◻ Eraser</button>
+</div>
+
+<div id="colorPickerPanel" role="dialog" aria-modal="false" aria-labelledby="colorPickerTitle" aria-hidden="true">
+  <div class="color-picker-header">
+    <div class="color-picker-target">
+      <div class="color-picker-kicker">Color Picker</div>
+      <div class="color-picker-title" id="colorPickerTitle">Primary Color</div>
+    </div>
+    <button id="colorPickerClose" class="color-picker-close" type="button" aria-label="Close color picker">✕</button>
+  </div>
+  <div class="color-picker-body">
+    <div class="color-picker-wheelWrap">
+      <canvas id="colorWheelCanvas" width="232" height="232" aria-label="Hue wheel"></canvas>
+    </div>
+    <div class="color-picker-controls">
+      <div class="color-picker-sliderRow">
+        <div class="color-picker-sliderHeader">
+          <span>Saturation</span>
+          <span class="color-picker-sliderValue" id="colorSaturationValue">100%</span>
+        </div>
+        <input id="colorSaturationSlider" class="color-picker-slider" type="range" min="0" max="100" step="1" value="100" aria-label="Saturation slider">
+      </div>
+      <div class="color-picker-sliderRow">
+        <div class="color-picker-sliderHeader">
+          <span>Lightness</span>
+          <span class="color-picker-sliderValue" id="colorLightnessValue">50%</span>
+        </div>
+        <input id="colorLightnessSlider" class="color-picker-slider" type="range" min="0" max="100" step="1" value="50" aria-label="Lightness slider">
+      </div>
+    </div>
+    <div class="color-picker-footer">
+      <div class="color-picker-summaryRow">
+        <div class="color-picker-preview">
+          <div class="color-picker-previewSwatch" id="colorPreviewSwatch"></div>
+        </div>
+        <div id="colorPickerHistory"></div>
+      </div>
+      <div class="color-picker-hexWrap">
+        <label class="color-picker-hexLabel" for="colorHexInput">HEX:</label>
+        <input id="colorHexInput" type="text" value="#1A1A1A" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Hex color value">
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ══════════ Canvas Stack ══════════ -->
@@ -846,6 +985,48 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   </div>
 </div>
 
+<div id="simSetupModal">
+  <div class="ai-modal-backdrop" id="simSetupBackdrop"></div>
+  <div class="ai-modal-panel sim-setup-panel" role="dialog" aria-modal="true" aria-labelledby="simSetupTitle" aria-describedby="simSetupIntro">
+    <div class="sim-setup-header">
+      <div class="sim-setup-title">
+        <h2 id="simSetupTitle">Simulation Setup Explorer</h2>
+        <p id="simSetupIntro">Assign saved simulation sessions to stamp layers, choose per-row sensing sources, and stage changes before accepting them.</p>
+      </div>
+      <button class="ai-modal-close" id="simSetupClose" aria-label="Close simulation setup explorer">✕</button>
+    </div>
+    <div class="sim-setup-body">
+      <div class="sim-setup-toolbar">
+        <div>
+          <strong>Draft setup</strong>
+          <span id="simSetupSummary">No saved sessions loaded.</span>
+        </div>
+        <label class="sim-setup-toggle">
+          <input id="simSetupMultiToggle" type="checkbox">
+          <span>Enable multi-session playback</span>
+        </label>
+        <div class="sim-setup-status" id="simSetupStatus"></div>
+      </div>
+      <div class="sim-setup-tableWrap" id="simSetupRows"></div>
+    </div>
+    <div class="sim-setup-footer">
+      <div class="sim-setup-footerGroup">
+        <button id="simSetupSaveJson" type="button">Save Setup JSON</button>
+        <button id="simSetupLoadJson" type="button">Load Setup JSON</button>
+        <button id="simSetupExportWorkspace" type="button">Export Workspace</button>
+        <button id="simSetupImportWorkspace" type="button">Import Workspace</button>
+      </div>
+      <div class="sim-setup-footerGroup">
+        <button id="simSetupClearDefaults" class="warn" type="button">Clear Defaults</button>
+        <button id="simSetupExit" type="button">Exit</button>
+        <button id="simSetupAccept" class="primary" type="button">Accept</button>
+      </div>
+    </div>
+    <input id="simSetupLoadFile" type="file" accept="application/json,.json" hidden>
+    <input id="simSetupWorkspaceImportFile" type="file" accept="application/json,.json" hidden>
+  </div>
+</div>
+
 <!-- ══════════ Status Bar ══════════ -->
 <div id="status">Ready</div>
 <div id="toast"></div>
@@ -901,7 +1082,11 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
     <div style="margin-bottom:12px;">
       <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Background</label>
-      <input type="color" id="canvasSizeBg" value="#ffffff" style="width:40px;height:30px;border:2px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;padding:0;">
+      <input type="hidden" id="canvasSizeBg" value="#ffffff">
+      <button id="canvasSizeBgTrigger" class="canvas-size-color-trigger" type="button" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false">
+        <span class="canvas-size-color-chip"></span>
+        <span class="canvas-size-color-value" id="canvasSizeBgValue">#FFFFFF</span>
+      </button>
     </div>
 
     <div class="ai-modal-footer">
@@ -1081,7 +1266,9 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-import { App } from './app.js';
+const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
+const appModuleUrl = reloadToken ? `./app.js?bb_reload=${encodeURIComponent(reloadToken)}` : './app.js';
+const { App } = await import(appModuleUrl);
 const app = new App();
 window._app = app; // expose for debugging
 window.boidGpuDebug = () => window._app?.brushes?.boid?.getDebugState?.() || null;

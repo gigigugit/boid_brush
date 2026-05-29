@@ -18,6 +18,8 @@ const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-26-sim-phase4-playback-export-1';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 1;
+const SIM_SETUP_FORMAT = 'boid-brush-simulation-setup';
+const SIM_SETUP_VERSION = 1;
 const SIM_EXPORT_TIMESLICE_MS = 250;
 const SIM_EXPORT_FFMPEG_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_UTIL_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
@@ -1829,6 +1831,18 @@ export class App {
     this.primaryEl = document.getElementById('primaryColor');
     this.secondaryEl = document.getElementById('secondaryColor');
     this.bgColorEl = document.getElementById('bgColor');
+    this._colorPicker = {
+      open: false,
+      target: 'primary',
+      hue: 0,
+      saturation: 100,
+      lightness: 50,
+      anchorEl: null,
+      initialHex: '#1a1a1a',
+      changedSinceOpen: false,
+      wheelPointerId: null,
+      refs: null,
+    };
 
     // Color history
     this._colorHistory = [];
@@ -1890,6 +1904,7 @@ export class App {
     // Restore session
     await this._ensureBuiltinCanvasTexture();
     await this._restoreSession();
+    this._syncColorPickerUi();
     // Fresh loads start with activeBrush='boid' but had not been run through
     // the normal brush activation path. Re-applying the current brush keeps
     // startup behavior consistent with choosing it from the menu.
@@ -2026,7 +2041,7 @@ export class App {
 
     // Background
     if (bgColor) {
-      this.bgColorEl.value = bgColor;
+      this.setColorValue('background', bgColor, { silent: true });
     }
     this._fillBackgroundLayer();
 
@@ -2073,10 +2088,14 @@ export class App {
     if (wEl) wEl.value = this.W;
     if (hEl) hEl.value = this.H;
     if (bgEl) bgEl.value = this.bgColorEl?.value || '#ffffff';
+    this._syncCanvasSizeColorTrigger(bgEl?.value || '#ffffff');
     modal.classList.add('open');
   }
 
   _hideCanvasSizeModal() {
+    if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === 'canvasSizeBg') {
+      this._closeColorPicker({ recordHistory: false });
+    }
     document.getElementById('canvasSizeModal')?.classList.remove('open');
   }
 
@@ -2585,10 +2604,630 @@ export class App {
     bg.dirtyTiles = null;
   }
 
+  _normalizeHexColor(color, fallback = null) {
+    if (typeof color !== 'string') return fallback;
+    const trimmed = color.trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(trimmed)) return trimmed;
+    if (/^#[0-9a-f]{3}$/.test(trimmed)) {
+      return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`;
+    }
+    return fallback;
+  }
+
+  _isCustomColorTarget(target) {
+    return !!target && typeof target === 'object';
+  }
+
+  _getColorTargetKey(target) {
+    if (this._isCustomColorTarget(target)) {
+      return String(target.key || target.input?.id || target.trigger?.id || target.label || 'custom');
+    }
+    return String(target || '');
+  }
+
+  _getColorInput(target) {
+    if (this._isCustomColorTarget(target)) return target.input || null;
+    if (target === 'primary') return this.primaryEl;
+    if (target === 'secondary') return this.secondaryEl;
+    if (target === 'background') return this.bgColorEl;
+    return null;
+  }
+
+  getColorValue(target, fallback = '#ffffff') {
+    if (this._isCustomColorTarget(target) && typeof target.getValue === 'function') {
+      return this._normalizeHexColor(target.getValue(), fallback) || fallback;
+    }
+    const input = this._getColorInput(target);
+    return this._normalizeHexColor(input?.value, fallback) || fallback;
+  }
+
+  setColorValue(target, color, options = {}) {
+    const input = this._getColorInput(target);
+    const normalized = this._normalizeHexColor(color, this.getColorValue(target));
+    if (!normalized) return null;
+    const changed = this.getColorValue(target, normalized) !== normalized;
+    if (this._isCustomColorTarget(target)) {
+      if (typeof target.setValue === 'function') target.setValue(normalized, options);
+      else if (input) input.value = normalized;
+    } else {
+      if (!input) return null;
+      input.value = normalized;
+    }
+    if (options.recordHistory && this._getColorTargetKey(target) === 'primary') this._recordColor(normalized);
+    if (!options.silent && (changed || options.forceEvent)) {
+      const eventName = this._isCustomColorTarget(target) ? target.eventName : 'input';
+      if (input && eventName) input.dispatchEvent(new Event(eventName, { bubbles: true }));
+      if (this._isCustomColorTarget(target) && typeof target.onInput === 'function') {
+        target.onInput(normalized, options);
+      }
+    }
+    return normalized;
+  }
+
+  swapPaintColors() {
+    const primary = this.getColorValue('primary', '#1a1a1a');
+    const secondary = this.getColorValue('secondary', '#ffffff');
+    this.setColorValue('primary', secondary);
+    this.setColorValue('secondary', primary);
+  }
+
   setBackgroundColor(color) {
-    if (this.bgColorEl) this.bgColorEl.value = color;
-    this._fillBackgroundLayer();
-    this.compositeAllLayers();
+    this.setColorValue('background', color, { forceEvent: true });
+  }
+
+  _getColorTrigger(target) {
+    if (this._isCustomColorTarget(target)) return target.trigger || target.anchorEl || null;
+    if (target === 'primary') return document.getElementById('primaryColorTrigger');
+    if (target === 'secondary') return document.getElementById('secondaryColorTrigger');
+    if (target === 'background') return document.getElementById('bgColorTrigger');
+    return null;
+  }
+
+  _getColorTargetLabel(target) {
+    if (this._isCustomColorTarget(target)) return target.label || 'Color';
+    if (target === 'secondary') return 'Secondary Color';
+    if (target === 'background') return 'Background Color';
+    return 'Primary Color';
+  }
+
+  _setColorTriggerActive(trigger, active) {
+    if (!trigger) return;
+    trigger.classList.toggle('active', !!active);
+    trigger.setAttribute('aria-expanded', active ? 'true' : 'false');
+  }
+
+  _hexToRgb(hex) {
+    const normalized = this._normalizeHexColor(hex, null);
+    if (!normalized) return null;
+    return {
+      r: parseInt(normalized.slice(1, 3), 16),
+      g: parseInt(normalized.slice(3, 5), 16),
+      b: parseInt(normalized.slice(5, 7), 16),
+    };
+  }
+
+  _rgbToHsl(r, g, b) {
+    const red = r / 255;
+    const green = g / 255;
+    const blue = b / 255;
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    const lightness = (max + min) / 2;
+    let hue = 0;
+    let saturation = 0;
+
+    if (max !== min) {
+      const delta = max - min;
+      saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+      switch (max) {
+        case red:
+          hue = ((green - blue) / delta) + (green < blue ? 6 : 0);
+          break;
+        case green:
+          hue = ((blue - red) / delta) + 2;
+          break;
+        default:
+          hue = ((red - green) / delta) + 4;
+          break;
+      }
+      hue *= 60;
+    }
+
+    return {
+      hue,
+      saturation: saturation * 100,
+      lightness: lightness * 100,
+    };
+  }
+
+  _hexToHsl(hex) {
+    const rgb = this._hexToRgb(hex);
+    return rgb ? this._rgbToHsl(rgb.r, rgb.g, rgb.b) : { hue: 0, saturation: 100, lightness: 50 };
+  }
+
+  _hslToRgb(hue, saturation, lightness) {
+    const h = (((hue % 360) + 360) % 360) / 360;
+    const s = Math.max(0, Math.min(100, saturation)) / 100;
+    const l = Math.max(0, Math.min(100, lightness)) / 100;
+    if (s === 0) {
+      const value = Math.round(l * 255);
+      return { r: value, g: value, b: value };
+    }
+    const q = l < 0.5 ? l * (1 + s) : l + s - (l * s);
+    const p = 2 * l - q;
+    const hueToRgb = t => {
+      let next = t;
+      if (next < 0) next += 1;
+      if (next > 1) next -= 1;
+      if (next < 1 / 6) return p + ((q - p) * 6 * next);
+      if (next < 1 / 2) return q;
+      if (next < 2 / 3) return p + ((q - p) * (2 / 3 - next) * 6);
+      return p;
+    };
+    return {
+      r: Math.round(hueToRgb(h + 1 / 3) * 255),
+      g: Math.round(hueToRgb(h) * 255),
+      b: Math.round(hueToRgb(h - 1 / 3) * 255),
+    };
+  }
+
+  _hslToHex(hue, saturation, lightness) {
+    const { r, g, b } = this._hslToRgb(hue, saturation, lightness);
+    const toHex = value => value.toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  _syncColorPickerStateFromHex(hex) {
+    const next = this._hexToHsl(hex);
+    this._colorPicker.hue = next.hue;
+    this._colorPicker.saturation = next.saturation;
+    this._colorPicker.lightness = next.lightness;
+  }
+
+  _applyColorPickerState() {
+    const picker = this._colorPicker;
+    const hex = this._hslToHex(picker.hue, picker.saturation, picker.lightness);
+    this.setColorValue(picker.target, hex);
+    picker.changedSinceOpen = hex !== picker.initialHex;
+    this._syncColorPickerUi();
+  }
+
+  _syncColorTriggerSwatches() {
+    const activeKey = this._colorPicker.open ? this._getColorTargetKey(this._colorPicker.target) : '';
+    ['primary', 'secondary', 'background'].forEach(target => {
+      const trigger = this._getColorTrigger(target);
+      if (!trigger) return;
+      const chip = trigger.querySelector('.topbar-color-chip');
+      if (chip) chip.style.background = this.getColorValue(target, '#ffffff');
+      this._setColorTriggerActive(trigger, activeKey === this._getColorTargetKey(target));
+    });
+    this._syncCanvasSizeColorTrigger();
+    const customTrigger = this._getColorTrigger(this._colorPicker.target);
+    if (customTrigger && !['primaryColorTrigger', 'secondaryColorTrigger', 'bgColorTrigger'].includes(customTrigger.id || '')) {
+      this._setColorTriggerActive(customTrigger, this._colorPicker.open);
+    }
+  }
+
+  _syncCanvasSizeColorTrigger(color = null) {
+    const trigger = document.getElementById('canvasSizeBgTrigger');
+    const chip = trigger?.querySelector('.canvas-size-color-chip');
+    const valueEl = document.getElementById('canvasSizeBgValue');
+    const input = document.getElementById('canvasSizeBg');
+    const normalized = this._normalizeHexColor(color, input?.value || '#ffffff') || '#ffffff';
+    if (input) input.value = normalized;
+    if (chip) chip.style.background = normalized;
+    if (valueEl) valueEl.textContent = normalized.toUpperCase();
+  }
+
+  _getCanvasSizeColorTarget() {
+    const input = document.getElementById('canvasSizeBg');
+    const trigger = document.getElementById('canvasSizeBgTrigger');
+    if (!input || !trigger) return null;
+    return {
+      key: 'canvasSizeBg',
+      input,
+      trigger,
+      label: 'Canvas Background',
+      eventName: false,
+      getValue: () => input.value,
+      setValue: normalized => {
+        input.value = normalized;
+        this._syncCanvasSizeColorTrigger(normalized);
+      },
+    };
+  }
+
+  _syncSimulationFormatColorTrigger(trigger, color) {
+    if (!trigger) return;
+    const chip = trigger.querySelector('.sim-format-colorChip');
+    const normalized = this._normalizeHexColor(color, '#1a1a1a') || '#1a1a1a';
+    if (chip) chip.style.background = normalized;
+    trigger.title = normalized.toUpperCase();
+  }
+
+  _getSimulationFormatColorTarget(trigger) {
+    if (!trigger) return null;
+    const input = trigger.nextElementSibling?.matches?.('[data-sim-field][data-sim-type="color"]')
+      ? trigger.nextElementSibling
+      : null;
+    if (!input) return null;
+    const entry = this._getSelectedSimulationEntry();
+    const field = trigger.dataset.simColorTrigger || input.dataset.simField || 'color';
+    const label = field === 'color'
+      ? 'Simulation Color'
+      : `${field.replace(/([A-Z])/g, ' $1').replace(/^./, char => char.toUpperCase())} Color`;
+    const entryKey = entry ? `${entry.collection}:${entry.id}` : 'selection';
+    return {
+      key: `sim-format:${entryKey}:${field}`,
+      input,
+      trigger,
+      label,
+      eventName: false,
+      getValue: () => input.value,
+      setValue: normalized => {
+        input.value = normalized;
+        delete input.dataset.simUnset;
+        this._syncSimulationFormatColorTrigger(trigger, normalized);
+      },
+      onCommit: () => input.dispatchEvent(new Event('change', { bubbles: true })),
+    };
+  }
+
+  _renderColorPickerHistory() {
+    const container = document.getElementById('colorPickerHistory');
+    if (!container) return;
+    container.innerHTML = '';
+    for (const hex of this._colorHistory) {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'color-picker-historySwatch';
+      swatch.title = hex;
+      swatch.style.background = hex;
+      swatch.addEventListener('click', e => {
+        e.stopPropagation();
+        this._syncColorPickerStateFromHex(hex);
+        this._applyColorPickerState();
+      });
+      container.appendChild(swatch);
+    }
+  }
+
+  _drawColorWheel() {
+    const canvas = document.getElementById('colorWheelCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const picker = this._colorPicker;
+    const size = canvas.width;
+    const cx = size / 2;
+    const cy = size / 2;
+    const outerRadius = (size / 2) - 8;
+    const innerRadius = outerRadius - 28;
+    ctx.clearRect(0, 0, size, size);
+    ctx.save();
+    if (typeof ctx.createConicGradient === 'function') {
+      const gradient = ctx.createConicGradient(0, cx, cy);
+      gradient.addColorStop(0, '#ff0000');
+      gradient.addColorStop(1 / 6, '#ffff00');
+      gradient.addColorStop(2 / 6, '#00ff00');
+      gradient.addColorStop(3 / 6, '#00ffff');
+      gradient.addColorStop(4 / 6, '#0000ff');
+      gradient.addColorStop(5 / 6, '#ff00ff');
+      gradient.addColorStop(1, '#ff0000');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      for (let step = 0; step < 360; step += 1) {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, outerRadius, (step - 1) * Math.PI / 180, step * Math.PI / 180);
+        ctx.closePath();
+        ctx.fillStyle = `hsl(${step},100%,50%)`;
+        ctx.fill();
+      }
+    }
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const currentHex = this._hslToHex(picker.hue, picker.saturation, picker.lightness);
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerRadius - 10, 0, Math.PI * 2);
+    ctx.fillStyle = currentHex;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const markerRadius = (outerRadius + innerRadius) / 2;
+    const markerAngle = picker.hue * Math.PI / 180;
+    const markerX = cx + Math.cos(markerAngle) * markerRadius;
+    const markerY = cy + Math.sin(markerAngle) * markerRadius;
+    ctx.beginPath();
+    ctx.arc(markerX, markerY, 8, 0, Math.PI * 2);
+    ctx.fillStyle = currentHex;
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(markerX, markerY, 10.5, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  _syncColorPickerUi() {
+    this._syncColorTriggerSwatches();
+    const panel = document.getElementById('colorPickerPanel');
+    if (!panel) return;
+    const picker = this._colorPicker;
+    const title = document.getElementById('colorPickerTitle');
+    const previewSwatch = document.getElementById('colorPreviewSwatch');
+    const saturationSlider = document.getElementById('colorSaturationSlider');
+    const lightnessSlider = document.getElementById('colorLightnessSlider');
+    const saturationValue = document.getElementById('colorSaturationValue');
+    const lightnessValue = document.getElementById('colorLightnessValue');
+    const hexInput = document.getElementById('colorHexInput');
+    const currentHex = this._hslToHex(picker.hue, picker.saturation, picker.lightness);
+    if (title) title.textContent = this._getColorTargetLabel(picker.target);
+    if (previewSwatch) previewSwatch.style.background = currentHex;
+    if (saturationSlider) {
+      saturationSlider.value = String(Math.round(picker.saturation));
+      saturationSlider.style.setProperty('--slider-track', `linear-gradient(90deg, hsl(${picker.hue} 0% ${picker.lightness}%), hsl(${picker.hue} 100% ${picker.lightness}%))`);
+    }
+    if (lightnessSlider) {
+      lightnessSlider.value = String(Math.round(picker.lightness));
+      lightnessSlider.style.setProperty('--slider-track', `linear-gradient(90deg, hsl(${picker.hue} ${picker.saturation}% 0%), hsl(${picker.hue} ${picker.saturation}% 50%), hsl(${picker.hue} ${picker.saturation}% 100%))`);
+    }
+    if (saturationValue) saturationValue.textContent = `${Math.round(picker.saturation)}%`;
+    if (lightnessValue) lightnessValue.textContent = `${Math.round(picker.lightness)}%`;
+    if (hexInput && document.activeElement !== hexInput) {
+      hexInput.value = currentHex.toUpperCase();
+      hexInput.classList.remove('invalid');
+    }
+    panel.setAttribute('aria-hidden', picker.open ? 'false' : 'true');
+    this._renderColorPickerHistory();
+    this._drawColorWheel();
+  }
+
+  _positionColorPickerPanel() {
+    const panel = document.getElementById('colorPickerPanel');
+    const picker = this._colorPicker;
+    if (!panel || !picker.open) return;
+    const anchor = picker.anchorEl || this._getColorTrigger(picker.target);
+    if (!anchor) return;
+    panel.style.left = '-9999px';
+    panel.style.top = '-9999px';
+    panel.style.display = 'block';
+    const anchorRect = anchor.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const margin = 12;
+    let left = anchorRect.left;
+    let top = anchorRect.bottom + 10;
+    if (left + panelRect.width > window.innerWidth - margin) {
+      left = window.innerWidth - panelRect.width - margin;
+    }
+    if (left < margin) left = margin;
+    if (top + panelRect.height > window.innerHeight - margin) {
+      top = anchorRect.top - panelRect.height - 10;
+    }
+    if (top < margin) top = margin;
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+  }
+
+  _openColorPicker(target, anchorEl = null) {
+    const panel = document.getElementById('colorPickerPanel');
+    if (!panel) return;
+    const picker = this._colorPicker;
+    if (picker.open && picker.anchorEl && picker.anchorEl !== (anchorEl || this._getColorTrigger(target))) {
+      this._setColorTriggerActive(picker.anchorEl, false);
+    }
+    picker.target = target;
+    picker.anchorEl = anchorEl || this._getColorTrigger(target);
+    picker.initialHex = this.getColorValue(target, '#ffffff');
+    picker.changedSinceOpen = false;
+    picker.open = true;
+    this._syncColorPickerStateFromHex(picker.initialHex);
+    panel.classList.add('open');
+    this._setColorTriggerActive(picker.anchorEl, true);
+    this._syncColorPickerUi();
+    this._positionColorPickerPanel();
+  }
+
+  _closeColorPicker(options = {}) {
+    const panel = document.getElementById('colorPickerPanel');
+    const picker = this._colorPicker;
+    if (!panel || !picker.open) {
+      this._syncColorTriggerSwatches();
+      return;
+    }
+    const target = picker.target;
+    const trigger = picker.anchorEl || this._getColorTrigger(target);
+    const finalHex = this.getColorValue(target, '#ffffff');
+    const shouldRecordHistory = options.recordHistory !== false && picker.changedSinceOpen;
+    const shouldCommitTarget = picker.changedSinceOpen && this._isCustomColorTarget(target) && typeof target.onCommit === 'function';
+    picker.open = false;
+    picker.anchorEl = null;
+    picker.wheelPointerId = null;
+    picker.changedSinceOpen = false;
+    panel.classList.remove('open');
+    panel.style.display = '';
+    this._setColorTriggerActive(trigger, false);
+    if (shouldRecordHistory) this._recordColor(finalHex);
+    if (shouldCommitTarget) target.onCommit(finalHex, options);
+    this._syncColorTriggerSwatches();
+  }
+
+  _handleColorInputSync(target) {
+    if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === this._getColorTargetKey(target)) {
+      this._syncColorPickerStateFromHex(this.getColorValue(target, '#ffffff'));
+    }
+    this._syncColorPickerUi();
+  }
+
+  _updateColorPickerHueFromPointerEvent(event) {
+    const canvas = document.getElementById('colorWheelCanvas');
+    if (!canvas) return false;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (event.clientX - rect.left) * scaleX;
+    const y = (event.clientY - rect.top) * scaleY;
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const outerRadius = (canvas.width / 2) - 8;
+    const innerRadius = outerRadius - 28;
+    const dx = x - cx;
+    const dy = y - cy;
+    const distance = Math.hypot(dx, dy);
+    if (distance < innerRadius - 14 || distance > outerRadius + 14) return false;
+    this._colorPicker.hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    this._applyColorPickerState();
+    return true;
+  }
+
+  _initColorPickerBindings() {
+    if (this._colorPicker.refs) {
+      this._syncColorPickerUi();
+      return;
+    }
+    const refs = {
+      panel: document.getElementById('colorPickerPanel'),
+      closeBtn: document.getElementById('colorPickerClose'),
+      wheel: document.getElementById('colorWheelCanvas'),
+      saturationSlider: document.getElementById('colorSaturationSlider'),
+      lightnessSlider: document.getElementById('colorLightnessSlider'),
+      hexInput: document.getElementById('colorHexInput'),
+    };
+    if (!refs.panel || !refs.wheel || !refs.saturationSlider || !refs.lightnessSlider || !refs.hexInput) return;
+    this._colorPicker.refs = refs;
+
+    ['primary', 'secondary', 'background'].forEach(target => {
+      const trigger = this._getColorTrigger(target);
+      trigger?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === this._getColorTargetKey(target)) {
+          this._closeColorPicker();
+          return;
+        }
+        this._openColorPicker(target, trigger);
+      });
+    });
+
+    document.getElementById('canvasSizeBgTrigger')?.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = this._getCanvasSizeColorTarget();
+      if (!target) return;
+      if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === this._getColorTargetKey(target)) {
+        this._closeColorPicker({ recordHistory: false });
+        return;
+      }
+      this._openColorPicker(target, event.currentTarget);
+    });
+
+    refs.panel.addEventListener('click', event => event.stopPropagation());
+    refs.closeBtn.addEventListener('click', () => this._closeColorPicker());
+    refs.saturationSlider.addEventListener('input', () => {
+      this._colorPicker.saturation = +refs.saturationSlider.value;
+      this._applyColorPickerState();
+    });
+    refs.lightnessSlider.addEventListener('input', () => {
+      this._colorPicker.lightness = +refs.lightnessSlider.value;
+      this._applyColorPickerState();
+    });
+    refs.hexInput.addEventListener('input', () => {
+      const raw = refs.hexInput.value.trim();
+      if (!/^#?[0-9a-fA-F]{0,6}$/.test(raw)) {
+        refs.hexInput.classList.add('invalid');
+        return;
+      }
+      const candidate = raw.startsWith('#') ? raw : `#${raw}`;
+      const normalized = this._normalizeHexColor(candidate, null);
+      refs.hexInput.classList.remove('invalid');
+      if (!normalized) return;
+      this._syncColorPickerStateFromHex(normalized);
+      this._applyColorPickerState();
+    });
+    refs.hexInput.addEventListener('blur', () => {
+      const raw = refs.hexInput.value.trim();
+      const candidate = raw.startsWith('#') ? raw : `#${raw}`;
+      const normalized = this._normalizeHexColor(candidate, null);
+      refs.hexInput.classList.remove('invalid');
+      if (normalized) {
+        this._syncColorPickerStateFromHex(normalized);
+        this._applyColorPickerState();
+      }
+      refs.hexInput.value = this.getColorValue(this._colorPicker.target, '#ffffff').toUpperCase();
+    });
+    refs.hexInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        refs.hexInput.blur();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        this._closeColorPicker();
+      }
+    });
+    refs.wheel.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      this._colorPicker.wheelPointerId = event.pointerId;
+      try {
+        refs.wheel.setPointerCapture?.(event.pointerId);
+      } catch { /* synthetic or unsupported pointer capture */ }
+      this._updateColorPickerHueFromPointerEvent(event);
+    });
+    refs.wheel.addEventListener('pointermove', event => {
+      if (this._colorPicker.wheelPointerId !== event.pointerId) return;
+      event.preventDefault();
+      this._updateColorPickerHueFromPointerEvent(event);
+    });
+    const releaseWheel = event => {
+      if (this._colorPicker.wheelPointerId !== event.pointerId) return;
+      this._colorPicker.wheelPointerId = null;
+      try {
+        refs.wheel.releasePointerCapture?.(event.pointerId);
+      } catch { /* synthetic or unsupported pointer capture */ }
+    };
+    refs.wheel.addEventListener('pointerup', releaseWheel);
+    refs.wheel.addEventListener('pointercancel', releaseWheel);
+
+    document.addEventListener('click', event => {
+      if (!this._colorPicker.open) return;
+      if (refs.panel.contains(event.target)) return;
+      if (event.target?.closest?.('.topbar-color-trigger, .canvas-size-color-trigger, .sim-format-color')) return;
+      this._closeColorPicker();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && this._colorPicker.open) {
+        this._closeColorPicker();
+      }
+    });
+    window.addEventListener('resize', () => {
+      if (this._colorPicker.open) this._positionColorPickerPanel();
+    });
+    this._syncCanvasSizeColorTrigger();
+    this._syncColorPickerUi();
   }
 
   // ── Canvas texture ─────────────────────────────────────────
@@ -2598,7 +3237,7 @@ export class App {
    */
   _buildBuiltinPaperTextureCanvas() {
     const c = document.createElement('canvas');
-    c.width = 192;
+        this.setColorValue('background', bgColor, { silent: true });
     c.height = 192;
     const ctx = c.getContext('2d', { willReadFrequently: true });
     const img = ctx.createImageData(c.width, c.height);
@@ -3896,23 +4535,61 @@ export class App {
     return layers[safeIndex]?.id || layers[0]?.id || null;
   }
 
-  _normalizeSimulationSessionBindings() {
-    const sessions = Array.isArray(this.simulation.sessions) ? this.simulation.sessions : [];
-    const bindings = Array.isArray(this.simulation.multiSessionBindings) ? this.simulation.multiSessionBindings : [];
+  _createSimulationSessionId() {
+    const stamp = Date.now().toString(36);
+    const suffix = Math.random().toString(36).slice(2, 9);
+    return `sim-session-${stamp}-${suffix}`;
+  }
+
+  _ensureSimulationSessionIds(sessions = this.simulation.sessions) {
+    const usedIds = new Set();
+    for (const session of Array.isArray(sessions) ? sessions : []) {
+      if (!session || typeof session !== 'object') continue;
+      let id = typeof session.id === 'string' ? session.id.trim() : '';
+      if (!id || usedIds.has(id)) id = this._createSimulationSessionId();
+      session.id = id;
+      usedIds.add(id);
+      session.vars = _normalizeSimulationVars(session.vars);
+      session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+    }
+    return sessions;
+  }
+
+  _normalizeSimulationLayerIds(layerIds, fallbackSessionIndex = 0) {
     const validLayers = new Set(this._getSimulationTargetLayers().map(layer => layer.id));
     const normalized = [];
+    const addLayer = layerId => {
+      const id = String(layerId || '');
+      if (!id || !validLayers.has(id) || normalized.includes(id)) return;
+      normalized.push(id);
+    };
+    for (const layerId of Array.isArray(layerIds) ? layerIds : []) addLayer(layerId);
+    if (!normalized.length) addLayer(this._getDefaultSimulationSessionLayerId(fallbackSessionIndex));
+    return normalized;
+  }
+
+  _normalizeSimulationSessionBindings() {
+    const sessions = Array.isArray(this.simulation.sessions) ? this.simulation.sessions : [];
+    this._ensureSimulationSessionIds(sessions);
+    const bindings = Array.isArray(this.simulation.multiSessionBindings) ? this.simulation.multiSessionBindings : [];
+    const normalized = [];
     const bySession = new Map();
+    const sessionIndexById = new Map(sessions.map((session, index) => [session.id, index]));
 
     for (const binding of bindings) {
-      const sessionIndex = Math.round(binding?.sessionIndex);
+      const indexedSession = typeof binding?.sessionId === 'string' ? sessionIndexById.get(binding.sessionId) : undefined;
+      const fallbackIndex = Math.round(binding?.sessionIndex);
+      const sessionIndex = Number.isFinite(indexedSession) ? indexedSession : fallbackIndex;
       if (!Number.isFinite(sessionIndex) || sessionIndex < 0 || sessionIndex >= sessions.length) continue;
       if (bySession.has(sessionIndex)) continue;
-      const layerId = validLayers.has(binding?.layerId)
-        ? binding.layerId
-        : this._getDefaultSimulationSessionLayerId(sessionIndex);
-      const nextBinding = {
+      const layerIds = this._normalizeSimulationLayerIds(
+        Array.isArray(binding?.layerIds) ? binding.layerIds : [binding?.layerId],
         sessionIndex,
-        layerId,
+      );
+      const nextBinding = {
+        sessionId: sessions[sessionIndex].id,
+        sessionIndex,
+        layerIds,
         enabled: binding?.enabled !== false,
       };
       bySession.set(sessionIndex, nextBinding);
@@ -3922,8 +4599,9 @@ export class App {
     for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex++) {
       if (bySession.has(sessionIndex)) continue;
       normalized.push({
+        sessionId: sessions[sessionIndex].id,
         sessionIndex,
-        layerId: this._getDefaultSimulationSessionLayerId(sessionIndex),
+        layerIds: this._normalizeSimulationLayerIds([this._getDefaultSimulationSessionLayerId(sessionIndex)], sessionIndex),
         enabled: true,
       });
     }
@@ -3950,16 +4628,34 @@ export class App {
     const bindings = this._normalizeSimulationSessionBindings();
     const enabledBindings = bindings.filter(binding => binding.enabled !== false && this.simulation.sessions[binding.sessionIndex]);
     if (!enabledBindings.length) return 'No saved sessions armed for Run';
-    const uniqueLayers = new Set(enabledBindings.map(binding => binding.layerId).filter(Boolean));
-    return `${enabledBindings.length} session${enabledBindings.length === 1 ? '' : 's'} armed across ${uniqueLayers.size} layer${uniqueLayers.size === 1 ? '' : 's'}`;
+    const uniqueLayers = new Set();
+    let routeCount = 0;
+    for (const binding of enabledBindings) {
+      for (const layerId of binding.layerIds || []) {
+        if (!this._getLayerById(layerId)) continue;
+        uniqueLayers.add(layerId);
+        routeCount += 1;
+      }
+    }
+    if (!routeCount) return 'No saved sessions have valid target layers';
+    return `${enabledBindings.length} session${enabledBindings.length === 1 ? '' : 's'} armed across ${routeCount} layer route${routeCount === 1 ? '' : 's'} (${uniqueLayers.size} unique layer${uniqueLayers.size === 1 ? '' : 's'})`;
   }
 
   _getRunnableSimulationSessionBindings() {
-    return this._normalizeSimulationSessionBindings().filter(binding => {
-      if (binding.enabled === false) return false;
-      if (!this.simulation.sessions[binding.sessionIndex]) return false;
-      return !!this._getLayerById(binding.layerId);
-    });
+    const routes = [];
+    for (const binding of this._normalizeSimulationSessionBindings()) {
+      if (binding.enabled === false) continue;
+      if (!this.simulation.sessions[binding.sessionIndex]) continue;
+      for (const layerId of binding.layerIds || []) {
+        if (!this._getLayerById(layerId)) continue;
+        routes.push({
+          sessionId: binding.sessionId,
+          sessionIndex: binding.sessionIndex,
+          layerId,
+        });
+      }
+    }
+    return routes;
   }
 
   _shouldUseMultiSessionPlayback() {
@@ -5407,6 +6103,7 @@ export class App {
     if (!rawName) return;
     const name = rawName.trim().slice(0, MAX_SIM_SESSION_NAME_LENGTH) || defaultName;
     const nextSession = {
+      id: existingSession?.id || this._createSimulationSessionId(),
       name,
       savedAt: Date.now(),
       vars: _normalizeSimulationVars(this.simulation.vars),
@@ -5479,6 +6176,572 @@ export class App {
     }
     this.saveSession();
     this.showToast(`Deleted "${session.name}"`);
+  }
+
+  _createSimulationSetupDraft() {
+    const sessions = this._ensureSimulationSessionIds(_deepClone(this.simulation.sessions || [])) || [];
+    const activeSessionId = this.simulation.activeSessionIndex >= 0
+      ? sessions[this.simulation.activeSessionIndex]?.id || null
+      : null;
+    const bindings = this._normalizeSimulationSessionBindings().map(binding => ({
+      sessionId: binding.sessionId,
+      sessionIndex: binding.sessionIndex,
+      enabled: binding.enabled !== false,
+      layerIds: this._normalizeSimulationLayerIds(binding.layerIds, binding.sessionIndex),
+    }));
+    const rows = sessions.map((session, sessionIndex) => {
+      const binding = bindings.find(candidate => candidate.sessionId === session.id)
+        || bindings.find(candidate => candidate.sessionIndex === sessionIndex)
+        || {
+          sessionId: session.id,
+          sessionIndex,
+          enabled: false,
+          layerIds: this._normalizeSimulationLayerIds([this._getDefaultSimulationSessionLayerId(sessionIndex)], sessionIndex),
+        };
+      const sensingSource = SIM_SENSING_SOURCES.includes(session.vars?.sensingSource)
+        ? session.vars.sensingSource
+        : 'below';
+      let sensingLayerIds = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+      if (sensingSource === 'selected' && !sensingLayerIds.length) {
+        sensingLayerIds = this._seedDraftSensingSourceSelection(sensingSource, sessionIndex);
+      }
+      return {
+        sessionId: session.id,
+        sessionIndex,
+        name: session.name || `Session ${sessionIndex + 1}`,
+        savedAt: session.savedAt || 0,
+        enabled: binding.enabled !== false,
+        layerIds: this._normalizeSimulationLayerIds(binding.layerIds, sessionIndex),
+        sensingEnabled: session.vars?.sensingEnabled === true,
+        sensingSource,
+        sensingLayerIds,
+        unresolvedLayers: [],
+        unresolvedSensingLayers: [],
+      };
+    });
+    return {
+      sessions,
+      activeSessionId,
+      multiSessionEnabled: this.simulation.multiSessionEnabled === true,
+      rows,
+      status: '',
+      statusLevel: '',
+      importedSetupMeta: null,
+    };
+  }
+
+  _seedDraftSensingSourceSelection(source = 'below', sessionIndex = 0) {
+    const activeLayer = this._getLayerById(this._getDefaultSimulationSessionLayerId(sessionIndex)) || this.getActiveLayer();
+    const activeLayerIndex = activeLayer ? this.layers.findIndex(layer => layer.id === activeLayer.id) : this.getActiveLayerIndex();
+    if (source === 'all') {
+      return this.layers.filter(layer => layer.visible).map(layer => layer.id);
+    }
+    if (source === 'selected') {
+      return activeLayer ? [activeLayer.id] : [];
+    }
+    if (source === 'active') {
+      return activeLayer ? [activeLayer.id] : [];
+    }
+    return this.layers
+      .slice(Math.max(0, activeLayerIndex + 1))
+      .filter(layer => layer.visible)
+      .map(layer => layer.id);
+  }
+
+  _buildSimulationSetupLayerSummary(layerIds, sessionIndex = 0) {
+    const layers = this._normalizeSimulationLayerIds(layerIds, sessionIndex)
+      .map(layerId => this._getLayerById(layerId))
+      .filter(Boolean);
+    if (!layers.length) return 'No layers';
+    if (layers.length === 1) return layers[0].name || 'Unnamed layer';
+    const first = layers[0].name || 'Unnamed layer';
+    return `${first} +${layers.length - 1}`;
+  }
+
+  _buildSimulationSetupSensingSummary(row) {
+    if (!row?.sensingEnabled) return 'Sensing off';
+    if (row.sensingSource !== 'selected') {
+      if (row.sensingSource === 'below') return 'Layers below active';
+      if (row.sensingSource === 'all') return 'All visible layers';
+      if (row.sensingSource === 'active') return 'Active layer only';
+      return 'Source not set';
+    }
+    const layers = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds)
+      .map(layerId => this._getLayerById(layerId))
+      .filter(Boolean);
+    if (!layers.length) return 'Selected layers required';
+    if (layers.length === 1) return layers[0].name || 'Unnamed layer';
+    const first = layers[0].name || 'Unnamed layer';
+    return `${first} +${layers.length - 1}`;
+  }
+
+  _setSimulationSetupStatus(message = '', level = '') {
+    if (!this._simulationSetupDraft) return;
+    this._simulationSetupDraft.status = message;
+    this._simulationSetupDraft.statusLevel = level;
+    const node = document.getElementById('simSetupStatus');
+    if (!node) return;
+    node.textContent = message;
+    node.className = `sim-setup-status${level ? ` ${level}` : ''}`;
+  }
+
+  _closeSimulationSetupMenus({ exceptRowKey = '' } = {}) {
+    const root = document.getElementById('simSetupRows');
+    if (!root) return;
+    root.querySelectorAll('.sim-setup-multiList.open').forEach(menu => {
+      if (exceptRowKey && menu.dataset.rowKey === exceptRowKey) return;
+      menu.classList.remove('open');
+    });
+  }
+
+  _toggleSimulationSetupMenu(rowKey, event) {
+    const button = event?.currentTarget;
+    const menu = button?.parentElement?.querySelector('.sim-setup-multiList');
+    if (!menu) return;
+    const nextOpen = !menu.classList.contains('open');
+    this._closeSimulationSetupMenus({ exceptRowKey: nextOpen ? rowKey : '' });
+    menu.classList.toggle('open', nextOpen);
+  }
+
+  _updateSimulationSetupSummary() {
+    const summary = document.getElementById('simSetupSummary');
+    const toggle = document.getElementById('simSetupMultiToggle');
+    if (!summary || !this._simulationSetupDraft) return;
+    if (toggle) toggle.checked = this._simulationSetupDraft.multiSessionEnabled === true;
+    const enabledRows = this._simulationSetupDraft.rows.filter(row => row.enabled);
+    const routeCount = enabledRows.reduce((count, row) => count + this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex).length, 0);
+    if (!this._simulationSetupDraft.rows.length) {
+      summary.textContent = 'No saved sessions loaded.';
+      return;
+    }
+    summary.textContent = `${this._simulationSetupDraft.rows.length} saved session${this._simulationSetupDraft.rows.length === 1 ? '' : 's'} in draft, ${enabledRows.length} enabled, ${routeCount} target route${routeCount === 1 ? '' : 's'}.`;
+  }
+
+  _renderSimulationSetupExplorer() {
+    const root = document.getElementById('simSetupRows');
+    if (!root || !this._simulationSetupDraft) return;
+    const rows = this._simulationSetupDraft.rows || [];
+    this._updateSimulationSetupSummary();
+    this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '');
+    if (!rows.length) {
+      root.innerHTML = '<div class="sim-setup-empty">Save at least one simulation session before assigning setup rows.</div>';
+      return;
+    }
+    const layerOptions = this._getSimulationTargetLayers().map(layer => ({
+      id: layer.id,
+      label: layer.name || (layer.isBackground ? 'Background' : 'Unnamed layer'),
+    }));
+    const sensingLayerOptions = this.layers.map(layer => ({
+      id: layer.id,
+      label: layer.name || (layer.isBackground ? 'Background' : 'Unnamed layer'),
+    }));
+    root.innerHTML = `
+      <table class="sim-setup-table">
+        <thead>
+          <tr>
+            <th style="width:56px;">Run</th>
+            <th>Simulation</th>
+            <th style="width:210px;">Stamp Layer(s)</th>
+            <th style="width:88px;">Sense</th>
+            <th style="width:150px;">Sense Source</th>
+            <th style="width:220px;">Sense Layer(s)</th>
+            <th style="width:180px;">Future</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => {
+            const rowKey = _escapeHtml(row.sessionId);
+            const saveStamp = row.savedAt ? new Date(row.savedAt).toLocaleString() : 'Not saved yet';
+            const routeWarning = row.unresolvedLayers?.length
+              ? `<div class="sim-setup-warning">Missing: ${_escapeHtml(row.unresolvedLayers.join(', '))}</div>`
+              : '';
+            const sensingWarning = row.unresolvedSensingLayers?.length
+              ? `<div class="sim-setup-warning">Missing: ${_escapeHtml(row.unresolvedSensingLayers.join(', '))}</div>`
+              : '';
+            return `
+              <tr data-sim-setup-row="${rowKey}">
+                <td><label class="sim-setup-check"><input type="checkbox" data-sim-setup-enabled="${rowKey}" ${row.enabled ? 'checked' : ''}></label></td>
+                <td>
+                  <div class="sim-setup-sessionName">
+                    <strong>${_escapeHtml(row.name)}</strong>
+                    <span>Saved ${_escapeHtml(saveStamp)}</span>
+                    <span>${row.enabled ? 'Ready for multi-session playback' : 'Disabled in draft'}</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="sim-setup-multi">
+                    <button type="button" data-sim-setup-menu="${rowKey}" data-sim-setup-kind="layers">
+                      <span>${_escapeHtml(this._buildSimulationSetupLayerSummary(row.layerIds, row.sessionIndex))}</span>
+                      <span aria-hidden="true">▾</span>
+                    </button>
+                    <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="layers">
+                      ${layerOptions.map(option => `
+                        <label>
+                          <input type="checkbox" data-sim-setup-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.layerIds.includes(option.id) ? 'checked' : ''}>
+                          <span>${_escapeHtml(option.label)}</span>
+                        </label>`).join('')}
+                    </div>
+                    ${routeWarning}
+                  </div>
+                </td>
+                <td><label class="sim-setup-check"><input type="checkbox" data-sim-setup-sensing-enabled="${rowKey}" ${row.sensingEnabled ? 'checked' : ''}></label></td>
+                <td>
+                  <select data-sim-setup-sensing-source="${rowKey}">
+                    <option value="below" ${row.sensingSource === 'below' ? 'selected' : ''}>Below</option>
+                    <option value="all" ${row.sensingSource === 'all' ? 'selected' : ''}>All Visible</option>
+                    <option value="active" ${row.sensingSource === 'active' ? 'selected' : ''}>Active</option>
+                    <option value="selected" ${row.sensingSource === 'selected' ? 'selected' : ''}>Selected</option>
+                  </select>
+                </td>
+                <td>
+                  <div class="sim-setup-multi">
+                    <button type="button" data-sim-setup-menu="${rowKey}" data-sim-setup-kind="sensing" ${row.sensingSource === 'selected' ? '' : 'disabled'}>
+                      <span>${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</span>
+                      <span aria-hidden="true">▾</span>
+                    </button>
+                    <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="sensing">
+                      ${sensingLayerOptions.map(option => `
+                        <label>
+                          <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(option.id) ? 'checked' : ''}>
+                          <span>${_escapeHtml(option.label)}</span>
+                        </label>`).join('')}
+                    </div>
+                    ${sensingWarning}
+                    <div class="sim-setup-muted">${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</div>
+                  </div>
+                </td>
+                <td><div class="sim-setup-future">Reserved for per-row simulation variables, presets, and future feature routing.</div></td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+
+    root.querySelectorAll('[data-sim-setup-enabled]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupEnabled);
+        if (!row) return;
+        row.enabled = !!event.target.checked;
+        this._updateSimulationSetupSummary();
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-enabled]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingEnabled);
+        if (!row) return;
+        row.sensingEnabled = !!event.target.checked;
+        this._renderSimulationSetupExplorer();
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-source]').forEach(select => {
+      select.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingSource);
+        if (!row) return;
+        row.sensingSource = SIM_SENSING_SOURCES.includes(event.target.value) ? event.target.value : 'below';
+        if (row.sensingSource === 'selected' && !row.sensingLayerIds.length) {
+          row.sensingLayerIds = this._seedDraftSensingSourceSelection('selected', row.sessionIndex);
+        }
+        this._renderSimulationSetupExplorer();
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-menu]').forEach(button => {
+      button.addEventListener('click', event => {
+        const rowKey = event.currentTarget.dataset.simSetupMenu;
+        this._toggleSimulationSetupMenu(rowKey, event);
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-layer-option]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupLayerOption);
+        if (!row) return;
+        const nextIds = new Set(this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex));
+        if (event.target.checked) nextIds.add(event.target.value);
+        else nextIds.delete(event.target.value);
+        row.layerIds = this._normalizeSimulationLayerIds(Array.from(nextIds), row.sessionIndex);
+        this._renderSimulationSetupExplorer();
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-layer-option]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingLayerOption);
+        if (!row) return;
+        const nextIds = new Set(_normalizeSimulationSensingSourceSelection(row.sensingLayerIds));
+        if (event.target.checked) nextIds.add(event.target.value);
+        else nextIds.delete(event.target.value);
+        row.sensingLayerIds = _normalizeSimulationSensingSourceSelection(Array.from(nextIds));
+        this._renderSimulationSetupExplorer();
+      });
+    });
+  }
+
+  _getSimulationSetupDraftRow(sessionId) {
+    return this._simulationSetupDraft?.rows?.find(row => row.sessionId === sessionId) || null;
+  }
+
+  _showSimulationSetupExplorer(opener = null) {
+    const modal = document.getElementById('simSetupModal');
+    if (!modal) return;
+    this._simulationSetupDraft = this._createSimulationSetupDraft();
+    this._simulationSetupOpener = opener || document.activeElement;
+    this._renderSimulationSetupExplorer();
+    modal.classList.add('open');
+    const acceptButton = document.getElementById('simSetupAccept');
+    queueMicrotask(() => acceptButton?.focus());
+  }
+
+  _hideSimulationSetupExplorer({ discard = true } = {}) {
+    const modal = document.getElementById('simSetupModal');
+    if (!modal) return;
+    modal.classList.remove('open');
+    this._closeSimulationSetupMenus();
+    if (discard) this._simulationSetupDraft = null;
+    const opener = this._simulationSetupOpener;
+    this._simulationSetupOpener = null;
+    opener?.focus?.();
+  }
+
+  _applySimulationSetupDraft() {
+    if (!this._simulationSetupDraft) return false;
+    const validationError = this._validateSimulationSetupDraft();
+    if (validationError) {
+      this._setSimulationSetupStatus(validationError, 'error');
+      return false;
+    }
+    const sessions = this._ensureSimulationSessionIds(_deepClone(this._simulationSetupDraft.sessions || [])) || [];
+    const rowsById = new Map(this._simulationSetupDraft.rows.map(row => [row.sessionId, row]));
+    for (const session of sessions) {
+      const row = rowsById.get(session.id);
+      if (!row) continue;
+      session.vars = _normalizeSimulationVars({
+        ...session.vars,
+        sensingEnabled: row.sensingEnabled,
+        sensingSource: row.sensingSource,
+      });
+      session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
+    }
+    this.simulation.sessions = sessions;
+    const nextActiveIndex = this._simulationSetupDraft.activeSessionId
+      ? sessions.findIndex(session => session.id === this._simulationSetupDraft.activeSessionId)
+      : -1;
+    this.simulation.activeSessionIndex = nextActiveIndex >= 0 ? nextActiveIndex : -1;
+    this.simulation.multiSessionEnabled = this._simulationSetupDraft.multiSessionEnabled === true;
+    this.simulation.multiSessionBindings = this._simulationSetupDraft.rows.map(row => ({
+      sessionId: row.sessionId,
+      sessionIndex: row.sessionIndex,
+      enabled: row.enabled !== false,
+      layerIds: this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex),
+    }));
+    if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
+    this._normalizeSimulationSessionBindings();
+    this._renderSimulationInspector();
+    this._syncSimulationUI();
+    this.saveSession();
+    this._hideSimulationSetupExplorer({ discard: true });
+    this.showToast('Simulation setup applied');
+    return true;
+  }
+
+  _validateSimulationSetupDraft() {
+    if (!this._simulationSetupDraft) return 'No simulation setup draft is open.';
+    for (const row of this._simulationSetupDraft.rows || []) {
+      if (Array.isArray(row.unresolvedLayers) && row.unresolvedLayers.length) {
+        return `Resolve missing target layers for ${row.name} before accepting.`;
+      }
+      const layerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
+      if (row.enabled && !layerIds.length) {
+        return `Choose at least one target layer for ${row.name}.`;
+      }
+      if (row.sensingEnabled && row.sensingSource === 'selected' && Array.isArray(row.unresolvedSensingLayers) && row.unresolvedSensingLayers.length) {
+        return `Resolve missing sensing layers for ${row.name} before accepting.`;
+      }
+      if (row.sensingEnabled && row.sensingSource === 'selected' && !_normalizeSimulationSensingSourceSelection(row.sensingLayerIds).length) {
+        return `Choose at least one sensing source layer for ${row.name}.`;
+      }
+    }
+    return '';
+  }
+
+  _buildSimulationSetupDraftSnapshot(draft = this._simulationSetupDraft) {
+    if (!draft) return null;
+    const sessions = this._ensureSimulationSessionIds(_deepClone(draft.sessions || [])) || [];
+    const rowsById = new Map((draft.rows || []).map(row => [row.sessionId, row]));
+    for (const session of sessions) {
+      const row = rowsById.get(session.id);
+      if (!row) continue;
+      session.vars = _normalizeSimulationVars({
+        ...session.vars,
+        sensingEnabled: row.sensingEnabled,
+        sensingSource: row.sensingSource,
+      });
+      session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
+    }
+    return {
+      activeSessionId: draft.activeSessionId || null,
+      multiSessionEnabled: draft.multiSessionEnabled === true,
+      sessions,
+      bindings: (draft.rows || []).map(row => ({
+        sessionId: row.sessionId,
+        sessionIndex: row.sessionIndex,
+        enabled: row.enabled !== false,
+        layerIds: this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex),
+      })),
+    };
+  }
+
+  _resetSimulationSetupDraftToDefaults() {
+    if (!this._simulationSetupDraft) return;
+    this._simulationSetupDraft.multiSessionEnabled = false;
+    this._simulationSetupDraft.rows.forEach((row, index) => {
+      row.enabled = false;
+      row.layerIds = this._normalizeSimulationLayerIds([this._getDefaultSimulationSessionLayerId(index)], index);
+      row.sensingEnabled = false;
+      row.sensingSource = 'below';
+      row.sensingLayerIds = [];
+      row.unresolvedLayers = [];
+      row.unresolvedSensingLayers = [];
+    });
+    this._setSimulationSetupStatus('Draft reset to default routing and sensing.', 'warn');
+    this._renderSimulationSetupExplorer();
+  }
+
+  createSimulationSetupBundle() {
+    this._normalizeSimulationSessionBindings();
+    const draft = document.getElementById('simSetupModal')?.classList.contains('open') ? this._simulationSetupDraft : null;
+    const snapshot = draft ? this._buildSimulationSetupDraftSnapshot(draft) : null;
+    const layerCatalog = this.layers.map(layer => ({
+      id: layer.id,
+      name: layer.name || '',
+      isBackground: !!layer.isBackground,
+    }));
+    return {
+      format: SIM_SETUP_FORMAT,
+      version: SIM_SETUP_VERSION,
+      exportedAt: new Date().toISOString(),
+      appBuildId: APP_BUILD_ID,
+      activeSessionId: snapshot?.activeSessionId
+        || (this.simulation.activeSessionIndex >= 0 ? this.simulation.sessions[this.simulation.activeSessionIndex]?.id || null : null),
+      multiSessionEnabled: snapshot ? snapshot.multiSessionEnabled : this.simulation.multiSessionEnabled === true,
+      sessions: snapshot
+        ? snapshot.sessions
+        : this._ensureSimulationSessionIds(_deepClone(this.simulation.sessions || [])),
+      bindings: snapshot
+        ? snapshot.bindings
+        : _deepClone(this.simulation.multiSessionBindings || []),
+      layers: layerCatalog,
+    };
+  }
+
+  exportSimulationSetupFile() {
+    const bundle = this.createSimulationSetupBundle();
+    const stamp = new Date().toISOString().replace(/[.:]/g, '-');
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    this._downloadBlob(blob, `boid-brush-sim-setup-${stamp}.json`);
+    this.showToast('Simulation setup exported');
+    return true;
+  }
+
+  _mapImportedSimulationSetupLayerIds(layerIds, sourceLayers = []) {
+    const byId = new Map(this.layers.map(layer => [layer.id, layer.id]));
+    const byName = new Map(this.layers.map(layer => [layer.name || '', layer.id]));
+    const sourceById = new Map((sourceLayers || []).map(layer => [layer.id, layer]));
+    const resolved = [];
+    const missing = [];
+    for (const layerId of Array.isArray(layerIds) ? layerIds : []) {
+      if (byId.has(layerId)) {
+        resolved.push(byId.get(layerId));
+        continue;
+      }
+      const sourceLayer = sourceById.get(layerId);
+      const mappedByName = sourceLayer?.name ? byName.get(sourceLayer.name) : null;
+      if (mappedByName) resolved.push(mappedByName);
+      else missing.push(sourceLayer?.name || layerId);
+    }
+    return {
+      resolved: [...new Set(resolved)],
+      missing,
+    };
+  }
+
+  _normalizeSimulationSetupBundle(bundle) {
+    if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
+      throw new Error('Invalid simulation setup payload');
+    }
+    if (bundle.format !== SIM_SETUP_FORMAT) {
+      throw new Error('Unsupported simulation setup format');
+    }
+    const sessions = this._ensureSimulationSessionIds(
+      (Array.isArray(bundle.sessions) ? bundle.sessions : [])
+        .filter(session => session && typeof session === 'object')
+        .map(session => ({
+          ...session,
+          vars: _normalizeSimulationVars(session.vars),
+          sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+        })),
+    );
+    const sessionIndexById = new Map(sessions.map((session, index) => [session.id, index]));
+    const sourceLayers = Array.isArray(bundle.layers) ? bundle.layers : [];
+    const bindings = (Array.isArray(bundle.bindings) ? bundle.bindings : []).map(binding => {
+      const indexedSession = typeof binding?.sessionId === 'string' ? sessionIndexById.get(binding.sessionId) : undefined;
+      const fallbackIndex = Math.round(binding?.sessionIndex);
+      const sessionIndex = Number.isFinite(indexedSession) ? indexedSession : fallbackIndex;
+      const session = sessions[sessionIndex];
+      if (!session) return null;
+      const mapped = this._mapImportedSimulationSetupLayerIds(
+        Array.isArray(binding?.layerIds) ? binding.layerIds : [binding?.layerId],
+        sourceLayers,
+      );
+      return {
+        sessionId: session.id,
+        sessionIndex,
+        enabled: binding?.enabled !== false,
+        layerIds: mapped.resolved,
+        unresolvedLayers: mapped.missing,
+      };
+    }).filter(Boolean);
+    return {
+      activeSessionId: typeof bundle.activeSessionId === 'string' ? bundle.activeSessionId : null,
+      multiSessionEnabled: bundle.multiSessionEnabled === true,
+      sessions,
+      bindings,
+      importedSetupMeta: {
+        exportedAt: bundle.exportedAt || '',
+        sourceLayers,
+      },
+    };
+  }
+
+  async importSimulationSetupText(rawText) {
+    const parsed = JSON.parse(rawText);
+    const normalized = this._normalizeSimulationSetupBundle(parsed);
+    const bindingsById = new Map(normalized.bindings.map(binding => [binding.sessionId, binding]));
+    this._simulationSetupDraft = {
+      sessions: normalized.sessions,
+      activeSessionId: normalized.activeSessionId,
+      multiSessionEnabled: normalized.multiSessionEnabled,
+      rows: normalized.sessions.map((session, sessionIndex) => {
+        const binding = bindingsById.get(session.id);
+        const sensingMap = this._mapImportedSimulationSetupLayerIds(session.sensingSourceSelection, normalized.importedSetupMeta?.sourceLayers);
+        return {
+          sessionId: session.id,
+          sessionIndex,
+          name: session.name || `Session ${sessionIndex + 1}`,
+          savedAt: session.savedAt || 0,
+          enabled: binding?.enabled !== false,
+          layerIds: this._normalizeSimulationLayerIds(binding?.layerIds, sessionIndex),
+          sensingEnabled: session.vars?.sensingEnabled === true,
+          sensingSource: SIM_SENSING_SOURCES.includes(session.vars?.sensingSource) ? session.vars.sensingSource : 'below',
+          sensingLayerIds: sensingMap.resolved,
+          unresolvedLayers: binding?.unresolvedLayers || [],
+          unresolvedSensingLayers: sensingMap.missing,
+        };
+      }),
+      status: normalized.bindings.some(binding => binding.unresolvedLayers?.length)
+        ? 'Imported setup has unresolved layer mappings. Review rows before Accept.'
+        : 'Imported setup loaded into draft.',
+      statusLevel: normalized.bindings.some(binding => binding.unresolvedLayers?.length) ? 'warn' : '',
+      importedSetupMeta: normalized.importedSetupMeta,
+    };
+    this._renderSimulationSetupExplorer();
+    return true;
   }
 
   _ensureSimulationSessionRoutingPanel() {
@@ -5593,49 +6856,20 @@ export class App {
   }
 
   openSimulationSessionRoutingPicker(anchorEl) {
-    const panel = this._ensureSimulationSessionRoutingPanel();
-    this._simulationSessionRoutingAnchor = anchorEl || this._simulationSessionRoutingAnchor;
-    this._renderSimulationSessionRoutingPicker();
-    panel.style.display = 'block';
-    panel.classList.add('open');
-    if (this._simulationSessionRoutingAnchor) this._positionSimulationSessionRoutingPicker(this._simulationSessionRoutingAnchor);
-    if (!this._simulationSessionRoutingPointerHandler) {
-      this._simulationSessionRoutingPointerHandler = event => {
-        if (panel.contains(event.target) || this._simulationSessionRoutingAnchor?.contains?.(event.target)) return;
-        this.closeSimulationSessionRoutingPicker();
-      };
-      document.addEventListener('pointerdown', this._simulationSessionRoutingPointerHandler);
-    }
-    if (!this._simulationSessionRoutingKeyHandler) {
-      this._simulationSessionRoutingKeyHandler = event => {
-        if (event.key === 'Escape') this.closeSimulationSessionRoutingPicker();
-      };
-      document.addEventListener('keydown', this._simulationSessionRoutingKeyHandler);
-    }
+    this._showSimulationSetupExplorer(anchorEl);
   }
 
   toggleSimulationSessionRoutingPicker(anchorEl) {
-    const panel = this._ensureSimulationSessionRoutingPanel();
-    if (panel.classList.contains('open')) {
-      this.closeSimulationSessionRoutingPicker();
+    const modal = document.getElementById('simSetupModal');
+    if (modal?.classList.contains('open')) {
+      this._hideSimulationSetupExplorer({ discard: true });
       return;
     }
     this.openSimulationSessionRoutingPicker(anchorEl);
   }
 
   closeSimulationSessionRoutingPicker() {
-    const panel = this._simulationSessionRoutingPanel;
-    if (!panel) return;
-    panel.classList.remove('open');
-    panel.style.display = 'none';
-    if (this._simulationSessionRoutingPointerHandler) {
-      document.removeEventListener('pointerdown', this._simulationSessionRoutingPointerHandler);
-      this._simulationSessionRoutingPointerHandler = null;
-    }
-    if (this._simulationSessionRoutingKeyHandler) {
-      document.removeEventListener('keydown', this._simulationSessionRoutingKeyHandler);
-      this._simulationSessionRoutingKeyHandler = null;
-    }
+    this._hideSimulationSetupExplorer({ discard: true });
   }
 
   async _createSimulationRuntimeBrush(brushName = 'boid') {
@@ -6237,7 +7471,7 @@ export class App {
         <div class="sim-inspector-actions" style="margin-top:10px">
           <button data-sim-new-session="1">New Working Scene</button>
           <button data-sim-save-session="1">${activeSavedSession ? 'Update Session' : 'Save Session'}</button>
-          <button data-sim-open-routing="1">Session Layers</button>
+          <button data-sim-open-routing="1">Setup Explorer</button>
           ${activeSavedSession ? '<button class="danger" data-sim-delete-active-session="1">Delete Active</button>' : ''}
         </div>
         <div class="sim-inspector-note" style="margin-top:8px">${_escapeHtml(this._buildSimulationSessionRoutingSummary())}</div>
@@ -6368,7 +7602,7 @@ export class App {
         const raw = _normalizeHexColor(target[field]);
         const isSet = !!raw;
         const value = raw || _normalizeHexColor(fallbackColor, '#1a1a1a');
-        return `<input class="sim-format-color" type="color" value="${value}" title="Color" data-sim-field="${field}" data-sim-type="color"${isSet ? '' : ' data-sim-unset="1"'}>`;
+        return `<button type="button" class="sim-format-color" title="Color" data-sim-color-trigger="${field}"${isSet ? '' : ' data-sim-unset="1"'}><span class="sim-format-colorChip" style="background:${value}"></span></button><input type="hidden" value="${value}" data-sim-field="${field}" data-sim-type="color"${isSet ? '' : ' data-sim-unset="1"'}>`;
       };
       const compactNumberControl = (field, type, label, min, max, step, scale) => {
         const raw = target[field];
@@ -6546,6 +7780,20 @@ export class App {
       button.addEventListener('click', event => {
         event.stopPropagation();
         this._toggleSimulationFormatMenuPopover(button.dataset.simFormatToggle);
+      });
+    });
+    queryAllInRoots('[data-sim-color-trigger]').forEach(button => {
+      this._syncSimulationFormatColorTrigger(button, button.nextElementSibling?.value || '#1a1a1a');
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const target = this._getSimulationFormatColorTarget(button);
+        if (!target) return;
+        if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === this._getColorTargetKey(target)) {
+          this._closeColorPicker({ recordHistory: false });
+          return;
+        }
+        this._openColorPicker(target, button);
       });
     });
     queryAllInRoots('[data-sim-reset-all]').forEach(button => {
@@ -10533,6 +11781,7 @@ export class App {
         brushDropdown.classList.remove('open');
       });
     }
+    this._initColorPickerBindings();
     document.getElementById('undoBtn')?.addEventListener('click', () => this.doUndo());
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
@@ -10555,10 +11804,7 @@ export class App {
       document.getElementById('layersToggle')?.classList.toggle('active', open);
     });
     document.getElementById('swapColors')?.addEventListener('click', () => {
-      const t = this.primaryEl.value;
-      this.primaryEl.value = this.secondaryEl.value;
-      this.secondaryEl.value = t;
-      this._paramsDirty = true;
+      this.swapPaintColors();
     });
     document.getElementById('layerSwitcher')?.addEventListener('change', e => {
       this.setActiveLayer(+e.target.value);
@@ -10652,12 +11898,19 @@ export class App {
     document.getElementById('cutBtn')?.addEventListener('click', () => this.cutToClipboard());
     document.getElementById('pasteBtn')?.addEventListener('click', () => this.pasteFromClipboard());
     // Color pickers invalidate params
-    this.primaryEl.addEventListener('input', () => { this._paramsDirty = true; });
-    this.secondaryEl.addEventListener('input', () => { this._paramsDirty = true; });
+    this.primaryEl.addEventListener('input', () => {
+      this._paramsDirty = true;
+      this._handleColorInputSync('primary');
+    });
+    this.secondaryEl.addEventListener('input', () => {
+      this._paramsDirty = true;
+      this._handleColorInputSync('secondary');
+    });
     // Background color
     this.bgColorEl?.addEventListener('input', () => {
       this._fillBackgroundLayer();
       this.compositeAllLayers();
+      this._handleColorInputSync('background');
     });
     // Canvas size modal
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
@@ -10665,6 +11918,72 @@ export class App {
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('simExportClose')?.addEventListener('click', () => this._hideSimulationExportModal());
     document.getElementById('simExportBackdrop')?.addEventListener('click', () => this._hideSimulationExportModal());
+    document.getElementById('simSetupClose')?.addEventListener('click', () => this._hideSimulationSetupExplorer({ discard: true }));
+    document.getElementById('simSetupBackdrop')?.addEventListener('click', () => this._hideSimulationSetupExplorer({ discard: true }));
+    document.getElementById('simSetupExit')?.addEventListener('click', () => this._hideSimulationSetupExplorer({ discard: true }));
+    document.getElementById('simSetupAccept')?.addEventListener('click', () => this._applySimulationSetupDraft());
+    document.getElementById('simSetupClearDefaults')?.addEventListener('click', () => this._resetSimulationSetupDraftToDefaults());
+    document.getElementById('simSetupMultiToggle')?.addEventListener('change', event => {
+      if (!this._simulationSetupDraft) return;
+      this._simulationSetupDraft.multiSessionEnabled = !!event.target.checked;
+      this._updateSimulationSetupSummary();
+    });
+    document.getElementById('simSetupSaveJson')?.addEventListener('click', () => this.exportSimulationSetupFile());
+    document.getElementById('simSetupLoadJson')?.addEventListener('click', () => document.getElementById('simSetupLoadFile')?.click());
+    document.getElementById('simSetupExportWorkspace')?.addEventListener('click', () => this.exportWorkspaceSettingsFile());
+    document.getElementById('simSetupImportWorkspace')?.addEventListener('click', () => document.getElementById('simSetupWorkspaceImportFile')?.click());
+    document.getElementById('simSetupLoadFile')?.addEventListener('change', async event => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        await this.importSimulationSetupText(await file.text());
+      } catch (error) {
+        console.error('Simulation setup import failed:', error);
+        this._setSimulationSetupStatus(error?.message || 'Simulation setup import failed.', 'error');
+      }
+    });
+    document.getElementById('simSetupWorkspaceImportFile')?.addEventListener('change', async event => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        await this.importWorkspaceSettingsText(await file.text());
+        this._hideSimulationSetupExplorer({ discard: true });
+        this.showToast('Workspace settings imported');
+      } catch (error) {
+        console.error('Workspace import failed:', error);
+        this._setSimulationSetupStatus(error?.message || 'Workspace import failed.', 'error');
+      }
+    });
+    document.addEventListener('keydown', event => {
+      const modal = document.getElementById('simSetupModal');
+      if (!modal?.classList.contains('open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this._hideSimulationSetupExplorer({ discard: true });
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusables = [...modal.querySelectorAll('button:not([disabled]), select:not([disabled]), input:not([disabled])')]
+        .filter(node => node.offsetParent !== null);
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      const modal = document.getElementById('simSetupModal');
+      if (!modal?.classList.contains('open')) return;
+      if (event.target.closest('[data-sim-setup-menu]') || event.target.closest('.sim-setup-multiList')) return;
+      this._closeSimulationSetupMenus();
+    });
     document.getElementById('simExportRecordAction')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
     document.getElementById('simExportDownloadBtn')?.addEventListener('click', () => {
       void this._exportSimulationRecording();
@@ -11500,10 +12819,7 @@ export class App {
     }
     // X = swap colors (non-ctrl; Ctrl+X is cut)
     if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey) {
-      const t = this.primaryEl.value;
-      this.primaryEl.value = this.secondaryEl.value;
-      this.secondaryEl.value = t;
-      this._paramsDirty = true;
+      this.swapPaintColors();
     }
     // / = toggle alpha lock on active layer
     if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
@@ -12756,15 +14072,13 @@ export class App {
     const d = ctx.getImageData(0, 0, 1, 1).data;
     if (d[3] === 0) {
       // Transparent pixel — sample background color instead
-      const bg = this.bgColorEl?.value || '#ffffff';
-      this.primaryEl.value = bg;
+      this.setColorValue('primary', this.getColorValue('background', '#ffffff'));
     } else {
       const toHex = v => v.toString(16).padStart(2, '0');
-      this.primaryEl.value = `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`;
+      this.setColorValue('primary', `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`);
     }
-    this._recordColor(this.primaryEl.value);
-    this._paramsDirty = true;
-    this.showToast(`🔬 Picked ${this.primaryEl.value}`);
+    this._recordColor(this.getColorValue('primary', '#1a1a1a'));
+    this.showToast(`🔬 Picked ${this.getColorValue('primary', '#1a1a1a')}`);
     // Return to brush mode after picking
     this.setTool('brush');
   }
@@ -13622,20 +14936,21 @@ export class App {
 
   _renderColorHistory() {
     const container = document.getElementById('colorHistory');
-    if (!container) return;
-    container.innerHTML = '';
-    for (const hex of this._colorHistory) {
-      const swatch = document.createElement('div');
-      swatch.style.cssText = `width:20px;height:20px;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:${hex};transition:transform 0.1s;`;
-      swatch.title = hex;
-      swatch.addEventListener('click', () => {
-        this.primaryEl.value = hex;
-        this._paramsDirty = true;
-      });
-      swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.2)');
-      swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
-      container.appendChild(swatch);
+    if (container) {
+      container.innerHTML = '';
+      for (const hex of this._colorHistory) {
+        const swatch = document.createElement('div');
+        swatch.style.cssText = `width:20px;height:20px;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:${hex};transition:transform 0.1s;`;
+        swatch.title = hex;
+        swatch.addEventListener('click', () => {
+          this.setColorValue('primary', hex);
+        });
+        swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.2)');
+        swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
+        container.appendChild(swatch);
+      }
     }
+    this._renderColorPickerHistory();
   }
 
   // SESSION PERSISTENCE
@@ -13795,8 +15110,8 @@ export class App {
       if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
       if (id === '_canvasTextureState') continue;
       if (id === '_stampImageState') continue;
-      if (id === 'primaryColor' || id === '_primaryColor') { this.primaryEl.value = val; continue; }
-      if (id === 'secondaryColor' || id === '_secondaryColor') { this.secondaryEl.value = val; continue; }
+      if (id === 'primaryColor' || id === '_primaryColor') { this.setColorValue('primary', val); continue; }
+      if (id === 'secondaryColor' || id === '_secondaryColor') { this.setColorValue('secondary', val); continue; }
       if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
       if (id === 'activeBrush' || id === '_activeBrush') { this.setBrush(val); continue; }
       if (id === '_colorHistory') {
