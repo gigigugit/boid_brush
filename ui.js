@@ -200,7 +200,7 @@ export function buildSidebar(app) {
 
     <!-- Spawn Shape (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="spawn">Spawn Shape <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
+    <div class="section-body" data-brushes="boid ant" data-section="sensing">
       <label>Shape <select id="spawnShape">
         <option value="circle">● Circle</option><option value="ring">◎ Ring</option>
         <option value="gaussian">☁ Gaussian</option><option value="line">═ Line</option>

@@ -7449,33 +7449,129 @@ export class App {
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
-    const simulationSetupButton = '<button data-sim-open-routing="1" title="Open Simulation Setup Explorer">Setup</button>';
+    const stageLayerOptions = isBoid ? this._getSimulationTargetLayers() : [];
+    const sensingLayerOptions = isBoid
+      ? this.layers.map(layer => ({ id: layer.id, name: layer.name || layer.id, isBackground: !!layer.isBackground }))
+      : [];
+    const stageSessionCards = isBoid
+      ? (() => {
+          const draft = this._createSimulationSetupDraft();
+          if (!draft.rows.length) {
+            return '<div class="sim-inspector-note">Save the draft session to create reusable stage sessions.</div>';
+          }
+          return `<div class="sim-stage-list">${draft.rows.map(row => {
+            const session = this.simulation.sessions[row.sessionIndex] || null;
+            if (!session) return '';
+            const isEditing = row.sessionIndex === this.simulation.activeSessionIndex;
+            const routeCount = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex).length;
+            const routeSummary = this._buildSimulationSetupLayerSummary(row.layerIds, row.sessionIndex);
+            const sensingSummary = this._buildSimulationSetupSensingSummary(row);
+            const sensingLayersDisabled = row.sensingSource !== 'selected';
+            return `
+              <details class="sim-stage-card${isEditing ? ' editing' : ''}" ${isEditing ? 'open' : ''}>
+                <summary class="sim-stage-card-summary">
+                  <div class="sim-stage-card-main">
+                    <div class="sim-stage-card-titleRow">
+                      <span class="sim-stage-card-title">${_escapeHtml(session.name || `Session ${row.sessionIndex + 1}`)}</span>
+                      ${isEditing ? '<span class="sim-stage-badge active">Draft loaded</span>' : ''}
+                      <span class="sim-stage-badge${row.enabled ? '' : ' muted'}">${row.enabled ? 'Mounted' : 'Off'}</span>
+                    </div>
+                    <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} · Sensing: ${_escapeHtml(sensingSummary)} · ${routeCount} route${routeCount === 1 ? '' : 's'}</div>
+                  </div>
+                  <span class="sim-stage-card-caret" aria-hidden="true">▾</span>
+                </summary>
+                <div class="sim-stage-card-body">
+                  <div class="sim-stage-row">
+                    <div class="sim-inspector-note">${isEditing ? 'This saved session is the active draft on the canvas.' : 'Load this session to edit its guides and overrides on the canvas.'}</div>
+                    <div class="sim-inspector-actions">
+                      <button data-sim-stage-edit-session="${row.sessionIndex}">${isEditing ? 'Loaded' : 'Load into Draft'}</button>
+                    </div>
+                  </div>
+                  <label class="sim-inspector-row">
+                    <span>
+                      <span>Mount on Stage</span>
+                      <span class="sim-inspector-note" style="display:block;margin-top:2px">Enable this saved session for multi-session playback routing.</span>
+                    </span>
+                    <input type="checkbox" data-sim-stage-enabled="${row.sessionIndex}" ${row.enabled ? 'checked' : ''}>
+                  </label>
+                  <div class="sim-stage-field">
+                    <div class="sim-stage-field-label">Target Layer(s)</div>
+                    <div class="sim-stage-checklist">
+                      ${stageLayerOptions.map(layer => {
+                        const checked = row.layerIds.includes(layer.id);
+                        return `
+                          <label class="sim-stage-check">
+                            <input type="checkbox" data-sim-stage-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''}>
+                            <span>${_escapeHtml(layer.name || layer.id)}${layer.isBackground ? ' (Background)' : ''}</span>
+                          </label>`;
+                      }).join('')}
+                    </div>
+                  </div>
+                  <label class="sim-inspector-row">
+                    <span>
+                      <span>Session Sensing</span>
+                      <span class="sim-inspector-note" style="display:block;margin-top:2px">Keep sensing attached to the saved session instead of the general sidebar.</span>
+                    </span>
+                    <input type="checkbox" data-sim-stage-sensing-enabled="${row.sessionIndex}" ${row.sensingEnabled ? 'checked' : ''}>
+                  </label>
+                  <div class="sim-stage-field">
+                    <div class="sim-stage-field-label">Sensing Source</div>
+                    <select class="sim-stage-select" data-sim-stage-sensing-source="${row.sessionIndex}">
+                      <option value="below" ${row.sensingSource === 'below' ? 'selected' : ''}>Layers below active</option>
+                      <option value="all" ${row.sensingSource === 'all' ? 'selected' : ''}>All visible layers</option>
+                      <option value="active" ${row.sensingSource === 'active' ? 'selected' : ''}>Active layer only</option>
+                      <option value="selected" ${row.sensingSource === 'selected' ? 'selected' : ''}>Custom selected layers</option>
+                    </select>
+                  </div>
+                  <div class="sim-stage-field${sensingLayersDisabled ? ' muted' : ''}">
+                    <div class="sim-stage-field-label">Selected Sensing Layers</div>
+                    <div class="sim-stage-checklist">
+                      ${sensingLayerOptions.map(layer => {
+                        const checked = row.sensingLayerIds.includes(layer.id);
+                        return `
+                          <label class="sim-stage-check">
+                            <input type="checkbox" data-sim-stage-sensing-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''} ${sensingLayersDisabled ? 'disabled' : ''}>
+                            <span>${_escapeHtml(layer.name)}${layer.isBackground ? ' (Background)' : ''}</span>
+                          </label>`;
+                      }).join('')}
+                    </div>
+                  </div>
+                </div>
+              </details>`;
+          }).join('')}</div>`;
+        })()
+      : '';
     const savedSessionControls = isBoid
       ? `
-        <label class="sim-inspector-row" style="margin-top:10px">
-          <span>
-            <span>Multiple Sessions</span>
-            <span class="sim-inspector-note" style="display:block;margin-top:2px">Run saved boid sessions simultaneously on different layers.</span>
-          </span>
-          <input type="checkbox" data-sim-multi-toggle="1" ${this.simulation.multiSessionEnabled ? 'checked' : ''}>
-        </label>
-        <label class="sim-inspector-row" style="margin-top:8px">
-          <span>
-            <span>Active Session</span>
-            <span class="sim-inspector-note" style="display:block;margin-top:2px">Load a saved session into the editor or keep working in the unsaved scene.</span>
-          </span>
-          <select data-sim-active-session-select style="width:100%;max-width:160px;">
-            <option value="">Current working scene</option>
-            ${this.simulation.sessions.map((session, index) => `<option value="${index}" ${index === this.simulation.activeSessionIndex ? 'selected' : ''}>${_escapeHtml(session.name)}</option>`).join('')}
-          </select>
-        </label>
-        <div class="sim-inspector-actions" style="margin-top:10px">
-          <button data-sim-new-session="1">New Working Scene</button>
-          <button data-sim-save-session="1">${activeSavedSession ? 'Update Session' : 'Save Session'}</button>
-          ${simulationSetupButton}
-          ${activeSavedSession ? '<button class="danger" data-sim-delete-active-session="1">Delete Active</button>' : ''}
-        </div>
-        <div class="sim-inspector-note" style="margin-top:8px">${_escapeHtml(this._buildSimulationSessionRoutingSummary())}</div>
+        <div class="sim-inspector-note">Treat the canvas as the draft session, and manage saved sessions as reusable stage modules mounted below.</div>
+        ${renderInspectorSubgroup('Draft Session', `
+          <div class="sim-stage-draft">
+            <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
+            <div class="sim-inspector-note">${activeSavedSession ? 'Guide edits and runtime overrides update the loaded saved session until you start a new draft or load a different one.' : 'Save the current draft to turn it into a named session that can be mounted on the stage.'}</div>
+            <label class="sim-inspector-row">
+              <span>
+                <span>Multi-Session Playback</span>
+                <span class="sim-inspector-note" style="display:block;margin-top:2px">Route multiple saved sessions to different layers from this single stage panel.</span>
+              </span>
+              <input type="checkbox" data-sim-multi-toggle="1" ${this.simulation.multiSessionEnabled ? 'checked' : ''}>
+            </label>
+            <div class="sim-inspector-actions">
+              <button data-sim-new-session="1">New Draft</button>
+              <button data-sim-save-session="1">${activeSavedSession ? 'Update Saved Session' : 'Save Draft Session'}</button>
+              ${activeSavedSession ? '<button class="danger" data-sim-delete-active-session="1">Delete Saved Session</button>' : ''}
+            </div>
+            <div class="sim-inspector-note">${_escapeHtml(this._buildSimulationSessionRoutingSummary())}</div>
+          </div>
+        `)}
+        ${renderInspectorSubgroup('Saved Sessions / Stage', stageSessionCards)}
+        ${renderInspectorSubgroup('Workspace', `
+          <div class="sim-inspector-actions">
+            <button data-sim-export-setup="1">Save Setup JSON</button>
+            <button data-sim-import-setup="1">Load Setup JSON</button>
+            <button data-sim-export-workspace="1">Export Workspace</button>
+            <button data-sim-import-workspace="1">Import Workspace</button>
+          </div>
+        `)}
       `
       : '';
 
@@ -7527,7 +7623,6 @@ export class App {
         </div>
         <div class="sim-inspector-actions">
           <button data-sim-collapse="1">Collapse</button>
-          ${isBoid ? simulationSetupButton : ''}
           <button data-sim-clear-canvas="1">Clear Canvas</button>
           ${clearSelectionBtn}
           <button data-sim-help="1">Help</button>
@@ -8141,23 +8236,105 @@ export class App {
 
     panel.querySelector('[data-sim-new-session]')?.addEventListener('click', () => this._newSimulationSession());
     panel.querySelector('[data-sim-save-session]')?.addEventListener('click', () => this._saveSimulationSession());
+    const commitStageInspectorChange = ({ rerender = true } = {}) => {
+      if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
+      if (rerender) this._renderSimulationInspector();
+      this._syncSimulationUI();
+      this.saveSession();
+    };
     panel.querySelector('[data-sim-multi-toggle]')?.addEventListener('change', event => {
       this.simulation.multiSessionEnabled = !!event.target.checked;
-      this._renderSimulationInspector();
-      this.saveSession();
+      commitStageInspectorChange();
     });
-    panel.querySelector('[data-sim-active-session-select]')?.addEventListener('change', event => {
-      const nextIndex = event.target.value === '' ? -1 : Number(event.target.value);
-      this._setActiveSimulationSessionIndex(nextIndex);
-    });
-    panel.querySelectorAll('[data-sim-open-routing]').forEach(button => {
+    panel.querySelectorAll('[data-sim-stage-edit-session]').forEach(button => {
       button.addEventListener('click', event => {
-        this.toggleSimulationSessionRoutingPicker(event.currentTarget);
+        const nextIndex = Number(event.currentTarget.dataset.simStageEditSession);
+        if (Number.isFinite(nextIndex)) this._setActiveSimulationSessionIndex(nextIndex);
+      });
+    });
+    panel.querySelectorAll('[data-sim-stage-enabled]').forEach(input => {
+      input.addEventListener('change', event => {
+        const sessionIndex = Number(event.target.dataset.simStageEnabled);
+        if (!Number.isFinite(sessionIndex)) return;
+        const binding = this._getSimulationSessionBinding(sessionIndex);
+        binding.enabled = !!event.target.checked;
+        commitStageInspectorChange();
+      });
+    });
+    panel.querySelectorAll('[data-sim-stage-layer]').forEach(input => {
+      input.addEventListener('change', event => {
+        const sessionIndex = Number(event.target.dataset.simStageLayer);
+        if (!Number.isFinite(sessionIndex)) return;
+        const selectedLayerIds = Array.from(panel.querySelectorAll(`[data-sim-stage-layer="${sessionIndex}"]:checked`)).map(el => el.value);
+        const binding = this._getSimulationSessionBinding(sessionIndex);
+        binding.layerIds = this._normalizeSimulationLayerIds(selectedLayerIds, sessionIndex);
+        commitStageInspectorChange();
+      });
+    });
+    panel.querySelectorAll('[data-sim-stage-sensing-enabled]').forEach(input => {
+      input.addEventListener('change', event => {
+        const sessionIndex = Number(event.target.dataset.simStageSensingEnabled);
+        const session = this.simulation.sessions[sessionIndex];
+        if (!session) return;
+        const enabled = !!event.target.checked;
+        session.vars = _normalizeSimulationVars({
+          ...session.vars,
+          sensingEnabled: enabled,
+        });
+        if (sessionIndex === this.simulation.activeSessionIndex) {
+          this.simulation.vars = _normalizeSimulationVars({
+            ...this.simulation.vars,
+            sensingEnabled: enabled,
+          });
+        }
+        commitStageInspectorChange();
+      });
+    });
+    panel.querySelectorAll('[data-sim-stage-sensing-source]').forEach(select => {
+      select.addEventListener('change', event => {
+        const sessionIndex = Number(event.target.dataset.simStageSensingSource);
+        const session = this.simulation.sessions[sessionIndex];
+        if (!session) return;
+        const nextSource = event.target.value || 'below';
+        let selection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+        if (nextSource === 'selected' && !selection.length) {
+          selection = this._normalizeSimulationLayerIds([this.activeLayer?.id], sessionIndex);
+        }
+        session.vars = _normalizeSimulationVars({
+          ...session.vars,
+          sensingSource: nextSource,
+        });
+        session.sensingSourceSelection = selection;
+        if (sessionIndex === this.simulation.activeSessionIndex) {
+          this.simulation.vars = _normalizeSimulationVars({
+            ...this.simulation.vars,
+            sensingSource: nextSource,
+          });
+          this._restoreSensingSourceSelection(selection);
+        }
+        commitStageInspectorChange();
+      });
+    });
+    panel.querySelectorAll('[data-sim-stage-sensing-layer]').forEach(input => {
+      input.addEventListener('change', event => {
+        const sessionIndex = Number(event.target.dataset.simStageSensingLayer);
+        const session = this.simulation.sessions[sessionIndex];
+        if (!session) return;
+        const selectedLayerIds = Array.from(panel.querySelectorAll(`[data-sim-stage-sensing-layer="${sessionIndex}"]:checked`)).map(el => el.value);
+        session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(selectedLayerIds);
+        if (sessionIndex === this.simulation.activeSessionIndex) {
+          this._restoreSensingSourceSelection(session.sensingSourceSelection);
+        }
+        commitStageInspectorChange();
       });
     });
     panel.querySelector('[data-sim-delete-active-session]')?.addEventListener('click', () => {
       if (this.simulation.activeSessionIndex >= 0) this._deleteSimulationSavedSession(this.simulation.activeSessionIndex);
     });
+    panel.querySelector('[data-sim-export-setup]')?.addEventListener('click', () => this.exportSimulationSetupFile());
+    panel.querySelector('[data-sim-import-setup]')?.addEventListener('click', () => document.getElementById('simSetupImportInput')?.click());
+    panel.querySelector('[data-sim-export-workspace]')?.addEventListener('click', () => this.exportWorkspaceSettingsFile());
+    panel.querySelector('[data-sim-import-workspace]')?.addEventListener('click', () => document.getElementById('workspaceSettingsImportInput')?.click());
     } catch (error) {
       console.error('Simulation inspector render failed:', error);
       this.simulation.inspectorCollapsed = true;
@@ -11660,7 +11837,10 @@ export class App {
   _toggleBrushSections(brush) {
     document.querySelectorAll('[data-brushes]').forEach(el => {
       const allowed = el.dataset.brushes.split(' ');
-      const show = allowed.includes(brush);
+      let show = allowed.includes(brush);
+      if (show && el.dataset.section === 'sensing' && this.simulation.enabled && this._isMotionBrush(brush)) {
+        show = false;
+      }
       el.classList.toggle('brush-hidden', !show);
     });
   }
