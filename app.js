@@ -7463,8 +7463,11 @@ export class App {
             const session = this.simulation.sessions[row.sessionIndex] || null;
             if (!session) return '';
             const isEditing = row.sessionIndex === this.simulation.activeSessionIndex;
-            const routeCount = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex).length;
-            const routeSummary = this._buildSimulationSetupLayerSummary(row.layerIds, row.sessionIndex);
+            const normalizedLayerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
+            const selectedLayerIdSet = new Set(normalizedLayerIds);
+            const selectedSensingLayerSet = new Set(row.sensingLayerIds);
+            const routeCount = normalizedLayerIds.length;
+            const routeSummary = this._buildSimulationSetupLayerSummary(normalizedLayerIds, row.sessionIndex);
             const sensingSummary = this._buildSimulationSetupSensingSummary(row);
             const sensingLayersDisabled = row.sensingSource !== 'selected';
             return `
@@ -7498,7 +7501,7 @@ export class App {
                     <div class="sim-stage-field-label">Target Layer(s)</div>
                     <div class="sim-stage-checklist">
                       ${stageLayerOptions.map(layer => {
-                        const checked = row.layerIds.includes(layer.id);
+                        const checked = selectedLayerIdSet.has(layer.id);
                         return `
                           <label class="sim-stage-check">
                             <input type="checkbox" data-sim-stage-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''}>
@@ -7527,7 +7530,7 @@ export class App {
                     <div class="sim-stage-field-label">Selected Sensing Layers</div>
                     <div class="sim-stage-checklist">
                       ${sensingLayerOptions.map(layer => {
-                        const checked = row.sensingLayerIds.includes(layer.id);
+                        const checked = selectedSensingLayerSet.has(layer.id);
                         return `
                           <label class="sim-stage-check">
                             <input type="checkbox" data-sim-stage-sensing-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''} ${sensingLayersDisabled ? 'disabled' : ''}>
@@ -11837,11 +11840,9 @@ export class App {
   _toggleBrushSections(brush) {
     document.querySelectorAll('[data-brushes]').forEach(el => {
       const allowed = el.dataset.brushes.split(' ');
-      let show = allowed.includes(brush);
-      if (show && el.dataset.section === 'sensing' && this.simulation.enabled && this._isMotionBrush(brush)) {
-        show = false;
-      }
-      el.classList.toggle('brush-hidden', !show);
+      const shouldShow = allowed.includes(brush)
+        && !(el.dataset.section === 'sensing' && this.simulation.enabled && this._isMotionBrush(brush));
+      el.classList.toggle('brush-hidden', !shouldShow);
     });
   }
 

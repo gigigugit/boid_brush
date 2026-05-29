@@ -227,7 +227,7 @@ export function buildSidebar(app) {
 
     <!-- Forces (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="forces">Forces <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant" data-section="sensing">
+    <div class="section-body" data-brushes="boid ant">
       ${sliderRow('seek', 'Seek', 0, 100, 75, v => (v/100).toFixed(2))}
       ${sliderRow('cohesion', 'Cohesion', 0, 100, 15, v => (v/100).toFixed(2))}
       ${sliderRow('separation', 'Separation', 0, 100, 15, v => (v/100).toFixed(2))}
@@ -621,7 +621,7 @@ export function buildSidebar(app) {
 
     <!-- Sensing (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
+    <div class="section-body" data-brushes="boid ant" data-section="sensing">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
