@@ -619,8 +619,21 @@ export function buildSidebar(app) {
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
 
+    <div class="section-header" data-brushes="boid" data-section="simulationContext">Simulation Session <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid" data-section="simulationContext">
+      <div id="simSidebarContextCard" style="display:grid;gap:6px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.04);">
+        <div id="simSidebarModeLabel" style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8fb0f4;">Drawing Mode Sidebar</div>
+        <div id="simSidebarSessionName" style="font-size:12px;font-weight:700;color:#eef3ff;">Simulation session: Unsaved Draft</div>
+        <div id="simSidebarSessionMeta" class="slider-desc" style="margin:0;">The main sidebar edits drawing-mode boid defaults. Open the Simulation Session Editor to edit saved simulation defaults, stage routing, and multi-session playback.</div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">
+        <button id="btnOpenSimulationInspector" type="button">Session Editor</button>
+        <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
+      </div>
+    </div>
+
     <!-- Sensing (boid + ant) -->
-    <div class="section-header" data-brushes="boid ant" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-header" data-brushes="boid ant" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant" data-section="sensing">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
@@ -923,6 +936,14 @@ export function buildSidebar(app) {
   document.getElementById('btnSaveSession')?.addEventListener('click', () => {
     app.saveSession(); app.showToast('💾 Session saved');
   });
+  document.getElementById('btnOpenSimulationInspector')?.addEventListener('click', () => {
+    if (!app.simulation.enabled) app._toggleSimulationMode(true);
+    app.simulation.inspectorCollapsed = false;
+    app._syncSimulationUI?.();
+  });
+  document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
+    app._showSimulationSetupExplorer?.(event.currentTarget);
+  });
   document.getElementById('btnImportWorkspace')?.addEventListener('click', () => {
     if (!confirm('Import workspace settings from a file and replace the current saved workspace settings?')) return;
     workspaceImportInput.click();
@@ -969,6 +990,7 @@ export function buildSidebar(app) {
   }
   app._refreshPerformanceTelemetryUI(true);
   app._refreshSensingLayerSourceUi?.();
+  app._syncSimulationSessionContextUi?.();
 
   // Initial brush-specific visibility
   app._toggleBrushSections(app.activeBrush);
