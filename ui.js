@@ -180,6 +180,22 @@ function _syncLeaderOverrideUI() {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <!-- Simulation Sessions -->
+    <div class="section-header" data-section="simSessions">Simulation Sessions <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Active Session
+        <select id="simSessionSelect" style="width:100%;">
+          <option value="-1">Default Settings</option>
+        </select>
+      </label>
+      <div style="display:flex;gap:3px;flex-wrap:wrap;margin:6px 0;">
+        <button id="btnSimSessionNew" type="button">+ New</button>
+        <button id="btnSimSessionSave" type="button" class="save-btn">💾 Save</button>
+        <button id="btnSimSessionDelete" type="button" class="reset-btn">✕ Delete</button>
+      </div>
+      <div id="simSessionVarsContainer"></div>
+    </div>
+
     <!-- Color History -->
     <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -749,6 +765,9 @@ export function buildSidebar(app) {
   sb.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
+
+  // ── Wire simulation session controls ──
+  _wireSimSessionControls(app);
 
   // ── Wire slider readouts ──
   sb.querySelectorAll('input[type="range"]').forEach(inp => {
@@ -1924,4 +1943,193 @@ export function initEdgeSliders(app) {
   });
 
   syncEdgeSliders(app);
+}
+
+// ── Simulation Session sidebar controls ─────────────────────
+
+// Descriptors for session-overridable vars (subset of _normalizeSimulationVars keys).
+const SIM_SESSION_VAR_DEFS = [
+  { key: 'seek', label: 'Seek', min: 0, max: 1, step: 0.01, fmt: v => v.toFixed(2) },
+  { key: 'cohesion', label: 'Cohesion', min: 0, max: 1, step: 0.01, fmt: v => v.toFixed(2) },
+  { key: 'separation', label: 'Separation', min: 0, max: 1, step: 0.01, fmt: v => v.toFixed(2) },
+  { key: 'alignment', label: 'Alignment', min: 0, max: 1, step: 0.01, fmt: v => v.toFixed(2) },
+  { key: 'maxSpeed', label: 'Max Speed', min: 0, max: 15, step: 0.1, fmt: v => v.toFixed(1) },
+  { key: 'damping', label: 'Damping', min: 0.8, max: 1, step: 0.005, fmt: v => v.toFixed(3) },
+  { key: 'sensingStrength', label: 'Sensing Strength', min: 0, max: 1, step: 0.01, fmt: v => v.toFixed(2) },
+  { key: 'sensingRadius', label: 'Sensing Radius', min: 0, max: 80, step: 1, fmt: v => Math.round(v) },
+  { key: 'sensingThreshold', label: 'Sensing Threshold', min: 0, max: 1, step: 0.01, fmt: v => v.toFixed(2) },
+  { key: 'sensingUpdateFrames', label: 'Sensing Update', min: 1, max: 50, step: 1, fmt: v => `${Math.round(v)}f` },
+];
+
+function _wireSimSessionControls(app) {
+  const selectEl = document.getElementById('simSessionSelect');
+  if (!selectEl) return;
+
+  // Populate dropdown from current state
+  _rebuildSimSessionDropdown(app);
+
+  selectEl.addEventListener('change', () => {
+    const idx = Number(selectEl.value);
+    if (idx >= 0 && idx < app.simulation.sessions.length) {
+      app.simulation.activeSessionIndex = idx;
+      app._applySimulationSessionToDraft(app.simulation.sessions[idx]);
+    } else {
+      app.simulation.activeSessionIndex = -1;
+      app.simulation.vars = { seek: 0 };
+    }
+    app.invalidateParams();
+    _renderSimSessionVars(app);
+    app._syncSimulationSessionContextUi?.();
+    app.saveSession();
+  });
+
+  document.getElementById('btnSimSessionNew')?.addEventListener('click', () => {
+    const name = window.prompt('Name for new simulation session:', `Session ${app.simulation.sessions.length + 1}`);
+    if (!name) return;
+    const session = {
+      id: app._createSimulationSessionId(),
+      name: name.trim().slice(0, 64) || `Session ${app.simulation.sessions.length + 1}`,
+      savedAt: Date.now(),
+      vars: { seek: 0 },
+      brushData: { boid: { spawns: [], points: [], paths: [] }, ant: { spawns: [], points: [], edges: [], pheromonePaths: [] } },
+      nextId: 1,
+    };
+    app.simulation.sessions.push(session);
+    app.simulation.activeSessionIndex = app.simulation.sessions.length - 1;
+    app._applySimulationSessionToDraft(session);
+    app.invalidateParams();
+    _rebuildSimSessionDropdown(app);
+    _renderSimSessionVars(app);
+    app._syncSimulationSessionContextUi?.();
+    app.saveSession();
+    app.showToast(`Created session "${session.name}"`);
+  });
+
+  document.getElementById('btnSimSessionSave')?.addEventListener('click', () => {
+    const idx = app.simulation.activeSessionIndex;
+    if (idx < 0 || idx >= app.simulation.sessions.length) {
+      app.showToast('⚠ Select or create a session first');
+      return;
+    }
+    app._syncActiveSimulationSessionFromDraft();
+    app.simulation.sessions[idx].savedAt = Date.now();
+    app.saveSession();
+    app.showToast(`💾 Saved "${app.simulation.sessions[idx].name}"`);
+  });
+
+  document.getElementById('btnSimSessionDelete')?.addEventListener('click', () => {
+    const idx = app.simulation.activeSessionIndex;
+    if (idx < 0 || idx >= app.simulation.sessions.length) {
+      app.showToast('⚠ No session selected');
+      return;
+    }
+    const name = app.simulation.sessions[idx].name;
+    if (!confirm(`Delete simulation session "${name}"?`)) return;
+    app.simulation.sessions.splice(idx, 1);
+    app.simulation.activeSessionIndex = -1;
+    app.simulation.vars = { seek: 0 };
+    app.invalidateParams();
+    _rebuildSimSessionDropdown(app);
+    _renderSimSessionVars(app);
+    app._syncSimulationSessionContextUi?.();
+    app.saveSession();
+    app.showToast(`Deleted "${name}"`);
+  });
+
+  // Initial render
+  _renderSimSessionVars(app);
+}
+
+function _rebuildSimSessionDropdown(app) {
+  const selectEl = document.getElementById('simSessionSelect');
+  if (!selectEl) return;
+  const sessions = app.simulation.sessions || [];
+  const activeIdx = app.simulation.activeSessionIndex;
+  let html = '<option value="-1"' + (activeIdx < 0 ? ' selected' : '') + '>Default Settings</option>';
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i];
+    const selected = i === activeIdx ? ' selected' : '';
+    html += `<option value="${i}"${selected}>${_escapeForAttr(s.name || `Session ${i + 1}`)}</option>`;
+  }
+  selectEl.innerHTML = html;
+}
+
+function _escapeForAttr(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _renderSimSessionVars(app) {
+  const container = document.getElementById('simSessionVarsContainer');
+  if (!container) return;
+
+  const idx = app.simulation.activeSessionIndex;
+  if (idx < 0 || idx >= app.simulation.sessions.length) {
+    container.innerHTML = '<span class="slider-desc" style="display:block;margin-top:4px;">Using default sidebar settings (no session overrides active).</span>';
+    return;
+  }
+
+  const vars = app.simulation.vars;
+  let html = '<div style="margin-top:6px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.04);">';
+  html += '<div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8fb0f4;margin-bottom:6px;">Session Parameter Overrides</div>';
+
+  for (const def of SIM_SESSION_VAR_DEFS) {
+    const currentVal = Number.isFinite(vars[def.key]) ? vars[def.key] : '';
+    const hasOverride = Number.isFinite(vars[def.key]);
+    const inputId = `simSessVar_${def.key}`;
+    html += `<div style="display:flex;align-items:center;gap:6px;margin:4px 0;">`;
+    html += `<label style="flex:0 0 auto;font-size:11px;"><input type="checkbox" class="sim-sess-var-toggle" data-var-key="${def.key}" ${hasOverride ? 'checked' : ''}></label>`;
+    html += `<span style="flex:1;font-size:11px;color:#cbd7e6;">${def.label}</span>`;
+    html += `<input type="number" id="${inputId}" class="sim-sess-var-input" data-var-key="${def.key}" min="${def.min}" max="${def.max}" step="${def.step}" value="${hasOverride ? currentVal : ''}" style="width:60px;font-size:11px;padding:2px 4px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:#eef3ff;" ${hasOverride ? '' : 'disabled'}>`;
+    html += `<span class="sim-sess-var-display" data-var-key="${def.key}" style="font-size:10px;min-width:36px;text-align:right;color:#8899aa;">${hasOverride ? def.fmt(currentVal) : '—'}</span>`;
+    html += `</div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Wire toggles and inputs
+  container.querySelectorAll('.sim-sess-var-toggle').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.varKey;
+      const input = container.querySelector(`.sim-sess-var-input[data-var-key="${key}"]`);
+      const display = container.querySelector(`.sim-sess-var-display[data-var-key="${key}"]`);
+      const def = SIM_SESSION_VAR_DEFS.find(d => d.key === key);
+      if (cb.checked) {
+        const defaultVal = def ? (def.min + def.max) / 2 : 0;
+        const val = input.value !== '' ? Number(input.value) : defaultVal;
+        input.disabled = false;
+        input.value = val;
+        app.simulation.vars[key] = val;
+        if (display && def) display.textContent = def.fmt(val);
+      } else {
+        input.disabled = true;
+        delete app.simulation.vars[key];
+        if (display) display.textContent = '—';
+      }
+      app.invalidateParams();
+      app.saveSession();
+    });
+  });
+
+  container.querySelectorAll('.sim-sess-var-input').forEach(input => {
+    input.addEventListener('input', () => {
+      const key = input.dataset.varKey;
+      const def = SIM_SESSION_VAR_DEFS.find(d => d.key === key);
+      const val = Number(input.value);
+      if (!Number.isFinite(val)) return;
+      const clamped = Math.max(def.min, Math.min(def.max, val));
+      app.simulation.vars[key] = clamped;
+      const display = container.querySelector(`.sim-sess-var-display[data-var-key="${key}"]`);
+      if (display && def) display.textContent = def.fmt(clamped);
+      app.invalidateParams();
+    });
+    input.addEventListener('change', () => {
+      app.saveSession();
+    });
+  });
+}
+
+export function syncSimSessionUI(app) {
+  _rebuildSimSessionDropdown(app);
+  _renderSimSessionVars(app);
 }
