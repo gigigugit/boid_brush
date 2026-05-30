@@ -6314,6 +6314,12 @@ export class App {
         sensingEnabled: session.vars?.sensingEnabled === true,
         sensingSource,
         sensingLayerIds,
+        sensingMode: SIM_SENSING_MODES.includes(session.vars?.sensingMode) ? session.vars.sensingMode : 'avoid',
+        sensingChannel: SIM_SENSING_CHANNELS.includes(session.vars?.sensingChannel) ? session.vars.sensingChannel : 'darkness',
+        sensingStrength: Number.isFinite(session.vars?.sensingStrength) ? session.vars.sensingStrength : 50,
+        sensingRadius: Number.isFinite(session.vars?.sensingRadius) ? session.vars.sensingRadius : 20,
+        sensingThreshold: Number.isFinite(session.vars?.sensingThreshold) ? session.vars.sensingThreshold : 10,
+        sensingUpdateFrames: Number.isFinite(session.vars?.sensingUpdateFrames) ? session.vars.sensingUpdateFrames : 30,
         unresolvedLayers: [],
         unresolvedSensingLayers: [],
       };
@@ -6445,7 +6451,12 @@ export class App {
             <th style="width:88px;">Sense</th>
             <th style="width:150px;">Sense Source</th>
             <th style="width:220px;">Sense Layer(s)</th>
-            <th style="width:180px;">Future</th>
+            <th style="width:120px;">Mode</th>
+            <th style="width:130px;">Channel</th>
+            <th style="width:90px;">Strength</th>
+            <th style="width:80px;">Radius</th>
+            <th style="width:90px;">Threshold</th>
+            <th style="width:90px;">Refresh</th>
           </tr>
         </thead>
         <tbody>
@@ -6512,7 +6523,27 @@ export class App {
                     <div class="sim-setup-muted">${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</div>
                   </div>
                 </td>
-                <td><div class="sim-setup-future">Reserved for per-row simulation variables, presets, and future feature routing.</div></td>
+                <td>
+                  <select data-sim-setup-sensing-mode="${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                    <option value="avoid" ${row.sensingMode === 'avoid' ? 'selected' : ''}>Avoid</option>
+                    <option value="attract" ${row.sensingMode === 'attract' ? 'selected' : ''}>Attract</option>
+                  </select>
+                </td>
+                <td>
+                  <select data-sim-setup-sensing-channel="${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                    <option value="darkness" ${row.sensingChannel === 'darkness' ? 'selected' : ''}>Darkness</option>
+                    <option value="lightness" ${row.sensingChannel === 'lightness' ? 'selected' : ''}>Lightness</option>
+                    <option value="saturation" ${row.sensingChannel === 'saturation' ? 'selected' : ''}>Saturation</option>
+                    <option value="red" ${row.sensingChannel === 'red' ? 'selected' : ''}>Red</option>
+                    <option value="green" ${row.sensingChannel === 'green' ? 'selected' : ''}>Green</option>
+                    <option value="blue" ${row.sensingChannel === 'blue' ? 'selected' : ''}>Blue</option>
+                    <option value="alpha" ${row.sensingChannel === 'alpha' ? 'selected' : ''}>Alpha</option>
+                  </select>
+                </td>
+                <td><input type="number" data-sim-setup-sensing-strength="${rowKey}" min="0" max="100" step="1" value="${row.sensingStrength}" style="width:60px" ${row.sensingEnabled ? '' : 'disabled'}></td>
+                <td><input type="number" data-sim-setup-sensing-radius="${rowKey}" min="5" max="80" step="1" value="${row.sensingRadius}" style="width:54px" ${row.sensingEnabled ? '' : 'disabled'}></td>
+                <td><input type="number" data-sim-setup-sensing-threshold="${rowKey}" min="0" max="100" step="1" value="${row.sensingThreshold}" style="width:60px" ${row.sensingEnabled ? '' : 'disabled'}></td>
+                <td><input type="number" data-sim-setup-sensing-update-frames="${rowKey}" min="1" max="50" step="1" value="${row.sensingUpdateFrames}" style="width:60px" ${row.sensingEnabled ? '' : 'disabled'}></td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -6573,6 +6604,48 @@ export class App {
         this._renderSimulationSetupExplorer();
       });
     });
+    root.querySelectorAll('[data-sim-setup-sensing-mode]').forEach(select => {
+      select.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingMode);
+        if (!row) return;
+        row.sensingMode = SIM_SENSING_MODES.includes(event.target.value) ? event.target.value : 'avoid';
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-channel]').forEach(select => {
+      select.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingChannel);
+        if (!row) return;
+        row.sensingChannel = SIM_SENSING_CHANNELS.includes(event.target.value) ? event.target.value : 'darkness';
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-strength]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingStrength);
+        if (!row) return;
+        row.sensingStrength = Math.max(0, Math.min(100, parseInt(event.target.value, 10) || 0));
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-radius]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingRadius);
+        if (!row) return;
+        row.sensingRadius = Math.max(5, Math.min(80, parseInt(event.target.value, 10) || 5));
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-threshold]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingThreshold);
+        if (!row) return;
+        row.sensingThreshold = Math.max(0, Math.min(100, parseInt(event.target.value, 10) || 0));
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-update-frames]').forEach(input => {
+      input.addEventListener('change', event => {
+        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingUpdateFrames);
+        if (!row) return;
+        row.sensingUpdateFrames = Math.max(1, Math.min(50, parseInt(event.target.value, 10) || 1));
+      });
+    });
   }
 
   _getSimulationSetupDraftRow(sessionId) {
@@ -6617,6 +6690,12 @@ export class App {
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingSource: row.sensingSource,
+        sensingMode: row.sensingMode,
+        sensingChannel: row.sensingChannel,
+        sensingStrength: row.sensingStrength,
+        sensingRadius: row.sensingRadius,
+        sensingThreshold: row.sensingThreshold,
+        sensingUpdateFrames: row.sensingUpdateFrames,
       });
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
@@ -6676,6 +6755,12 @@ export class App {
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingSource: row.sensingSource,
+        sensingMode: row.sensingMode,
+        sensingChannel: row.sensingChannel,
+        sensingStrength: row.sensingStrength,
+        sensingRadius: row.sensingRadius,
+        sensingThreshold: row.sensingThreshold,
+        sensingUpdateFrames: row.sensingUpdateFrames,
       });
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
@@ -6701,6 +6786,12 @@ export class App {
       row.sensingEnabled = false;
       row.sensingSource = 'below';
       row.sensingLayerIds = [];
+      row.sensingMode = 'avoid';
+      row.sensingChannel = 'darkness';
+      row.sensingStrength = 50;
+      row.sensingRadius = 20;
+      row.sensingThreshold = 10;
+      row.sensingUpdateFrames = 30;
       row.unresolvedLayers = [];
       row.unresolvedSensingLayers = [];
     });
@@ -6835,6 +6926,12 @@ export class App {
           sensingEnabled: session.vars?.sensingEnabled === true,
           sensingSource: SIM_SENSING_SOURCES.includes(session.vars?.sensingSource) ? session.vars.sensingSource : 'below',
           sensingLayerIds: sensingMap.resolved,
+          sensingMode: SIM_SENSING_MODES.includes(session.vars?.sensingMode) ? session.vars.sensingMode : 'avoid',
+          sensingChannel: SIM_SENSING_CHANNELS.includes(session.vars?.sensingChannel) ? session.vars.sensingChannel : 'darkness',
+          sensingStrength: Number.isFinite(session.vars?.sensingStrength) ? session.vars.sensingStrength : 50,
+          sensingRadius: Number.isFinite(session.vars?.sensingRadius) ? session.vars.sensingRadius : 20,
+          sensingThreshold: Number.isFinite(session.vars?.sensingThreshold) ? session.vars.sensingThreshold : 10,
+          sensingUpdateFrames: Number.isFinite(session.vars?.sensingUpdateFrames) ? session.vars.sensingUpdateFrames : 30,
           unresolvedLayers: binding?.unresolvedLayers || [],
           unresolvedSensingLayers: sensingMap.missing,
         };
