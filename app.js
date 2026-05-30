@@ -366,6 +366,11 @@ const SIM_HEATMAP_TARGET_CELLS = 48;
 const SIM_HEATMAP_MAX_ALPHA = 1;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
+// Keys excluded from per-simulation-session control snapshots (remain global).
+const SESSION_CONTROLS_EXCLUDE_PREFIXES = ['canvasTexture'];
+const SESSION_CONTROLS_EXCLUDE_KEYS = new Set([
+  'perfTelemetryEnabled', 'perfWakeLockEnabled', 'autoSaveSession',
+]);
 const MOTION_PATH_HANDLE_RADIUS = 7;
 const MOTION_PATH_HIT_RADIUS = 12;
 const MOTION_PATH_POINT_SIZE_MIN = 0.2;
@@ -4463,6 +4468,18 @@ export class App {
 
   _getRuntimeScopedParams(baseParams) {
     if (!this._simulationContextOverride || !this.simulation?.enabled || !baseParams) return baseParams;
+    // If the runtime context has pre-computed processed params (from session controls),
+    // overlay them on base params (preserving canvas texture from base).
+    const processed = this._simulationContextOverride.processedParams;
+    if (processed) {
+      const next = { ...baseParams };
+      for (const [key, value] of Object.entries(processed)) {
+        if (key.startsWith('canvasTexture')) continue; // canvas texture stays global
+        if (value !== undefined) next[key] = value;
+      }
+      return next;
+    }
+    // Legacy path: only override sensing/force vars from session.vars
     const vars = this._getSimulationVars();
     if (!vars) return baseParams;
     const next = { ...baseParams };
@@ -4485,6 +4502,45 @@ export class App {
 
   _getSimulationVars() {
     return this._simulationContextOverride?.vars || this.simulation.vars;
+  }
+
+  /**
+   * Build a fully-processed params object from raw session controls by temporarily
+   * applying them to DOM and calling getP(). Used once at multi-session prime time.
+   */
+  _buildProcessedParamsFromSessionControls(controls) {
+    // Snapshot current DOM values for the keys we'll temporarily change
+    const snapshot = {};
+    for (const [id, val] of Object.entries(controls)) {
+      if (id === 'primaryColor') { snapshot.primaryColor = this.primaryEl.value; continue; }
+      if (id === 'secondaryColor') { snapshot.secondaryColor = this.secondaryEl?.value; continue; }
+      if (id === 'activeBrush') { snapshot.activeBrush = this.activeBrush; continue; }
+      const el = document.getElementById(id);
+      if (!el) continue;
+      snapshot[id] = el.type === 'checkbox' ? el.checked : el.value;
+    }
+    // Temporarily apply session controls
+    this._applySimulationSessionControls(controls);
+    // Force param rebuild without context override
+    const prevOverride = this._simulationContextOverride;
+    this._simulationContextOverride = null;
+    this._paramsDirty = true;
+    const processed = { ...this.getP() };
+    // Restore
+    this._simulationContextOverride = prevOverride;
+    this._paramsDirty = true;
+    this._cachedP = null;
+    // Restore DOM from snapshot
+    for (const [id, val] of Object.entries(snapshot)) {
+      if (id === 'primaryColor') { this.setColorValue('primary', val); continue; }
+      if (id === 'secondaryColor') { this.setColorValue('secondary', val); continue; }
+      if (id === 'activeBrush') { this.setBrush(val); continue; }
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!val;
+      else el.value = val;
+    }
+    return processed;
   }
 
   _getCurrentSensingSourceSelectionState() {
@@ -6169,6 +6225,7 @@ export class App {
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
+      controls: this._captureSimulationSessionControls(),
     };
     this.simulation.sessions[activeIndex] = nextSession;
     return nextSession;
@@ -6181,6 +6238,12 @@ export class App {
     this.simulation.brushData = _deepClone(session.brushData);
     if (Number.isFinite(session.nextId)) this.simulation.nextId = Math.max(1, Math.round(session.nextId));
     this.simulation.selected = null;
+    // Apply per-session sidebar controls (backward-compat: old sessions without controls still work)
+    if (session.controls && typeof session.controls === 'object') {
+      this._applySimulationSessionControls(session.controls);
+      this._paramsDirty = true;
+      syncUI(this);
+    }
     this._normalizeSimulationData();
     this._constrainSimulationDataToBounds('boid');
     this._constrainSimulationDataToBounds('ant');
@@ -6220,6 +6283,7 @@ export class App {
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
+      controls: this._captureSimulationSessionControls(),
     };
     if (existingSession) {
       this.simulation.sessions[activeIndex] = nextSession;
@@ -7016,12 +7080,20 @@ export class App {
     runtime.brushData = _deepClone(session.brushData);
     runtime.vars = _normalizeSimulationVars(session.vars);
     runtime.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+    runtime.controls = session.controls || null;
     runtime.layerId = layer.id;
     runtime.sessionIndex = this.simulation.sessions.indexOf(session);
     runtime.sessionName = session.name;
     runtime.leaderX = this.W * 0.5;
     runtime.leaderY = this.H * 0.5;
     runtime.strokeFrame = 0;
+    // Pre-compute processed params from session controls so multi-session
+    // playback uses per-session parameters without re-reading DOM each frame.
+    if (runtime.controls) {
+      runtime.processedParams = this._buildProcessedParamsFromSessionControls(runtime.controls);
+    } else {
+      runtime.processedParams = null;
+    }
     this._withSimulationRuntimeContext(runtime, () => {
       runtime.brushInstance.resetSimulationPlaybackState?.({ compositePreview: false });
       this._normalizeSimulationData();
@@ -15348,6 +15420,51 @@ export class App {
     controls._canvasTextureState = this._serializeCanvasTextureState();
     controls._stampImageState = this._serializeCustomStampImageState();
     return controls;
+  }
+
+  /**
+   * Capture sidebar DOM controls scoped to a simulation session.
+   * Excludes canvas texture settings (global) and internal/app-level keys.
+   * Returns raw DOM values matching the format _applyControlState expects.
+   */
+  _captureSimulationSessionControls() {
+    const controls = {};
+    const isExcluded = (id) => {
+      if (!id || id.startsWith('_')) return true;
+      if (SESSION_CONTROLS_EXCLUDE_KEYS.has(id)) return true;
+      for (const prefix of SESSION_CONTROLS_EXCLUDE_PREFIXES) {
+        if (id.startsWith(prefix)) return true;
+      }
+      return false;
+    };
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select').forEach(el => {
+      if (el.id && !isExcluded(el.id)) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    document.querySelectorAll('#sidebar input[type="number"]').forEach(el => {
+      if (el.id && !isExcluded(el.id)) controls[el.id] = el.value;
+    });
+    // Include color and brush selection as per-session state
+    controls.primaryColor = this.primaryEl.value;
+    controls.secondaryColor = this.secondaryEl.value;
+    controls.activeBrush = this.activeBrush;
+    return controls;
+  }
+
+  /**
+   * Apply per-simulation-session controls back to DOM.
+   * Only sets simple DOM elements (no internal _ keys, no canvas texture).
+   */
+  _applySimulationSessionControls(controls) {
+    if (!controls || typeof controls !== 'object') return;
+    for (const [id, val] of Object.entries(controls)) {
+      if (id === 'primaryColor') { this.setColorValue('primary', val); continue; }
+      if (id === 'secondaryColor') { this.setColorValue('secondary', val); continue; }
+      if (id === 'activeBrush') { this.setBrush(val); continue; }
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!val;
+      else el.value = val;
+    }
   }
 
   saveSession() {
