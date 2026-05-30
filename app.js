@@ -13198,7 +13198,7 @@ export class App {
       e.preventDefault();
       this._pinchActive = true;
       // Cancel any active drawing
-      if (this.isDrawing) {
+      if (this.isDrawing && !this.simulation.running) {
         this.isDrawing = false;
         const brush = this.getCurrentBrush();
         if (brush) brush.onUp(this.leaderX, this.leaderY);
@@ -14029,9 +14029,9 @@ export class App {
         this._applySimulationEphemeralFade(p);
       }
     }
-    if (this.isDrawing && brush && brush.onFrame && !this._hasActiveMultiSessionPlayback()) {
+    if ((this.isDrawing || this.simulation.running) && brush && brush.onFrame && !this._hasActiveMultiSessionPlayback()) {
       brush.onFrame(elapsed);
-    } else if (!this.isDrawing && !this.isTapering && brush && brush.onHoverFrame) {
+    } else if (!this.isDrawing && !this.simulation.running && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
       // Skip during taper — taperFrame already steps the sim
       brush.onHoverFrame(elapsed);
