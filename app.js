@@ -7,7 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, syncSimSessionUI, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -4715,6 +4715,8 @@ export class App {
     if (simSetupActiveSession) simSetupActiveSession.textContent = context.setupLabel;
     const simSetupModeSummary = document.getElementById('simSetupModeSummary');
     if (simSetupModeSummary) simSetupModeSummary.textContent = context.modeSummary;
+    // Keep sidebar session dropdown in sync
+    syncSimSessionUI(this);
   }
 
   _getRunnableSimulationSessionBindings() {
