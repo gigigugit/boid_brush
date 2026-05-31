@@ -719,6 +719,7 @@ export function buildSidebar(app) {
     <!-- Settings -->
     <div class="section-header" data-section="settings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
+      <label>Always show tabs <input type="checkbox" id="alwaysShowTabs"></label>
       <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
       <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
       <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
