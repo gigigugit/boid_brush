@@ -60,15 +60,15 @@ function toggleSection(header) {
 function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
   const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
-  const step = (max - min) <= 1 ? 0.01 : 1;
-  return `<div class="slider-row-wrap"><label>${label} <span class="slider-row-controls"><input type="number" class="slider-num-input" id="n_${id}" min="${min}" max="${max}" step="${step}" value="${value}"><input type="range" class="slider-vertical" id="vslider_${id}" min="${min}" max="${max}" value="${value}" orient="vertical"></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}</div>`;
+  const step = (max - min) < 2 ? 0.01 : 1;
+  return `<div class="slider-row-wrap"><label>${label} <span class="slider-row-controls"><input type="number" class="slider-num-input" id="n_${id}" min="${min}" max="${max}" step="${step}" value="${value}" aria-label="${label}"><input type="range" class="slider-vertical" id="vslider_${id}" min="${min}" max="${max}" value="${value}" orient="vertical" aria-label="${label} slider"></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}</div>`;
 }
 
 function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
   const fmtFn = fmt || (v => v);
   const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
-  const step = (max - min) <= 1 ? 0.01 : 1;
-  return `<div class="slider-row-wrap"><label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${NUDGE_BUTTON_STYLE}">−</button><input type="number" class="slider-num-input" id="n_${id}" min="${min}" max="${max}" step="${step}" value="${value}"><input type="range" class="slider-vertical" id="vslider_${id}" min="${min}" max="${max}" value="${value}" orient="vertical"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${NUDGE_BUTTON_STYLE}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}</div>`;
+  const step = (max - min) < 2 ? 0.01 : 1;
+  return `<div class="slider-row-wrap"><label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${NUDGE_BUTTON_STYLE}">−</button><input type="number" class="slider-num-input" id="n_${id}" min="${min}" max="${max}" step="${step}" value="${value}" aria-label="${label}"><input type="range" class="slider-vertical" id="vslider_${id}" min="${min}" max="${max}" value="${value}" orient="vertical" aria-label="${label} slider"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${NUDGE_BUTTON_STYLE}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}</div>`;
 }
 
 function fluidMidrangeRow() {
@@ -776,7 +776,9 @@ export function buildSidebar(app) {
     // Wire number input → range + vertical slider
     if (numInput) {
       numInput.addEventListener('input', () => {
-        const v = Math.max(Number(inp.min), Math.min(Number(inp.max), Number(numInput.value) || 0));
+        const raw = Number(numInput.value);
+        if (isNaN(raw)) return; // ignore while user is still typing
+        const v = Math.max(Number(inp.min), Math.min(Number(inp.max), raw));
         inp.value = String(v);
         if (vSlider) vSlider.value = String(v);
         if (span) span.textContent = fmt ? fmt(v) : v;
