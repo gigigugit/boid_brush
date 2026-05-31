@@ -6995,10 +6995,10 @@ export class App {
     this._hideSimulationSetupExplorer({ discard: true });
   }
 
-  async _createSimulationRuntimeBrush(brushName = 'boid') {
+  async _createSimulationRuntimeBrush(brushName = 'boid', gpuOptions = {}) {
     if (brushName !== 'boid') return null;
     const runtimeBrush = new BoidBrush(this);
-    await runtimeBrush.init({ useShared: false });
+    await runtimeBrush.init({ useShared: false, gpuOptions });
     if (!runtimeBrush.sim) {
       throw new Error('Failed to initialize isolated boid simulation runtime');
     }
@@ -7073,6 +7073,27 @@ export class App {
     }
 
     this._releaseCachedMultiSessionRuntimeSessions();
+
+    // Acquire a single shared GPU device for all runtime sessions to avoid
+    // exceeding the browser's WebGPU device limit when multiple sims start.
+    let gpuOptions = {};
+    if (typeof navigator !== 'undefined' && navigator.gpu) {
+      try {
+        const existingSim = this.sharedMotionSim;
+        if (existingSim?.device && existingSim?.adapter) {
+          gpuOptions = { device: existingSim.device, adapter: existingSim.adapter };
+        } else {
+          const adapter = await navigator.gpu.requestAdapter();
+          if (adapter) {
+            const device = await adapter.requestDevice();
+            gpuOptions = { device, adapter };
+          }
+        }
+      } catch (e) {
+        console.warn('Multi-session: shared GPU device acquisition failed, sessions will attempt individual devices.', e);
+      }
+    }
+
     const runtimes = [];
     for (const binding of bindings) {
       const session = this.simulation.sessions[binding.sessionIndex];
@@ -7091,7 +7112,12 @@ export class App {
         strokeFrame: 0,
         brushInstance: null,
       };
-      runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush);
+      try {
+        runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush, gpuOptions);
+      } catch (e) {
+        console.error(`Multi-session: failed to create runtime for session "${session.name}" → layer "${layer.name}":`, e);
+        continue;
+      }
       this._primeMultiSessionRuntime(runtime, session, layer, p);
       runtimes.push(runtime);
     }
@@ -8742,7 +8768,10 @@ export class App {
       this.simulation.paused = false;
       this.isDrawing = false;
       this._syncSimulationUI();
-      this.showToast('Simulation start failed');
+      const msg = error?.message?.includes('WebGPU')
+        ? 'Simulation start failed: GPU device limit reached'
+        : 'Simulation start failed';
+      this.showToast(msg);
     } finally {
       this.simulation.starting = false;
     }

@@ -1035,12 +1035,12 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   return count > 0;
 }
 
-async function _createMotionSim(app, maxAgents = SHARED_MOTION_SIM_MAX_AGENTS) {
+async function _createMotionSim(app, maxAgents = SHARED_MOTION_SIM_MAX_AGENTS, options = {}) {
   const width = app.W || 800;
   const height = app.H || 600;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      return WebGPUBoidSim.create(width, height, maxAgents);
+      return WebGPUBoidSim.create(width, height, maxAgents, undefined, options);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
@@ -1117,7 +1117,7 @@ export class BoidBrush {
     this._rendererChainPatched = true;
   }
 
-  async init({ force = false, useShared = true } = {}) {
+  async init({ force = false, useShared = true, gpuOptions = {} } = {}) {
     if (force) {
       this._clearGpuPreview();
       this._ready = false;
@@ -1150,7 +1150,7 @@ export class BoidBrush {
     try {
       this.sim = useShared
         ? await _createSharedMotionSim(this.app)
-        : await _createMotionSim(this.app);
+        : await _createMotionSim(this.app, undefined, gpuOptions);
       this._usingSharedSim = !!useShared;
       if (useShared) this.app.sharedMotionSim = this.sim;
       this._syncRenderBackendStatus();
