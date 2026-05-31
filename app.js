@@ -6541,10 +6541,42 @@ export class App {
                         <option value="alpha" ${row.sensingChannel === 'alpha' ? 'selected' : ''}>Alpha</option>
                       </select>
                     </label>
-                    <label>Strength <input type="number" data-sim-setup-sensing-strength="${rowKey}" min="0" max="100" step="1" value="${row.sensingStrength}" ${row.sensingEnabled ? '' : 'disabled'}></label>
-                    <label>Radius <input type="number" data-sim-setup-sensing-radius="${rowKey}" min="5" max="80" step="1" value="${row.sensingRadius}" ${row.sensingEnabled ? '' : 'disabled'}></label>
-                    <label>Threshold <input type="number" data-sim-setup-sensing-threshold="${rowKey}" min="0" max="100" step="1" value="${row.sensingThreshold}" ${row.sensingEnabled ? '' : 'disabled'}></label>
-                    <label>Refresh <input type="number" data-sim-setup-sensing-update-frames="${rowKey}" min="1" max="50" step="1" value="${row.sensingUpdateFrames}" ${row.sensingEnabled ? '' : 'disabled'}></label>
+                    <label>Strength
+                      <span class="sim-setup-popup-slider">
+                        <button type="button" class="sim-setup-popup-slider-btn" data-sim-setup-slider-toggle="sensing-strength-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>${row.sensingStrength}</button>
+                        <span class="sim-setup-popup-slider-drop" data-sim-setup-slider-drop="sensing-strength-${rowKey}">
+                          <input type="range" min="0" max="100" step="1" value="${row.sensingStrength}" data-sim-setup-sensing-strength="${rowKey}" data-sim-setup-slider-range="sensing-strength-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                          <input type="number" min="0" max="100" step="1" value="${row.sensingStrength}" data-sim-setup-sensing-strength-num="${rowKey}" data-sim-setup-slider-num="sensing-strength-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                        </span>
+                      </span>
+                    </label>
+                    <label>Radius
+                      <span class="sim-setup-popup-slider">
+                        <button type="button" class="sim-setup-popup-slider-btn" data-sim-setup-slider-toggle="sensing-radius-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>${row.sensingRadius}</button>
+                        <span class="sim-setup-popup-slider-drop" data-sim-setup-slider-drop="sensing-radius-${rowKey}">
+                          <input type="range" min="5" max="80" step="1" value="${row.sensingRadius}" data-sim-setup-sensing-radius="${rowKey}" data-sim-setup-slider-range="sensing-radius-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                          <input type="number" min="5" max="80" step="1" value="${row.sensingRadius}" data-sim-setup-sensing-radius-num="${rowKey}" data-sim-setup-slider-num="sensing-radius-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                        </span>
+                      </span>
+                    </label>
+                    <label>Threshold
+                      <span class="sim-setup-popup-slider">
+                        <button type="button" class="sim-setup-popup-slider-btn" data-sim-setup-slider-toggle="sensing-threshold-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>${row.sensingThreshold}</button>
+                        <span class="sim-setup-popup-slider-drop" data-sim-setup-slider-drop="sensing-threshold-${rowKey}">
+                          <input type="range" min="0" max="100" step="1" value="${row.sensingThreshold}" data-sim-setup-sensing-threshold="${rowKey}" data-sim-setup-slider-range="sensing-threshold-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                          <input type="number" min="0" max="100" step="1" value="${row.sensingThreshold}" data-sim-setup-sensing-threshold-num="${rowKey}" data-sim-setup-slider-num="sensing-threshold-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                        </span>
+                      </span>
+                    </label>
+                    <label>Refresh
+                      <span class="sim-setup-popup-slider">
+                        <button type="button" class="sim-setup-popup-slider-btn" data-sim-setup-slider-toggle="sensing-update-frames-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>${row.sensingUpdateFrames}</button>
+                        <span class="sim-setup-popup-slider-drop" data-sim-setup-slider-drop="sensing-update-frames-${rowKey}">
+                          <input type="range" min="1" max="50" step="1" value="${row.sensingUpdateFrames}" data-sim-setup-sensing-update-frames="${rowKey}" data-sim-setup-slider-range="sensing-update-frames-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                          <input type="number" min="1" max="50" step="1" value="${row.sensingUpdateFrames}" data-sim-setup-sensing-update-frames-num="${rowKey}" data-sim-setup-slider-num="sensing-update-frames-${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 </td>
               </tr>`;
@@ -6646,32 +6678,108 @@ export class App {
         row.sensingChannel = SIM_SENSING_CHANNELS.includes(event.target.value) ? event.target.value : 'darkness';
       });
     });
+    // Popup slider toggle buttons
+    root.querySelectorAll('[data-sim-setup-slider-toggle]').forEach(btn => {
+      btn.addEventListener('click', event => {
+        const key = event.currentTarget.dataset.simSetupSliderToggle;
+        // Close any other open popup sliders first
+        root.querySelectorAll('.sim-setup-popup-slider-drop.open').forEach(drop => {
+          if (drop.dataset.simSetupSliderDrop !== key) drop.classList.remove('open');
+        });
+        const drop = root.querySelector(`[data-sim-setup-slider-drop="${key}"]`);
+        if (drop) drop.classList.toggle('open');
+      });
+    });
+    // Close popup sliders when clicking outside
+    const closePopupSliders = (event) => {
+      if (!event.target.closest('.sim-setup-popup-slider')) {
+        root.querySelectorAll('.sim-setup-popup-slider-drop.open').forEach(drop => drop.classList.remove('open'));
+      }
+    };
+    root.addEventListener('pointerdown', closePopupSliders);
+    // Sync helper for popup slider widgets
+    const syncPopupSlider = (key, value, root) => {
+      const btn = root.querySelector(`[data-sim-setup-slider-toggle="${key}"]`);
+      if (btn) btn.textContent = value;
+      const range = root.querySelector(`[data-sim-setup-slider-range="${key}"]`);
+      if (range && range !== document.activeElement) range.value = value;
+      const num = root.querySelector(`[data-sim-setup-slider-num="${key}"]`);
+      if (num && num !== document.activeElement) num.value = value;
+    };
     root.querySelectorAll('[data-sim-setup-sensing-strength]').forEach(input => {
-      input.addEventListener('change', event => {
+      const handler = event => {
         const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingStrength);
         if (!row) return;
         row.sensingStrength = Math.max(0, Math.min(100, parseInt(event.target.value, 10) || 0));
+        syncPopupSlider(`sensing-strength-${event.target.dataset.simSetupSensingStrength}`, row.sensingStrength, root);
+      };
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-strength-num]').forEach(input => {
+      input.addEventListener('change', event => {
+        const rowKey = event.target.dataset.simSetupSensingStrengthNum;
+        const row = this._getSimulationSetupDraftRow(rowKey);
+        if (!row) return;
+        row.sensingStrength = Math.max(0, Math.min(100, parseInt(event.target.value, 10) || 0));
+        syncPopupSlider(`sensing-strength-${rowKey}`, row.sensingStrength, root);
       });
     });
     root.querySelectorAll('[data-sim-setup-sensing-radius]').forEach(input => {
-      input.addEventListener('change', event => {
+      const handler = event => {
         const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingRadius);
         if (!row) return;
         row.sensingRadius = Math.max(5, Math.min(80, parseInt(event.target.value, 10) || 5));
+        syncPopupSlider(`sensing-radius-${event.target.dataset.simSetupSensingRadius}`, row.sensingRadius, root);
+      };
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-radius-num]').forEach(input => {
+      input.addEventListener('change', event => {
+        const rowKey = event.target.dataset.simSetupSensingRadiusNum;
+        const row = this._getSimulationSetupDraftRow(rowKey);
+        if (!row) return;
+        row.sensingRadius = Math.max(5, Math.min(80, parseInt(event.target.value, 10) || 5));
+        syncPopupSlider(`sensing-radius-${rowKey}`, row.sensingRadius, root);
       });
     });
     root.querySelectorAll('[data-sim-setup-sensing-threshold]').forEach(input => {
-      input.addEventListener('change', event => {
+      const handler = event => {
         const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingThreshold);
         if (!row) return;
         row.sensingThreshold = Math.max(0, Math.min(100, parseInt(event.target.value, 10) || 0));
+        syncPopupSlider(`sensing-threshold-${event.target.dataset.simSetupSensingThreshold}`, row.sensingThreshold, root);
+      };
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-threshold-num]').forEach(input => {
+      input.addEventListener('change', event => {
+        const rowKey = event.target.dataset.simSetupSensingThresholdNum;
+        const row = this._getSimulationSetupDraftRow(rowKey);
+        if (!row) return;
+        row.sensingThreshold = Math.max(0, Math.min(100, parseInt(event.target.value, 10) || 0));
+        syncPopupSlider(`sensing-threshold-${rowKey}`, row.sensingThreshold, root);
       });
     });
     root.querySelectorAll('[data-sim-setup-sensing-update-frames]').forEach(input => {
-      input.addEventListener('change', event => {
+      const handler = event => {
         const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingUpdateFrames);
         if (!row) return;
         row.sensingUpdateFrames = Math.max(1, Math.min(50, parseInt(event.target.value, 10) || 1));
+        syncPopupSlider(`sensing-update-frames-${event.target.dataset.simSetupSensingUpdateFrames}`, row.sensingUpdateFrames, root);
+      };
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
+    root.querySelectorAll('[data-sim-setup-sensing-update-frames-num]').forEach(input => {
+      input.addEventListener('change', event => {
+        const rowKey = event.target.dataset.simSetupSensingUpdateFramesNum;
+        const row = this._getSimulationSetupDraftRow(rowKey);
+        if (!row) return;
+        row.sensingUpdateFrames = Math.max(1, Math.min(50, parseInt(event.target.value, 10) || 1));
+        syncPopupSlider(`sensing-update-frames-${rowKey}`, row.sensingUpdateFrames, root);
       });
     });
   }
