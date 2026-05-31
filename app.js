@@ -15433,10 +15433,10 @@ export class App {
 
   _captureSessionControls() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="range"]:not(.slider-vertical), #sidebar input[type="checkbox"], #sidebar select').forEach(el => {
       if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
-    document.querySelectorAll('#sidebar input[type="number"]').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="number"]:not(.slider-num-input)').forEach(el => {
       if (el.id) controls[el.id] = el.value;
     });
     controls.primaryColor = this.primaryEl.value;

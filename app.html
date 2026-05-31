@@ -171,11 +171,24 @@ html,body{overflow:hidden;width:100%;height:100%;
 #sidebar label,#layersPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
 #sidebar label span,#layersPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
 .slider-desc{display:block;font-size:8px;color:var(--ink-3);margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
-#sidebar input[type="range"],#layersPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
-#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
-#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#sidebar input[type="range"]:not(.slider-vertical),#layersPanel input[type="range"]:not(.slider-vertical){-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"]:not(.slider-vertical):hover,#layersPanel input[type="range"]:not(.slider-vertical):hover{background:rgba(255,255,255,0.14);}
+#sidebar input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb,#layersPanel input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]:not(.slider-vertical)::-moz-range-thumb,#layersPanel input[type="range"]:not(.slider-vertical)::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]:not(.slider-vertical)::-moz-range-track,#layersPanel input[type="range"]:not(.slider-vertical)::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+/* Vertical slider styles */
+.slider-vertical{-webkit-appearance:slider-vertical;appearance:slider-vertical;writing-mode:vertical-lr;direction:rtl;width:16px;height:48px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;margin:0 2px;}
+.slider-vertical:hover{background:rgba(255,255,255,0.14);}
+.slider-vertical::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 3px rgba(0,0,0,0.5);}
+.slider-vertical::-moz-range-thumb{width:10px;height:10px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 3px rgba(0,0,0,0.5);}
+.slider-vertical::-moz-range-track{width:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+/* Number input styles */
+.slider-num-input{width:42px;height:20px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:var(--ink-0);font-size:10px;font-variant-numeric:tabular-nums;text-align:center;padding:0 2px;outline:none;-moz-appearance:textfield;}
+.slider-num-input::-webkit-outer-spin-button,.slider-num-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.slider-num-input:focus{border-color:rgba(117,162,255,0.5);background:rgba(255,255,255,0.1);}
+/* Slider row wrap */
+.slider-row-wrap{display:contents;}
+.slider-row-controls{display:inline-flex;align-items:center;gap:3px;}
 #sidebar select,#layersPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
 #sidebar select:hover,#layersPanel select:hover{border-color:rgba(255,255,255,0.2);}
 #sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}

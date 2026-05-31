@@ -60,13 +60,15 @@ function toggleSection(header) {
 function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
   const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
-  return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
+  const step = (max - min) <= 1 ? 0.01 : 1;
+  return `<div class="slider-row-wrap"><label>${label} <span class="slider-row-controls"><input type="number" class="slider-num-input" id="n_${id}" min="${min}" max="${max}" step="${step}" value="${value}"><input type="range" class="slider-vertical" id="vslider_${id}" min="${min}" max="${max}" value="${value}" orient="vertical"></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}</div>`;
 }
 
 function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
   const fmtFn = fmt || (v => v);
   const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
-  return `<label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${NUDGE_BUTTON_STYLE}">−</button><span id="v_${id}">${fmtFn(value)}</span><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${NUDGE_BUTTON_STYLE}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
+  const step = (max - min) <= 1 ? 0.01 : 1;
+  return `<div class="slider-row-wrap"><label>${label} <span style="display:inline-flex;align-items:center;gap:4px;"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${-delta}" aria-label="Decrease ${label}" style="${NUDGE_BUTTON_STYLE}">−</button><input type="number" class="slider-num-input" id="n_${id}" min="${min}" max="${max}" step="${step}" value="${value}"><input type="range" class="slider-vertical" id="vslider_${id}" min="${min}" max="${max}" value="${value}" orient="vertical"><button type="button" class="slider-nudge-btn" data-target="${id}" data-delta="${delta}" aria-label="Increase ${label}" style="${NUDGE_BUTTON_STYLE}">+</button></span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}</div>`;
 }
 
 function fluidMidrangeRow() {
@@ -168,8 +170,14 @@ function _copyLeaderOverrideFromSource(field) {
   if (target.type === 'checkbox') target.checked = source.checked;
   else target.value = source.value;
   const span = document.getElementById('v_' + field.id);
+  const numInput = document.getElementById('n_' + field.id);
+  const vSlider = document.getElementById('vslider_' + field.id);
   const fmt = _sliderFormats[field.id];
-  if (span && target.type === 'range') span.textContent = fmt ? fmt(+target.value) : target.value;
+  if (target.type === 'range') {
+    if (span) span.textContent = fmt ? fmt(+target.value) : target.value;
+    if (numInput) numInput.value = target.value;
+    if (vSlider) vSlider.value = target.value;
+  }
 }
 
 function _syncLeaderOverrideUI() {
@@ -751,16 +759,41 @@ export function buildSidebar(app) {
   });
 
   // ── Wire slider readouts ──
-  sb.querySelectorAll('input[type="range"]').forEach(inp => {
+  sb.querySelectorAll('input[type="range"]:not(.slider-vertical)').forEach(inp => {
+    const numInput = document.getElementById('n_' + inp.id);
+    const vSlider = document.getElementById('vslider_' + inp.id);
+    // Legacy span fallback (for non-sliderRow rows that still use v_ spans)
     const span = document.getElementById('v_' + inp.id);
-    if (!span) return;
     const fmt = _sliderFormats[inp.id];
     const update = () => {
-      span.textContent = fmt ? fmt(+inp.value) : inp.value;
+      if (numInput) numInput.value = inp.value;
+      if (vSlider) vSlider.value = inp.value;
+      if (span) span.textContent = fmt ? fmt(+inp.value) : inp.value;
       app.invalidateParams();
       syncEdgeSliders(app);
     };
     inp.addEventListener('input', update);
+    // Wire number input → range + vertical slider
+    if (numInput) {
+      numInput.addEventListener('input', () => {
+        const v = Math.max(Number(inp.min), Math.min(Number(inp.max), Number(numInput.value) || 0));
+        inp.value = String(v);
+        if (vSlider) vSlider.value = String(v);
+        if (span) span.textContent = fmt ? fmt(v) : v;
+        app.invalidateParams();
+        syncEdgeSliders(app);
+      });
+    }
+    // Wire vertical slider → range + number input
+    if (vSlider) {
+      vSlider.addEventListener('input', () => {
+        inp.value = vSlider.value;
+        if (numInput) numInput.value = vSlider.value;
+        if (span) span.textContent = fmt ? fmt(+vSlider.value) : vSlider.value;
+        app.invalidateParams();
+        syncEdgeSliders(app);
+      });
+    }
   });
 
   sb.querySelectorAll('.slider-nudge-btn').forEach(btn => {
@@ -983,7 +1016,7 @@ export function buildSidebar(app) {
       clearTimeout(_autoSaveTimer);
       _autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
     };
-    sb.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
+    sb.querySelectorAll('input[type="range"]:not(.slider-vertical), input[type="checkbox"], select, .slider-num-input').forEach(el => {
       el.addEventListener('input', triggerAutoSave);
       el.addEventListener('change', triggerAutoSave);
     });
@@ -1239,11 +1272,14 @@ function _syncMultDisplays() {
 
 export function syncUI(app) {
   // Update slider readouts
-  document.querySelectorAll('#sidebar input[type="range"]').forEach(inp => {
+  document.querySelectorAll('#sidebar input[type="range"]:not(.slider-vertical)').forEach(inp => {
+    const numInput = document.getElementById('n_' + inp.id);
+    const vSlider = document.getElementById('vslider_' + inp.id);
     const span = document.getElementById('v_' + inp.id);
-    if (!span) return;
     const fmt = _sliderFormats[inp.id];
-    span.textContent = fmt ? fmt(+inp.value) : inp.value;
+    if (numInput) numInput.value = inp.value;
+    if (vSlider) vSlider.value = inp.value;
+    if (span) span.textContent = fmt ? fmt(+inp.value) : inp.value;
   });
   // Update multiplier displays
   _syncMultDisplays();
@@ -1771,7 +1807,7 @@ function _applyPreset(app, values) {
 
 function _captureCurrentPresetValues(app) {
   const values = {};
-  document.querySelectorAll('#sidebar input[type="range"]').forEach(el => {
+  document.querySelectorAll('#sidebar input[type="range"]:not(.slider-vertical)').forEach(el => {
     if (el.id) values[el.id] = +el.value;
   });
   document.querySelectorAll('#sidebar input[type="checkbox"]').forEach(el => {
