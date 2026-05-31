@@ -6584,24 +6584,41 @@ export class App {
     });
     root.querySelectorAll('[data-sim-setup-layer-option]').forEach(input => {
       input.addEventListener('change', event => {
-        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupLayerOption);
+        const rowKey = event.target.dataset.simSetupLayerOption;
+        const row = this._getSimulationSetupDraftRow(rowKey);
         if (!row) return;
         const nextIds = new Set(this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex));
         if (event.target.checked) nextIds.add(event.target.value);
         else nextIds.delete(event.target.value);
         row.layerIds = this._normalizeSimulationLayerIds(Array.from(nextIds), row.sessionIndex);
-        this._renderSimulationSetupExplorer();
+        // Update the summary button text without closing the dropdown
+        const button = root.querySelector(`[data-sim-setup-menu="${rowKey}"][data-sim-setup-kind="layers"]`);
+        if (button) {
+          const span = button.querySelector('span');
+          if (span) span.textContent = this._buildSimulationSetupLayerSummary(row.layerIds, row.sessionIndex);
+        }
+        this._updateSimulationSetupSummary();
       });
     });
     root.querySelectorAll('[data-sim-setup-sensing-layer-option]').forEach(input => {
       input.addEventListener('change', event => {
-        const row = this._getSimulationSetupDraftRow(event.target.dataset.simSetupSensingLayerOption);
+        const rowKey = event.target.dataset.simSetupSensingLayerOption;
+        const row = this._getSimulationSetupDraftRow(rowKey);
         if (!row) return;
         const nextIds = new Set(_normalizeSimulationSensingSourceSelection(row.sensingLayerIds));
         if (event.target.checked) nextIds.add(event.target.value);
         else nextIds.delete(event.target.value);
         row.sensingLayerIds = _normalizeSimulationSensingSourceSelection(Array.from(nextIds));
-        this._renderSimulationSetupExplorer();
+        // Update the summary button text and muted label without closing the dropdown
+        const multiContainer = event.target.closest('.sim-setup-multi');
+        const button = multiContainer?.querySelector(`[data-sim-setup-menu="${rowKey}"][data-sim-setup-kind="sensing"]`);
+        if (button) {
+          const span = button.querySelector('span');
+          if (span) span.textContent = this._buildSimulationSetupSensingSummary(row);
+        }
+        const mutedLabel = multiContainer?.querySelector('.sim-setup-muted');
+        if (mutedLabel) mutedLabel.textContent = this._buildSimulationSetupSensingSummary(row);
+        this._updateSimulationSetupSummary();
       });
     });
     root.querySelectorAll('[data-sim-setup-sensing-mode]').forEach(select => {
