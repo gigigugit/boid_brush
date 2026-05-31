@@ -11910,6 +11910,8 @@ export class App {
     document.getElementById('leftPanel')?.classList.remove('open');
     document.getElementById('sidebarToggle')?.classList.remove('active');
     document.getElementById('layersToggle')?.classList.remove('active');
+    document.getElementById('rightPanelTabs')?.classList.remove('panel-tabs--shifted');
+    document.getElementById('leftPanelTabs')?.classList.remove('panel-tabs--shifted');
     document.getElementById('brushDropdown')?.classList.remove('open');
     document.getElementById('motionPathEditor')?.classList.add('open');
     this.motionPath.editorOpen = true;
@@ -11948,10 +11950,12 @@ export class App {
     if (previous?.sidebarOpen) {
       document.getElementById('rightPanel')?.classList.add('open');
       document.getElementById('sidebarToggle')?.classList.add('active');
+      document.getElementById('rightPanelTabs')?.classList.add('panel-tabs--shifted');
     }
     if (previous?.layersOpen) {
       document.getElementById('leftPanel')?.classList.add('open');
       document.getElementById('layersToggle')?.classList.add('active');
+      document.getElementById('leftPanelTabs')?.classList.add('panel-tabs--shifted');
     }
     this.motionPath.previousUiState = null;
     this._syncMotionPathUI();
@@ -12139,24 +12143,47 @@ export class App {
       const rp = document.getElementById('rightPanel');
       const open = rp?.classList.toggle('open');
       document.getElementById('sidebarToggle')?.classList.toggle('active', open);
+      document.getElementById('rightPanelTabs')?.classList.toggle('panel-tabs--shifted', open);
     });
     document.getElementById('layersToggle')?.addEventListener('click', () => {
       const lp = document.getElementById('leftPanel');
       const open = lp?.classList.toggle('open');
       document.getElementById('layersToggle')?.classList.toggle('active', open);
+      document.getElementById('leftPanelTabs')?.classList.toggle('panel-tabs--shifted', open);
     });
-    // ── Panel tab switching ──
+    // ── Panel tab switching (drawer handles) ──
     document.querySelectorAll('.panel-tabs').forEach(tabBar => {
       tabBar.addEventListener('click', e => {
         const tab = e.target.closest('.panel-tab');
         if (!tab) return;
         const viewName = tab.dataset.panelView;
-        const panelContainer = tabBar.parentElement;
-        tabBar.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        panelContainer.querySelectorAll(':scope > .panel-view').forEach(v => v.classList.remove('active'));
-        const target = panelContainer.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
-        if (target) target.classList.add('active');
+        const panelId = tab.dataset.panelTarget;
+        const panelContainer = document.getElementById(panelId);
+        if (!panelContainer) return;
+
+        const isActive = tab.classList.contains('active');
+        const isOpen = panelContainer.classList.contains('open');
+
+        if (isActive && isOpen) {
+          // Clicking the active tab when panel is open closes the panel
+          panelContainer.classList.remove('open');
+          tabBar.classList.remove('panel-tabs--shifted');
+          // Update topbar toggle
+          if (panelId === 'rightPanel') document.getElementById('sidebarToggle')?.classList.remove('active');
+          if (panelId === 'leftPanel') document.getElementById('layersToggle')?.classList.remove('active');
+        } else {
+          // Switch to the clicked tab and open the panel
+          tabBar.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          panelContainer.querySelectorAll(':scope > .panel-view').forEach(v => v.classList.remove('active'));
+          const target = panelContainer.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
+          if (target) target.classList.add('active');
+          panelContainer.classList.add('open');
+          tabBar.classList.add('panel-tabs--shifted');
+          // Update topbar toggle
+          if (panelId === 'rightPanel') document.getElementById('sidebarToggle')?.classList.add('active');
+          if (panelId === 'leftPanel') document.getElementById('layersToggle')?.classList.add('active');
+        }
       });
     });
     document.getElementById('swapColors')?.addEventListener('click', () => {
@@ -12236,11 +12263,6 @@ export class App {
           if (brushTab) brushTab.click();
         } else {
           simTab.click();
-          const rp = document.getElementById('rightPanel');
-          if (rp && !rp.classList.contains('open')) {
-            rp.classList.add('open');
-            document.getElementById('sidebarToggle')?.classList.add('active');
-          }
         }
       }
       this._syncSimulationUI();
@@ -12249,11 +12271,6 @@ export class App {
       // Switch to simulation tab in right panel
       const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
       if (simTab) simTab.click();
-      const rp = document.getElementById('rightPanel');
-      if (rp && !rp.classList.contains('open')) {
-        rp.classList.add('open');
-        document.getElementById('sidebarToggle')?.classList.add('active');
-      }
     });
     document.getElementById('simFormatMenu')?.addEventListener('pointerdown', e => this._handleSimulationFormatMenuPointerDown(e));
     window.addEventListener('pointermove', e => this._handleSimulationFormatMenuPointerMove(e), { passive: false });

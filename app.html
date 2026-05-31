@@ -159,9 +159,15 @@ html,body{overflow:hidden;width:100%;height:100%;
 #sidebar{-webkit-overflow-scrolling:touch;padding:10px;}
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
 
-/* ---- Panel Tabs ---- */
-.panel-tabs{display:flex;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line-0);background:rgba(0,0,0,0.3);flex-shrink:0;}
-.panel-tab{padding:10px 16px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.06);color:var(--ink-1);font-size:12px;font-weight:600;min-height:44px;min-width:44px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;flex:1;text-align:center;display:flex;align-items:center;justify-content:center;}
+/* ---- Panel Tabs (drawer handles) ---- */
+.panel-tabs{position:fixed;top:calc(var(--topbar-h) + 24px);z-index:21;display:flex;flex-direction:column;gap:4px;}
+.panel-tabs--left{left:0;transform:translateX(0);transition:transform 220ms ease;}
+.panel-tabs--right{right:0;transform:translateX(0);transition:transform 220ms ease;}
+.panel-tabs--left.panel-tabs--shifted{transform:translateX(var(--layers-w));}
+.panel-tabs--right.panel-tabs--shifted{transform:translateX(calc(-1 * var(--sidebar-w)));}
+.panel-tab{padding:10px 8px;border:1px solid var(--line-0);background:rgba(17,20,28,0.92);backdrop-filter:blur(16px);color:var(--ink-1);font-size:11px;font-weight:600;min-height:44px;min-width:32px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;text-align:center;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;text-orientation:mixed;}
+.panel-tabs--left .panel-tab{border-radius:0 var(--rad-1) var(--rad-1) 0;border-left:none;}
+.panel-tabs--right .panel-tab{border-radius:var(--rad-1) 0 0 var(--rad-1);border-right:none;}
 .panel-tab:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 .panel-tab.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
 .panel-tab-hidden{display:none!important;}
@@ -898,19 +904,19 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 </div>
 
 <!-- ══════════ Layers Panel (left) ══════════ -->
+<div class="panel-tabs panel-tabs--left" id="leftPanelTabs">
+  <button class="panel-tab active" data-panel-view="layers" data-panel-target="leftPanel">Layers</button>
+</div>
 <aside id="leftPanel">
-  <div class="panel-tabs" id="leftPanelTabs">
-    <button class="panel-tab active" data-panel-view="layers">Layers</button>
-  </div>
   <div id="layersPanel" class="panel-view active" data-panel-view="layers"></div>
 </aside>
 
 <!-- ══════════ Right Panel (tabbed) ══════════ -->
+<div class="panel-tabs panel-tabs--right" id="rightPanelTabs">
+  <button class="panel-tab active" data-panel-view="brush" data-panel-target="rightPanel">Brush</button>
+  <button class="panel-tab panel-tab-hidden" data-panel-view="simulation" data-panel-target="rightPanel">Simulation</button>
+</div>
 <aside id="rightPanel">
-  <div class="panel-tabs" id="rightPanelTabs">
-    <button class="panel-tab active" data-panel-view="brush">Brush</button>
-    <button class="panel-tab panel-tab-hidden" data-panel-view="simulation">Simulation</button>
-  </div>
   <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
   <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
   <div id="simFormatMenu"></div>
