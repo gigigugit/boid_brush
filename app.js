@@ -6448,15 +6448,6 @@ export class App {
             <th style="width:56px;">Run</th>
             <th>Simulation</th>
             <th style="width:210px;">Stamp Layer(s)</th>
-            <th style="width:88px;">Sense</th>
-            <th style="width:150px;">Sense Source</th>
-            <th style="width:220px;">Sense Layer(s)</th>
-            <th style="width:120px;">Mode</th>
-            <th style="width:130px;">Channel</th>
-            <th style="width:90px;">Strength</th>
-            <th style="width:80px;">Radius</th>
-            <th style="width:90px;">Threshold</th>
-            <th style="width:90px;">Refresh</th>
           </tr>
         </thead>
         <tbody>
@@ -6497,57 +6488,72 @@ export class App {
                     ${routeWarning}
                   </div>
                 </td>
-                <td><label class="sim-setup-check"><input type="checkbox" data-sim-setup-sensing-enabled="${rowKey}" ${row.sensingEnabled ? 'checked' : ''}></label></td>
-                <td>
-                  <select data-sim-setup-sensing-source="${rowKey}">
-                    <option value="below" ${row.sensingSource === 'below' ? 'selected' : ''}>Below</option>
-                    <option value="all" ${row.sensingSource === 'all' ? 'selected' : ''}>All Visible</option>
-                    <option value="active" ${row.sensingSource === 'active' ? 'selected' : ''}>Active</option>
-                    <option value="selected" ${row.sensingSource === 'selected' ? 'selected' : ''}>Selected</option>
-                  </select>
-                </td>
-                <td>
-                  <div class="sim-setup-multi">
-                    <button type="button" data-sim-setup-menu="${rowKey}" data-sim-setup-kind="sensing" ${row.sensingSource === 'selected' ? '' : 'disabled'}>
-                      <span>${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</span>
-                      <span aria-hidden="true">▾</span>
-                    </button>
-                    <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="sensing">
-                      ${sensingLayerOptions.map(option => `
-                        <label>
-                          <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(option.id) ? 'checked' : ''}>
-                          <span>${_escapeHtml(option.label)}</span>
-                        </label>`).join('')}
+              </tr>
+              <tr class="sim-setup-accordion" data-sim-setup-accordion="${rowKey}">
+                <td colspan="3">
+                  <button type="button" class="sim-setup-accordion-toggle" data-sim-setup-accordion-toggle="${rowKey}">
+                    <span class="chevron">▶</span> Show Settings
+                  </button>
+                  <div class="sim-setup-accordion-body">
+                    <label><input type="checkbox" data-sim-setup-sensing-enabled="${rowKey}" ${row.sensingEnabled ? 'checked' : ''}> Sense</label>
+                    <label>Source
+                      <select data-sim-setup-sensing-source="${rowKey}">
+                        <option value="below" ${row.sensingSource === 'below' ? 'selected' : ''}>Below</option>
+                        <option value="all" ${row.sensingSource === 'all' ? 'selected' : ''}>All Visible</option>
+                        <option value="active" ${row.sensingSource === 'active' ? 'selected' : ''}>Active</option>
+                        <option value="selected" ${row.sensingSource === 'selected' ? 'selected' : ''}>Selected</option>
+                      </select>
+                    </label>
+                    <div class="sim-setup-multi">
+                      <button type="button" data-sim-setup-menu="${rowKey}" data-sim-setup-kind="sensing" ${row.sensingSource === 'selected' ? '' : 'disabled'}>
+                        <span>${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</span>
+                        <span aria-hidden="true">▾</span>
+                      </button>
+                      <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="sensing">
+                        ${sensingLayerOptions.map(option => `
+                          <label>
+                            <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(option.id) ? 'checked' : ''}>
+                            <span>${_escapeHtml(option.label)}</span>
+                          </label>`).join('')}
+                      </div>
+                      ${sensingWarning}
+                      <div class="sim-setup-muted">${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</div>
                     </div>
-                    ${sensingWarning}
-                    <div class="sim-setup-muted">${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</div>
+                    <label>Mode
+                      <select data-sim-setup-sensing-mode="${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                        <option value="avoid" ${row.sensingMode === 'avoid' ? 'selected' : ''}>Avoid</option>
+                        <option value="attract" ${row.sensingMode === 'attract' ? 'selected' : ''}>Attract</option>
+                      </select>
+                    </label>
+                    <label>Channel
+                      <select data-sim-setup-sensing-channel="${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
+                        <option value="darkness" ${row.sensingChannel === 'darkness' ? 'selected' : ''}>Darkness</option>
+                        <option value="lightness" ${row.sensingChannel === 'lightness' ? 'selected' : ''}>Lightness</option>
+                        <option value="saturation" ${row.sensingChannel === 'saturation' ? 'selected' : ''}>Saturation</option>
+                        <option value="red" ${row.sensingChannel === 'red' ? 'selected' : ''}>Red</option>
+                        <option value="green" ${row.sensingChannel === 'green' ? 'selected' : ''}>Green</option>
+                        <option value="blue" ${row.sensingChannel === 'blue' ? 'selected' : ''}>Blue</option>
+                        <option value="alpha" ${row.sensingChannel === 'alpha' ? 'selected' : ''}>Alpha</option>
+                      </select>
+                    </label>
+                    <label>Strength <input type="number" data-sim-setup-sensing-strength="${rowKey}" min="0" max="100" step="1" value="${row.sensingStrength}" ${row.sensingEnabled ? '' : 'disabled'}></label>
+                    <label>Radius <input type="number" data-sim-setup-sensing-radius="${rowKey}" min="5" max="80" step="1" value="${row.sensingRadius}" ${row.sensingEnabled ? '' : 'disabled'}></label>
+                    <label>Threshold <input type="number" data-sim-setup-sensing-threshold="${rowKey}" min="0" max="100" step="1" value="${row.sensingThreshold}" ${row.sensingEnabled ? '' : 'disabled'}></label>
+                    <label>Refresh <input type="number" data-sim-setup-sensing-update-frames="${rowKey}" min="1" max="50" step="1" value="${row.sensingUpdateFrames}" ${row.sensingEnabled ? '' : 'disabled'}></label>
                   </div>
                 </td>
-                <td>
-                  <select data-sim-setup-sensing-mode="${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
-                    <option value="avoid" ${row.sensingMode === 'avoid' ? 'selected' : ''}>Avoid</option>
-                    <option value="attract" ${row.sensingMode === 'attract' ? 'selected' : ''}>Attract</option>
-                  </select>
-                </td>
-                <td>
-                  <select data-sim-setup-sensing-channel="${rowKey}" ${row.sensingEnabled ? '' : 'disabled'}>
-                    <option value="darkness" ${row.sensingChannel === 'darkness' ? 'selected' : ''}>Darkness</option>
-                    <option value="lightness" ${row.sensingChannel === 'lightness' ? 'selected' : ''}>Lightness</option>
-                    <option value="saturation" ${row.sensingChannel === 'saturation' ? 'selected' : ''}>Saturation</option>
-                    <option value="red" ${row.sensingChannel === 'red' ? 'selected' : ''}>Red</option>
-                    <option value="green" ${row.sensingChannel === 'green' ? 'selected' : ''}>Green</option>
-                    <option value="blue" ${row.sensingChannel === 'blue' ? 'selected' : ''}>Blue</option>
-                    <option value="alpha" ${row.sensingChannel === 'alpha' ? 'selected' : ''}>Alpha</option>
-                  </select>
-                </td>
-                <td><input type="number" data-sim-setup-sensing-strength="${rowKey}" min="0" max="100" step="1" value="${row.sensingStrength}" style="width:60px" ${row.sensingEnabled ? '' : 'disabled'}></td>
-                <td><input type="number" data-sim-setup-sensing-radius="${rowKey}" min="5" max="80" step="1" value="${row.sensingRadius}" style="width:54px" ${row.sensingEnabled ? '' : 'disabled'}></td>
-                <td><input type="number" data-sim-setup-sensing-threshold="${rowKey}" min="0" max="100" step="1" value="${row.sensingThreshold}" style="width:60px" ${row.sensingEnabled ? '' : 'disabled'}></td>
-                <td><input type="number" data-sim-setup-sensing-update-frames="${rowKey}" min="1" max="50" step="1" value="${row.sensingUpdateFrames}" style="width:60px" ${row.sensingEnabled ? '' : 'disabled'}></td>
               </tr>`;
           }).join('')}
         </tbody>
       </table>`;
+
+    root.querySelectorAll('[data-sim-setup-accordion-toggle]').forEach(button => {
+      button.addEventListener('click', event => {
+        const rowKey = event.currentTarget.dataset.simSetupAccordionToggle;
+        const accordionRow = root.querySelector(`[data-sim-setup-accordion="${rowKey}"]`);
+        if (accordionRow) accordionRow.classList.toggle('open');
+      });
+    });
 
     root.querySelectorAll('[data-sim-setup-enabled]').forEach(input => {
       input.addEventListener('change', event => {

@@ -541,12 +541,29 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simSetupModal .sim-setup-toolbar .sim-setup-context{display:block;margin-top:4px;color:#c9d6ef;}
 #simSetupModal .sim-setup-toggle{display:flex;align-items:center;gap:8px;color:#dbe6fb;font-size:11px;font-weight:650;}
 #simSetupModal .sim-setup-toggle input{accent-color:var(--accent-b);}
-#simSetupModal .sim-setup-tableWrap{width:max-content;max-width:100%;overflow:auto;border:1px solid rgba(255,255,255,0.1);background:rgba(5,9,16,0.58);}
-#simSetupModal .sim-setup-table{width:max-content;min-width:1680px;border-collapse:collapse;font-size:11px;color:#d8e2f7;}
+#simSetupModal .sim-setup-tableWrap{width:100%;max-width:100%;overflow:auto;border:1px solid rgba(255,255,255,0.1);background:rgba(5,9,16,0.58);}
+#simSetupModal .sim-setup-table{width:100%;min-width:500px;border-collapse:collapse;font-size:11px;color:#d8e2f7;}
 #simSetupModal .sim-setup-table th{position:sticky;top:0;z-index:1;background:#111827;color:#8fb0f4;text-align:left;text-transform:uppercase;letter-spacing:.08em;font-size:10px;font-weight:800;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.11);}
 #simSetupModal .sim-setup-table td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.07);vertical-align:top;}
+#simSetupModal .sim-setup-table tr[data-sim-setup-row] td{border-bottom:none;}
+#simSetupModal .sim-setup-table tr.sim-setup-accordion td{border-bottom:1px solid rgba(255,255,255,0.07);padding:0 10px 0;}
+#simSetupModal .sim-setup-table tr.sim-setup-accordion.open td{padding:0 10px 9px;}
+#simSetupModal .sim-setup-accordion-toggle{display:inline-flex;align-items:center;gap:5px;padding:5px 0;cursor:pointer;color:#8fb0f4;font-size:11px;font-weight:650;user-select:none;border:none;background:none;}
+#simSetupModal .sim-setup-accordion-toggle:hover{color:#b8d4ff;}
+#simSetupModal .sim-setup-accordion-toggle .chevron{display:inline-block;transition:transform .15s ease;font-size:9px;}
+#simSetupModal .sim-setup-accordion.open .sim-setup-accordion-toggle .chevron{transform:rotate(90deg);}
+#simSetupModal .sim-setup-accordion-body{display:none;gap:10px;flex-wrap:wrap;align-items:center;padding:6px 0 4px;}
+#simSetupModal .sim-setup-accordion.open .sim-setup-accordion-body{display:flex;}
+#simSetupModal .sim-setup-accordion-body label{display:flex;align-items:center;gap:5px;color:#d8e2f7;font-size:11px;white-space:nowrap;}
+#simSetupModal .sim-setup-accordion-body select{min-height:28px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;color-scheme:dark;}
+#simSetupModal .sim-setup-accordion-body select option{background:var(--select-panel-bg);color:var(--select-text);}
+#simSetupModal .sim-setup-accordion-body input[type="number"]{min-height:28px;width:56px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;color-scheme:dark;}
+#simSetupModal .sim-setup-accordion-body input[type="checkbox"]{accent-color:var(--accent-b);}
+#simSetupModal .sim-setup-accordion-body .sim-setup-multi{min-width:140px;}
+#simSetupModal .sim-setup-accordion-body .sim-setup-multi button{min-height:28px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;cursor:pointer;font-weight:650;width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px;}
 #simSetupModal .sim-setup-table tr:last-child td{border-bottom:none;}
 #simSetupModal .sim-setup-table tr:hover td{background:rgba(255,255,255,0.025);}
+#simSetupModal .sim-setup-table tr.sim-setup-accordion:hover td{background:transparent;}
 #simSetupModal .sim-setup-table tr.active td{background:rgba(58,106,232,0.08);}
 #simSetupModal .sim-setup-sessionName{display:grid;gap:3px;min-width:180px;}
 #simSetupModal .sim-setup-sessionName strong{color:#f2f6ff;font-size:12px;}
