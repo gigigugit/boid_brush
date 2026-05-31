@@ -2664,6 +2664,24 @@ export class App {
     return normalized;
   }
 
+  _updateTabVisibility() {
+    const alwaysShow = document.getElementById('alwaysShowTabs')?.checked || false;
+    const leftPanel = document.getElementById('leftPanel');
+    const rightPanel = document.getElementById('rightPanel');
+    const leftTabs = document.getElementById('leftPanelTabs');
+    const rightTabs = document.getElementById('rightPanelTabs');
+    const leftOpen = leftPanel?.classList.contains('open');
+    const rightOpen = rightPanel?.classList.contains('open');
+    if (leftTabs) {
+      leftTabs.classList.toggle('panel-tabs--visible', alwaysShow || leftOpen);
+      leftTabs.classList.toggle('panel-tabs--open', !!leftOpen);
+    }
+    if (rightTabs) {
+      rightTabs.classList.toggle('panel-tabs--visible', alwaysShow || rightOpen);
+      rightTabs.classList.toggle('panel-tabs--open', !!rightOpen);
+    }
+  }
+
   swapPaintColors() {
     const primary = this.getColorValue('primary', '#1a1a1a');
     const secondary = this.getColorValue('secondary', '#ffffff');
@@ -11910,8 +11928,7 @@ export class App {
     document.getElementById('leftPanel')?.classList.remove('open');
     document.getElementById('sidebarToggle')?.classList.remove('active');
     document.getElementById('layersToggle')?.classList.remove('active');
-    document.getElementById('rightPanelTabs')?.classList.remove('panel-tabs--shifted');
-    document.getElementById('leftPanelTabs')?.classList.remove('panel-tabs--shifted');
+    this._updateTabVisibility();
     document.getElementById('brushDropdown')?.classList.remove('open');
     document.getElementById('motionPathEditor')?.classList.add('open');
     this.motionPath.editorOpen = true;
@@ -11950,13 +11967,12 @@ export class App {
     if (previous?.sidebarOpen) {
       document.getElementById('rightPanel')?.classList.add('open');
       document.getElementById('sidebarToggle')?.classList.add('active');
-      document.getElementById('rightPanelTabs')?.classList.add('panel-tabs--shifted');
     }
     if (previous?.layersOpen) {
       document.getElementById('leftPanel')?.classList.add('open');
       document.getElementById('layersToggle')?.classList.add('active');
-      document.getElementById('leftPanelTabs')?.classList.add('panel-tabs--shifted');
     }
+    this._updateTabVisibility();
     this.motionPath.previousUiState = null;
     this._syncMotionPathUI();
     if (save) this.saveSession();
@@ -12143,13 +12159,13 @@ export class App {
       const rp = document.getElementById('rightPanel');
       const open = rp?.classList.toggle('open');
       document.getElementById('sidebarToggle')?.classList.toggle('active', open);
-      document.getElementById('rightPanelTabs')?.classList.toggle('panel-tabs--shifted', open);
+      this._updateTabVisibility();
     });
     document.getElementById('layersToggle')?.addEventListener('click', () => {
       const lp = document.getElementById('leftPanel');
       const open = lp?.classList.toggle('open');
       document.getElementById('layersToggle')?.classList.toggle('active', open);
-      document.getElementById('leftPanelTabs')?.classList.toggle('panel-tabs--shifted', open);
+      this._updateTabVisibility();
     });
     // ── Panel tab switching (drawer handles) ──
     document.querySelectorAll('.panel-tabs').forEach(tabBar => {
@@ -12167,7 +12183,6 @@ export class App {
         if (isActive && isOpen) {
           // Clicking the active tab when panel is open closes the panel
           panelContainer.classList.remove('open');
-          tabBar.classList.remove('panel-tabs--shifted');
           // Update topbar toggle
           if (panelId === 'rightPanel') document.getElementById('sidebarToggle')?.classList.remove('active');
           if (panelId === 'leftPanel') document.getElementById('layersToggle')?.classList.remove('active');
@@ -12179,13 +12194,23 @@ export class App {
           const target = panelContainer.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
           if (target) target.classList.add('active');
           panelContainer.classList.add('open');
-          tabBar.classList.add('panel-tabs--shifted');
           // Update topbar toggle
           if (panelId === 'rightPanel') document.getElementById('sidebarToggle')?.classList.add('active');
           if (panelId === 'leftPanel') document.getElementById('layersToggle')?.classList.add('active');
         }
+        this._updateTabVisibility();
       });
     });
+    // ── Always show tabs setting ──
+    const alwaysShowTabsCb = document.getElementById('alwaysShowTabs');
+    if (alwaysShowTabsCb) {
+      alwaysShowTabsCb.checked = localStorage.getItem('bb_alwaysShowTabs') === 'true';
+      alwaysShowTabsCb.addEventListener('change', () => {
+        localStorage.setItem('bb_alwaysShowTabs', alwaysShowTabsCb.checked);
+        this._updateTabVisibility();
+      });
+    }
+    this._updateTabVisibility();
     document.getElementById('swapColors')?.addEventListener('click', () => {
       this.swapPaintColors();
     });

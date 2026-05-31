@@ -160,11 +160,12 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
 
 /* ---- Panel Tabs (drawer handles) ---- */
-.panel-tabs{position:fixed;top:calc(var(--topbar-h) + 24px);z-index:21;display:flex;flex-direction:column;gap:4px;}
-.panel-tabs--left{left:0;transform:translateX(0);transition:transform 220ms ease;}
-.panel-tabs--right{right:0;transform:translateX(0);transition:transform 220ms ease;}
-.panel-tabs--left.panel-tabs--shifted{transform:translateX(var(--layers-w));}
-.panel-tabs--right.panel-tabs--shifted{transform:translateX(calc(-1 * var(--sidebar-w)));}
+.panel-tabs{position:fixed;top:calc(var(--topbar-h) + 24px);z-index:21;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transition:opacity 220ms ease,left 220ms ease,right 220ms ease;}
+.panel-tabs--visible{opacity:1;pointer-events:auto;}
+.panel-tabs--left{left:0;}
+.panel-tabs--right{right:0;}
+.panel-tabs--left.panel-tabs--open{left:var(--layers-w);}
+.panel-tabs--right.panel-tabs--open{right:var(--sidebar-w);}
 .panel-tab{padding:10px 8px;border:1px solid var(--line-0);background:rgba(17,20,28,0.92);backdrop-filter:blur(16px);color:var(--ink-1);font-size:11px;font-weight:600;min-height:44px;min-width:32px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;text-align:center;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;text-orientation:mixed;}
 .panel-tabs--left .panel-tab{border-radius:0 var(--rad-1) var(--rad-1) 0;border-left:none;}
 .panel-tabs--right .panel-tab{border-radius:var(--rad-1) 0 0 var(--rad-1);border-right:none;}
