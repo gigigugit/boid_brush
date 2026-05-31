@@ -4906,6 +4906,16 @@ export class App {
       distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : 'uniform',
       noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : 1,
       mask: spawn?.mask || null,
+      stampSize: Number.isFinite(spawn?.stampSize) ? Math.max(1, spawn.stampSize) : p.stampSize,
+      stampSeparation: Number.isFinite(spawn?.stampSeparation) ? Math.max(0, Math.min(1, spawn.stampSeparation)) : p.stampSeparation,
+      trailFlow: Number.isFinite(spawn?.trailFlow) ? Math.max(0, Math.min(1, spawn.trailFlow)) : p.trailFlow,
+      smudge: Number.isFinite(spawn?.smudge) ? Math.max(0, Math.min(1, spawn.smudge)) : p.smudge,
+      hueVar: Number.isFinite(spawn?.hueVar) ? Math.max(0, Math.min(1, spawn.hueVar)) : p.hueVar,
+      satVar: Number.isFinite(spawn?.satVar) ? Math.max(0, Math.min(1, spawn.satVar)) : p.satVar,
+      litVar: Number.isFinite(spawn?.litVar) ? Math.max(0, Math.min(1, spawn.litVar)) : p.litVar,
+      sizeVar: Number.isFinite(spawn?.sizeVar) ? Math.max(0, Math.min(1, spawn.sizeVar)) : p.sizeVar,
+      opacityVar: Number.isFinite(spawn?.opacityVar) ? Math.max(0, Math.min(1, spawn.opacityVar)) : p.opacityVar,
+      speedVar: Number.isFinite(spawn?.speedVar) ? Math.max(0, Math.min(1, spawn.speedVar)) : p.speedVar,
     };
   }
 
@@ -7949,16 +7959,29 @@ export class App {
           compactControls.push(compactNumberControl('jitter', 'number', 'Jitter', 0, 100, 1, 0.01));
           resetFields.push('shape', 'radius', 'angle', 'jitter');
         }
+        compactControls.push(compactNumberControl('stampSize', 'integer', 'Stamp Size', 1, 100, 1, 1));
+        compactControls.push(compactNumberControl('stampSeparation', 'number', 'Spacing', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('trailFlow', 'number', 'Flow', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('smudge', 'number', 'Smudge', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('hueVar', 'number', 'Hue Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('satVar', 'number', 'Sat Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('litVar', 'number', 'Lit Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('sizeVar', 'number', 'Size Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('opacityVar', 'number', 'Opacity Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('speedVar', 'number', 'Speed Var', 0, 100, 1, 0.01));
+        resetFields.push('stampSize', 'stampSeparation', 'trailFlow', 'smudge', 'hueVar', 'satVar', 'litVar', 'sizeVar', 'opacityVar', 'speedVar');
       } else if (selected.kind === 'point') {
+        compactControls.push(compactColorControl('color'));
         compactControls.push(compactNumberControl('strength', 'number', 'Strength', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 300, 1, 1));
-        resetFields.push('strength', 'radius');
+        resetFields.push('color', 'strength', 'radius');
         if (target.type === 'repel') {
           compactControls.push(compactNumberControl('hardness', 'number', 'Hardness', 1, 100, 5, 0.1));
           resetFields.push('hardness');
         }
       } else if (selected.kind === 'path') {
         const pathConfig = this._resolveSimulationPathConfig(target, p);
+        compactControls.push(compactColorControl('color'));
         compactControls.push(compactNumberControl('strength', 'number', 'Strength', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 300, 1, 1));
         compactControls.push(compactNumberControl('influenceRadius', 'integer', 'Falloff', 1, 600, 1, 1));
@@ -7972,7 +7995,7 @@ export class App {
           { value: 'reverse', label: 'Reverse' },
         ], pathConfig.direction));
         compactControls.push(compactToggleControl('closed', 'Loop', !!target.closed));
-        resetFields.push('strength', 'radius', 'influenceRadius', 'speed', 'direction', 'closed');
+        resetFields.push('color', 'strength', 'radius', 'influenceRadius', 'speed', 'direction', 'closed');
       } else if (selected.kind === 'edge') {
         compactControls.push(compactNumberControl('strength', 'number', 'Force', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 0, 300, 1, 1));
