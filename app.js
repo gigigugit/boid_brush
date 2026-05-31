@@ -7120,7 +7120,7 @@ export class App {
       this._syncSimulationSessionContextUi();
       const uiEnabled = this.simulation.enabled && this._isMotionBrush();
       const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
-      if (simTab) simTab.style.display = uiEnabled ? '' : 'none';
+      if (simTab) simTab.classList.toggle('panel-tab-hidden', !uiEnabled);
       if (!uiEnabled) {
         panel.innerHTML = '';
         // If simulation tab was active, switch back to brush
@@ -12151,14 +12151,11 @@ export class App {
         const tab = e.target.closest('.panel-tab');
         if (!tab) return;
         const viewName = tab.dataset.panelView;
-        const panel = tabBar.parentElement;
+        const panelContainer = tabBar.parentElement;
         tabBar.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        panel.querySelectorAll(':scope > .panel-view').forEach(v => v.classList.remove('active'));
-        const target = panel.querySelector(`.panel-view[data-panel-view="${viewName}"]`) ||
-          (viewName === 'brush' ? document.getElementById('sidebar') :
-           viewName === 'simulation' ? document.getElementById('simOverlaySidebar') :
-           viewName === 'layers' ? document.getElementById('layersPanel') : null);
+        panelContainer.querySelectorAll(':scope > .panel-view').forEach(v => v.classList.remove('active'));
+        const target = panelContainer.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
         if (target) target.classList.add('active');
       });
     });

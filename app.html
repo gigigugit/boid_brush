@@ -164,6 +164,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 .panel-tab{padding:10px 16px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.06);color:var(--ink-1);font-size:12px;font-weight:600;min-height:44px;min-width:44px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;flex:1;text-align:center;display:flex;align-items:center;justify-content:center;}
 .panel-tab:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 .panel-tab.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
+.panel-tab-hidden{display:none!important;}
 .panel-view{display:none;flex:1;min-height:0;overflow-y:auto;}
 .panel-view.active{display:block;}
 
@@ -694,7 +695,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Top Bar ══════════ -->
 <div id="topbarWrap">
-<button id="layersToggle" aria-expanded="false" aria-controls="leftPanel">☰</button>
+<button id="layersToggle" aria-expanded="false" aria-controls="leftPanel" aria-label="Layers">☰</button>
 <div id="topbar">
   <!-- topbar-essential is applied to #brushBtnWrap (the direct #topbar child)
        because the overflow manager tracks direct children of #topbar -->
@@ -901,20 +902,19 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <div class="panel-tabs" id="leftPanelTabs">
     <button class="panel-tab active" data-panel-view="layers">Layers</button>
   </div>
-  <div id="layersPanel" class="panel-view active"></div>
+  <div id="layersPanel" class="panel-view active" data-panel-view="layers"></div>
 </aside>
 
 <!-- ══════════ Right Panel (tabbed) ══════════ -->
 <aside id="rightPanel">
   <div class="panel-tabs" id="rightPanelTabs">
     <button class="panel-tab active" data-panel-view="brush">Brush</button>
-    <button class="panel-tab" data-panel-view="simulation" style="display:none;">Simulation</button>
+    <button class="panel-tab panel-tab-hidden" data-panel-view="simulation">Simulation</button>
   </div>
-  <div id="sidebar" class="panel-view active"></div>
-  <div id="simOverlaySidebar" class="panel-view"></div>
+  <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
+  <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
   <div id="simFormatMenu"></div>
 </aside>
-<button id="simOverlayHandle" type="button" aria-controls="simOverlaySidebar" aria-expanded="false" style="display:none;">Simulation</button>
 
 <!-- ══════════ Ant Math Overlay Panel ══════════ -->
 <div id="antMathPanel"></div>
