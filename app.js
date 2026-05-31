@@ -7095,6 +7095,7 @@ export class App {
     }
 
     const runtimes = [];
+    let failedCount = 0;
     for (const binding of bindings) {
       const session = this.simulation.sessions[binding.sessionIndex];
       const layer = this._getLayerById(binding.layerId);
@@ -7116,10 +7117,14 @@ export class App {
         runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush, gpuOptions);
       } catch (e) {
         console.error(`Multi-session: failed to create runtime for session "${session.name}" → layer "${layer.name}":`, e);
+        failedCount++;
         continue;
       }
       this._primeMultiSessionRuntime(runtime, session, layer, p);
       runtimes.push(runtime);
+    }
+    if (failedCount > 0 && runtimes.length > 0) {
+      this.showToast(`${failedCount} session(s) failed to start — running ${runtimes.length} of ${runtimes.length + failedCount}`);
     }
     return runtimes;
   }
