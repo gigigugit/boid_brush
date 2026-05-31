@@ -7119,10 +7119,18 @@ export class App {
     try {
       this._syncSimulationSessionContextUi();
       const uiEnabled = this.simulation.enabled && this._isMotionBrush();
-      const open = uiEnabled && !this.simulation.inspectorCollapsed;
-      panel.classList.toggle('open', open);
+      const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
+      if (simTab) simTab.style.display = uiEnabled ? '' : 'none';
       if (!uiEnabled) {
         panel.innerHTML = '';
+        // If simulation tab was active, switch back to brush
+        if (simTab && simTab.classList.contains('active')) {
+          simTab.classList.remove('active');
+          panel.classList.remove('active');
+          const brushTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]');
+          if (brushTab) brushTab.classList.add('active');
+          document.getElementById('sidebar')?.classList.add('active');
+        }
         if (formatPanel) {
           formatPanel.innerHTML = '';
           formatPanel.classList.remove('open');
@@ -8563,9 +8571,8 @@ export class App {
       hudCollapseBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     }
     if (handle) {
-      const showHandle = !!this.simulation.enabled && isMotion && this.simulation.inspectorCollapsed;
-      handle.classList.toggle('open', showHandle);
-      handle.setAttribute('aria-expanded', showHandle ? 'false' : 'true');
+      // Handle is now hidden; simulation tab in rightPanel replaces it
+      handle.style.display = 'none';
     }
 
     const toolRow = document.getElementById('simToolRow');
@@ -8595,7 +8602,8 @@ export class App {
     }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
-    document.getElementById('simInspectorToggle')?.classList.toggle('active', !this.simulation.inspectorCollapsed);
+    const simTabActive = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]')?.classList.contains('active');
+    document.getElementById('simInspectorToggle')?.classList.toggle('active', !!simTabActive);
     const guidesBtn = document.getElementById('simGuidesToggle');
     if (guidesBtn) {
       guidesBtn.classList.toggle('active', this.simulation.guidesVisible !== false);
@@ -11895,11 +11903,11 @@ export class App {
     this._normalizeMotionPathState();
     if (this.motionPath.editorOpen) return;
     this.motionPath.previousUiState = {
-      sidebarOpen: !!document.getElementById('sidebar')?.classList.contains('open'),
-      layersOpen: !!document.getElementById('layersPanel')?.classList.contains('open'),
+      sidebarOpen: !!document.getElementById('rightPanel')?.classList.contains('open'),
+      layersOpen: !!document.getElementById('leftPanel')?.classList.contains('open'),
     };
-    document.getElementById('sidebar')?.classList.remove('open');
-    document.getElementById('layersPanel')?.classList.remove('open');
+    document.getElementById('rightPanel')?.classList.remove('open');
+    document.getElementById('leftPanel')?.classList.remove('open');
     document.getElementById('sidebarToggle')?.classList.remove('active');
     document.getElementById('layersToggle')?.classList.remove('active');
     document.getElementById('brushDropdown')?.classList.remove('open');
@@ -11938,11 +11946,11 @@ export class App {
     this.motionPathEditor.insertPointMode = false;
     const previous = this.motionPath.previousUiState;
     if (previous?.sidebarOpen) {
-      document.getElementById('sidebar')?.classList.add('open');
+      document.getElementById('rightPanel')?.classList.add('open');
       document.getElementById('sidebarToggle')?.classList.add('active');
     }
     if (previous?.layersOpen) {
-      document.getElementById('layersPanel')?.classList.add('open');
+      document.getElementById('leftPanel')?.classList.add('open');
       document.getElementById('layersToggle')?.classList.add('active');
     }
     this.motionPath.previousUiState = null;
@@ -12128,14 +12136,31 @@ export class App {
     document.getElementById('tilingBtn')?.addEventListener('click', () => this.toggleTiling());
     document.getElementById('alphaLockBtn')?.addEventListener('click', () => this.toggleAlphaLock());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
-      const sb = document.getElementById('sidebar');
-      const open = sb?.classList.toggle('open');
+      const rp = document.getElementById('rightPanel');
+      const open = rp?.classList.toggle('open');
       document.getElementById('sidebarToggle')?.classList.toggle('active', open);
     });
     document.getElementById('layersToggle')?.addEventListener('click', () => {
-      const lp = document.getElementById('layersPanel');
+      const lp = document.getElementById('leftPanel');
       const open = lp?.classList.toggle('open');
       document.getElementById('layersToggle')?.classList.toggle('active', open);
+    });
+    // ── Panel tab switching ──
+    document.querySelectorAll('.panel-tabs').forEach(tabBar => {
+      tabBar.addEventListener('click', e => {
+        const tab = e.target.closest('.panel-tab');
+        if (!tab) return;
+        const viewName = tab.dataset.panelView;
+        const panel = tabBar.parentElement;
+        tabBar.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        panel.querySelectorAll(':scope > .panel-view').forEach(v => v.classList.remove('active'));
+        const target = panel.querySelector(`.panel-view[data-panel-view="${viewName}"]`) ||
+          (viewName === 'brush' ? document.getElementById('sidebar') :
+           viewName === 'simulation' ? document.getElementById('simOverlaySidebar') :
+           viewName === 'layers' ? document.getElementById('layersPanel') : null);
+        if (target) target.classList.add('active');
+      });
     });
     document.getElementById('swapColors')?.addEventListener('click', () => {
       this.swapPaintColors();
@@ -12205,12 +12230,33 @@ export class App {
       this._syncSimulationUI();
     });
     document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
-      this.simulation.inspectorCollapsed = !this.simulation.inspectorCollapsed;
+      // Toggle simulation tab visibility in right panel
+      const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
+      if (simTab) {
+        if (simTab.classList.contains('active')) {
+          // Switch back to brush
+          const brushTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]');
+          if (brushTab) brushTab.click();
+        } else {
+          simTab.click();
+          const rp = document.getElementById('rightPanel');
+          if (rp && !rp.classList.contains('open')) {
+            rp.classList.add('open');
+            document.getElementById('sidebarToggle')?.classList.add('active');
+          }
+        }
+      }
       this._syncSimulationUI();
     });
     document.getElementById('simOverlayHandle')?.addEventListener('click', () => {
-      this.simulation.inspectorCollapsed = false;
-      this._syncSimulationUI();
+      // Switch to simulation tab in right panel
+      const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
+      if (simTab) simTab.click();
+      const rp = document.getElementById('rightPanel');
+      if (rp && !rp.classList.contains('open')) {
+        rp.classList.add('open');
+        document.getElementById('sidebarToggle')?.classList.add('active');
+      }
     });
     document.getElementById('simFormatMenu')?.addEventListener('pointerdown', e => this._handleSimulationFormatMenuPointerDown(e));
     window.addEventListener('pointermove', e => this._handleSimulationFormatMenuPointerMove(e), { passive: false });

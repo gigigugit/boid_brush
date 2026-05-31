@@ -42,9 +42,9 @@ html,body{overflow:hidden;width:100%;height:100%;
     linear-gradient(180deg, #0d1118 0%, #0a0d14 100%);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:var(--ink-1);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
-#sidebar,#sidebar *{touch-action:pan-y;}
+#leftPanel,#leftPanel *{touch-action:pan-y;}
+#rightPanel,#rightPanel *{touch-action:pan-y;}
 #antMathPanel,#antMathPanel *{touch-action:pan-y;}
-#simOverlaySidebar,#simOverlaySidebar *{touch-action:pan-y;}
 #simFormatMenu,#simFormatMenu *{touch-action:pan-y;}
 #topbar,#topbar *{touch-action:pan-x;}
 
@@ -143,19 +143,29 @@ html,body{overflow:hidden;width:100%;height:100%;
 #swapColors:hover{color:#fff;transform:rotate(180deg);}
 
 /* ---- Layers panel (left) ---- */
-#layersPanel,#layersPanel *{touch-action:pan-y;}
-#layersPanel{position:fixed;top:var(--topbar-h);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateX(-100%);transition:transform 220ms ease;padding:10px;font-size:11px;box-shadow:var(--shadow-lg);}
-#layersPanel.open{transform:translateX(0);}
-#layersPanel::-webkit-scrollbar{width:5px;}
-#layersPanel::-webkit-scrollbar-track{background:transparent;}
-#layersPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+#leftPanel{position:fixed;top:var(--topbar-h);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#leftPanel.open{transform:translateX(0);}
+#leftPanel::-webkit-scrollbar{width:5px;}
+#leftPanel::-webkit-scrollbar-track{background:transparent;}
+#leftPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+#layersPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 
-/* ---- Sidebar (right) ---- */
-#sidebar{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateX(100%);transition:transform 220ms ease;padding:10px;font-size:11px;box-shadow:var(--shadow-lg);}
-#sidebar.open{transform:translateX(0);}
-#sidebar::-webkit-scrollbar{width:5px;}
-#sidebar::-webkit-scrollbar-track{background:transparent;}
-#sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+/* ---- Right Panel (tabbed) ---- */
+#rightPanel{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#rightPanel.open{transform:translateX(0);}
+#rightPanel::-webkit-scrollbar{width:5px;}
+#rightPanel::-webkit-scrollbar-track{background:transparent;}
+#rightPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+#sidebar{-webkit-overflow-scrolling:touch;padding:10px;}
+#simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
+
+/* ---- Panel Tabs ---- */
+.panel-tabs{display:flex;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line-0);background:rgba(0,0,0,0.3);flex-shrink:0;}
+.panel-tab{padding:10px 16px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.06);color:var(--ink-1);font-size:12px;font-weight:600;min-height:44px;min-width:44px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;flex:1;text-align:center;display:flex;align-items:center;justify-content:center;}
+.panel-tab:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
+.panel-tab.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 10px rgba(75,120,241,0.36);}
+.panel-view{display:none;flex:1;min-height:0;overflow-y:auto;}
+.panel-view.active{display:block;}
 
 /* Section headers */
 .section-header{color:var(--ink-0);margin:4px 0 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.04);border:1px solid var(--line-0);border-radius:10px 10px 0 0;min-height:40px;transition:all 0.15s;}
@@ -307,14 +317,6 @@ html,body{overflow:hidden;width:100%;height:100%;
 .am-math{display:block;font-size:8px;color:#666;margin:-2px 0 2px 0;line-height:1.2;white-space:normal;font-style:italic;}
 
 /* Simulation inspector overlay */
-#simOverlaySidebar{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:min(296px,92vw);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:22;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px;font-size:11px;transform:translateX(100%);transition:transform 220ms ease;box-shadow:var(--shadow-lg);}
-#simOverlaySidebar.open{transform:translateX(0);}
-#simOverlayHandle{position:fixed;top:calc(var(--topbar-h) + 84px);right:0;z-index:21;display:none;align-items:center;justify-content:center;writing-mode:vertical-rl;transform:translateX(100%);padding:10px 7px;border:1px solid var(--line-0);border-right:none;border-radius:12px 0 0 12px;background:rgba(12,15,22,0.94);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);color:#dfe7f8;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:transform 220ms ease,background 140ms ease,color 140ms ease;}
-#simOverlayHandle.open{display:flex;transform:translateX(0);}
-#simOverlayHandle:hover{background:rgba(255,255,255,0.12);color:#fff;}
-#simOverlaySidebar::-webkit-scrollbar{width:5px;}
-#simOverlaySidebar::-webkit-scrollbar-track{background:transparent;}
-#simOverlaySidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
 #simOverlaySidebar .section-header{margin:3px 0 0;padding:8px 10px;min-height:34px;border-radius:9px 9px 0 0;}
 #simOverlaySidebar .section-body{padding:6px;gap:4px;margin-bottom:3px;border-radius:0 0 9px 9px;}
 .sim-inspector-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;}
@@ -692,7 +694,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Top Bar ══════════ -->
 <div id="topbarWrap">
-<button id="layersToggle" aria-expanded="false" aria-controls="layersPanel">Layers</button>
+<button id="layersToggle" aria-expanded="false" aria-controls="leftPanel">☰</button>
 <div id="topbar">
   <!-- topbar-essential is applied to #brushBtnWrap (the direct #topbar child)
        because the overflow manager tracks direct children of #topbar -->
@@ -895,15 +897,24 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 </div>
 
 <!-- ══════════ Layers Panel (left) ══════════ -->
-<aside id="layersPanel"></aside>
+<aside id="leftPanel">
+  <div class="panel-tabs" id="leftPanelTabs">
+    <button class="panel-tab active" data-panel-view="layers">Layers</button>
+  </div>
+  <div id="layersPanel" class="panel-view active"></div>
+</aside>
 
-<!-- ══════════ Sidebar ══════════ -->
-<div id="sidebar"></div>
-
-<!-- ══════════ Simulation Overlay Sidebar ══════════ -->
-<div id="simOverlaySidebar"></div>
-<div id="simFormatMenu"></div>
-<button id="simOverlayHandle" type="button" aria-controls="simOverlaySidebar" aria-expanded="false">Simulation</button>
+<!-- ══════════ Right Panel (tabbed) ══════════ -->
+<aside id="rightPanel">
+  <div class="panel-tabs" id="rightPanelTabs">
+    <button class="panel-tab active" data-panel-view="brush">Brush</button>
+    <button class="panel-tab" data-panel-view="simulation" style="display:none;">Simulation</button>
+  </div>
+  <div id="sidebar" class="panel-view active"></div>
+  <div id="simOverlaySidebar" class="panel-view"></div>
+  <div id="simFormatMenu"></div>
+</aside>
+<button id="simOverlayHandle" type="button" aria-controls="simOverlaySidebar" aria-expanded="false" style="display:none;">Simulation</button>
 
 <!-- ══════════ Ant Math Overlay Panel ══════════ -->
 <div id="antMathPanel"></div>
