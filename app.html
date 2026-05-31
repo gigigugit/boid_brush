@@ -785,7 +785,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <div class="sim-row-spacer"></div>
     <button id="simTopbarGuideToggle" class="sim-row-guide-toggle" aria-expanded="false" aria-controls="simTopbarGuideContent">❔ Guide</button>
   </div>
-  <div class="sim-row-guide" id="simTopbarGuideContent">
+  <div class="sim-row-guide" id="simTopbarGuideContent" role="region" aria-labelledby="simTopbarGuideToggle">
     <h3>Override precedence</h3>
     <ul>
       <li>Selected simulation item overrides win whenever that override is set.</li>
