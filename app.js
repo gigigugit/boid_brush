@@ -4733,6 +4733,19 @@ export class App {
     if (simSetupActiveSession) simSetupActiveSession.textContent = context.setupLabel;
     const simSetupModeSummary = document.getElementById('simSetupModeSummary');
     if (simSetupModeSummary) simSetupModeSummary.textContent = context.modeSummary;
+    // Sync topbar second-row session selector
+    const topbarSelect = document.getElementById('simTopbarSessionSelect');
+    if (topbarSelect) {
+      const hasSessions = this.simulation.sessions.length > 0;
+      topbarSelect.disabled = !hasSessions;
+      let opts = `<option value="" ${context.isSaved ? '' : 'selected'} disabled>${context.isSaved ? 'Choose a saved session...' : 'Unsaved Draft'}</option>`;
+      for (let i = 0; i < this.simulation.sessions.length; i++) {
+        const s = this.simulation.sessions[i];
+        const label = s.name || `Session ${i + 1}`;
+        opts += `<option value="${i}" ${i === context.activeIndex ? 'selected' : ''}>${label}</option>`;
+      }
+      topbarSelect.innerHTML = opts;
+    }
   }
 
   _getRunnableSimulationSessionBindings() {
@@ -6028,6 +6041,21 @@ export class App {
 
   _closeSimulationHelp() {
     document.getElementById('simHelpModal')?.classList.remove('open');
+  }
+
+  _toggleSimTopbarGuide() {
+    const guide = document.getElementById('simTopbarGuideContent');
+    const btn = document.getElementById('simTopbarGuideToggle');
+    if (!guide) return;
+    const isOpen = guide.classList.toggle('open');
+    if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    // Update row height CSS variable since guide content changes the height
+    requestAnimationFrame(() => {
+      const row = document.getElementById('simTopbarRow');
+      if (row && row.classList.contains('open')) {
+        document.body.style.setProperty('--sim-row-h', row.offsetHeight + 'px');
+      }
+    });
   }
 
   _getSimulationDistributeDialogTarget() {
@@ -8582,6 +8610,18 @@ export class App {
     }
     if (playbackBar) {
       playbackBar.classList.toggle('open', !!this.simulation.enabled && isMotion);
+    }
+    // Simulation second row visibility
+    const simTopbarRow = document.getElementById('simTopbarRow');
+    if (simTopbarRow) {
+      const showRow = !!this.simulation.enabled && isMotion;
+      simTopbarRow.classList.toggle('open', showRow);
+      document.body.classList.toggle('sim-topbar-row-open', showRow);
+      if (showRow) {
+        // Update CSS variable for row height
+        const rowH = simTopbarRow.offsetHeight;
+        document.body.style.setProperty('--sim-row-h', rowH + 'px');
+      }
     }
     if (hudCollapseBtn) {
       const expanded = !this.simulation.hudCollapsed;
@@ -12231,8 +12271,16 @@ export class App {
     document.getElementById('simulationBtn')?.addEventListener('click', () => this._toggleSimulationMode());
     document.getElementById('simHelpMenuBtn')?.addEventListener('click', () => {
       this._closeTopbarOverflowMenu?.();
-      this._openSimulationHelp();
+      this._toggleSimTopbarGuide();
     });
+    // Simulation topbar second-row controls
+    document.getElementById('simTopbarSessionSelect')?.addEventListener('change', event => {
+      const nextIndex = parseInt(event.target.value, 10);
+      if (Number.isFinite(nextIndex)) this._setActiveSimulationSessionIndex(nextIndex);
+    });
+    document.getElementById('simTopbarNewDraft')?.addEventListener('click', () => this._newSimulationSession());
+    document.getElementById('simTopbarSave')?.addEventListener('click', () => this._saveSimulationSession());
+    document.getElementById('simTopbarGuideToggle')?.addEventListener('click', () => this._toggleSimTopbarGuide());
     document.getElementById('simRunBtn')?.addEventListener('click', () => {
       if (this.simulation.paused) this.resumeSimulation();
       else this.startSimulation();
