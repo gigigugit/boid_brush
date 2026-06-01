@@ -739,6 +739,7 @@ button,input{font:inherit;}
   document.getElementById('deckNext').addEventListener('click', function() { activate(current + 1); });
 
   preview.addEventListener('pointerdown', function(event) {
+    event.preventDefault();
     pointerStart = { x: event.clientX, y: event.clientY };
   });
   preview.addEventListener('pointerup', function(event) {
@@ -747,7 +748,7 @@ button,input{font:inherit;}
     var deltaY = event.clientY - pointerStart.y;
     pointerStart = null;
     // Only treat the gesture as a swipe when horizontal travel clearly exceeds vertical drift.
-    if (Math.abs(deltaX) < SWIPE_THRESHOLD || Math.abs(deltaX) < Math.abs(deltaY)) return;
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD || Math.abs(deltaX) <= Math.abs(deltaY)) return;
     activate(current + (deltaX < 0 ? 1 : -1));
   });
   preview.addEventListener('pointercancel', function() { pointerStart = null; });
