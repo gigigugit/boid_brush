@@ -6307,22 +6307,23 @@ export class App {
   }
 
   _getSimulationVarOverridesFromParamSnapshot(snapshot = {}) {
+    const vars = this.simulation?.vars || {};
     return _normalizeSimulationVars({
-      ...this.simulation.vars,
+      ...vars,
       seek: snapshot.seek,
       cohesion: snapshot.cohesion,
       separation: snapshot.separation,
       alignment: snapshot.alignment,
       maxSpeed: snapshot.maxSpeed,
       damping: snapshot.damping,
-      sensingEnabled: snapshot.sensingEnabled,
-      sensingMode: snapshot.sensingMode,
-      sensingChannel: snapshot.sensingChannel,
-      sensingStrength: snapshot.sensingStrength,
-      sensingRadius: snapshot.sensingRadius,
-      sensingThreshold: snapshot.sensingThreshold,
-      sensingSource: snapshot.sensingSource,
-      sensingUpdateFrames: snapshot.sensingUpdateFrames,
+      sensingEnabled: typeof vars.sensingEnabled === 'boolean' ? vars.sensingEnabled : snapshot.sensingEnabled,
+      sensingMode: typeof vars.sensingMode === 'string' ? vars.sensingMode : snapshot.sensingMode,
+      sensingChannel: typeof vars.sensingChannel === 'string' ? vars.sensingChannel : snapshot.sensingChannel,
+      sensingStrength: Number.isFinite(vars.sensingStrength) ? vars.sensingStrength : snapshot.sensingStrength,
+      sensingRadius: Number.isFinite(vars.sensingRadius) ? vars.sensingRadius : snapshot.sensingRadius,
+      sensingThreshold: Number.isFinite(vars.sensingThreshold) ? vars.sensingThreshold : snapshot.sensingThreshold,
+      sensingSource: typeof vars.sensingSource === 'string' ? vars.sensingSource : snapshot.sensingSource,
+      sensingUpdateFrames: Number.isFinite(vars.sensingUpdateFrames) ? vars.sensingUpdateFrames : snapshot.sensingUpdateFrames,
     });
   }
 
@@ -6344,6 +6345,38 @@ export class App {
       this._refreshSensingLayerSourceUi?.();
     }
     return applied;
+  }
+
+  _syncSimulationSessionSensingControls({ sync = true } = {}) {
+    const vars = this.simulation?.vars || {};
+    let applied = false;
+    const assign = (id, value) => {
+      if (value === undefined || value === null) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.type === 'checkbox') el.checked = !!value;
+      else el.value = String(value);
+      applied = true;
+    };
+    if (typeof vars.sensingEnabled === 'boolean') assign('sensingEnabled', vars.sensingEnabled);
+    if (typeof vars.sensingMode === 'string') assign('sensingMode', vars.sensingMode);
+    if (typeof vars.sensingChannel === 'string') assign('sensingChannel', vars.sensingChannel);
+    if (Number.isFinite(vars.sensingStrength)) assign('sensingStrength', Math.round(vars.sensingStrength * 100));
+    if (Number.isFinite(vars.sensingRadius)) assign('sensingRadius', Math.round(vars.sensingRadius));
+    if (Number.isFinite(vars.sensingThreshold)) assign('sensingThreshold', Math.round(vars.sensingThreshold * 100));
+    if (typeof vars.sensingSource === 'string') {
+      assign('sensingSource', vars.sensingSource);
+      const sourceSelect = document.getElementById('sensingSource');
+      if (sourceSelect) sourceSelect.dataset.prevValue = vars.sensingSource;
+    }
+    if (Number.isFinite(vars.sensingUpdateFrames)) {
+      assign('sensingUpdateFrames', Math.max(1, Math.min(50, Math.round(vars.sensingUpdateFrames))));
+    }
+    if (!applied) return false;
+    this._paramsDirty = true;
+    if (sync && document.getElementById('sidebar')) syncUI(this);
+    this._refreshSensingLayerSourceUi?.();
+    return true;
   }
 
   _syncActiveSimulationSessionFromDraft() {
@@ -6377,6 +6410,7 @@ export class App {
     });
     this._restoreSensingSourceSelection(session.sensingSourceSelection);
     this._applySimulationSessionControlState(session.controlState, { sync: false });
+    this._syncSimulationSessionSensingControls({ sync: false });
     this.simulation.brushData = _deepClone(session.brushData);
     if (Number.isFinite(session.nextId)) this.simulation.nextId = Math.max(1, Math.round(session.nextId));
     this.simulation.selected = null;
@@ -7568,17 +7602,6 @@ export class App {
     const alignmentValue = Number.isFinite(this.simulation.vars.alignment) ? this.simulation.vars.alignment : p.alignment;
     const maxSpeedValue = Number.isFinite(this.simulation.vars.maxSpeed) ? this.simulation.vars.maxSpeed : p.maxSpeed;
     const dampingValue = Number.isFinite(this.simulation.vars.damping) ? this.simulation.vars.damping : p.damping;
-    const sensingEnabledValue = typeof this.simulation.vars.sensingEnabled === 'boolean' ? this.simulation.vars.sensingEnabled : p.sensingEnabled;
-    const sensingModeValue = this.simulation.vars.sensingMode || p.sensingMode;
-    const sensingChannelValue = this.simulation.vars.sensingChannel || p.sensingChannel;
-    const sensingStrengthValue = Number.isFinite(this.simulation.vars.sensingStrength) ? this.simulation.vars.sensingStrength : p.sensingStrength;
-    const sensingRadiusValue = Number.isFinite(this.simulation.vars.sensingRadius) ? this.simulation.vars.sensingRadius : p.sensingRadius;
-    const sensingThresholdValue = Number.isFinite(this.simulation.vars.sensingThreshold) ? this.simulation.vars.sensingThreshold : p.sensingThreshold;
-    const sensingSourceValue = this.simulation.vars.sensingSource || p.sensingSource;
-    const sensingUpdateFramesValue = Number.isFinite(this.simulation.vars.sensingUpdateFrames)
-      ? this.simulation.vars.sensingUpdateFrames
-      : p.sensingUpdateFrames;
-    const sensingSummaryValue = this._buildSensingLayerSelectionSummary();
     const formatSimPanelValue = (id, value) => {
       switch (id) {
         case 'simSpeed': return `${(value / 100).toFixed(1)}×`;
@@ -7734,50 +7757,7 @@ export class App {
       ${simVarSlider({ id: 'maxSpeed', label: 'Max Speed', min: 1, max: 30, step: 0.5, scale: 0.5, value: maxSpeedValue })}
       ${simVarSlider({ id: 'damping', label: 'Damping', min: 80, max: 100, step: 0.5, scale: 0.01, value: dampingValue })}`;
     const boidSensingBody = `
-      <div class="sim-inspector-note">These sensing controls are saved with the current simulation session and applied per runtime during multi-session playback.</div>
-      ${simVarToggle({ id: 'sensingEnabled', label: 'Enable Pixel Sensing', checked: sensingEnabledValue, desc: 'When enabled, boids react to sampled pixels while the simulation runs.' })}
-      ${simVarSelect({
-        id: 'sensingMode',
-        label: 'Sensing Mode',
-        value: sensingModeValue,
-        options: [
-          { value: 'avoid', label: 'Avoid' },
-          { value: 'attract', label: 'Attract' },
-        ],
-      })}
-      ${simVarSelect({
-        id: 'sensingChannel',
-        label: 'Sample Channel',
-        value: sensingChannelValue,
-        options: [
-          { value: 'darkness', label: 'Darkness' },
-          { value: 'lightness', label: 'Lightness' },
-          { value: 'saturation', label: 'Saturation' },
-          { value: 'red', label: 'Red' },
-          { value: 'green', label: 'Green' },
-          { value: 'blue', label: 'Blue' },
-          { value: 'alpha', label: 'Alpha' },
-        ],
-      })}
-      ${simVarSelect({
-        id: 'sensingSource',
-        label: 'Sensing Source',
-        value: sensingSourceValue,
-        options: [
-          { value: 'below', label: 'Layers below active' },
-          { value: 'all', label: 'All visible layers' },
-          { value: 'active', label: 'Active layer only' },
-          { value: 'selected', label: 'Custom selected layers' },
-        ],
-      })}
-      <div class="sim-inspector-actions" style="margin-top:8px">
-        <button data-sim-sensing-pick="1">${sensingSourceValue === 'selected' ? 'Edit Layers' : 'Pick Layers'}</button>
-      </div>
-      <div class="sim-inspector-note" style="margin-top:6px" data-sim-sensing-summary="1">${_escapeHtml(sensingSummaryValue)}</div>
-      ${simVarSlider({ id: 'sensingStrength', label: 'Sensing Strength', min: 0, max: 100, step: 1, scale: 0.01, value: sensingStrengthValue })}
-      ${simVarSlider({ id: 'sensingRadius', label: 'Sensing Radius', min: 5, max: 80, step: 1, scale: 1, value: sensingRadiusValue })}
-      ${simVarSlider({ id: 'sensingThreshold', label: 'Sensing Threshold', min: 0, max: 100, step: 1, scale: 0.01, value: sensingThresholdValue })}
-      ${simVarSlider({ id: 'sensingUpdateFrames', label: 'Refresh Every', min: 1, max: 50, step: 1, scale: 1, value: sensingUpdateFramesValue, desc: 'Higher values reuse the same sampled image for more frames before refreshing active, all, or selected sensing.' })}`;
+      <div class="sim-inspector-note">Use the sidebar Pixel Sensing controls while this session is loaded. Those drawing-mode controls are saved with the active simulation session and applied per runtime during multi-session playback.</div>`;
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
@@ -8672,6 +8652,7 @@ export class App {
             ...this.simulation.vars,
             sensingEnabled: enabled,
           });
+          this._syncSimulationSessionSensingControls();
         }
         commitStageInspectorChange();
       });
@@ -8697,6 +8678,7 @@ export class App {
             sensingSource: nextSource,
           });
           this._restoreSensingSourceSelection(selection);
+          this._syncSimulationSessionSensingControls();
         }
         commitStageInspectorChange();
       });
@@ -8710,6 +8692,7 @@ export class App {
         session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(selectedLayerIds);
         if (sessionIndex === this.simulation.activeSessionIndex) {
           this._restoreSensingSourceSelection(session.sensingSourceSelection);
+          this._syncSimulationSessionSensingControls();
         }
         commitStageInspectorChange();
       });
