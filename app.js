@@ -6328,6 +6328,8 @@ export class App {
     const vars = this.simulation?.vars || {};
     return _normalizeSimulationVars({
       ...vars,
+      // Simulation seek is owned by the session override slider, not the
+      // draw-mode sidebar seek control captured in the param snapshot.
       seek: Number.isFinite(vars.seek) ? vars.seek : DEFAULT_SIM_SEEK,
       cohesion: Number.isFinite(vars.cohesion) ? vars.cohesion : snapshot.cohesion,
       separation: Number.isFinite(vars.separation) ? vars.separation : snapshot.separation,
@@ -6445,6 +6447,8 @@ export class App {
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
     this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    // New simulation sessions always start from the sim seek default instead of
+    // inheriting the current draw-mode seek slider value.
     this.simulation.vars.seek = DEFAULT_SIM_SEEK;
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
