@@ -5089,11 +5089,20 @@ export class App {
     const panel = document.getElementById('simFormatMenu');
     if (!panel) return;
     if (!this._simFormatMenuUi.position) {
-      panel.style.left = '';
-      panel.style.top = '';
-      panel.style.right = '';
-      panel.style.bottom = '';
-      return;
+      if (!panel.classList.contains('open')) {
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.right = '';
+        panel.style.bottom = '';
+        return;
+      }
+      const rect = panel.getBoundingClientRect();
+      this._simFormatMenuUi.position = this._clampSimulationFormatMenuPosition(
+        rect.left,
+        rect.top,
+        rect.width || panel.offsetWidth || 0,
+        rect.height || panel.offsetHeight || 0,
+      );
     }
     const pos = this._clampSimulationFormatMenuPosition(
       this._simFormatMenuUi.position.left,

@@ -425,14 +425,14 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-guide-layer-toggle.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b))!important;border-color:rgba(117,162,255,0.55)!important;color:#fff!important;}
 .sim-guide-layer-delete{background:rgba(138,52,52,0.72)!important;border-color:rgba(225,99,99,0.28)!important;color:#ffd6d6!important;}
 .sim-guide-layer-delete:hover{background:rgba(255,59,48,0.38)!important;color:#fff!important;}
-#simFormatMenu{position:fixed;top:calc(var(--topbar-h) + 18px);right:calc(min(296px, 92vw) + 18px);width:max-content;max-width:none;overflow:visible;display:none;z-index:23;padding:0;border-radius:12px;background:rgba(12,15,22,0.96);backdrop-filter:blur(20px);border:1px solid var(--line-1);box-shadow:var(--shadow-lg);cursor:grab;}
+#simFormatMenu{position:fixed;top:calc(var(--topbar-h) + 18px);right:calc(min(296px, 92vw) + 18px);width:auto;max-width:calc(100vw - 16px);overflow:visible;display:none;z-index:23;padding:0;border-radius:12px;background:rgba(12,15,22,0.96);backdrop-filter:blur(20px);border:1px solid var(--line-1);box-shadow:var(--shadow-lg);cursor:grab;}
 #simFormatMenu.open{display:block;}
 #simFormatMenu.dragging{cursor:grabbing;user-select:none;}
 #simFormatMenu::-webkit-scrollbar{width:5px;}
 #simFormatMenu::-webkit-scrollbar-track{background:transparent;}
 #simFormatMenu::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-.sim-format-shell{padding:6px;width:max-content;}
-.sim-format-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow:visible;width:max-content;max-width:none;cursor:grab;}
+.sim-format-shell{padding:6px;max-width:100%;}
+.sim-format-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;overflow:visible;max-width:100%;cursor:grab;}
 .sim-format-row > *{flex:0 0 auto;}
 .sim-format-chip,.sim-format-color,.sim-format-reset,.sim-format-close{min-height:28px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.05);color:#edf2ff;font-size:10px;}
 .sim-format-chip{position:relative;display:inline-flex;align-items:center;gap:4px;padding:3px 6px;cursor:grab;}
