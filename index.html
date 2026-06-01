@@ -237,11 +237,11 @@ button,input{font:inherit;}
         <p>These are static UI concepts for the real canvas area: touch-sized controls, labeled quick actions, and different placements for an always-on floating palette you could eventually let users reposition.</p>
       </div>
       <div class="deck-tabs" role="tablist" aria-label="Choose a UI concept">
-        <button class="deck-tab is-active" type="button" id="deck-tab-0" data-index="0" role="tab" aria-selected="true" aria-controls="deck-panel-0">Studio Dock</button>
-        <button class="deck-tab" type="button" id="deck-tab-1" data-index="1" role="tab" aria-selected="false" aria-controls="deck-panel-1">Focus Strip</button>
-        <button class="deck-tab" type="button" id="deck-tab-2" data-index="2" role="tab" aria-selected="false" aria-controls="deck-panel-2">Twin Rail</button>
-        <button class="deck-tab" type="button" id="deck-tab-3" data-index="3" role="tab" aria-selected="false" aria-controls="deck-panel-3">Touch Board</button>
-        <button class="deck-tab" type="button" id="deck-tab-4" data-index="4" role="tab" aria-selected="false" aria-controls="deck-panel-4">Guided Stack</button>
+        <button class="deck-tab is-active" type="button" id="deck-tab-0" data-index="0" role="tab" aria-selected="true" aria-controls="deck-panel-0" tabindex="0">Studio Dock</button>
+        <button class="deck-tab" type="button" id="deck-tab-1" data-index="1" role="tab" aria-selected="false" aria-controls="deck-panel-1" tabindex="-1">Focus Strip</button>
+        <button class="deck-tab" type="button" id="deck-tab-2" data-index="2" role="tab" aria-selected="false" aria-controls="deck-panel-2" tabindex="-1">Twin Rail</button>
+        <button class="deck-tab" type="button" id="deck-tab-3" data-index="3" role="tab" aria-selected="false" aria-controls="deck-panel-3" tabindex="-1">Touch Board</button>
+        <button class="deck-tab" type="button" id="deck-tab-4" data-index="4" role="tab" aria-selected="false" aria-controls="deck-panel-4" tabindex="-1">Guided Stack</button>
       </div>
     </div>
 
@@ -747,7 +747,7 @@ button,input{font:inherit;}
     var deltaY = event.clientY - pointerStart.y;
     pointerStart = null;
     // Only treat the gesture as a swipe when horizontal travel clearly exceeds vertical drift.
-    if (Math.abs(deltaX) < SWIPE_THRESHOLD || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD || Math.abs(deltaX) < Math.abs(deltaY)) return;
     activate(current + (deltaX < 0 ? 1 : -1));
   });
   preview.addEventListener('pointercancel', function() { pointerStart = null; });
