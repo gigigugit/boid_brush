@@ -1836,6 +1836,7 @@ export class App {
       multiSessionBindings: [],
       runtimeSessions: [],
       cachedRuntimeSessions: [],
+      priorDrawSeek: null,
       drawingPath: null,
       drawingBlob: null,
       dragTarget: null,
@@ -1894,6 +1895,23 @@ export class App {
 
     // Kick off
     this._init().catch(error => this._handleInitError(error));
+  }
+
+  _captureSimulationPriorDrawSeek() {
+    const seekControl = document.getElementById('seek');
+    const seekValue = seekControl ? Number(seekControl.value) : NaN;
+    if (Number.isFinite(seekValue)) this.simulation.priorDrawSeek = seekValue;
+  }
+
+  _restoreSimulationPriorDrawSeek() {
+    const priorDrawSeek = this.simulation?.priorDrawSeek;
+    this.simulation.priorDrawSeek = null;
+    if (!Number.isFinite(priorDrawSeek)) return;
+    const seekControl = document.getElementById('seek');
+    if (!seekControl) return;
+    seekControl.value = String(priorDrawSeek);
+    this._paramsDirty = true;
+    syncUI(this);
   }
 
   // ========================================================
@@ -6310,12 +6328,12 @@ export class App {
     const vars = this.simulation?.vars || {};
     return _normalizeSimulationVars({
       ...vars,
-      seek: snapshot.seek,
-      cohesion: snapshot.cohesion,
-      separation: snapshot.separation,
-      alignment: snapshot.alignment,
-      maxSpeed: snapshot.maxSpeed,
-      damping: snapshot.damping,
+      seek: Number.isFinite(vars.seek) ? vars.seek : DEFAULT_SIM_SEEK,
+      cohesion: Number.isFinite(vars.cohesion) ? vars.cohesion : snapshot.cohesion,
+      separation: Number.isFinite(vars.separation) ? vars.separation : snapshot.separation,
+      alignment: Number.isFinite(vars.alignment) ? vars.alignment : snapshot.alignment,
+      maxSpeed: Number.isFinite(vars.maxSpeed) ? vars.maxSpeed : snapshot.maxSpeed,
+      damping: Number.isFinite(vars.damping) ? vars.damping : snapshot.damping,
       sensingEnabled: typeof vars.sensingEnabled === 'boolean' ? vars.sensingEnabled : snapshot.sensingEnabled,
       sensingMode: typeof vars.sensingMode === 'string' ? vars.sensingMode : snapshot.sensingMode,
       sensingChannel: typeof vars.sensingChannel === 'string' ? vars.sensingChannel : snapshot.sensingChannel,
@@ -6427,6 +6445,7 @@ export class App {
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
     this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    this.simulation.vars.seek = DEFAULT_SIM_SEEK;
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -8658,7 +8677,9 @@ export class App {
 
   _toggleSimulationMode(force) {
     if (!this._isMotionBrush()) return;
+    const wasEnabled = !!this.simulation.enabled;
     const next = typeof force === 'boolean' ? force : !this.simulation.enabled;
+    if (!wasEnabled && next) this._captureSimulationPriorDrawSeek();
     if (!next) {
       this.stopSimulation(false);
       this.simulation.frameCount = 0;
@@ -8682,6 +8703,7 @@ export class App {
       this._constrainSimulationDataToBounds('ant');
     }
     this._ensureSimulationSpawns();
+    if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
     this._syncSimulationUI();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
   }
