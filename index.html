@@ -6,46 +6,205 @@
 <title>Boid Brush — Forks &amp; Demos</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
-html,body{min-height:100vh;background:#111;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#d0d0d4;}
-a{color:#5b8af0;text-decoration:none;}
+:root{
+  --bg:#111;
+  --panel:#1a1a1e;
+  --panel-strong:#111722;
+  --line:rgba(255,255,255,0.08);
+  --line-strong:rgba(255,255,255,0.14);
+  --text:#d0d0d4;
+  --text-soft:#888;
+  --text-dim:#555;
+  --accent:#5b8af0;
+  --accent-soft:#8bb3ff;
+  --accent-bg:rgba(91,138,240,0.15);
+  --warn:#b43b3b;
+  --radius:16px;
+  --shadow:0 24px 60px rgba(0,0,0,0.32);
+  --tap-min:44px;
+}
+html,body{min-height:100vh;background:#111;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:var(--text);}
+a{color:var(--accent);text-decoration:none;}
 a:hover{text-decoration:underline;}
-
-.page{max-width:720px;margin:0 auto;padding:48px 24px 80px;}
+button,input{font:inherit;}
+button{font-family:inherit;}
+.page{max-width:1120px;margin:0 auto;padding:48px 24px 80px;}
 
 /* Header */
 .header{text-align:center;margin-bottom:40px;}
 .header h1{font-size:28px;font-weight:700;color:#eee;margin-bottom:6px;}
-.header .tagline{color:#888;font-size:14px;line-height:1.5;}
+.header .tagline{color:var(--text-soft);font-size:14px;line-height:1.5;max-width:760px;margin:0 auto;}
 
 /* Main app link */
-.main-app{display:block;text-align:center;margin-bottom:16px;padding:20px;background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:12px;transition:border-color 0.2s,background 0.2s;}
+.main-app{display:block;text-align:center;margin-bottom:16px;padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;transition:border-color 0.2s,background 0.2s;}
 .main-app:hover{background:#1e1e24;border-color:rgba(91,138,240,0.4);text-decoration:none;}
 .main-app .label{font-size:18px;font-weight:600;color:#eee;}
-.main-app .desc{font-size:12px;color:#888;margin-top:4px;}
+.main-app .desc{font-size:12px;color:var(--text-soft);margin-top:4px;}
 
 /* Branch selector */
-.branch-selector{margin-bottom:48px;padding:16px;background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:10px;}
-.branch-selector .bs-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:10px;}
+.branch-selector{margin-bottom:48px;padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+.branch-selector .bs-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text-soft);margin-bottom:10px;}
 .branch-selector .bs-row{display:flex;gap:8px;}
-.branch-selector select{flex:1;padding:8px 10px;background:#111;color:#d0d0d4;border:1px solid rgba(255,255,255,0.12);border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;}
+.branch-selector select{flex:1;padding:8px 10px;background:#111;color:var(--text);border:1px solid rgba(255,255,255,0.12);border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;}
 .branch-selector select:focus{outline:none;border-color:rgba(91,138,240,0.5);}
-.branch-selector select option{background:#1a1a1e;color:#d0d0d4;}
-.branch-selector .bs-go{padding:8px 16px;background:rgba(91,138,240,0.15);color:#5b8af0;border:1px solid rgba(91,138,240,0.3);border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s;text-decoration:none;white-space:nowrap;}
+.branch-selector select option{background:var(--panel);color:var(--text);}
+.branch-selector .bs-go{padding:8px 16px;background:var(--accent-bg);color:var(--accent);border:1px solid rgba(91,138,240,0.3);border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s;text-decoration:none;white-space:nowrap;}
 .branch-selector .bs-go:hover{background:rgba(91,138,240,0.25);border-color:rgba(91,138,240,0.5);text-decoration:none;}
-.branch-selector .bs-status{font-size:11px;color:#555;margin-top:8px;}
+.branch-selector .bs-status{font-size:11px;color:var(--text-dim);margin-top:8px;}
 
 /* Section */
-.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:#888;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);}
+.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-soft);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);}
+
+/* Mockup deck */
+.deck-card{margin-bottom:40px;padding:22px;background:linear-gradient(180deg,rgba(26,26,30,0.98),rgba(14,19,28,0.98));border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);}
+.deck-head{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:18px;}
+.deck-copy h2{font-size:20px;color:#eef3ff;margin-bottom:6px;}
+.deck-copy p{max-width:700px;font-size:13px;line-height:1.6;color:#9ca8be;}
+.deck-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;}
+.deck-tabs::-webkit-scrollbar,.canvas-chipbar::-webkit-scrollbar{display:none;}
+.deck-tab,.canvas-chip,.canvas-nav button,.floating-action{min-height:var(--tap-min);border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);color:var(--text);cursor:pointer;transition:all 0.18s ease;}
+.deck-tab,.canvas-chip{padding:10px 14px;white-space:nowrap;font-size:12px;font-weight:600;}
+.deck-tab:hover,.canvas-chip:hover,.canvas-nav button:hover,.floating-action:hover{background:rgba(255,255,255,0.1);border-color:var(--line-strong);color:#eef3ff;}
+.deck-tab.is-active,.canvas-chip.is-active,.floating-action.is-active{background:linear-gradient(135deg,var(--accent),var(--accent-soft));border-color:rgba(117,162,255,0.55);color:#fff;box-shadow:0 0 12px rgba(75,120,241,0.28);}
+.deck-preview{position:relative;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,0.1);background:
+  radial-gradient(960px 480px at 16% 10%, rgba(91,138,240,0.14), transparent 58%),
+  radial-gradient(820px 540px at 84% 86%, rgba(139,179,255,0.14), transparent 56%),
+  linear-gradient(180deg,#0d1118 0%,#0a0d14 100%);
+  min-height:clamp(420px,58vw,640px);
+}
+.deck-preview::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,0.04),transparent 28%,transparent 72%,rgba(255,255,255,0.03));pointer-events:none;}
+.deck-shell{position:relative;min-height:inherit;padding:68px 22px 90px;}
+.canvas-nav{position:absolute;inset:50% 12px auto 12px;display:flex;justify-content:space-between;pointer-events:none;transform:translateY(-50%);z-index:4;}
+.canvas-nav button{pointer-events:auto;width:52px;min-width:52px;padding:0;font-size:22px;backdrop-filter:blur(14px);}
+.canvas-chipbar{position:absolute;left:18px;right:18px;bottom:18px;display:flex;gap:8px;overflow-x:auto;padding:4px 0;z-index:4;}
+.canvas-chip{backdrop-filter:blur(14px);background:rgba(12,16,23,0.72);}
+.mock-screen{position:absolute;inset:68px 22px 90px;opacity:0;pointer-events:none;transform:translateX(22px) scale(0.985);transition:opacity 0.28s ease,transform 0.28s ease;}
+.mock-screen.is-active{opacity:1;pointer-events:auto;transform:translateX(0) scale(1);}
+.mock-frame{position:relative;width:100%;height:100%;padding:18px;border-radius:26px;background:linear-gradient(180deg,#f8fbff 0%,#eff4fb 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.88),0 28px 64px rgba(0,0,0,0.22);overflow:hidden;}
+.mock-frame::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,0.36),transparent 26%);pointer-events:none;}
+.mock-topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-radius:18px;background:rgba(18,24,36,0.86);color:#edf2ff;box-shadow:0 12px 28px rgba(7,10,16,0.16);position:relative;z-index:1;}
+.mock-brand{display:flex;align-items:center;gap:10px;min-width:0;}
+.mock-dot{width:10px;height:10px;border-radius:999px;background:linear-gradient(135deg,var(--accent),#9bc2ff);box-shadow:0 0 12px rgba(91,138,240,0.45);}
+.mock-title{font-size:13px;font-weight:700;letter-spacing:0.02em;color:#f7faff;}
+.mock-subtitle{font-size:11px;color:#9da9c1;}
+.mock-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+.chip{padding:8px 12px;border-radius:999px;background:rgba(255,255,255,0.08);font-size:11px;font-weight:600;color:#dce6ff;white-space:nowrap;}
+.chip.strong{background:linear-gradient(135deg,var(--accent),var(--accent-soft));color:#fff;}
+.mock-body{position:absolute;inset:92px 18px 18px;display:grid;gap:14px;}
+.canvas-column{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;}
+.canvas-surface{position:relative;flex:1;min-height:0;border-radius:22px;border:1px solid rgba(18,25,38,0.08);background:
+  linear-gradient(0deg,rgba(255,255,255,0.56),rgba(255,255,255,0.56)),
+  linear-gradient(90deg,rgba(26,31,46,0.05) 1px,transparent 1px),
+  linear-gradient(rgba(26,31,46,0.05) 1px,transparent 1px),
+  radial-gradient(circle at 24% 28%, rgba(91,138,240,0.18), transparent 32%),
+  radial-gradient(circle at 74% 66%, rgba(178,111,255,0.14), transparent 36%),
+  linear-gradient(180deg,#fdfefe 0%,#eef3fb 100%);
+  background-size:auto,28px 28px,28px 28px,auto,auto,auto;
+  overflow:hidden;
+}
+.canvas-surface::before{content:'';position:absolute;inset:18% 14% 22% 18%;border-radius:42% 58% 52% 48% / 34% 42% 58% 66%;background:radial-gradient(circle at 36% 34%, rgba(91,138,240,0.18), transparent 46%),radial-gradient(circle at 64% 62%, rgba(255,122,182,0.16), transparent 38%),linear-gradient(135deg, rgba(52,86,161,0.14), rgba(255,255,255,0));filter:blur(2px);}
+.canvas-surface::after{content:'';position:absolute;inset:auto 12% 14% auto;width:34%;height:18%;border-radius:18px;background:linear-gradient(135deg, rgba(91,138,240,0.18), rgba(255,255,255,0.06));transform:rotate(-6deg);}
+.canvas-note,.canvas-scale,.canvas-badge{position:absolute;z-index:1;border-radius:999px;background:rgba(17,20,29,0.84);color:#edf2ff;border:1px solid rgba(255,255,255,0.08);backdrop-filter:blur(16px);font-size:11px;font-weight:700;letter-spacing:0.03em;}
+.canvas-note{top:16px;left:16px;padding:9px 12px;}
+.canvas-scale{top:16px;right:16px;padding:9px 12px;}
+.canvas-badge{bottom:16px;left:16px;padding:10px 14px;}
+.mock-sidebar,.mock-rail,.mock-bottom,.mock-stack,.mock-strip{border-radius:20px;background:rgba(19,24,35,0.92);color:#eef3ff;border:1px solid rgba(255,255,255,0.08);box-shadow:0 16px 32px rgba(7,10,16,0.14);overflow:hidden;}
+.mock-sidebar,.mock-rail{padding:14px;display:grid;gap:10px;align-content:start;}
+.group-label{font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#96a3bc;}
+.row-pills,.row-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.card-line,.tiny-card,.control-bar,.tool-pill,.pill-block{border-radius:14px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.06);min-height:40px;display:flex;align-items:center;padding:0 12px;color:#eef3ff;font-size:11px;font-weight:600;}
+.tiny-card{min-height:52px;justify-content:space-between;}
+.tool-pill{border-radius:999px;min-height:36px;padding:0 12px;}
+.pill-block{min-height:52px;border-radius:16px;}
+.pill-block.active,.tool-pill.active,.card-line.active{background:linear-gradient(135deg,var(--accent),var(--accent-soft));}
+.mock-sidebar .meter{height:8px;border-radius:999px;background:rgba(255,255,255,0.07);overflow:hidden;}
+.mock-sidebar .meter::after{content:'';display:block;width:68%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-soft));}
+.mock-bottom{padding:12px 14px;display:flex;gap:10px;align-items:center;justify-content:space-between;}
+.mock-bottom .row-pills{flex-wrap:nowrap;overflow:auto;padding-bottom:2px;}
+.mock-bottom .row-pills::-webkit-scrollbar{display:none;}
+.mock-stack{padding:14px;display:grid;gap:12px;}
+.mock-strip{padding:10px 12px;display:flex;gap:8px;align-items:center;overflow:auto;}
+.mock-strip::-webkit-scrollbar{display:none;}
+.workspace-card{border-radius:18px;background:rgba(17,20,29,0.08);border:1px dashed rgba(17,20,29,0.14);padding:12px;color:#51607a;font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;}
+.floating-palette{position:absolute;z-index:3;display:grid;gap:8px;min-width:min(280px,56vw);padding:12px;border-radius:18px;background:rgba(14,18,27,0.92);border:1px solid rgba(255,255,255,0.08);box-shadow:0 18px 36px rgba(5,9,15,0.28);backdrop-filter:blur(18px);}
+.floating-palette header{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#edf2ff;font-size:12px;font-weight:700;}
+.floating-palette small{color:#9ba8c0;font-size:11px;font-weight:600;}
+.floating-actions{display:flex;flex-wrap:wrap;gap:8px;}
+.floating-action{padding:10px 12px;font-size:11px;font-weight:700;color:#eef3ff;}
+.layout-studio .mock-body{grid-template-columns:minmax(140px,0.22fr) minmax(0,1fr) minmax(150px,0.26fr);grid-template-rows:minmax(0,1fr);}
+.layout-studio .floating-palette{right:20px;bottom:20px;}
+.layout-focus .mock-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;}
+.layout-focus .mock-topbar{max-width:74%;}
+.layout-focus .mock-strip{position:absolute;top:104px;left:36px;right:36px;z-index:2;}
+.layout-focus .canvas-column{padding-top:58px;}
+.layout-focus .floating-palette{left:50%;bottom:20px;transform:translateX(-50%);min-width:min(420px,78vw);}
+.layout-focus .mock-bottom{justify-content:flex-start;gap:10px;}
+.layout-focus .mock-bottom .card-line{min-width:140px;}
+.layout-split .mock-body{grid-template-columns:92px minmax(0,1fr) 92px;grid-template-rows:minmax(0,1fr);}
+.layout-split .mock-rail{padding:12px 10px;justify-items:center;}
+.layout-split .tool-pill{width:100%;justify-content:center;padding:0 0;min-height:48px;}
+.layout-split .floating-palette{left:22px;bottom:22px;}
+.layout-touch .mock-body{grid-template-columns:minmax(0,1fr) minmax(210px,0.34fr);grid-template-rows:minmax(0,1fr) auto;}
+.layout-touch .canvas-column{grid-row:1 / span 2;}
+.layout-touch .mock-stack{max-height:100%;overflow:auto;}
+.layout-touch .floating-palette{right:22px;top:118px;min-width:min(240px,44vw);}
+.layout-touch .mock-bottom{grid-column:2;align-self:end;display:grid;gap:10px;}
+.layout-guided .mock-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;}
+.layout-guided .mock-stack.top-stack{display:flex;gap:10px;overflow:auto;padding:12px;}
+.layout-guided .mock-stack.top-stack .pill-block{min-width:200px;}
+.layout-guided .floating-palette{right:22px;bottom:22px;}
+.deck-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px;}
+.meta-card{padding:14px 16px;border-radius:16px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);}
+.meta-card .meta-label{display:block;font-size:10px;font-weight:700;letter-spacing:0.11em;text-transform:uppercase;color:#96a3bc;margin-bottom:6px;}
+.meta-card strong{display:block;font-size:14px;color:#edf2ff;margin-bottom:4px;}
+.meta-card p{font-size:12px;line-height:1.5;color:#9ca8be;}
 
 /* Fork list */
 .fork-list{list-style:none;display:grid;gap:10px;margin-bottom:40px;}
-.fork-card{display:block;padding:14px 16px;background:#1a1a1e;border:1px solid rgba(255,255,255,0.08);border-radius:10px;transition:border-color 0.2s,background 0.2s;}
+.fork-card{display:block;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;transition:border-color 0.2s,background 0.2s;}
 .fork-card:hover{background:#1e1e24;border-color:rgba(91,138,240,0.3);text-decoration:none;}
 .fork-card .fork-name{font-size:14px;font-weight:600;color:#eee;}
-.fork-card .fork-desc{font-size:12px;color:#888;margin-top:3px;line-height:1.4;}
+.fork-card .fork-desc{font-size:12px;color:var(--text-soft);margin-top:3px;line-height:1.4;}
 
 /* Footer */
-.footer{text-align:center;color:#555;font-size:11px;margin-top:48px;}
+.footer{text-align:center;color:var(--text-dim);font-size:11px;margin-top:48px;}
+
+@media (max-width: 900px){
+  .deck-shell{padding:58px 16px 84px;}
+  .mock-screen{inset:58px 16px 84px;}
+  .layout-studio .mock-body,
+  .layout-split .mock-body,
+  .layout-touch .mock-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;}
+  .layout-studio .mock-sidebar,
+  .layout-studio .mock-rail,
+  .layout-split .mock-rail,
+  .layout-touch .mock-sidebar,
+  .layout-touch .mock-bottom{display:none;}
+  .layout-touch .canvas-column{grid-row:auto;}
+  .layout-focus .mock-topbar{max-width:none;}
+  .deck-meta{grid-template-columns:1fr;}
+}
+
+@media (max-width: 640px){
+  .page{padding:36px 16px 72px;}
+  .branch-selector .bs-row{flex-direction:column;}
+  .branch-selector .bs-go{text-align:center;}
+  .deck-card{padding:18px;}
+  .deck-copy h2{font-size:18px;}
+  .deck-preview{min-height:500px;}
+  .mock-frame{padding:14px;}
+  .mock-topbar{padding:10px 12px;align-items:flex-start;}
+  .mock-actions{justify-content:flex-start;}
+  .mock-body{inset:88px 14px 14px;}
+  .canvas-nav{inset:auto 14px 86px 14px;transform:none;}
+  .canvas-nav button{width:calc(50% - 4px);border-radius:16px;font-size:16px;}
+  .floating-palette,
+  .layout-focus .floating-palette,
+  .layout-touch .floating-palette,
+  .layout-guided .floating-palette,
+  .layout-split .floating-palette,
+  .layout-studio .floating-palette{left:14px;right:14px;bottom:14px;top:auto;transform:none;min-width:0;}
+}
 </style>
 </head>
 <body>
@@ -53,9 +212,8 @@ a:hover{text-decoration:underline;}
 
   <div class="header">
     <h1>🐦 Boid Brush</h1>
-    <p class="tagline">A browser-based painting app using boid-flocking simulation.</p>
+    <p class="tagline">A browser-based painting app using boid-flocking simulation. Preview five polished UI directions below and tap through them directly inside the mock canvas stage.</p>
   </div>
-
 
   <a class="main-app" href="app.html">
     <div class="label">▶ Open Boid Brush</div>
@@ -70,6 +228,311 @@ a:hover{text-decoration:underline;}
     </div>
     <div class="bs-status" id="branchStatus"></div>
   </div>
+
+  <div class="section-title">UI Concept Deck</div>
+  <section class="deck-card" aria-labelledby="deckTitle">
+    <div class="deck-head">
+      <div class="deck-copy">
+        <h2 id="deckTitle">Five landing-page mockups you can click through</h2>
+        <p>These are static UI concepts for the real canvas area: touch-sized controls, labeled quick actions, and different placements for an always-on floating palette you could eventually let users reposition.</p>
+      </div>
+      <div class="deck-tabs" role="tablist" aria-label="Choose a UI concept">
+        <button class="deck-tab is-active" type="button" data-index="0" role="tab" aria-selected="true">Studio Dock</button>
+        <button class="deck-tab" type="button" data-index="1" role="tab" aria-selected="false">Focus Strip</button>
+        <button class="deck-tab" type="button" data-index="2" role="tab" aria-selected="false">Twin Rail</button>
+        <button class="deck-tab" type="button" data-index="3" role="tab" aria-selected="false">Touch Board</button>
+        <button class="deck-tab" type="button" data-index="4" role="tab" aria-selected="false">Guided Stack</button>
+      </div>
+    </div>
+
+    <div class="deck-preview" id="uiDeckPreview">
+      <div class="deck-shell">
+        <div class="canvas-nav" aria-hidden="false">
+          <button type="button" id="deckPrev" aria-label="Show previous mockup">‹</button>
+          <button type="button" id="deckNext" aria-label="Show next mockup">›</button>
+        </div>
+
+        <section class="mock-screen is-active" data-index="0" data-mode="Studio Dock" data-surface="Desktop-first" data-summary="A full studio frame with familiar left tools, right inspector, and the floating quick palette anchored near the lower-right canvas edge.">
+          <div class="mock-frame layout-studio">
+            <div class="mock-topbar">
+              <div class="mock-brand">
+                <span class="mock-dot"></span>
+                <div>
+                  <div class="mock-title">Studio Dock</div>
+                  <div class="mock-subtitle">Dense but calm for long-form editing</div>
+                </div>
+              </div>
+              <div class="mock-actions">
+                <span class="chip strong">Brush</span>
+                <span class="chip">Sim overlay</span>
+                <span class="chip">Layers</span>
+              </div>
+            </div>
+            <div class="mock-body">
+              <aside class="mock-sidebar">
+                <span class="group-label">Tools</span>
+                <div class="card-line active">Paint</div>
+                <div class="card-line">Smudge</div>
+                <div class="card-line">Erase</div>
+                <span class="group-label">Flow</span>
+                <div class="meter"></div>
+                <div class="tiny-card"><span>Pressure</span><span>78%</span></div>
+                <div class="tiny-card"><span>Stability</span><span>High</span></div>
+              </aside>
+              <div class="canvas-column">
+                <div class="canvas-surface">
+                  <div class="canvas-note">Canvas · 16:9 preview</div>
+                  <div class="canvas-scale">Thumb + pen ready</div>
+                  <div class="canvas-badge">Floating palette stays visible while painting</div>
+                </div>
+              </div>
+              <aside class="mock-sidebar">
+                <span class="group-label">Inspector</span>
+                <div class="workspace-card">Brush response</div>
+                <div class="workspace-card">Simulation blend</div>
+                <div class="workspace-card">Color history</div>
+                <div class="row-chips">
+                  <span class="tool-pill active">Pinned</span>
+                  <span class="tool-pill">Auto-hide</span>
+                </div>
+              </aside>
+            </div>
+            <div class="floating-palette">
+              <header><span>Quick tools</span><small>Docked right</small></header>
+              <div class="floating-actions">
+                <button class="floating-action is-active" type="button">Brush</button>
+                <button class="floating-action" type="button">Layers</button>
+                <button class="floating-action" type="button">Modes</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mock-screen" data-index="1" data-mode="Focus Strip" data-surface="Canvas-first" data-summary="A distraction-light surface with a slim command strip, bottom transport row, and a centered floating palette that reads clearly while staying out of the stroke path.">
+          <div class="mock-frame layout-focus">
+            <div class="mock-topbar">
+              <div class="mock-brand">
+                <span class="mock-dot"></span>
+                <div>
+                  <div class="mock-title">Focus Strip</div>
+                  <div class="mock-subtitle">Most of the screen belongs to the artwork</div>
+                </div>
+              </div>
+              <div class="mock-actions">
+                <span class="chip strong">Live brush</span>
+                <span class="chip">Minimal chrome</span>
+              </div>
+            </div>
+            <div class="mock-strip">
+              <span class="tool-pill active">Brushes</span>
+              <span class="tool-pill">Color</span>
+              <span class="tool-pill">Dynamics</span>
+              <span class="tool-pill">Playback</span>
+              <span class="tool-pill">Export</span>
+            </div>
+            <div class="mock-body">
+              <div class="canvas-column">
+                <div class="canvas-surface">
+                  <div class="canvas-note">Canvas focus mode</div>
+                  <div class="canvas-scale">Swipe left/right to browse ideas</div>
+                  <div class="canvas-badge">Always-on palette can sit centered for two-handed use</div>
+                </div>
+              </div>
+              <div class="mock-bottom">
+                <div class="row-pills">
+                  <div class="card-line active">Undo / Redo</div>
+                  <div class="card-line">Blend mode</div>
+                  <div class="card-line">Symmetry</div>
+                </div>
+              </div>
+            </div>
+            <div class="floating-palette">
+              <header><span>Quick tools</span><small>Centered</small></header>
+              <div class="floating-actions">
+                <button class="floating-action is-active" type="button">Brush</button>
+                <button class="floating-action" type="button">Color</button>
+                <button class="floating-action" type="button">Layers</button>
+                <button class="floating-action" type="button">Sim</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mock-screen" data-index="2" data-mode="Twin Rail" data-surface="Balanced" data-summary="A symmetrical arrangement with quick thumb targets on both edges so the canvas stays centered and the floating palette can live on the left without covering the painting.">
+          <div class="mock-frame layout-split">
+            <div class="mock-topbar">
+              <div class="mock-brand">
+                <span class="mock-dot"></span>
+                <div>
+                  <div class="mock-title">Twin Rail</div>
+                  <div class="mock-subtitle">Balanced controls for left- or right-handed workflows</div>
+                </div>
+              </div>
+              <div class="mock-actions">
+                <span class="chip">Thumb rails</span>
+                <span class="chip strong">Centered canvas</span>
+              </div>
+            </div>
+            <div class="mock-body">
+              <aside class="mock-rail">
+                <span class="group-label">Left rail</span>
+                <div class="tool-pill active">Brush</div>
+                <div class="tool-pill">Shape</div>
+                <div class="tool-pill">Mask</div>
+                <div class="tool-pill">Move</div>
+              </aside>
+              <div class="canvas-column">
+                <div class="canvas-surface">
+                  <div class="canvas-note">Centered working area</div>
+                  <div class="canvas-scale">High visibility for large touch targets</div>
+                  <div class="canvas-badge">Rails can collapse independently</div>
+                </div>
+              </div>
+              <aside class="mock-rail">
+                <span class="group-label">Right rail</span>
+                <div class="tool-pill">Layers</div>
+                <div class="tool-pill active">Params</div>
+                <div class="tool-pill">History</div>
+                <div class="tool-pill">Export</div>
+              </aside>
+            </div>
+            <div class="floating-palette">
+              <header><span>Quick tools</span><small>Docked left</small></header>
+              <div class="floating-actions">
+                <button class="floating-action is-active" type="button">Brush</button>
+                <button class="floating-action" type="button">Blend</button>
+                <button class="floating-action" type="button">HUD</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mock-screen" data-index="3" data-mode="Touch Board" data-surface="Tablet-first" data-summary="A tablet-oriented split with oversized cards, a top-right floating palette, and a secondary board for presets so everything feels durable under repeated touch use.">
+          <div class="mock-frame layout-touch">
+            <div class="mock-topbar">
+              <div class="mock-brand">
+                <span class="mock-dot"></span>
+                <div>
+                  <div class="mock-title">Touch Board</div>
+                  <div class="mock-subtitle">Big targets and layered cards for handheld use</div>
+                </div>
+              </div>
+              <div class="mock-actions">
+                <span class="chip strong">Touch-first</span>
+                <span class="chip">Preset board</span>
+              </div>
+            </div>
+            <div class="mock-body">
+              <div class="canvas-column">
+                <div class="canvas-surface">
+                  <div class="canvas-note">Primary painting zone</div>
+                  <div class="canvas-scale">Tap targets stay above 44px</div>
+                  <div class="canvas-badge">Palette placement hints at future user pinning</div>
+                </div>
+              </div>
+              <aside class="mock-stack">
+                <span class="group-label">Preset board</span>
+                <div class="pill-block active">Soft boid brush</div>
+                <div class="pill-block">Wet blend</div>
+                <div class="pill-block">Smudge ribbon</div>
+                <div class="workspace-card">Secondary settings tray</div>
+              </aside>
+              <div class="mock-bottom">
+                <div class="card-line active">Pinned canvas shortcuts</div>
+                <div class="row-chips">
+                  <span class="tool-pill">Undo</span>
+                  <span class="tool-pill">Redo</span>
+                  <span class="tool-pill">Zoom</span>
+                </div>
+              </div>
+            </div>
+            <div class="floating-palette">
+              <header><span>Quick tools</span><small>Top right</small></header>
+              <div class="floating-actions">
+                <button class="floating-action is-active" type="button">Brush</button>
+                <button class="floating-action" type="button">Presets</button>
+                <button class="floating-action" type="button">Layers</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mock-screen" data-index="4" data-mode="Guided Stack" data-surface="Progressive disclosure" data-summary="A guided sequence that surfaces the next action first, keeping the canvas wide while a labeled floating palette remains available for expert shortcuts.">
+          <div class="mock-frame layout-guided">
+            <div class="mock-topbar">
+              <div class="mock-brand">
+                <span class="mock-dot"></span>
+                <div>
+                  <div class="mock-title">Guided Stack</div>
+                  <div class="mock-subtitle">Good for onboarding, tutorials, or mode-driven workflows</div>
+                </div>
+              </div>
+              <div class="mock-actions">
+                <span class="chip">Step flow</span>
+                <span class="chip strong">Guided prompts</span>
+              </div>
+            </div>
+            <div class="mock-body">
+              <div class="mock-stack top-stack">
+                <div class="pill-block active">1 · Pick brush family</div>
+                <div class="pill-block">2 · Tune boid dynamics</div>
+                <div class="pill-block">3 · Record stroke rhythm</div>
+              </div>
+              <div class="canvas-column">
+                <div class="canvas-surface">
+                  <div class="canvas-note">Instructional canvas stage</div>
+                  <div class="canvas-scale">Onboarding text can live here</div>
+                  <div class="canvas-badge">Floating palette still available for fast experts</div>
+                </div>
+              </div>
+              <div class="mock-bottom">
+                <div class="row-pills">
+                  <div class="card-line active">Current step</div>
+                  <div class="card-line">Suggested next action</div>
+                  <div class="card-line">Recent changes</div>
+                </div>
+              </div>
+            </div>
+            <div class="floating-palette">
+              <header><span>Quick tools</span><small>Bottom right</small></header>
+              <div class="floating-actions">
+                <button class="floating-action is-active" type="button">Brush</button>
+                <button class="floating-action" type="button">Help</button>
+                <button class="floating-action" type="button">Layers</button>
+                <button class="floating-action" type="button">Mode</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="canvas-chipbar" role="tablist" aria-label="Cycle mockups inside the preview">
+          <button class="canvas-chip is-active" type="button" data-index="0" aria-selected="true">Studio Dock</button>
+          <button class="canvas-chip" type="button" data-index="1" aria-selected="false">Focus Strip</button>
+          <button class="canvas-chip" type="button" data-index="2" aria-selected="false">Twin Rail</button>
+          <button class="canvas-chip" type="button" data-index="3" aria-selected="false">Touch Board</button>
+          <button class="canvas-chip" type="button" data-index="4" aria-selected="false">Guided Stack</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="deck-meta" aria-live="polite">
+      <div class="meta-card">
+        <span class="meta-label">Current concept</span>
+        <strong id="deckMode">Studio Dock</strong>
+        <p id="deckSummary">A full studio frame with familiar left tools, right inspector, and the floating quick palette anchored near the lower-right canvas edge.</p>
+      </div>
+      <div class="meta-card">
+        <span class="meta-label">Interaction feel</span>
+        <strong id="deckSurface">Desktop-first</strong>
+        <p>Every concept keeps labels visible, prioritizes touch-size buttons, and preserves a clean stage for the eventual real canvas.</p>
+      </div>
+      <div class="meta-card">
+        <span class="meta-label">Customization signal</span>
+        <strong>Floating palette</strong>
+        <p>Each layout previews a different docking point to suggest future user-configurable placement without committing to a single system yet.</p>
+      </div>
+    </div>
+  </section>
 
   <div class="section-title">Forks &amp; Experiments</div>
 
@@ -107,6 +570,12 @@ a:hover{text-decoration:underline;}
         <div class="fork-desc">AI diffusion server management and diagnostics.</div>
       </a>
     </li>
+    <li>
+      <a class="fork-card" href="ui_mockup.html">
+        <div class="fork-name">Legacy Fullscreen UI Mockup</div>
+        <div class="fork-desc">Earlier standalone UI concept for comparison with the new landing-page mockup deck.</div>
+      </a>
+    </li>
   </ul>
 
   <div class="footer">
@@ -122,7 +591,6 @@ a:hover{text-decoration:underline;}
   const st  = document.getElementById('branchStatus');
   const DEFAULT_BRANCH = 'main';
 
-  // Branches created before the app.html split only have index.html as the entry point
   const LEGACY_BRANCHES = [
     'copilot/add-canvas-texture-option',
     'copilot/add-copy-paste-select-deselect',
@@ -163,7 +631,7 @@ a:hover{text-decoration:underline;}
 
   sel.addEventListener('change', updateLink);
 
-  var CACHE_KEY = 'bb_branches', CACHE_TTL = 5 * 60 * 1000; // 5 min
+  var CACHE_KEY = 'bb_branches', CACHE_TTL = 5 * 60 * 1000;
 
   function populate(branches) {
     sel.innerHTML = '';
@@ -182,7 +650,6 @@ a:hover{text-decoration:underline;}
     updateLink();
   }
 
-  // Use sessionStorage cache to avoid GitHub API rate limits (60/hr unauthenticated)
   try {
     var cached = JSON.parse(sessionStorage.getItem(CACHE_KEY));
     if (cached && Date.now() - cached.ts < CACHE_TTL) { populate(cached.data); }
@@ -202,6 +669,73 @@ a:hover{text-decoration:underline;}
         st.textContent = 'Could not fetch branches: ' + err.message;
       });
   }
+})();
+
+(function() {
+  var screens = Array.prototype.slice.call(document.querySelectorAll('.mock-screen'));
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.deck-tab'));
+  var chips = Array.prototype.slice.call(document.querySelectorAll('.canvas-chip'));
+  var mode = document.getElementById('deckMode');
+  var surface = document.getElementById('deckSurface');
+  var summary = document.getElementById('deckSummary');
+  var current = 0;
+  var preview = document.getElementById('uiDeckPreview');
+  var pointerStart = null;
+
+  function syncButtons(buttons, index) {
+    buttons.forEach(function(button, i) {
+      var active = i === index;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (button.hasAttribute('aria-pressed')) button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function activate(index) {
+    current = (index + screens.length) % screens.length;
+    screens.forEach(function(screen, i) {
+      screen.classList.toggle('is-active', i === current);
+    });
+    syncButtons(tabs, current);
+    syncButtons(chips, current);
+    mode.textContent = screens[current].getAttribute('data-mode');
+    surface.textContent = screens[current].getAttribute('data-surface');
+    summary.textContent = screens[current].getAttribute('data-summary');
+  }
+
+  tabs.concat(chips).forEach(function(button) {
+    button.addEventListener('click', function() {
+      activate(parseInt(button.getAttribute('data-index'), 10) || 0);
+    });
+  });
+
+  document.getElementById('deckPrev').addEventListener('click', function() { activate(current - 1); });
+  document.getElementById('deckNext').addEventListener('click', function() { activate(current + 1); });
+
+  preview.addEventListener('pointerdown', function(event) {
+    pointerStart = event.clientX;
+  });
+  preview.addEventListener('pointerup', function(event) {
+    if (pointerStart === null) return;
+    var delta = event.clientX - pointerStart;
+    pointerStart = null;
+    if (Math.abs(delta) < 46) return;
+    activate(current + (delta < 0 ? 1 : -1));
+  });
+  preview.addEventListener('pointercancel', function() { pointerStart = null; });
+  preview.addEventListener('pointerleave', function() { pointerStart = null; });
+
+  document.querySelectorAll('.floating-palette').forEach(function(palette) {
+    palette.addEventListener('click', function(event) {
+      var button = event.target.closest('.floating-action');
+      if (!button) return;
+      palette.querySelectorAll('.floating-action').forEach(function(item) {
+        item.classList.toggle('is-active', item === button);
+      });
+    });
+  });
+
+  activate(0);
 })();
 </script>
 </body>
