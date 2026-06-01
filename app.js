@@ -35,6 +35,13 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
   leaderCount: 0,
   leaderPull: 35,
 }));
+const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
+  'alwaysShowTabs',
+  'autoSaveSession',
+  'perfTelemetryEnabled',
+  'perfWakeLockEnabled',
+  'simSidebarSessionSelect',
+]);
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
   fillTolerance: 32,
@@ -475,6 +482,33 @@ async function _fetchWithRetry(resource, {
 
 function _escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _isPlainObject(value) {
+  if (!value || Object.prototype.toString.call(value) !== '[object Object]') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function _sanitizeSimulationSessionData(value) {
+  if (value == null) return value;
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    const next = [];
+    for (const entry of value) {
+      const normalized = _sanitizeSimulationSessionData(entry);
+      if (normalized !== undefined) next.push(normalized);
+    }
+    return next;
+  }
+  if (!_isPlainObject(value)) return undefined;
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = _sanitizeSimulationSessionData(entry);
+    if (normalized !== undefined) next[key] = normalized;
+  }
+  return next;
 }
 
 function _normalizeSimulationVars(value) {
@@ -4483,8 +4517,14 @@ export class App {
   _getRuntimeScopedParams(baseParams) {
     if (!this._simulationContextOverride || !this.simulation?.enabled || !baseParams) return baseParams;
     const vars = this._getSimulationVars();
-    if (!vars) return baseParams;
     const next = { ...baseParams };
+    const paramSnapshot = _sanitizeSimulationSessionData(this._simulationContextOverride?.paramSnapshot);
+    if (paramSnapshot && typeof paramSnapshot === 'object') {
+      for (const [key, value] of Object.entries(paramSnapshot)) {
+        next[key] = _deepClone(value);
+      }
+    }
+    if (!vars) return next;
     if (Number.isFinite(vars.seek)) next.seek = vars.seek;
     if (Number.isFinite(vars.cohesion)) next.cohesion = vars.cohesion;
     if (Number.isFinite(vars.separation)) next.separation = vars.separation;
@@ -4705,14 +4745,14 @@ export class App {
       typeLabel: isSaved ? 'Saved Session' : 'Unsaved Draft',
       sidebarTitle: `Simulation session: ${name}`,
       sidebarSummary: isSaved
-        ? `The main sidebar still edits drawing-mode defaults. Simulation mode loads and updates ${name}, plus any per-item overrides in the Session Editor.`
-        : 'The main sidebar still edits drawing-mode defaults. Simulation mode is currently using an unsaved draft until you save or load a named session.',
+        ? `The brush sidebar is editing ${name}. Save to keep sidebar values, simulation defaults, and guide edits together in this session.`
+        : 'The brush sidebar is editing an unsaved draft. Save it to keep the current sidebar values, simulation defaults, and guide edits together.',
       editorSummary: isSaved
         ? `Editing saved session "${name}". Guide edits and simulation-mode defaults update this session until you load another one or start a new draft.`
         : 'Editing an unsaved draft session. Save it to reuse the current simulation defaults, guides, and sensing routes later.',
       playbackLabel: `Session ${name}`,
       setupLabel: isSaved ? `Editing saved session: ${name}` : 'Editing unsaved draft session.',
-      modeSummary: 'Drawing-mode defaults stay in the main sidebar.',
+      modeSummary: 'The brush sidebar stays wired to the selected simulation draft or saved session.',
       routingSummary: this._buildSimulationSessionRoutingSummary(),
     };
   }
@@ -4723,6 +4763,13 @@ export class App {
     if (sidebarTitle) sidebarTitle.textContent = context.sidebarTitle;
     const sidebarMeta = document.getElementById('simSidebarSessionMeta');
     if (sidebarMeta) sidebarMeta.textContent = context.sidebarSummary;
+    const sidebarBadge = document.getElementById('simSidebarSessionBadge');
+    if (sidebarBadge) {
+      sidebarBadge.textContent = context.typeLabel;
+      sidebarBadge.className = `sim-stage-badge ${context.isSaved ? 'active' : 'muted'}`;
+    }
+    const sidebarSave = document.getElementById('simSidebarSave');
+    if (sidebarSave) sidebarSave.textContent = context.isSaved ? 'Update Saved Session' : 'Save Draft Session';
     const playbackSession = document.getElementById('simPlaybackSession');
     if (playbackSession) {
       playbackSession.textContent = context.playbackLabel;
@@ -4734,18 +4781,17 @@ export class App {
     if (simSetupActiveSession) simSetupActiveSession.textContent = context.setupLabel;
     const simSetupModeSummary = document.getElementById('simSetupModeSummary');
     if (simSetupModeSummary) simSetupModeSummary.textContent = context.modeSummary;
-    // Sync topbar second-row session selector
-    const topbarSelect = document.getElementById('simTopbarSessionSelect');
-    if (topbarSelect) {
+    const sidebarSelect = document.getElementById('simSidebarSessionSelect');
+    if (sidebarSelect) {
       const hasSessions = this.simulation.sessions.length > 0;
-      topbarSelect.disabled = !hasSessions;
+      sidebarSelect.disabled = !hasSessions;
       let opts = `<option value="" ${context.isSaved ? '' : 'selected'} disabled>${context.isSaved ? 'Choose a saved session...' : 'Unsaved Draft'}</option>`;
       for (let i = 0; i < this.simulation.sessions.length; i++) {
         const s = this.simulation.sessions[i];
         const label = s.name || `Session ${i + 1}`;
         opts += `<option value="${i}" ${i === context.activeIndex ? 'selected' : ''}>${label}</option>`;
       }
-      topbarSelect.innerHTML = opts;
+      sidebarSelect.innerHTML = opts;
     }
   }
 
@@ -5088,9 +5134,7 @@ export class App {
 
   _getSimulationFormatMenuDockPosition(width = 0, height = 0) {
     const topbarHeight = document.getElementById('topbarWrap')?.offsetHeight || 44;
-    const simTopbarRow = document.getElementById('simTopbarRow');
-    const rowHeight = simTopbarRow?.classList.contains('open') ? (simTopbarRow.offsetHeight || 0) : 0;
-    return this._clampSimulationFormatMenuPosition(8, topbarHeight + rowHeight + 8, width, height);
+    return this._clampSimulationFormatMenuPosition(8, topbarHeight + 8, width, height);
   }
 
   _applySimulationFormatMenuPosition() {
@@ -6095,19 +6139,7 @@ export class App {
   }
 
   _toggleSimTopbarGuide() {
-    const guide = document.getElementById('simTopbarGuideContent');
-    const btn = document.getElementById('simTopbarGuideToggle');
-    if (!guide) return;
-    const isOpen = guide.classList.toggle('open');
-    if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    // Update row height CSS variable since guide content changes the height
-    requestAnimationFrame(() => {
-      const row = document.getElementById('simTopbarRow');
-      if (row && row.classList.contains('open')) {
-        document.body.style.setProperty('--sim-row-h', row.offsetHeight + 'px');
-        if (this._simFormatMenuUi.docked) this._applySimulationFormatMenuPosition();
-      }
-    });
+    this._openSimulationHelp();
   }
 
   _getSimulationDistributeDialogTarget() {
@@ -6253,15 +6285,76 @@ export class App {
     if (document.getElementById('autoSaveSession')?.checked) this.saveSession();
   }
 
+  _captureSimulationSessionControlState() {
+    const controls = {};
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select, #sidebar input[type="number"]').forEach(el => {
+      if (!el.id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(el.id)) return;
+      controls[el.id] = el.type === 'checkbox' ? !!el.checked : el.value;
+    });
+    return _sanitizeSimulationSessionData(controls) || {};
+  }
+
+  _captureSimulationSessionParamSnapshot() {
+    const params = this.getP();
+    const snapshot = {};
+    for (const [key, value] of Object.entries(params || {})) {
+      const normalized = _sanitizeSimulationSessionData(value);
+      if (normalized !== undefined) snapshot[key] = normalized;
+    }
+    return snapshot;
+  }
+
+  _getSimulationVarOverridesFromParamSnapshot(snapshot = {}) {
+    return _normalizeSimulationVars({
+      ...this.simulation.vars,
+      seek: snapshot.seek,
+      cohesion: snapshot.cohesion,
+      separation: snapshot.separation,
+      alignment: snapshot.alignment,
+      maxSpeed: snapshot.maxSpeed,
+      damping: snapshot.damping,
+      sensingEnabled: snapshot.sensingEnabled,
+      sensingMode: snapshot.sensingMode,
+      sensingChannel: snapshot.sensingChannel,
+      sensingStrength: snapshot.sensingStrength,
+      sensingRadius: snapshot.sensingRadius,
+      sensingThreshold: snapshot.sensingThreshold,
+      sensingSource: snapshot.sensingSource,
+      sensingUpdateFrames: snapshot.sensingUpdateFrames,
+    });
+  }
+
+  _applySimulationSessionControlState(controlState, { sync = true } = {}) {
+    if (!controlState || typeof controlState !== 'object') return false;
+    for (const [id, value] of Object.entries(controlState)) {
+      if (!id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(id)) continue;
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!value;
+      else el.value = value;
+    }
+    this._paramsDirty = true;
+    if (sync) {
+      syncUI(this);
+      this._refreshSensingLayerSourceUi?.();
+    }
+    return true;
+  }
+
   _syncActiveSimulationSessionFromDraft() {
     const activeIndex = Number.isFinite(this.simulation.activeSessionIndex)
       ? Math.round(this.simulation.activeSessionIndex)
       : -1;
     const session = activeIndex >= 0 ? this.simulation.sessions[activeIndex] : null;
     if (!session) return null;
+    const paramSnapshot = this._captureSimulationSessionParamSnapshot();
+    const controlState = this._captureSimulationSessionControlState();
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
     const nextSession = {
       ...session,
       vars: _normalizeSimulationVars(this.simulation.vars),
+      controlState,
+      paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
@@ -6272,8 +6365,13 @@ export class App {
 
   _applySimulationSessionToDraft(session) {
     if (!session) return false;
-    this.simulation.vars = _normalizeSimulationVars(session.vars);
+    const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
+    this.simulation.vars = _normalizeSimulationVars({
+      ...this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot),
+      ...session.vars,
+    });
     this._restoreSensingSourceSelection(session.sensingSourceSelection);
+    this._applySimulationSessionControlState(session.controlState, { sync: false });
     this.simulation.brushData = _deepClone(session.brushData);
     if (Number.isFinite(session.nextId)) this.simulation.nextId = Math.max(1, Math.round(session.nextId));
     this.simulation.selected = null;
@@ -6281,11 +6379,14 @@ export class App {
     this._constrainSimulationDataToBounds('boid');
     this._constrainSimulationDataToBounds('ant');
     this._ensureSimulationSpawns();
+    this._paramsDirty = true;
+    syncUI(this);
     return true;
   }
 
   _newSimulationSession() {
-    this.simulation.vars = _normalizeSimulationVars();
+    this._syncActiveSimulationSessionFromDraft();
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(this._captureSimulationSessionParamSnapshot());
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -6296,11 +6397,13 @@ export class App {
     this.simulation.drawingBlob = null;
     this._ensureSimulationSpawns();
     this._renderSimulationInspector();
+    this._syncSimulationSessionContextUi();
     this.saveSession();
     this.showToast('New simulation session started');
   }
 
   _saveSimulationSession() {
+    this._syncActiveSimulationSessionFromDraft();
     this._normalizeSimulationSessionBindings();
     const activeIndex = this.simulation.activeSessionIndex;
     const existingSession = activeIndex >= 0 ? this.simulation.sessions[activeIndex] : null;
@@ -6308,11 +6411,17 @@ export class App {
     const rawName = window.prompt(existingSession ? 'Update this simulation session:' : 'Name for this simulation session:', defaultName);
     if (!rawName) return;
     const name = rawName.trim().slice(0, MAX_SIM_SESSION_NAME_LENGTH) || defaultName;
+    const paramSnapshot = this._captureSimulationSessionParamSnapshot();
+    const controlState = this._captureSimulationSessionControlState();
+    const vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    this.simulation.vars = vars;
     const nextSession = {
       id: existingSession?.id || this._createSimulationSessionId(),
       name,
       savedAt: Date.now(),
-      vars: _normalizeSimulationVars(this.simulation.vars),
+      vars,
+      controlState,
+      paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
@@ -6329,6 +6438,7 @@ export class App {
       this._renderSimulationSessionRoutingPicker();
       if (this._simulationSessionRoutingAnchor) this._positionSimulationSessionRoutingPicker(this._simulationSessionRoutingAnchor);
     }
+    this._syncSimulationSessionContextUi();
     this.saveSession();
     const verb = existingSession ? 'Updated' : 'Saved';
     this.showToast(rawName.trim().length > MAX_SIM_SESSION_NAME_LENGTH ? `${verb} "${name}" (trimmed)` : `${verb} "${name}"`);
@@ -6340,15 +6450,18 @@ export class App {
     this.simulation.activeSessionIndex = index;
     this._normalizeSimulationSessionBindings();
     this._renderSimulationInspector();
+    this._syncSimulationSessionContextUi();
     this.saveSession();
     this.showToast(`Loaded "${session.name}"`);
   }
 
   _setActiveSimulationSessionIndex(index) {
+    this._syncActiveSimulationSessionFromDraft();
     if (!Number.isFinite(index) || index < 0 || !this.simulation.sessions[index]) {
       this.simulation.activeSessionIndex = -1;
       this._normalizeSimulationSessionBindings();
       this._renderSimulationInspector();
+      this._syncSimulationSessionContextUi();
       this.saveSession();
       return;
     }
@@ -7111,6 +7224,7 @@ export class App {
     runtime.brush = 'boid';
     runtime.brushData = _deepClone(session.brushData);
     runtime.vars = _normalizeSimulationVars(session.vars);
+    runtime.paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
     runtime.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
     runtime.layerId = layer.id;
     runtime.sessionIndex = this.simulation.sessions.indexOf(session);
@@ -7162,6 +7276,7 @@ export class App {
         brush: 'boid',
         brushData: _deepClone(session.brushData),
         vars: _normalizeSimulationVars(session.vars),
+        paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
         sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
         layerId: layer.id,
         sessionIndex: binding.sessionIndex,
@@ -7757,7 +7872,7 @@ export class App {
       : '';
     const savedSessionControls = isBoid
       ? `
-        <div class="sim-inspector-note">The main sidebar always edits drawing-mode boid defaults. Use this editor to load, save, and route simulation sessions that run independently from those drawing controls.</div>
+        <div class="sim-inspector-note">Use the brush sidebar or this editor to keep session-specific boid settings, guide edits, and stage routing together.</div>
         ${renderInspectorSubgroup('Active Session Draft', `
           <div class="sim-stage-draft">
             <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
@@ -7848,6 +7963,7 @@ export class App {
               </label>
               <div class="sim-inspector-sessionBarActions">
                 <button data-sim-new-session="1">New Draft</button>
+                <button data-sim-save-session="1">${sessionContext.isSaved ? 'Update Saved Session' : 'Save Draft Session'}</button>
                 <button data-sim-open-setup="1">Stage Setup</button>
               </div>
             </div>
@@ -8680,19 +8796,8 @@ export class App {
     if (playbackBar) {
       playbackBar.classList.toggle('open', !!this.simulation.enabled && isMotion);
     }
-    // Simulation second row visibility
-    const simTopbarRow = document.getElementById('simTopbarRow');
-    if (simTopbarRow) {
-      const showRow = !!this.simulation.enabled && isMotion;
-      simTopbarRow.classList.toggle('open', showRow);
-      document.body.classList.toggle('sim-topbar-row-open', showRow);
-      if (showRow) {
-        // Update CSS variable for row height
-        const rowH = simTopbarRow.offsetHeight;
-        document.body.style.setProperty('--sim-row-h', rowH + 'px');
-        if (this._simFormatMenuUi.docked) this._applySimulationFormatMenuPosition();
-      }
-    }
+    document.body.classList.remove('sim-topbar-row-open');
+    document.body.style.removeProperty('--sim-row-h');
     if (hudCollapseBtn) {
       const expanded = !this.simulation.hudCollapsed;
       hudCollapseBtn.textContent = expanded ? 'Collapse' : 'Expand';
@@ -12343,14 +12448,6 @@ export class App {
       this._closeTopbarOverflowMenu?.();
       this._toggleSimTopbarGuide();
     });
-    // Simulation topbar second-row controls
-    document.getElementById('simTopbarSessionSelect')?.addEventListener('change', event => {
-      const nextIndex = parseInt(event.target.value, 10);
-      if (Number.isFinite(nextIndex)) this._setActiveSimulationSessionIndex(nextIndex);
-    });
-    document.getElementById('simTopbarNewDraft')?.addEventListener('click', () => this._newSimulationSession());
-    document.getElementById('simTopbarSave')?.addEventListener('click', () => this._saveSimulationSession());
-    document.getElementById('simTopbarGuideToggle')?.addEventListener('click', () => this._toggleSimTopbarGuide());
     document.getElementById('simRunBtn')?.addEventListener('click', () => {
       if (this.simulation.paused) this.resumeSimulation();
       else this.startSimulation();
@@ -15699,6 +15796,8 @@ export class App {
             .map(session => ({
               ...session,
               vars: _normalizeSimulationVars(session.vars),
+              controlState: _sanitizeSimulationSessionData(session.controlState) || {},
+              paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
               sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
             }));
         }

@@ -477,24 +477,10 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-help-close{position:absolute;top:10px;right:12px;border:none;background:none;color:#93a0b7;font-size:20px;cursor:pointer;}
 .sim-help-close:hover{color:#fff;}
 
-/* ---- Simulation Top Bar Second Row ---- */
-#simTopbarRow{position:fixed;top:var(--topbar-h);left:0;right:0;z-index:29;display:none;flex-direction:column;background:rgba(14,17,24,0.94);backdrop-filter:blur(16px);border-bottom:1px solid var(--line-0);box-shadow:0 2px 12px rgba(0,0,0,0.35);font-size:11px;color:var(--ink-1);}
-#simTopbarRow.open{display:flex;}
-#simTopbarRow .sim-row-main{display:flex;align-items:center;gap:8px;padding:6px 12px;min-height:36px;}
-#simTopbarRow .sim-row-main label{display:flex;align-items:center;gap:5px;font-weight:600;color:var(--ink-2);}
-#simTopbarRow .sim-row-main select{padding:4px 8px;border:1px solid var(--line-1);border-radius:6px;background:var(--select-bg);color:var(--select-text);font-size:11px;cursor:pointer;}
-#simTopbarRow .sim-row-main button{padding:5px 10px;border:1px solid var(--line-0);border-radius:6px;background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all 120ms ease;}
-#simTopbarRow .sim-row-main button:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
-#simTopbarRow .sim-row-spacer{flex:1;}
-#simTopbarRow .sim-row-guide-toggle{margin-left:auto;}
-#simTopbarRow .sim-row-guide{display:none;padding:10px 14px 12px;border-top:1px solid var(--line-0);max-height:260px;overflow-y:auto;color:#c6cfdf;line-height:1.5;}
-#simTopbarRow .sim-row-guide.open{display:block;}
-#simTopbarRow .sim-row-guide h3{margin:10px 0 4px;font-size:11px;color:#8ab4f8;text-transform:uppercase;letter-spacing:0.8px;}
-#simTopbarRow .sim-row-guide h3:first-child{margin-top:0;}
-#simTopbarRow .sim-row-guide ul{margin:4px 0 0 14px;padding:0;}
-#simTopbarRow .sim-row-guide li{margin-bottom:2px;}
-body.sim-topbar-row-open #canvasArea{top:calc(var(--topbar-h) + var(--sim-row-h, 36px));}
-body.sim-topbar-row-open{--panel-top:calc(var(--topbar-h) + var(--sim-row-h, 36px));}
+#sidebar #simBrushSessionCardHost{display:grid;gap:8px;margin:0 0 10px;}
+#sidebar #simBrushSessionCardHost.brush-hidden{display:none!important;}
+#sidebar #simBrushSessionCardHost .sim-inspector-sessionBarCard{box-shadow:none;background:rgba(12,16,26,0.84);}
+#sidebar #simBrushSessionCardHost .sim-inspector-title{font-size:13px;}
 
 .sim-distribute-panel{position:relative;width:min(440px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;display:grid;gap:14px;}
 .sim-distribute-panel h2{margin:0;font-size:18px;color:#fff;}
@@ -774,53 +760,6 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <div id="topbarOverflowMenu" role="region" aria-label="Overflow toolbar controls"></div>
 </div>
 <button id="sidebarToggle">☰</button>
-</div>
-
-<!-- ══════════ Simulation Second Row (below top bar) ══════════ -->
-<div id="simTopbarRow">
-  <div class="sim-row-main">
-    <label>Session:
-      <select id="simTopbarSessionSelect" class="sim-stage-select" disabled>
-        <option value="" disabled selected>Unsaved Draft</option>
-      </select>
-    </label>
-    <button id="simTopbarNewDraft">+ New Draft</button>
-    <button id="simTopbarSave">💾 Save</button>
-    <div class="sim-row-spacer"></div>
-    <button id="simTopbarGuideToggle" class="sim-row-guide-toggle" aria-expanded="false" aria-controls="simTopbarGuideContent">❔ Guide</button>
-  </div>
-  <div class="sim-row-guide" id="simTopbarGuideContent" role="region" aria-labelledby="simTopbarGuideToggle">
-    <h3>Override precedence</h3>
-    <ul>
-      <li>Selected simulation item overrides win whenever that override is set.</li>
-      <li>If an item has no override, the usual brush sidebar setting is used.</li>
-      <li>Changing brush controls never rewrites existing simulation-item overrides.</li>
-    </ul>
-    <h3>Boid guides</h3>
-    <ul>
-      <li>Each enabled Boid path animates a moving attraction point along the drawn stroke.</li>
-      <li>Boids steer by vector-summing enabled moving path guides and point attractions.</li>
-      <li>Enabled attract points and moving path targets also provide a soft flock-follow target.</li>
-      <li>Per-path strength and radius let you bias one guide more than another.</li>
-    </ul>
-    <h3>Repulsion hardness</h3>
-    <ul>
-      <li>Repel points now include hardness, which changes how sharply repulsion ramps up near the source.</li>
-      <li>Lower hardness feels softer and wider; higher hardness feels tighter and stronger near the center.</li>
-    </ul>
-    <h3>Inspector workflow</h3>
-    <ul>
-      <li>Use the floating Simulation HUD to place spawn, attract, repel, path, edge, or pheromone items.</li>
-      <li>Use the Settings button in the Simulation HUD to collapse or reopen the right-side simulation inspector.</li>
-      <li>Select an item on the canvas or from the inspector list to edit it in the right-side overlay.</li>
-      <li>Disable an item to keep it in the scene without deleting it.</li>
-    </ul>
-    <h3>Brush behavior</h3>
-    <ul>
-      <li>Outside Simulation mode, boid and ant brushes keep using the normal sidebar settings.</li>
-      <li>Simulation mode layers per-item overrides on top of those brush defaults.</li>
-    </ul>
-  </div>
 </div>
 
 <input type="hidden" id="primaryColor" class="color-input-state" value="#1a1a1a">
@@ -1152,7 +1091,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
           <strong>Draft setup</strong>
           <span id="simSetupSummary">No saved sessions loaded.</span>
           <span class="sim-setup-context" id="simSetupActiveSession">Editing unsaved draft session.</span>
-          <span class="sim-setup-context" id="simSetupModeSummary">Drawing-mode defaults stay in the main sidebar.</span>
+          <span class="sim-setup-context" id="simSetupModeSummary">The brush sidebar stays wired to the selected simulation draft or saved session.</span>
         </div>
         <label class="sim-setup-toggle">
           <input id="simSetupMultiToggle" type="checkbox">
