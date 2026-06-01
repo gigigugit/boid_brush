@@ -7576,26 +7576,6 @@ export class App {
           ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
         </div>`;
     };
-    const simVarToggle = ({ id, label, checked, desc }) => `
-      <div class="sim-slider-row">
-        <label class="sim-slider-header" style="align-items:center;gap:10px;cursor:pointer;justify-content:space-between;">
-          <span class="sim-slider-label">${label}</span>
-          <input type="checkbox" data-sim-bool-var="${id}" ${checked ? 'checked' : ''}>
-        </label>
-        ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
-      </div>`;
-    const simVarSelect = ({ id, label, value, options, desc }) => `
-      <div class="sim-slider-row">
-        <div class="sim-slider-header">
-          <span class="sim-slider-label">${label}</span>
-        </div>
-        <div class="sim-slider-controls">
-          <select data-sim-select-var="${id}">
-            ${options.map(option => `<option value="${option.value}" ${option.value === value ? 'selected' : ''}>${option.label}</option>`).join('')}
-          </select>
-        </div>
-        ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
-      </div>`;
     const seekValue = Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK;
     const cohesionValue = Number.isFinite(this.simulation.vars.cohesion) ? this.simulation.vars.cohesion : p.cohesion;
     const separationValue = Number.isFinite(this.simulation.vars.separation) ? this.simulation.vars.separation : p.separation;
@@ -8555,42 +8535,6 @@ export class App {
       };
       el.addEventListener('input', updateVar);
       el.addEventListener('change', updateVar);
-    });
-
-    panel.querySelectorAll('[data-sim-bool-var]').forEach(el => {
-      el.addEventListener('change', () => {
-        this.simulation.vars[el.dataset.simBoolVar] = !!el.checked;
-        this._maybeAutoSaveSession();
-      });
-    });
-
-    panel.querySelectorAll('[data-sim-select-var]').forEach(el => {
-      el.addEventListener('change', () => {
-        this.simulation.vars[el.dataset.simSelectVar] = el.value;
-        if (el.dataset.simSelectVar === 'sensingSource') {
-          this._handleSensingSourceChange(el.value, el.dataset.prevValue || 'below');
-          el.dataset.prevValue = el.value;
-          this._renderSimulationInspector();
-          this._maybeAutoSaveSession();
-          return;
-        }
-        this._maybeAutoSaveSession();
-      });
-      if (el.dataset.simSelectVar === 'sensingSource') {
-        el.dataset.prevValue = el.value || 'below';
-      }
-    });
-
-    panel.querySelector('[data-sim-sensing-pick]')?.addEventListener('click', event => {
-      const currentSource = this.simulation.vars.sensingSource || this.getP().sensingSource || 'below';
-      if (currentSource !== 'selected') {
-        const previousSource = currentSource;
-        this.simulation.vars.sensingSource = 'selected';
-        this._handleSensingSourceChange('selected', previousSource);
-        this._renderSimulationInspector();
-        this._maybeAutoSaveSession();
-      }
-      this.openSensingSourcePicker(event.currentTarget);
     });
 
     panel.querySelector('[data-sim-new-session]')?.addEventListener('click', () => this._newSimulationSession());
