@@ -27,7 +27,6 @@ html,body{min-height:100vh;background:#111;font-family:-apple-system,BlinkMacSys
 a{color:var(--accent);text-decoration:none;}
 a:hover{text-decoration:underline;}
 button,input{font:inherit;}
-button{font-family:inherit;}
 .page{max-width:1120px;margin:0 auto;padding:48px 24px 80px;}
 
 /* Header */
@@ -61,6 +60,7 @@ button{font-family:inherit;}
 .deck-copy h2{font-size:20px;color:#eef3ff;margin-bottom:6px;}
 .deck-copy p{max-width:700px;font-size:13px;line-height:1.6;color:#9ca8be;}
 .deck-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;}
+.canvas-chipbar{scrollbar-width:none;}
 .deck-tabs::-webkit-scrollbar,.canvas-chipbar::-webkit-scrollbar{display:none;}
 .deck-tab,.canvas-chip,.canvas-nav button,.floating-action{min-height:var(--tap-min);border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);color:var(--text);cursor:pointer;transition:all 0.18s ease;}
 .deck-tab,.canvas-chip{padding:10px 14px;white-space:nowrap;font-size:12px;font-weight:600;}
@@ -237,22 +237,22 @@ button{font-family:inherit;}
         <p>These are static UI concepts for the real canvas area: touch-sized controls, labeled quick actions, and different placements for an always-on floating palette you could eventually let users reposition.</p>
       </div>
       <div class="deck-tabs" role="tablist" aria-label="Choose a UI concept">
-        <button class="deck-tab is-active" type="button" data-index="0" role="tab" aria-selected="true">Studio Dock</button>
-        <button class="deck-tab" type="button" data-index="1" role="tab" aria-selected="false">Focus Strip</button>
-        <button class="deck-tab" type="button" data-index="2" role="tab" aria-selected="false">Twin Rail</button>
-        <button class="deck-tab" type="button" data-index="3" role="tab" aria-selected="false">Touch Board</button>
-        <button class="deck-tab" type="button" data-index="4" role="tab" aria-selected="false">Guided Stack</button>
+        <button class="deck-tab is-active" type="button" id="deck-tab-0" data-index="0" role="tab" aria-selected="true" aria-controls="deck-panel-0">Studio Dock</button>
+        <button class="deck-tab" type="button" id="deck-tab-1" data-index="1" role="tab" aria-selected="false" aria-controls="deck-panel-1">Focus Strip</button>
+        <button class="deck-tab" type="button" id="deck-tab-2" data-index="2" role="tab" aria-selected="false" aria-controls="deck-panel-2">Twin Rail</button>
+        <button class="deck-tab" type="button" id="deck-tab-3" data-index="3" role="tab" aria-selected="false" aria-controls="deck-panel-3">Touch Board</button>
+        <button class="deck-tab" type="button" id="deck-tab-4" data-index="4" role="tab" aria-selected="false" aria-controls="deck-panel-4">Guided Stack</button>
       </div>
     </div>
 
     <div class="deck-preview" id="uiDeckPreview">
       <div class="deck-shell">
-        <div class="canvas-nav" aria-hidden="false">
+        <div class="canvas-nav">
           <button type="button" id="deckPrev" aria-label="Show previous mockup">‹</button>
           <button type="button" id="deckNext" aria-label="Show next mockup">›</button>
         </div>
 
-        <section class="mock-screen is-active" data-index="0" data-mode="Studio Dock" data-surface="Desktop-first" data-summary="A full studio frame with familiar left tools, right inspector, and the floating quick palette anchored near the lower-right canvas edge.">
+        <section class="mock-screen is-active" id="deck-panel-0" role="tabpanel" aria-labelledby="deck-tab-0" data-index="0" data-mode="Studio Dock" data-surface="Desktop-first" data-summary="A full studio frame with familiar left tools, right inspector, and the floating quick palette anchored near the lower-right canvas edge.">
           <div class="mock-frame layout-studio">
             <div class="mock-topbar">
               <div class="mock-brand">
@@ -300,15 +300,15 @@ button{font-family:inherit;}
             <div class="floating-palette">
               <header><span>Quick tools</span><small>Docked right</small></header>
               <div class="floating-actions">
-                <button class="floating-action is-active" type="button">Brush</button>
-                <button class="floating-action" type="button">Layers</button>
-                <button class="floating-action" type="button">Modes</button>
+                <button class="floating-action is-active" type="button" aria-pressed="true">Brush</button>
+                <button class="floating-action" type="button" aria-pressed="false">Layers</button>
+                <button class="floating-action" type="button" aria-pressed="false">Modes</button>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="mock-screen" data-index="1" data-mode="Focus Strip" data-surface="Canvas-first" data-summary="A distraction-light surface with a slim command strip, bottom transport row, and a centered floating palette that reads clearly while staying out of the stroke path.">
+        <section class="mock-screen" id="deck-panel-1" role="tabpanel" aria-labelledby="deck-tab-1" hidden data-index="1" data-mode="Focus Strip" data-surface="Canvas-first" data-summary="A distraction-light surface with a slim command strip, bottom transport row, and a centered floating palette that reads clearly while staying out of the stroke path.">
           <div class="mock-frame layout-focus">
             <div class="mock-topbar">
               <div class="mock-brand">
@@ -349,16 +349,16 @@ button{font-family:inherit;}
             <div class="floating-palette">
               <header><span>Quick tools</span><small>Centered</small></header>
               <div class="floating-actions">
-                <button class="floating-action is-active" type="button">Brush</button>
-                <button class="floating-action" type="button">Color</button>
-                <button class="floating-action" type="button">Layers</button>
-                <button class="floating-action" type="button">Sim</button>
+                <button class="floating-action is-active" type="button" aria-pressed="true">Brush</button>
+                <button class="floating-action" type="button" aria-pressed="false">Color</button>
+                <button class="floating-action" type="button" aria-pressed="false">Layers</button>
+                <button class="floating-action" type="button" aria-pressed="false">Sim</button>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="mock-screen" data-index="2" data-mode="Twin Rail" data-surface="Balanced" data-summary="A symmetrical arrangement with quick thumb targets on both edges so the canvas stays centered and the floating palette can live on the left without covering the painting.">
+        <section class="mock-screen" id="deck-panel-2" role="tabpanel" aria-labelledby="deck-tab-2" hidden data-index="2" data-mode="Twin Rail" data-surface="Balanced" data-summary="A symmetrical arrangement with quick thumb targets on both edges so the canvas stays centered and the floating palette can live on the left without covering the painting.">
           <div class="mock-frame layout-split">
             <div class="mock-topbar">
               <div class="mock-brand">
@@ -399,15 +399,15 @@ button{font-family:inherit;}
             <div class="floating-palette">
               <header><span>Quick tools</span><small>Docked left</small></header>
               <div class="floating-actions">
-                <button class="floating-action is-active" type="button">Brush</button>
-                <button class="floating-action" type="button">Blend</button>
-                <button class="floating-action" type="button">HUD</button>
+                <button class="floating-action is-active" type="button" aria-pressed="true">Brush</button>
+                <button class="floating-action" type="button" aria-pressed="false">Blend</button>
+                <button class="floating-action" type="button" aria-pressed="false">HUD</button>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="mock-screen" data-index="3" data-mode="Touch Board" data-surface="Tablet-first" data-summary="A tablet-oriented split with oversized cards, a top-right floating palette, and a secondary board for presets so everything feels durable under repeated touch use.">
+        <section class="mock-screen" id="deck-panel-3" role="tabpanel" aria-labelledby="deck-tab-3" hidden data-index="3" data-mode="Touch Board" data-surface="Tablet-first" data-summary="A tablet-oriented split with oversized cards, a top-right floating palette, and a secondary board for presets so everything feels durable under repeated touch use.">
           <div class="mock-frame layout-touch">
             <div class="mock-topbar">
               <div class="mock-brand">
@@ -449,15 +449,15 @@ button{font-family:inherit;}
             <div class="floating-palette">
               <header><span>Quick tools</span><small>Top right</small></header>
               <div class="floating-actions">
-                <button class="floating-action is-active" type="button">Brush</button>
-                <button class="floating-action" type="button">Presets</button>
-                <button class="floating-action" type="button">Layers</button>
+                <button class="floating-action is-active" type="button" aria-pressed="true">Brush</button>
+                <button class="floating-action" type="button" aria-pressed="false">Presets</button>
+                <button class="floating-action" type="button" aria-pressed="false">Layers</button>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="mock-screen" data-index="4" data-mode="Guided Stack" data-surface="Progressive disclosure" data-summary="A guided sequence that surfaces the next action first, keeping the canvas wide while a labeled floating palette remains available for expert shortcuts.">
+        <section class="mock-screen" id="deck-panel-4" role="tabpanel" aria-labelledby="deck-tab-4" hidden data-index="4" data-mode="Guided Stack" data-surface="Progressive disclosure" data-summary="A guided sequence that surfaces the next action first, keeping the canvas wide while a labeled floating palette remains available for expert shortcuts.">
           <div class="mock-frame layout-guided">
             <div class="mock-topbar">
               <div class="mock-brand">
@@ -496,21 +496,21 @@ button{font-family:inherit;}
             <div class="floating-palette">
               <header><span>Quick tools</span><small>Bottom right</small></header>
               <div class="floating-actions">
-                <button class="floating-action is-active" type="button">Brush</button>
-                <button class="floating-action" type="button">Help</button>
-                <button class="floating-action" type="button">Layers</button>
-                <button class="floating-action" type="button">Mode</button>
+                <button class="floating-action is-active" type="button" aria-pressed="true">Brush</button>
+                <button class="floating-action" type="button" aria-pressed="false">Help</button>
+                <button class="floating-action" type="button" aria-pressed="false">Layers</button>
+                <button class="floating-action" type="button" aria-pressed="false">Mode</button>
               </div>
             </div>
           </div>
         </section>
 
-        <div class="canvas-chipbar" role="tablist" aria-label="Cycle mockups inside the preview">
-          <button class="canvas-chip is-active" type="button" data-index="0" aria-selected="true">Studio Dock</button>
-          <button class="canvas-chip" type="button" data-index="1" aria-selected="false">Focus Strip</button>
-          <button class="canvas-chip" type="button" data-index="2" aria-selected="false">Twin Rail</button>
-          <button class="canvas-chip" type="button" data-index="3" aria-selected="false">Touch Board</button>
-          <button class="canvas-chip" type="button" data-index="4" aria-selected="false">Guided Stack</button>
+        <div class="canvas-chipbar" role="group" aria-label="Cycle mockups inside the preview">
+          <button class="canvas-chip is-active" type="button" data-index="0" aria-pressed="true">Studio Dock</button>
+          <button class="canvas-chip" type="button" data-index="1" aria-pressed="false">Focus Strip</button>
+          <button class="canvas-chip" type="button" data-index="2" aria-pressed="false">Twin Rail</button>
+          <button class="canvas-chip" type="button" data-index="3" aria-pressed="false">Touch Board</button>
+          <button class="canvas-chip" type="button" data-index="4" aria-pressed="false">Guided Stack</button>
         </div>
       </div>
     </div>
@@ -681,23 +681,34 @@ button{font-family:inherit;}
   var current = 0;
   var preview = document.getElementById('uiDeckPreview');
   var pointerStart = null;
+  var SWIPE_THRESHOLD = 46;
 
-  function syncButtons(buttons, index) {
-    buttons.forEach(function(button, i) {
+  function syncTabs(index) {
+    tabs.forEach(function(button, i) {
       var active = i === index;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-selected', active ? 'true' : 'false');
-      if (button.hasAttribute('aria-pressed')) button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.setAttribute('tabindex', active ? '0' : '-1');
+    });
+  }
+
+  function syncChips(index) {
+    chips.forEach(function(button, i) {
+      var active = i === index;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   }
 
   function activate(index) {
     current = (index + screens.length) % screens.length;
     screens.forEach(function(screen, i) {
-      screen.classList.toggle('is-active', i === current);
+      var active = i === current;
+      screen.classList.toggle('is-active', active);
+      screen.hidden = !active;
     });
-    syncButtons(tabs, current);
-    syncButtons(chips, current);
+    syncTabs(current);
+    syncChips(current);
     mode.textContent = screens[current].getAttribute('data-mode');
     surface.textContent = screens[current].getAttribute('data-surface');
     summary.textContent = screens[current].getAttribute('data-summary');
@@ -713,14 +724,15 @@ button{font-family:inherit;}
   document.getElementById('deckNext').addEventListener('click', function() { activate(current + 1); });
 
   preview.addEventListener('pointerdown', function(event) {
-    pointerStart = event.clientX;
+    pointerStart = { x: event.clientX, y: event.clientY };
   });
   preview.addEventListener('pointerup', function(event) {
-    if (pointerStart === null) return;
-    var delta = event.clientX - pointerStart;
+    if (!pointerStart) return;
+    var deltaX = event.clientX - pointerStart.x;
+    var deltaY = event.clientY - pointerStart.y;
     pointerStart = null;
-    if (Math.abs(delta) < 46) return;
-    activate(current + (delta < 0 ? 1 : -1));
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    activate(current + (deltaX < 0 ? 1 : -1));
   });
   preview.addEventListener('pointercancel', function() { pointerStart = null; });
   preview.addEventListener('pointerleave', function() { pointerStart = null; });
@@ -730,7 +742,9 @@ button{font-family:inherit;}
       var button = event.target.closest('.floating-action');
       if (!button) return;
       palette.querySelectorAll('.floating-action').forEach(function(item) {
-        item.classList.toggle('is-active', item === button);
+        var active = item === button;
+        item.classList.toggle('is-active', active);
+        item.setAttribute('aria-pressed', active ? 'true' : 'false');
       });
     });
   });
