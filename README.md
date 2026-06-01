@@ -35,6 +35,17 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 
 Open `app.html` in a modern browser (or `index.html` for the landing page with links to forks). Works on desktop and tablet (iPad) — no server or build step required.
 
+### iPad / Capacitor shell
+
+A Capacitor iOS wrapper is now wired for shipping the existing web app inside a native `WKWebView`. After installing dependencies, use:
+
+- `npm run cap:prepare` — stage the current web assets into `capacitor/www`
+- `npm run cap:add:ios` — create the iOS shell if you remove `ios/` and need to regenerate it
+- `npm run cap:sync` — refresh the staged assets and sync the iOS project
+- `npm run cap:open:ios` — open the generated Xcode project
+
+The native shell defaults to `app.html`, mirrors `localStorage` into Capacitor Preferences for more durable state restoration, routes exports through Capacitor Filesystem when available, and exposes a native share action for the current canvas.
+
 ### Keyboard Shortcuts
 
 | Key | Action |

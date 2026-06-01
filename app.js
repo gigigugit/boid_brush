@@ -2443,13 +2443,23 @@ export class App {
     }
   }
 
-  _downloadBlob(blob, filename) {
+  async _downloadBlob(blob, filename, options = {}) {
+    const platform = window.BoidBrushPlatform;
+    if (platform?.isNativeShell?.() && platform?.saveBlob) {
+      try {
+        const saved = await platform.saveBlob(blob, filename, options);
+        if (saved?.saved) return saved;
+      } catch (error) {
+        console.warn('Native save failed, falling back to browser download:', error);
+      }
+    }
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 2500);
+    return { saved: true, native: false, path: filename };
   }
 
   async _exportSimulationRecording() {
@@ -2468,7 +2478,7 @@ export class App {
       const exported = await this._transcodeSimulationRecording(sourceBlob, options);
       if (!exported?.blob) throw new Error('No export output produced');
       const stamp = new Date().toISOString().replace(/[.:]/g, '-');
-      this._downloadBlob(exported.blob, `simulation-${stamp}.${exported.extension}`);
+      await this._downloadBlob(exported.blob, `simulation-${stamp}.${exported.extension}`);
       this.showToast(`💾 Exported ${exported.extension.toUpperCase()}`);
     } catch (error) {
       console.error('Simulation export failed:', error);
@@ -7009,11 +7019,11 @@ export class App {
     };
   }
 
-  exportSimulationSetupFile() {
+  async exportSimulationSetupFile() {
     const bundle = this.createSimulationSetupBundle();
     const stamp = new Date().toISOString().replace(/[.:]/g, '-');
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-    this._downloadBlob(blob, `boid-brush-sim-setup-${stamp}.json`);
+    await this._downloadBlob(blob, `boid-brush-sim-setup-${stamp}.json`);
     this.showToast('Simulation setup exported');
     return true;
   }
@@ -8705,9 +8715,9 @@ export class App {
     panel.querySelector('[data-sim-delete-active-session]')?.addEventListener('click', () => {
       if (this.simulation.activeSessionIndex >= 0) this._deleteSimulationSavedSession(this.simulation.activeSessionIndex);
     });
-    panel.querySelector('[data-sim-export-setup]')?.addEventListener('click', () => this.exportSimulationSetupFile());
+    panel.querySelector('[data-sim-export-setup]')?.addEventListener('click', () => void this.exportSimulationSetupFile());
     panel.querySelector('[data-sim-import-setup]')?.addEventListener('click', () => document.getElementById('simSetupImportInput')?.click());
-    panel.querySelector('[data-sim-export-workspace]')?.addEventListener('click', () => this.exportWorkspaceSettingsFile());
+    panel.querySelector('[data-sim-export-workspace]')?.addEventListener('click', () => void this.exportWorkspaceSettingsFile());
     panel.querySelector('[data-sim-import-workspace]')?.addEventListener('click', () => document.getElementById('workspaceSettingsImportInput')?.click());
     } catch (error) {
       console.error('Simulation inspector render failed:', error);
@@ -12362,7 +12372,8 @@ export class App {
     document.getElementById('undoBtn')?.addEventListener('click', () => this.doUndo());
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
-    document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
+    document.getElementById('saveBtn')?.addEventListener('click', () => void this.saveImage());
+    document.getElementById('shareBtn')?.addEventListener('click', () => void this.shareImage());
     document.getElementById('reloadAppBtn')?.addEventListener('click', () => this.reloadAppWithCacheBust());
     document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
     document.getElementById('importPsdBtn')?.addEventListener('click', () => importPSD(this));
@@ -12569,9 +12580,9 @@ export class App {
       this._simulationSetupDraft.multiSessionEnabled = !!event.target.checked;
       this._updateSimulationSetupSummary();
     });
-    document.getElementById('simSetupSaveJson')?.addEventListener('click', () => this.exportSimulationSetupFile());
+    document.getElementById('simSetupSaveJson')?.addEventListener('click', () => void this.exportSimulationSetupFile());
     document.getElementById('simSetupLoadJson')?.addEventListener('click', () => document.getElementById('simSetupLoadFile')?.click());
-    document.getElementById('simSetupExportWorkspace')?.addEventListener('click', () => this.exportWorkspaceSettingsFile());
+    document.getElementById('simSetupExportWorkspace')?.addEventListener('click', () => void this.exportWorkspaceSettingsFile());
     document.getElementById('simSetupImportWorkspace')?.addEventListener('click', () => document.getElementById('simSetupWorkspaceImportFile')?.click());
     document.getElementById('simSetupLoadFile')?.addEventListener('change', async event => {
       const file = event.target.files?.[0];
@@ -13436,7 +13447,7 @@ export class App {
     if (e.ctrlKey && !e.shiftKey && e.key === 'z') { e.preventDefault(); this.doUndoSimulationGuide(); }
     if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); this.doRedoSimulationGuide(); }
     // Ctrl+S = save image
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); this.saveImage(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); void this.saveImage(); }
     // Ctrl+C = copy canvas to clipboard
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); this.copyToClipboard(); }
     // Ctrl+X = cut selection
@@ -15374,27 +15385,45 @@ export class App {
     return canvas;
   }
 
-  saveImage() {
+  async saveImage() {
     const canvas = this._compositeFlatCanvas();
-    // Use toBlob for better performance with large canvases
-    canvas.toBlob(blob => {
-      if (!blob) {
-        // Fallback to toDataURL
-        const a = document.createElement('a');
-        a.download = 'boid-brush.png';
-        a.href = canvas.toDataURL('image/png');
-        a.click();
-        this.showToast('💾 Saved');
-        return;
-      }
-      const url = URL.createObjectURL(blob);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) {
       const a = document.createElement('a');
       a.download = 'boid-brush.png';
-      a.href = url;
+      a.href = canvas.toDataURL('image/png');
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
       this.showToast('💾 Saved');
-    }, 'image/png');
+      return true;
+    }
+    await this._downloadBlob(blob, 'boid-brush.png');
+    this.showToast('💾 Saved');
+    return true;
+  }
+
+  async shareImage() {
+    const canvas = this._compositeFlatCanvas();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) {
+      this.showToast('⚠ Share failed');
+      return false;
+    }
+    const platform = window.BoidBrushPlatform;
+    if (platform?.isNativeShell?.() && platform?.shareBlob) {
+      try {
+        await platform.shareBlob(blob, 'boid-brush.png', {
+          title: 'Boid Brush Export',
+          text: 'Shared from Boid Brush on iPad',
+        });
+        this.showToast('📤 Shared');
+        return true;
+      } catch (error) {
+        console.error('Share failed:', error);
+      }
+    }
+    await this._downloadBlob(blob, 'boid-brush.png');
+    this.showToast('💾 Saved');
+    return false;
   }
 
   // ========================================================
@@ -15690,12 +15719,12 @@ export class App {
     };
   }
 
-  exportWorkspaceSettingsFile() {
+  async exportWorkspaceSettingsFile() {
     try {
       const bundle = this.createWorkspaceSettingsBundle();
       const stamp = new Date().toISOString().replace(/[.:]/g, '-');
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-      this._downloadBlob(blob, `boid-brush-workspace-${stamp}.json`);
+      await this._downloadBlob(blob, `boid-brush-workspace-${stamp}.json`);
       this.showToast('💾 Workspace settings exported');
       return true;
     } catch (error) {
