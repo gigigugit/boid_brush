@@ -191,11 +191,24 @@ html,body{overflow:hidden;width:100%;height:100%;
 #sidebar label,#layersPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
 #sidebar label span,#layersPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
 .slider-desc{display:block;font-size:8px;color:var(--ink-3);margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
-#sidebar input[type="range"],#layersPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
-#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
-#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#sidebar input[type="range"]:not(.slider-vertical),#layersPanel input[type="range"]:not(.slider-vertical){-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"]:not(.slider-vertical):hover,#layersPanel input[type="range"]:not(.slider-vertical):hover{background:rgba(255,255,255,0.14);}
+#sidebar input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb,#layersPanel input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]:not(.slider-vertical)::-moz-range-thumb,#layersPanel input[type="range"]:not(.slider-vertical)::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]:not(.slider-vertical)::-moz-range-track,#layersPanel input[type="range"]:not(.slider-vertical)::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+/* Vertical slider styles */
+.slider-vertical{-webkit-appearance:slider-vertical;appearance:slider-vertical;writing-mode:vertical-lr;direction:rtl;width:16px;height:48px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;margin:0 2px;}
+.slider-vertical:hover{background:rgba(255,255,255,0.14);}
+.slider-vertical::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 3px rgba(0,0,0,0.5);}
+.slider-vertical::-moz-range-thumb{width:10px;height:10px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 3px rgba(0,0,0,0.5);}
+.slider-vertical::-moz-range-track{width:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+/* Number input styles */
+.slider-num-input{width:42px;height:20px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:var(--ink-0);font-size:10px;font-variant-numeric:tabular-nums;text-align:center;padding:0 2px;outline:none;-moz-appearance:textfield;}
+.slider-num-input::-webkit-outer-spin-button,.slider-num-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.slider-num-input:focus{border-color:rgba(117,162,255,0.5);background:rgba(255,255,255,0.1);}
+/* Slider row wrap */
+.slider-row-wrap{display:contents;}
+.slider-row-controls{display:inline-flex;align-items:center;gap:3px;}
 #sidebar select,#layersPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
 #sidebar select:hover,#layersPanel select:hover{border-color:rgba(255,255,255,0.2);}
 #sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
@@ -561,11 +574,39 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simSetupModal .sim-setup-toggle{display:flex;align-items:center;gap:8px;color:#dbe6fb;font-size:11px;font-weight:650;}
 #simSetupModal .sim-setup-toggle input{accent-color:var(--accent-b);}
 #simSetupModal .sim-setup-tableWrap{width:max-content;max-width:100%;overflow:auto;border:1px solid rgba(255,255,255,0.1);background:rgba(5,9,16,0.58);}
-#simSetupModal .sim-setup-table{width:max-content;min-width:1320px;border-collapse:collapse;font-size:11px;color:#d8e2f7;}
+#simSetupModal .sim-setup-table{width:max-content;min-width:1080px;border-collapse:collapse;font-size:11px;color:#d8e2f7;}
 #simSetupModal .sim-setup-table th{position:sticky;top:0;z-index:1;background:#111827;color:#8fb0f4;text-align:left;text-transform:uppercase;letter-spacing:.08em;font-size:10px;font-weight:800;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.11);}
 #simSetupModal .sim-setup-table td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.07);vertical-align:top;}
+#simSetupModal .sim-setup-table tr[data-sim-setup-row] td{border-bottom:none;}
+#simSetupModal .sim-setup-table tr.sim-setup-accordion td{border-bottom:1px solid rgba(255,255,255,0.07);padding:0 10px 0;}
+#simSetupModal .sim-setup-table tr.sim-setup-accordion.open td{padding:0 10px 9px;}
+#simSetupModal .sim-setup-accordion-toggle{display:inline-flex;align-items:center;gap:5px;padding:5px 0;cursor:pointer;color:#8fb0f4;font-size:11px;font-weight:650;user-select:none;border:none;background:none;}
+#simSetupModal .sim-setup-accordion-toggle:hover{color:#b8d4ff;}
+#simSetupModal .sim-setup-accordion-toggle .chevron{display:inline-block;transition:transform .15s ease;font-size:9px;}
+#simSetupModal .sim-setup-accordion.open .sim-setup-accordion-toggle .chevron{transform:rotate(90deg);}
+#simSetupModal .sim-setup-accordion-body{display:none;gap:10px;flex-wrap:wrap;align-items:center;padding:6px 0 4px;}
+#simSetupModal .sim-setup-accordion.open .sim-setup-accordion-body{display:flex;}
+#simSetupModal .sim-setup-accordion-body label{display:flex;align-items:center;gap:5px;color:#d8e2f7;font-size:11px;white-space:nowrap;}
+#simSetupModal .sim-setup-accordion-body select{min-height:28px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;color-scheme:dark;}
+#simSetupModal .sim-setup-accordion-body select option{background:var(--select-panel-bg);color:var(--select-text);}
+#simSetupModal .sim-setup-accordion-body input[type="number"]{min-height:28px;width:56px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;color-scheme:dark;}
+#simSetupModal .sim-setup-popup-slider{position:relative;display:inline-flex;align-items:center;}
+#simSetupModal .sim-setup-popup-slider-btn{min-height:28px;min-width:48px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;cursor:pointer;text-align:center;font-variant-numeric:tabular-nums;user-select:none;}
+#simSetupModal .sim-setup-popup-slider-btn:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.22);}
+#simSetupModal .sim-setup-popup-slider-btn:disabled{opacity:0.4;cursor:not-allowed;}
+#simSetupModal .sim-setup-popup-slider-drop{display:none;position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:6px;padding:8px 12px;background:rgba(20,25,38,0.98);border:1px solid rgba(255,255,255,0.14);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.5);z-index:200;white-space:nowrap;align-items:center;gap:8px;}
+#simSetupModal .sim-setup-popup-slider-drop.open{display:flex;}
+#simSetupModal .sim-setup-popup-slider-drop input[type="range"]{-webkit-appearance:none;appearance:none;width:100px;height:4px;background:rgba(255,255,255,0.12);border-radius:2px;outline:none;cursor:pointer;}
+#simSetupModal .sim-setup-popup-slider-drop input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#simSetupModal .sim-setup-popup-slider-drop input[type="range"]::-moz-range-thumb{width:12px;height:12px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#simSetupModal .sim-setup-popup-slider-drop input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.12);border-radius:2px;border:none;}
+#simSetupModal .sim-setup-popup-slider-drop input[type="number"]{width:48px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.06);color:#e8eefb;font-size:11px;font-family:inherit;padding:2px 5px;text-align:center;color-scheme:dark;}
+#simSetupModal .sim-setup-accordion-body input[type="checkbox"]{accent-color:var(--accent-b);}
+#simSetupModal .sim-setup-accordion-body .sim-setup-multi{min-width:140px;}
+#simSetupModal .sim-setup-accordion-body .sim-setup-multi button{min-height:28px;border-radius:6px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:4px 7px;cursor:pointer;font-weight:650;width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px;}
 #simSetupModal .sim-setup-table tr:last-child td{border-bottom:none;}
 #simSetupModal .sim-setup-table tr:hover td{background:rgba(255,255,255,0.025);}
+#simSetupModal .sim-setup-table tr.sim-setup-accordion:hover td{background:transparent;}
 #simSetupModal .sim-setup-table tr.active td{background:rgba(58,106,232,0.08);}
 #simSetupModal .sim-setup-sessionName{display:grid;gap:3px;min-width:180px;}
 #simSetupModal .sim-setup-sessionName strong{color:#f2f6ff;font-size:12px;}
@@ -574,6 +615,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simSetupModal .sim-setup-table input[type="checkbox"]{accent-color:var(--accent-b);}
 #simSetupModal .sim-setup-table select,#simSetupModal .sim-setup-table button,#simSetupModal .sim-setup-footer button,#simSetupModal .sim-setup-toolbar button{min-height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;}
 #simSetupModal .sim-setup-table select{width:100%;padding:6px 8px;color-scheme:dark;background:var(--select-bg);}
+#simSetupModal .sim-setup-table input[type="number"]{min-height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;padding:6px 8px;color-scheme:dark;}
 #simSetupModal .sim-setup-table select option,#simSetupModal .sim-setup-table select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
 #simSetupModal .sim-setup-table button,#simSetupModal .sim-setup-footer button,#simSetupModal .sim-setup-toolbar button{padding:6px 10px;cursor:pointer;font-weight:650;}
 #simSetupModal .sim-setup-table button:hover,#simSetupModal .sim-setup-footer button:hover,#simSetupModal .sim-setup-toolbar button:hover{background:rgba(255,255,255,0.11);}
