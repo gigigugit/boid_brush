@@ -1910,6 +1910,16 @@ export class BoidBrush {
           spawnMask: spawnConfig.mask,
           spawnDistribution: spawnConfig.distribution,
           spawnNoiseScale: spawnConfig.noiseScale,
+          stampSize: spawnConfig.stampSize,
+          stampSeparation: spawnConfig.stampSeparation,
+          trailFlow: spawnConfig.trailFlow,
+          smudge: spawnConfig.smudge,
+          hueVar: spawnConfig.hueVar,
+          satVar: spawnConfig.satVar,
+          litVar: spawnConfig.litVar,
+          sizeVar: spawnConfig.sizeVar,
+          opacityVar: spawnConfig.opacityVar,
+          speedVar: spawnConfig.speedVar,
         }
       : p;
 
@@ -2876,6 +2886,18 @@ export class AntBrush {
       color: spawnConfig ? spawnConfig.color : p.color,
       opacity: spawnConfig ? spawnConfig.opacity : p.stampOpacity,
     }, p);
+    this._spawnOverrides = spawnConfig ? {
+      stampSize: spawnConfig.stampSize,
+      stampSeparation: spawnConfig.stampSeparation,
+      trailFlow: spawnConfig.trailFlow,
+      smudge: spawnConfig.smudge,
+      hueVar: spawnConfig.hueVar,
+      satVar: spawnConfig.satVar,
+      litVar: spawnConfig.litVar,
+      sizeVar: spawnConfig.sizeVar,
+      opacityVar: spawnConfig.opacityVar,
+      speedVar: spawnConfig.speedVar,
+    } : null;
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpawnX = x;

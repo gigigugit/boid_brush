@@ -10,6 +10,8 @@
   --status-h: 24px;
   --sidebar-w: 280px;
   --layers-w: 230px;
+  --panel-top: var(--topbar-h);
+  --panel-tabs-top: calc(var(--panel-top) + 24px);
   --ink-0: #f2f4f8;
   --ink-1: #cdd2de;
   --ink-2: #9ea7b8;
@@ -45,7 +47,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #leftPanel,#leftPanel *{touch-action:pan-y;}
 #rightPanel,#rightPanel *{touch-action:pan-y;}
 #antMathPanel,#antMathPanel *{touch-action:pan-y;}
-#simFormatMenu,#simFormatMenu *{touch-action:pan-y;}
+#simFormatMenu,#simFormatMenu *{touch-action:none;}
 #topbar,#topbar *{touch-action:pan-x;}
 
 /* ---- Canvas Area ---- */
@@ -143,7 +145,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #swapColors:hover{color:#fff;transform:rotate(180deg);}
 
 /* ---- Layers panel (left) ---- */
-#leftPanel{position:fixed;top:var(--topbar-h);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#leftPanel{position:fixed;top:var(--panel-top);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
 #leftPanel.open{transform:translateX(0);}
 #leftPanel::-webkit-scrollbar{width:5px;}
 #leftPanel::-webkit-scrollbar-track{background:transparent;}
@@ -151,7 +153,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #layersPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 
 /* ---- Right Panel (tabbed) ---- */
-#rightPanel{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#rightPanel{position:fixed;top:var(--panel-top);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
 #rightPanel.open{transform:translateX(0);}
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
@@ -160,7 +162,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
 
 /* ---- Panel Tabs (drawer handles) ---- */
-.panel-tabs{position:fixed;top:calc(var(--topbar-h) + 24px);z-index:21;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transform:translateX(0);transition:opacity 220ms ease,transform 220ms ease;}
+.panel-tabs{position:fixed;top:var(--panel-tabs-top);z-index:21;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transform:translateX(0);transition:opacity 220ms ease,transform 220ms ease;}
 .panel-tabs--visible{opacity:1;pointer-events:auto;}
 .panel-tabs--left{left:0;}
 .panel-tabs--right{right:0;}
@@ -425,14 +427,15 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-guide-layer-toggle.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b))!important;border-color:rgba(117,162,255,0.55)!important;color:#fff!important;}
 .sim-guide-layer-delete{background:rgba(138,52,52,0.72)!important;border-color:rgba(225,99,99,0.28)!important;color:#ffd6d6!important;}
 .sim-guide-layer-delete:hover{background:rgba(255,59,48,0.38)!important;color:#fff!important;}
-#simFormatMenu{position:fixed;top:calc(var(--topbar-h) + 18px);right:calc(min(296px, 92vw) + 18px);width:max-content;max-width:none;overflow:visible;display:none;z-index:23;padding:0;border-radius:12px;background:rgba(12,15,22,0.96);backdrop-filter:blur(20px);border:1px solid var(--line-1);box-shadow:var(--shadow-lg);cursor:grab;}
+#simFormatMenu{position:fixed;top:calc(var(--topbar-h) + 18px);right:calc(min(296px, 92vw) + 18px);width:auto;max-width:calc(100vw - 16px);overflow:visible;display:none;z-index:23;padding:0;border-radius:12px;background:rgba(12,15,22,0.96);backdrop-filter:blur(20px);border:1px solid var(--line-1);box-shadow:var(--shadow-lg);cursor:grab;}
 #simFormatMenu.open{display:block;}
+#simFormatMenu.docked{cursor:default;}
 #simFormatMenu.dragging{cursor:grabbing;user-select:none;}
 #simFormatMenu::-webkit-scrollbar{width:5px;}
 #simFormatMenu::-webkit-scrollbar-track{background:transparent;}
 #simFormatMenu::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-.sim-format-shell{padding:6px;width:max-content;}
-.sim-format-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow:visible;width:max-content;max-width:none;cursor:grab;}
+.sim-format-shell{padding:6px;max-width:100%;}
+.sim-format-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;overflow:visible;max-width:100%;cursor:grab;}
 .sim-format-row > *{flex:0 0 auto;}
 .sim-format-chip,.sim-format-color,.sim-format-reset,.sim-format-close{min-height:28px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.05);color:#edf2ff;font-size:10px;}
 .sim-format-chip{position:relative;display:inline-flex;align-items:center;gap:4px;padding:3px 6px;cursor:grab;}
@@ -473,6 +476,12 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-help-panel ul{margin:6px 0 0 16px;padding:0;}
 .sim-help-close{position:absolute;top:10px;right:12px;border:none;background:none;color:#93a0b7;font-size:20px;cursor:pointer;}
 .sim-help-close:hover{color:#fff;}
+
+#sidebar #simBrushSessionCardHost{position:sticky;top:0;z-index:2;display:grid;gap:8px;margin:0 0 10px;padding:8px 0 10px;background:linear-gradient(180deg,rgba(17,20,28,0.98) 0%,rgba(17,20,28,0.94) 78%,rgba(17,20,28,0) 100%);}
+#sidebar #simBrushSessionCardHost.brush-hidden{display:none!important;}
+#sidebar #simBrushSessionCardHost .sim-inspector-sessionBarCard{box-shadow:none;background:rgba(12,16,26,0.84);}
+#sidebar #simBrushSessionCardHost .sim-inspector-title{font-size:13px;}
+
 .sim-distribute-panel{position:relative;width:min(440px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;display:grid;gap:14px;}
 .sim-distribute-panel h2{margin:0;font-size:18px;color:#fff;}
 .sim-distribute-subtitle{color:#9aa7bd;line-height:1.45;}
@@ -920,8 +929,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <aside id="rightPanel">
   <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
   <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
-  <div id="simFormatMenu"></div>
 </aside>
+<div id="simFormatMenu"></div>
 
 <!-- ══════════ Ant Math Overlay Panel ══════════ -->
 <div id="antMathPanel"></div>
@@ -1082,7 +1091,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
           <strong>Draft setup</strong>
           <span id="simSetupSummary">No saved sessions loaded.</span>
           <span class="sim-setup-context" id="simSetupActiveSession">Editing unsaved draft session.</span>
-          <span class="sim-setup-context" id="simSetupModeSummary">Drawing-mode defaults stay in the main sidebar.</span>
+          <span class="sim-setup-context" id="simSetupModeSummary">The brush sidebar stays wired to the selected simulation draft or saved session.</span>
         </div>
         <label class="sim-setup-toggle">
           <input id="simSetupMultiToggle" type="checkbox">

@@ -35,6 +35,13 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
   leaderCount: 0,
   leaderPull: 35,
 }));
+const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
+  'alwaysShowTabs',
+  'autoSaveSession',
+  'perfTelemetryEnabled',
+  'perfWakeLockEnabled',
+  'simSidebarSessionSelect',
+]);
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
   fillTolerance: 32,
@@ -475,6 +482,33 @@ async function _fetchWithRetry(resource, {
 
 function _escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _isPlainObject(value) {
+  if (!value || Object.prototype.toString.call(value) !== '[object Object]') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function _sanitizeSimulationSessionData(value) {
+  if (value == null) return value;
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    const next = [];
+    for (const entry of value) {
+      const normalized = _sanitizeSimulationSessionData(entry);
+      if (normalized !== undefined) next.push(normalized);
+    }
+    return next;
+  }
+  if (!_isPlainObject(value)) return undefined;
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = _sanitizeSimulationSessionData(entry);
+    if (normalized !== undefined) next[key] = normalized;
+  }
+  return next;
 }
 
 function _normalizeSimulationVars(value) {
@@ -1802,6 +1836,7 @@ export class App {
       multiSessionBindings: [],
       runtimeSessions: [],
       cachedRuntimeSessions: [],
+      priorDrawSeek: null,
       drawingPath: null,
       drawingBlob: null,
       dragTarget: null,
@@ -1813,6 +1848,7 @@ export class App {
     this.motionPathEditor = this._createMotionPathEditorState();
     this._simFormatMenuUi = {
       activePopover: null,
+      docked: false,
       position: null,
       dragPointerId: null,
       dragOffsetX: 0,
@@ -1859,6 +1895,23 @@ export class App {
 
     // Kick off
     this._init().catch(error => this._handleInitError(error));
+  }
+
+  _captureSimulationPriorDrawSeek() {
+    const seekControl = document.getElementById('seek');
+    const seekValue = seekControl ? Number(seekControl.value) : NaN;
+    if (Number.isFinite(seekValue)) this.simulation.priorDrawSeek = seekValue;
+  }
+
+  _restoreSimulationPriorDrawSeek() {
+    const priorDrawSeek = this.simulation?.priorDrawSeek;
+    this.simulation.priorDrawSeek = null;
+    if (!Number.isFinite(priorDrawSeek)) return;
+    const seekControl = document.getElementById('seek');
+    if (!seekControl) return;
+    seekControl.value = String(priorDrawSeek);
+    this._paramsDirty = true;
+    syncUI(this);
   }
 
   // ========================================================
@@ -4482,8 +4535,14 @@ export class App {
   _getRuntimeScopedParams(baseParams) {
     if (!this._simulationContextOverride || !this.simulation?.enabled || !baseParams) return baseParams;
     const vars = this._getSimulationVars();
-    if (!vars) return baseParams;
     const next = { ...baseParams };
+    const paramSnapshot = _sanitizeSimulationSessionData(this._simulationContextOverride?.paramSnapshot);
+    if (paramSnapshot && typeof paramSnapshot === 'object') {
+      for (const [key, value] of Object.entries(paramSnapshot)) {
+        next[key] = _deepClone(value);
+      }
+    }
+    if (!vars) return next;
     if (Number.isFinite(vars.seek)) next.seek = vars.seek;
     if (Number.isFinite(vars.cohesion)) next.cohesion = vars.cohesion;
     if (Number.isFinite(vars.separation)) next.separation = vars.separation;
@@ -4704,14 +4763,14 @@ export class App {
       typeLabel: isSaved ? 'Saved Session' : 'Unsaved Draft',
       sidebarTitle: `Simulation session: ${name}`,
       sidebarSummary: isSaved
-        ? `The main sidebar still edits drawing-mode defaults. Simulation mode loads and updates ${name}, plus any per-item overrides in the Session Editor.`
-        : 'The main sidebar still edits drawing-mode defaults. Simulation mode is currently using an unsaved draft until you save or load a named session.',
+        ? `The brush sidebar is editing ${name}. Save to keep sidebar values, simulation defaults, and guide edits together in this session.`
+        : 'The brush sidebar is editing an unsaved draft. Save it to keep the current sidebar values, simulation defaults, and guide edits together.',
       editorSummary: isSaved
         ? `Editing saved session "${name}". Guide edits and simulation-mode defaults update this session until you load another one or start a new draft.`
         : 'Editing an unsaved draft session. Save it to reuse the current simulation defaults, guides, and sensing routes later.',
       playbackLabel: `Session ${name}`,
       setupLabel: isSaved ? `Editing saved session: ${name}` : 'Editing unsaved draft session.',
-      modeSummary: 'Drawing-mode defaults stay in the main sidebar.',
+      modeSummary: 'The brush sidebar stays wired to the selected simulation draft or saved session.',
       routingSummary: this._buildSimulationSessionRoutingSummary(),
     };
   }
@@ -4722,6 +4781,13 @@ export class App {
     if (sidebarTitle) sidebarTitle.textContent = context.sidebarTitle;
     const sidebarMeta = document.getElementById('simSidebarSessionMeta');
     if (sidebarMeta) sidebarMeta.textContent = context.sidebarSummary;
+    const sidebarBadge = document.getElementById('simSidebarSessionBadge');
+    if (sidebarBadge) {
+      sidebarBadge.textContent = context.typeLabel;
+      sidebarBadge.className = `sim-stage-badge ${context.isSaved ? 'active' : 'muted'}`;
+    }
+    const sidebarSave = document.getElementById('simSidebarSave');
+    if (sidebarSave) sidebarSave.textContent = context.isSaved ? 'Update Saved Session' : 'Save Draft Session';
     const playbackSession = document.getElementById('simPlaybackSession');
     if (playbackSession) {
       playbackSession.textContent = context.playbackLabel;
@@ -4733,6 +4799,18 @@ export class App {
     if (simSetupActiveSession) simSetupActiveSession.textContent = context.setupLabel;
     const simSetupModeSummary = document.getElementById('simSetupModeSummary');
     if (simSetupModeSummary) simSetupModeSummary.textContent = context.modeSummary;
+    const sidebarSelect = document.getElementById('simSidebarSessionSelect');
+    if (sidebarSelect) {
+      const hasSessions = this.simulation.sessions.length > 0;
+      sidebarSelect.disabled = !hasSessions;
+      let opts = `<option value="" ${context.isSaved ? '' : 'selected'} disabled>${context.isSaved ? 'Choose a saved session...' : 'Unsaved Draft'}</option>`;
+      for (let i = 0; i < this.simulation.sessions.length; i++) {
+        const s = this.simulation.sessions[i];
+        const label = s.name || `Session ${i + 1}`;
+        opts += `<option value="${i}" ${i === context.activeIndex ? 'selected' : ''}>${label}</option>`;
+      }
+      sidebarSelect.innerHTML = opts;
+    }
   }
 
   _getRunnableSimulationSessionBindings() {
@@ -4893,6 +4971,16 @@ export class App {
       distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : 'uniform',
       noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : 1,
       mask: spawn?.mask || null,
+      stampSize: Number.isFinite(spawn?.stampSize) ? Math.max(1, spawn.stampSize) : p.stampSize,
+      stampSeparation: Number.isFinite(spawn?.stampSeparation) ? Math.max(0, Math.min(1, spawn.stampSeparation)) : p.stampSeparation,
+      trailFlow: Number.isFinite(spawn?.trailFlow) ? Math.max(0, Math.min(1, spawn.trailFlow)) : p.trailFlow,
+      smudge: Number.isFinite(spawn?.smudge) ? Math.max(0, Math.min(1, spawn.smudge)) : p.smudge,
+      hueVar: Number.isFinite(spawn?.hueVar) ? Math.max(0, Math.min(1, spawn.hueVar)) : p.hueVar,
+      satVar: Number.isFinite(spawn?.satVar) ? Math.max(0, Math.min(1, spawn.satVar)) : p.satVar,
+      litVar: Number.isFinite(spawn?.litVar) ? Math.max(0, Math.min(1, spawn.litVar)) : p.litVar,
+      sizeVar: Number.isFinite(spawn?.sizeVar) ? Math.max(0, Math.min(1, spawn.sizeVar)) : p.sizeVar,
+      opacityVar: Number.isFinite(spawn?.opacityVar) ? Math.max(0, Math.min(1, spawn.opacityVar)) : p.opacityVar,
+      speedVar: Number.isFinite(spawn?.speedVar) ? Math.max(0, Math.min(1, spawn.speedVar)) : p.speedVar,
     };
   }
 
@@ -5062,15 +5150,41 @@ export class App {
     };
   }
 
+  _getSimulationFormatMenuDockPosition(width = 0, height = 0) {
+    const topbarHeight = document.getElementById('topbarWrap')?.offsetHeight || 44;
+    return this._clampSimulationFormatMenuPosition(8, topbarHeight + 8, width, height);
+  }
+
   _applySimulationFormatMenuPosition() {
     const panel = document.getElementById('simFormatMenu');
     if (!panel) return;
-    if (!this._simFormatMenuUi.position) {
-      panel.style.left = '';
-      panel.style.top = '';
-      panel.style.right = '';
-      panel.style.bottom = '';
+    if (this._simFormatMenuUi.docked && panel.classList.contains('open')) {
+      const pos = this._getSimulationFormatMenuDockPosition(panel.offsetWidth || 0, panel.offsetHeight || 0);
+      this._simFormatMenuUi.position = pos;
+      panel.classList.add('docked');
+      panel.style.left = `${Math.round(pos.left)}px`;
+      panel.style.top = `${Math.round(pos.top)}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      this._positionSimulationFormatMenuPopovers();
       return;
+    }
+    panel.classList.remove('docked');
+    if (!this._simFormatMenuUi.position) {
+      if (!panel.classList.contains('open')) {
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.right = '';
+        panel.style.bottom = '';
+        return;
+      }
+      const rect = panel.getBoundingClientRect();
+      this._simFormatMenuUi.position = this._clampSimulationFormatMenuPosition(
+        rect.left,
+        rect.top,
+        rect.width || panel.offsetWidth || 0,
+        rect.height || panel.offsetHeight || 0,
+      );
     }
     const pos = this._clampSimulationFormatMenuPosition(
       this._simFormatMenuUi.position.left,
@@ -5112,6 +5226,17 @@ export class App {
     this._renderSimulationInspector();
   }
 
+  _toggleSimulationFormatMenuDock(force) {
+    const next = typeof force === 'boolean' ? force : !this._simFormatMenuUi.docked;
+    this._simFormatMenuUi.docked = next;
+    if (next) {
+      this._simFormatMenuUi.dragPointerId = null;
+      this._simFormatMenuUi.position = null;
+    }
+    this._applySimulationFormatMenuPosition();
+    this._renderSimulationInspector();
+  }
+
   _closeSimulationFormatMenuPopover({ rerender = true } = {}) {
     if (!this._simFormatMenuUi.activePopover) return;
     this._simFormatMenuUi.activePopover = null;
@@ -5121,6 +5246,7 @@ export class App {
   _handleSimulationFormatMenuPointerDown(event) {
     const panel = document.getElementById('simFormatMenu');
     if (!panel?.classList.contains('open')) return;
+    if (this._simFormatMenuUi.docked) return;
     if (event.button !== 0) return;
     if (event.target.closest('input,button,select,option,[data-sim-format-popover]')) return;
     const rect = panel.getBoundingClientRect();
@@ -6030,6 +6156,10 @@ export class App {
     document.getElementById('simHelpModal')?.classList.remove('open');
   }
 
+  _toggleSimTopbarGuide() {
+    this._openSimulationHelp();
+  }
+
   _getSimulationDistributeDialogTarget() {
     const modal = document.getElementById('simDistributePointsModal');
     const pathId = Number(modal?.dataset.pathId || 0);
@@ -6173,15 +6303,116 @@ export class App {
     if (document.getElementById('autoSaveSession')?.checked) this.saveSession();
   }
 
+  _captureSimulationSessionControlState() {
+    const controls = {};
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return controls;
+    sidebar.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
+      if (!el.id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(el.id)) return;
+      controls[el.id] = el.type === 'checkbox' ? !!el.checked : el.value;
+    });
+    return _sanitizeSimulationSessionData(controls) || {};
+  }
+
+  _captureSimulationSessionParamSnapshot() {
+    const params = this.getP();
+    const snapshot = {};
+    for (const [key, value] of Object.entries(params || {})) {
+      const normalized = _sanitizeSimulationSessionData(value);
+      if (normalized !== undefined) snapshot[key] = normalized;
+    }
+    return snapshot;
+  }
+
+  _getSimulationVarOverridesFromParamSnapshot(snapshot = {}) {
+    const vars = this.simulation?.vars || {};
+    return _normalizeSimulationVars({
+      ...vars,
+      // Simulation seek is owned by the session override slider, not the
+      // draw-mode sidebar seek control captured in the param snapshot.
+      seek: Number.isFinite(vars.seek) ? vars.seek : DEFAULT_SIM_SEEK,
+      cohesion: Number.isFinite(vars.cohesion) ? vars.cohesion : snapshot.cohesion,
+      separation: Number.isFinite(vars.separation) ? vars.separation : snapshot.separation,
+      alignment: Number.isFinite(vars.alignment) ? vars.alignment : snapshot.alignment,
+      maxSpeed: Number.isFinite(vars.maxSpeed) ? vars.maxSpeed : snapshot.maxSpeed,
+      damping: Number.isFinite(vars.damping) ? vars.damping : snapshot.damping,
+      sensingEnabled: typeof vars.sensingEnabled === 'boolean' ? vars.sensingEnabled : snapshot.sensingEnabled,
+      sensingMode: typeof vars.sensingMode === 'string' ? vars.sensingMode : snapshot.sensingMode,
+      sensingChannel: typeof vars.sensingChannel === 'string' ? vars.sensingChannel : snapshot.sensingChannel,
+      sensingStrength: Number.isFinite(vars.sensingStrength) ? vars.sensingStrength : snapshot.sensingStrength,
+      sensingRadius: Number.isFinite(vars.sensingRadius) ? vars.sensingRadius : snapshot.sensingRadius,
+      sensingThreshold: Number.isFinite(vars.sensingThreshold) ? vars.sensingThreshold : snapshot.sensingThreshold,
+      sensingSource: typeof vars.sensingSource === 'string' ? vars.sensingSource : snapshot.sensingSource,
+      sensingUpdateFrames: Number.isFinite(vars.sensingUpdateFrames) ? vars.sensingUpdateFrames : snapshot.sensingUpdateFrames,
+    });
+  }
+
+  _applySimulationSessionControlState(controlState, { sync = true } = {}) {
+    if (!controlState || typeof controlState !== 'object') return false;
+    let applied = false;
+    for (const [id, value] of Object.entries(controlState)) {
+      if (!id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(id)) continue;
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!value;
+      else el.value = value;
+      applied = true;
+    }
+    if (!applied) return false;
+    this._paramsDirty = true;
+    if (sync) {
+      syncUI(this);
+      this._refreshSensingLayerSourceUi?.();
+    }
+    return applied;
+  }
+
+  _syncSimulationSessionSensingControls({ sync = true } = {}) {
+    const vars = this.simulation?.vars || {};
+    let applied = false;
+    const assign = (id, value) => {
+      if (value === undefined || value === null) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.type === 'checkbox') el.checked = !!value;
+      else el.value = String(value);
+      applied = true;
+    };
+    if (typeof vars.sensingEnabled === 'boolean') assign('sensingEnabled', vars.sensingEnabled);
+    if (typeof vars.sensingMode === 'string') assign('sensingMode', vars.sensingMode);
+    if (typeof vars.sensingChannel === 'string') assign('sensingChannel', vars.sensingChannel);
+    if (Number.isFinite(vars.sensingStrength)) assign('sensingStrength', Math.round(vars.sensingStrength * 100));
+    if (Number.isFinite(vars.sensingRadius)) assign('sensingRadius', Math.round(vars.sensingRadius));
+    if (Number.isFinite(vars.sensingThreshold)) assign('sensingThreshold', Math.round(vars.sensingThreshold * 100));
+    if (typeof vars.sensingSource === 'string') {
+      assign('sensingSource', vars.sensingSource);
+      const sourceSelect = document.getElementById('sensingSource');
+      if (sourceSelect) sourceSelect.dataset.prevValue = vars.sensingSource;
+    }
+    if (Number.isFinite(vars.sensingUpdateFrames)) {
+      assign('sensingUpdateFrames', Math.max(1, Math.min(50, Math.round(vars.sensingUpdateFrames))));
+    }
+    if (!applied) return false;
+    this._paramsDirty = true;
+    if (sync && document.getElementById('sidebar')) syncUI(this);
+    this._refreshSensingLayerSourceUi?.();
+    return true;
+  }
+
   _syncActiveSimulationSessionFromDraft() {
     const activeIndex = Number.isFinite(this.simulation.activeSessionIndex)
       ? Math.round(this.simulation.activeSessionIndex)
       : -1;
     const session = activeIndex >= 0 ? this.simulation.sessions[activeIndex] : null;
     if (!session) return null;
+    const paramSnapshot = this._captureSimulationSessionParamSnapshot();
+    const controlState = this._captureSimulationSessionControlState();
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
     const nextSession = {
       ...session,
       vars: _normalizeSimulationVars(this.simulation.vars),
+      controlState,
+      paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
@@ -6192,8 +6423,14 @@ export class App {
 
   _applySimulationSessionToDraft(session) {
     if (!session) return false;
-    this.simulation.vars = _normalizeSimulationVars(session.vars);
+    const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
+    this.simulation.vars = _normalizeSimulationVars({
+      ...this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot),
+      ...session.vars,
+    });
     this._restoreSensingSourceSelection(session.sensingSourceSelection);
+    this._applySimulationSessionControlState(session.controlState, { sync: false });
+    this._syncSimulationSessionSensingControls({ sync: false });
     this.simulation.brushData = _deepClone(session.brushData);
     if (Number.isFinite(session.nextId)) this.simulation.nextId = Math.max(1, Math.round(session.nextId));
     this.simulation.selected = null;
@@ -6201,11 +6438,18 @@ export class App {
     this._constrainSimulationDataToBounds('boid');
     this._constrainSimulationDataToBounds('ant');
     this._ensureSimulationSpawns();
+    this._paramsDirty = true;
+    syncUI(this);
     return true;
   }
 
   _newSimulationSession() {
-    this.simulation.vars = _normalizeSimulationVars();
+    const paramSnapshot = this._captureSimulationSessionParamSnapshot();
+    this._syncActiveSimulationSessionFromDraft();
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    // New simulation sessions always start from the sim seek default instead of
+    // inheriting the current draw-mode seek slider value.
+    this.simulation.vars.seek = DEFAULT_SIM_SEEK;
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -6216,11 +6460,13 @@ export class App {
     this.simulation.drawingBlob = null;
     this._ensureSimulationSpawns();
     this._renderSimulationInspector();
+    this._syncSimulationSessionContextUi();
     this.saveSession();
     this.showToast('New simulation session started');
   }
 
   _saveSimulationSession() {
+    this._syncActiveSimulationSessionFromDraft();
     this._normalizeSimulationSessionBindings();
     const activeIndex = this.simulation.activeSessionIndex;
     const existingSession = activeIndex >= 0 ? this.simulation.sessions[activeIndex] : null;
@@ -6228,11 +6474,17 @@ export class App {
     const rawName = window.prompt(existingSession ? 'Update this simulation session:' : 'Name for this simulation session:', defaultName);
     if (!rawName) return;
     const name = rawName.trim().slice(0, MAX_SIM_SESSION_NAME_LENGTH) || defaultName;
+    const paramSnapshot = this._captureSimulationSessionParamSnapshot();
+    const controlState = this._captureSimulationSessionControlState();
+    const vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    this.simulation.vars = vars;
     const nextSession = {
       id: existingSession?.id || this._createSimulationSessionId(),
       name,
       savedAt: Date.now(),
-      vars: _normalizeSimulationVars(this.simulation.vars),
+      vars,
+      controlState,
+      paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
       nextId: this.simulation.nextId,
@@ -6249,6 +6501,7 @@ export class App {
       this._renderSimulationSessionRoutingPicker();
       if (this._simulationSessionRoutingAnchor) this._positionSimulationSessionRoutingPicker(this._simulationSessionRoutingAnchor);
     }
+    this._syncSimulationSessionContextUi();
     this.saveSession();
     const verb = existingSession ? 'Updated' : 'Saved';
     this.showToast(rawName.trim().length > MAX_SIM_SESSION_NAME_LENGTH ? `${verb} "${name}" (trimmed)` : `${verb} "${name}"`);
@@ -6260,15 +6513,18 @@ export class App {
     this.simulation.activeSessionIndex = index;
     this._normalizeSimulationSessionBindings();
     this._renderSimulationInspector();
+    this._syncSimulationSessionContextUi();
     this.saveSession();
     this.showToast(`Loaded "${session.name}"`);
   }
 
   _setActiveSimulationSessionIndex(index) {
+    this._syncActiveSimulationSessionFromDraft();
     if (!Number.isFinite(index) || index < 0 || !this.simulation.sessions[index]) {
       this.simulation.activeSessionIndex = -1;
       this._normalizeSimulationSessionBindings();
       this._renderSimulationInspector();
+      this._syncSimulationSessionContextUi();
       this.saveSession();
       return;
     }
@@ -7031,6 +7287,7 @@ export class App {
     runtime.brush = 'boid';
     runtime.brushData = _deepClone(session.brushData);
     runtime.vars = _normalizeSimulationVars(session.vars);
+    runtime.paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
     runtime.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
     runtime.layerId = layer.id;
     runtime.sessionIndex = this.simulation.sessions.indexOf(session);
@@ -7104,6 +7361,7 @@ export class App {
         brush: 'boid',
         brushData: _deepClone(session.brushData),
         vars: _normalizeSimulationVars(session.vars),
+        paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
         sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
         layerId: layer.id,
         sessionIndex: binding.sessionIndex,
@@ -7372,43 +7630,12 @@ export class App {
           ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
         </div>`;
     };
-    const simVarToggle = ({ id, label, checked, desc }) => `
-      <div class="sim-slider-row">
-        <label class="sim-slider-header" style="align-items:center;gap:10px;cursor:pointer;justify-content:space-between;">
-          <span class="sim-slider-label">${label}</span>
-          <input type="checkbox" data-sim-bool-var="${id}" ${checked ? 'checked' : ''}>
-        </label>
-        ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
-      </div>`;
-    const simVarSelect = ({ id, label, value, options, desc }) => `
-      <div class="sim-slider-row">
-        <div class="sim-slider-header">
-          <span class="sim-slider-label">${label}</span>
-        </div>
-        <div class="sim-slider-controls">
-          <select data-sim-select-var="${id}">
-            ${options.map(option => `<option value="${option.value}" ${option.value === value ? 'selected' : ''}>${option.label}</option>`).join('')}
-          </select>
-        </div>
-        ${desc ? `<div class="sim-inspector-note" style="margin-top:4px">${desc}</div>` : ''}
-      </div>`;
     const seekValue = Number.isFinite(this.simulation.vars.seek) ? this.simulation.vars.seek : DEFAULT_SIM_SEEK;
     const cohesionValue = Number.isFinite(this.simulation.vars.cohesion) ? this.simulation.vars.cohesion : p.cohesion;
     const separationValue = Number.isFinite(this.simulation.vars.separation) ? this.simulation.vars.separation : p.separation;
     const alignmentValue = Number.isFinite(this.simulation.vars.alignment) ? this.simulation.vars.alignment : p.alignment;
     const maxSpeedValue = Number.isFinite(this.simulation.vars.maxSpeed) ? this.simulation.vars.maxSpeed : p.maxSpeed;
     const dampingValue = Number.isFinite(this.simulation.vars.damping) ? this.simulation.vars.damping : p.damping;
-    const sensingEnabledValue = typeof this.simulation.vars.sensingEnabled === 'boolean' ? this.simulation.vars.sensingEnabled : p.sensingEnabled;
-    const sensingModeValue = this.simulation.vars.sensingMode || p.sensingMode;
-    const sensingChannelValue = this.simulation.vars.sensingChannel || p.sensingChannel;
-    const sensingStrengthValue = Number.isFinite(this.simulation.vars.sensingStrength) ? this.simulation.vars.sensingStrength : p.sensingStrength;
-    const sensingRadiusValue = Number.isFinite(this.simulation.vars.sensingRadius) ? this.simulation.vars.sensingRadius : p.sensingRadius;
-    const sensingThresholdValue = Number.isFinite(this.simulation.vars.sensingThreshold) ? this.simulation.vars.sensingThreshold : p.sensingThreshold;
-    const sensingSourceValue = this.simulation.vars.sensingSource || p.sensingSource;
-    const sensingUpdateFramesValue = Number.isFinite(this.simulation.vars.sensingUpdateFrames)
-      ? this.simulation.vars.sensingUpdateFrames
-      : p.sensingUpdateFrames;
-    const sensingSummaryValue = this._buildSensingLayerSelectionSummary();
     const formatSimPanelValue = (id, value) => {
       switch (id) {
         case 'simSpeed': return `${(value / 100).toFixed(1)}×`;
@@ -7564,50 +7791,7 @@ export class App {
       ${simVarSlider({ id: 'maxSpeed', label: 'Max Speed', min: 1, max: 30, step: 0.5, scale: 0.5, value: maxSpeedValue })}
       ${simVarSlider({ id: 'damping', label: 'Damping', min: 80, max: 100, step: 0.5, scale: 0.01, value: dampingValue })}`;
     const boidSensingBody = `
-      <div class="sim-inspector-note">These sensing controls are saved with the current simulation session and applied per runtime during multi-session playback.</div>
-      ${simVarToggle({ id: 'sensingEnabled', label: 'Enable Pixel Sensing', checked: sensingEnabledValue, desc: 'When enabled, boids react to sampled pixels while the simulation runs.' })}
-      ${simVarSelect({
-        id: 'sensingMode',
-        label: 'Sensing Mode',
-        value: sensingModeValue,
-        options: [
-          { value: 'avoid', label: 'Avoid' },
-          { value: 'attract', label: 'Attract' },
-        ],
-      })}
-      ${simVarSelect({
-        id: 'sensingChannel',
-        label: 'Sample Channel',
-        value: sensingChannelValue,
-        options: [
-          { value: 'darkness', label: 'Darkness' },
-          { value: 'lightness', label: 'Lightness' },
-          { value: 'saturation', label: 'Saturation' },
-          { value: 'red', label: 'Red' },
-          { value: 'green', label: 'Green' },
-          { value: 'blue', label: 'Blue' },
-          { value: 'alpha', label: 'Alpha' },
-        ],
-      })}
-      ${simVarSelect({
-        id: 'sensingSource',
-        label: 'Sensing Source',
-        value: sensingSourceValue,
-        options: [
-          { value: 'below', label: 'Layers below active' },
-          { value: 'all', label: 'All visible layers' },
-          { value: 'active', label: 'Active layer only' },
-          { value: 'selected', label: 'Custom selected layers' },
-        ],
-      })}
-      <div class="sim-inspector-actions" style="margin-top:8px">
-        <button data-sim-sensing-pick="1">${sensingSourceValue === 'selected' ? 'Edit Layers' : 'Pick Layers'}</button>
-      </div>
-      <div class="sim-inspector-note" style="margin-top:6px" data-sim-sensing-summary="1">${_escapeHtml(sensingSummaryValue)}</div>
-      ${simVarSlider({ id: 'sensingStrength', label: 'Sensing Strength', min: 0, max: 100, step: 1, scale: 0.01, value: sensingStrengthValue })}
-      ${simVarSlider({ id: 'sensingRadius', label: 'Sensing Radius', min: 5, max: 80, step: 1, scale: 1, value: sensingRadiusValue })}
-      ${simVarSlider({ id: 'sensingThreshold', label: 'Sensing Threshold', min: 0, max: 100, step: 1, scale: 0.01, value: sensingThresholdValue })}
-      ${simVarSlider({ id: 'sensingUpdateFrames', label: 'Refresh Every', min: 1, max: 50, step: 1, scale: 1, value: sensingUpdateFramesValue, desc: 'Higher values reuse the same sampled image for more frames before refreshing active, all, or selected sensing.' })}`;
+      <div class="sim-inspector-note">Use the sidebar Pixel Sensing controls while this session is loaded. Those drawing-mode controls are saved with the active simulation session and applied per runtime during multi-session playback.</div>`;
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
@@ -7708,7 +7892,7 @@ export class App {
       : '';
     const savedSessionControls = isBoid
       ? `
-        <div class="sim-inspector-note">The main sidebar always edits drawing-mode boid defaults. Use this editor to load, save, and route simulation sessions that run independently from those drawing controls.</div>
+        <div class="sim-inspector-note">Use the brush sidebar or this editor to keep session-specific boid settings, guide edits, and stage routing together.</div>
         ${renderInspectorSubgroup('Active Session Draft', `
           <div class="sim-stage-draft">
             <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
@@ -7799,6 +7983,7 @@ export class App {
               </label>
               <div class="sim-inspector-sessionBarActions">
                 <button data-sim-new-session="1">New Draft</button>
+                <button data-sim-save-session="1">${sessionContext.isSaved ? 'Update Saved Session' : 'Save Draft Session'}</button>
                 <button data-sim-open-setup="1">Stage Setup</button>
               </div>
             </div>
@@ -7952,16 +8137,29 @@ export class App {
           compactControls.push(compactNumberControl('jitter', 'number', 'Jitter', 0, 100, 1, 0.01));
           resetFields.push('shape', 'radius', 'angle', 'jitter');
         }
+        compactControls.push(compactNumberControl('stampSize', 'integer', 'Stamp Size', 1, 100, 1, 1));
+        compactControls.push(compactNumberControl('stampSeparation', 'number', 'Spacing', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('trailFlow', 'number', 'Flow', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('smudge', 'number', 'Smudge', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('hueVar', 'number', 'Hue Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('satVar', 'number', 'Sat Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('litVar', 'number', 'Lit Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('sizeVar', 'number', 'Size Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('opacityVar', 'number', 'Opacity Var', 0, 100, 1, 0.01));
+        compactControls.push(compactNumberControl('speedVar', 'number', 'Speed Var', 0, 100, 1, 0.01));
+        resetFields.push('stampSize', 'stampSeparation', 'trailFlow', 'smudge', 'hueVar', 'satVar', 'litVar', 'sizeVar', 'opacityVar', 'speedVar');
       } else if (selected.kind === 'point') {
+        compactControls.push(compactColorControl('color'));
         compactControls.push(compactNumberControl('strength', 'number', 'Strength', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 300, 1, 1));
-        resetFields.push('strength', 'radius');
+        resetFields.push('color', 'strength', 'radius');
         if (target.type === 'repel') {
           compactControls.push(compactNumberControl('hardness', 'number', 'Hardness', 1, 100, 5, 0.1));
           resetFields.push('hardness');
         }
       } else if (selected.kind === 'path') {
         const pathConfig = this._resolveSimulationPathConfig(target, p);
+        compactControls.push(compactColorControl('color'));
         compactControls.push(compactNumberControl('strength', 'number', 'Strength', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 1, 300, 1, 1));
         compactControls.push(compactNumberControl('influenceRadius', 'integer', 'Falloff', 1, 600, 1, 1));
@@ -7975,7 +8173,7 @@ export class App {
           { value: 'reverse', label: 'Reverse' },
         ], pathConfig.direction));
         compactControls.push(compactToggleControl('closed', 'Loop', !!target.closed));
-        resetFields.push('strength', 'radius', 'influenceRadius', 'speed', 'direction', 'closed');
+        resetFields.push('color', 'strength', 'radius', 'influenceRadius', 'speed', 'direction', 'closed');
       } else if (selected.kind === 'edge') {
         compactControls.push(compactNumberControl('strength', 'number', 'Force', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 0, 300, 1, 1));
@@ -7989,6 +8187,7 @@ export class App {
       formatMarkup = `
         <div class="sim-format-shell">
           <div class="sim-format-row" data-sim-format-drag-root="1">
+            <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
             ${compactControls.join('')}
             <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
             <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
@@ -8063,6 +8262,9 @@ export class App {
     });
     queryAllInRoots('[data-sim-clear-selection]').forEach(button => {
       button.addEventListener('click', () => this._setSimulationSelection(null));
+    });
+    queryAllInRoots('[data-sim-format-dock]').forEach(button => {
+      button.addEventListener('click', () => this._toggleSimulationFormatMenuDock());
     });
     queryAllInRoots('[data-sim-format-toggle]').forEach(button => {
       button.addEventListener('click', event => {
@@ -8389,42 +8591,6 @@ export class App {
       el.addEventListener('change', updateVar);
     });
 
-    panel.querySelectorAll('[data-sim-bool-var]').forEach(el => {
-      el.addEventListener('change', () => {
-        this.simulation.vars[el.dataset.simBoolVar] = !!el.checked;
-        this._maybeAutoSaveSession();
-      });
-    });
-
-    panel.querySelectorAll('[data-sim-select-var]').forEach(el => {
-      el.addEventListener('change', () => {
-        this.simulation.vars[el.dataset.simSelectVar] = el.value;
-        if (el.dataset.simSelectVar === 'sensingSource') {
-          this._handleSensingSourceChange(el.value, el.dataset.prevValue || 'below');
-          el.dataset.prevValue = el.value;
-          this._renderSimulationInspector();
-          this._maybeAutoSaveSession();
-          return;
-        }
-        this._maybeAutoSaveSession();
-      });
-      if (el.dataset.simSelectVar === 'sensingSource') {
-        el.dataset.prevValue = el.value || 'below';
-      }
-    });
-
-    panel.querySelector('[data-sim-sensing-pick]')?.addEventListener('click', event => {
-      const currentSource = this.simulation.vars.sensingSource || this.getP().sensingSource || 'below';
-      if (currentSource !== 'selected') {
-        const previousSource = currentSource;
-        this.simulation.vars.sensingSource = 'selected';
-        this._handleSensingSourceChange('selected', previousSource);
-        this._renderSimulationInspector();
-        this._maybeAutoSaveSession();
-      }
-      this.openSensingSourcePicker(event.currentTarget);
-    });
-
     panel.querySelector('[data-sim-new-session]')?.addEventListener('click', () => this._newSimulationSession());
     panel.querySelector('[data-sim-save-session]')?.addEventListener('click', () => this._saveSimulationSession());
     panel.querySelector('[data-sim-active-session-select]')?.addEventListener('change', event => {
@@ -8484,6 +8650,7 @@ export class App {
             ...this.simulation.vars,
             sensingEnabled: enabled,
           });
+          this._syncSimulationSessionSensingControls();
         }
         commitStageInspectorChange();
       });
@@ -8509,6 +8676,7 @@ export class App {
             sensingSource: nextSource,
           });
           this._restoreSensingSourceSelection(selection);
+          this._syncSimulationSessionSensingControls();
         }
         commitStageInspectorChange();
       });
@@ -8522,6 +8690,7 @@ export class App {
         session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(selectedLayerIds);
         if (sessionIndex === this.simulation.activeSessionIndex) {
           this._restoreSensingSourceSelection(session.sensingSourceSelection);
+          this._syncSimulationSessionSensingControls();
         }
         commitStageInspectorChange();
       });
@@ -8543,7 +8712,9 @@ export class App {
 
   _toggleSimulationMode(force) {
     if (!this._isMotionBrush()) return;
+    const wasEnabled = !!this.simulation.enabled;
     const next = typeof force === 'boolean' ? force : !this.simulation.enabled;
+    if (!wasEnabled && next) this._captureSimulationPriorDrawSeek();
     if (!next) {
       this.stopSimulation(false);
       this.simulation.frameCount = 0;
@@ -8567,6 +8738,7 @@ export class App {
       this._constrainSimulationDataToBounds('ant');
     }
     this._ensureSimulationSpawns();
+    if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
     this._syncSimulationUI();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
   }
@@ -8614,6 +8786,8 @@ export class App {
     if (playbackBar) {
       playbackBar.classList.toggle('open', !!this.simulation.enabled && isMotion);
     }
+    document.body.classList.remove('sim-topbar-row-open');
+    document.body.style.removeProperty('--sim-row-h');
     if (hudCollapseBtn) {
       const expanded = !this.simulation.hudCollapsed;
       hudCollapseBtn.textContent = expanded ? 'Collapse' : 'Expand';
@@ -12265,7 +12439,7 @@ export class App {
     document.getElementById('simulationBtn')?.addEventListener('click', () => this._toggleSimulationMode());
     document.getElementById('simHelpMenuBtn')?.addEventListener('click', () => {
       this._closeTopbarOverflowMenu?.();
-      this._openSimulationHelp();
+      this._toggleSimTopbarGuide();
     });
     document.getElementById('simRunBtn')?.addEventListener('click', () => {
       if (this.simulation.paused) this.resumeSimulation();
@@ -15615,6 +15789,8 @@ export class App {
             .map(session => ({
               ...session,
               vars: _normalizeSimulationVars(session.vars),
+              controlState: _sanitizeSimulationSessionData(session.controlState) || {},
+              paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
               sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
             }));
         }

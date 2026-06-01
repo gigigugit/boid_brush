@@ -180,6 +180,32 @@ function _syncLeaderOverrideUI() {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <div id="simBrushSessionCardHost" data-brushes="boid">
+      <div class="sim-inspector-sessionBarCard">
+        <div class="sim-inspector-title">Simulation Session</div>
+        <div class="sim-inspector-sessionBarRow">
+          <span class="sim-inspector-sessionBarLabel">Editing Session</span>
+          <span id="simSidebarSessionBadge" class="sim-stage-badge muted">Unsaved Draft</span>
+        </div>
+        <div class="sim-inspector-sessionBarControls">
+          <label class="sim-session-switcher">
+            <span>Session Selector</span>
+            <select id="simSidebarSessionSelect" class="sim-stage-select" disabled>
+              <option value="" disabled selected>Unsaved Draft</option>
+            </select>
+          </label>
+          <div class="sim-inspector-sessionBarActions">
+            <button id="simSidebarNewDraft" type="button">New Draft</button>
+            <button id="simSidebarSave" type="button">Save Draft Session</button>
+            <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
+            <button id="btnOpenSimulationInspector" type="button">Session Editor</button>
+          </div>
+        </div>
+        <div id="simSidebarSessionName" class="sim-session-context-title">Simulation session: Unsaved Draft</div>
+        <div id="simSidebarSessionMeta" class="sim-session-context-meta">Brush sidebar changes can be captured into the current simulation draft or saved session.</div>
+      </div>
+    </div>
+
     <!-- Color History -->
     <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -619,19 +645,6 @@ export function buildSidebar(app) {
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
 
-    <div class="section-header" data-brushes="boid" data-section="simulationContext">Simulation Session <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid" data-section="simulationContext">
-      <div id="simSidebarContextCard" style="display:grid;gap:6px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.04);">
-        <div id="simSidebarModeLabel" style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8fb0f4;">Drawing Mode Sidebar</div>
-        <div id="simSidebarSessionName" style="font-size:12px;font-weight:700;color:#eef3ff;">Simulation session: Unsaved Draft</div>
-        <div id="simSidebarSessionMeta" class="slider-desc" style="margin:0;">The main sidebar edits drawing-mode boid defaults. Open the Simulation Session Editor to edit saved simulation defaults, stage routing, and multi-session playback.</div>
-      </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;">
-        <button id="btnOpenSimulationInspector" type="button">Session Editor</button>
-        <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
-      </div>
-    </div>
-
     <!-- Sensing (boid + ant) -->
     <div class="section-header" data-brushes="boid ant" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant" data-section="sensing">
@@ -942,6 +955,18 @@ export function buildSidebar(app) {
     app.simulation.inspectorCollapsed = false;
     app._syncSimulationUI?.();
   });
+  document.getElementById('simSidebarSessionSelect')?.addEventListener('change', event => {
+    const nextIndex = Number(event.target.value);
+    if (!Number.isFinite(nextIndex)) return;
+    app._syncActiveSimulationSessionFromDraft?.();
+    app._setActiveSimulationSessionIndex?.(nextIndex);
+  });
+  document.getElementById('simSidebarNewDraft')?.addEventListener('click', () => {
+    app._newSimulationSession?.();
+  });
+  document.getElementById('simSidebarSave')?.addEventListener('click', () => {
+    app._saveSimulationSession?.();
+  });
   document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
     app._showSimulationSetupExplorer?.(event.currentTarget);
   });
@@ -989,6 +1014,10 @@ export function buildSidebar(app) {
       el.addEventListener('change', triggerAutoSave);
     });
   }
+  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
+    el.addEventListener('input', () => app._syncActiveSimulationSessionFromDraft?.());
+    el.addEventListener('change', () => app._syncActiveSimulationSessionFromDraft?.());
+  });
   app._refreshPerformanceTelemetryUI(true);
   app._refreshSensingLayerSourceUi?.();
   app._syncSimulationSessionContextUi?.();
