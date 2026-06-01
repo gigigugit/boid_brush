@@ -1813,6 +1813,7 @@ export class App {
     this.motionPathEditor = this._createMotionPathEditorState();
     this._simFormatMenuUi = {
       activePopover: null,
+      docked: false,
       position: null,
       dragPointerId: null,
       dragOffsetX: 0,
@@ -5085,9 +5086,28 @@ export class App {
     };
   }
 
+  _getSimulationFormatMenuDockPosition(width = 0, height = 0) {
+    const topbarHeight = document.getElementById('topbarWrap')?.offsetHeight || 44;
+    const simTopbarRow = document.getElementById('simTopbarRow');
+    const rowHeight = simTopbarRow?.classList.contains('open') ? (simTopbarRow.offsetHeight || 0) : 0;
+    return this._clampSimulationFormatMenuPosition(8, topbarHeight + rowHeight + 8, width, height);
+  }
+
   _applySimulationFormatMenuPosition() {
     const panel = document.getElementById('simFormatMenu');
     if (!panel) return;
+    if (this._simFormatMenuUi.docked && panel.classList.contains('open')) {
+      const pos = this._getSimulationFormatMenuDockPosition(panel.offsetWidth || 0, panel.offsetHeight || 0);
+      this._simFormatMenuUi.position = pos;
+      panel.classList.add('docked');
+      panel.style.left = `${Math.round(pos.left)}px`;
+      panel.style.top = `${Math.round(pos.top)}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      this._positionSimulationFormatMenuPopovers();
+      return;
+    }
+    panel.classList.remove('docked');
     if (!this._simFormatMenuUi.position) {
       if (!panel.classList.contains('open')) {
         panel.style.left = '';
@@ -5144,6 +5164,17 @@ export class App {
     this._renderSimulationInspector();
   }
 
+  _toggleSimulationFormatMenuDock(force) {
+    const next = typeof force === 'boolean' ? force : !this._simFormatMenuUi.docked;
+    this._simFormatMenuUi.docked = next;
+    if (next) {
+      this._simFormatMenuUi.dragPointerId = null;
+      this._simFormatMenuUi.position = null;
+    }
+    this._applySimulationFormatMenuPosition();
+    this._renderSimulationInspector();
+  }
+
   _closeSimulationFormatMenuPopover({ rerender = true } = {}) {
     if (!this._simFormatMenuUi.activePopover) return;
     this._simFormatMenuUi.activePopover = null;
@@ -5153,6 +5184,7 @@ export class App {
   _handleSimulationFormatMenuPointerDown(event) {
     const panel = document.getElementById('simFormatMenu');
     if (!panel?.classList.contains('open')) return;
+    if (this._simFormatMenuUi.docked) return;
     if (event.button !== 0) return;
     if (event.target.closest('input,button,select,option,[data-sim-format-popover]')) return;
     const rect = panel.getBoundingClientRect();
@@ -6073,6 +6105,7 @@ export class App {
       const row = document.getElementById('simTopbarRow');
       if (row && row.classList.contains('open')) {
         document.body.style.setProperty('--sim-row-h', row.offsetHeight + 'px');
+        if (this._simFormatMenuUi.docked) this._applySimulationFormatMenuPosition();
       }
     });
   }
@@ -8018,6 +8051,7 @@ export class App {
       formatMarkup = `
         <div class="sim-format-shell">
           <div class="sim-format-row" data-sim-format-drag-root="1">
+            <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
             ${compactControls.join('')}
             <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
             <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
@@ -8092,6 +8126,9 @@ export class App {
     });
     queryAllInRoots('[data-sim-clear-selection]').forEach(button => {
       button.addEventListener('click', () => this._setSimulationSelection(null));
+    });
+    queryAllInRoots('[data-sim-format-dock]').forEach(button => {
+      button.addEventListener('click', () => this._toggleSimulationFormatMenuDock());
     });
     queryAllInRoots('[data-sim-format-toggle]').forEach(button => {
       button.addEventListener('click', event => {
@@ -8653,6 +8690,7 @@ export class App {
         // Update CSS variable for row height
         const rowH = simTopbarRow.offsetHeight;
         document.body.style.setProperty('--sim-row-h', rowH + 'px');
+        if (this._simFormatMenuUi.docked) this._applySimulationFormatMenuPosition();
       }
     }
     if (hudCollapseBtn) {
