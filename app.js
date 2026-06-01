@@ -7,7 +7,7 @@
 
 import { Compositor, BLEND_MODE_MAP } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -7964,31 +7964,33 @@ export class App {
         ])
       : '';
 
+    const sessionCardMarkup = isBoid
+      ? renderSimulationSessionCard({
+          title: 'Simulation Session',
+          badgeTone: sessionContext.isSaved ? 'active' : 'muted',
+          badgeLabel: _escapeHtml(sessionContext.typeLabel),
+          sessionSelectMarkup: `
+            <label class="sim-session-switcher">
+              <span>Session Selector</span>
+              <select class="sim-stage-select" data-sim-active-session-select ${this.simulation.sessions.length ? '' : 'disabled'}>
+                <option value="" ${sessionContext.isSaved ? '' : 'selected'} disabled>${sessionContext.isSaved ? 'Choose a saved session...' : 'Unsaved Draft'}</option>
+                ${this.simulation.sessions.map((session, index) => `<option value="${index}" ${index === sessionContext.activeIndex ? 'selected' : ''}>${_escapeHtml(session.name || `Session ${index + 1}`)}</option>`).join('')}
+              </select>
+            </label>`,
+          actionsMarkup: `
+            <button data-sim-new-session="1">New Draft</button>
+            <button data-sim-save-session="1">${sessionContext.isSaved ? 'Update Saved Session' : 'Save Draft Session'}</button>
+            <button data-sim-open-setup="1">Stage Setup</button>
+            <button data-sim-open-inspector="1">Session Editor</button>`,
+          sessionName: _escapeHtml(sessionContext.sidebarTitle),
+          sessionMeta: _escapeHtml(sessionContext.sidebarSummary),
+        })
+      : '';
+
     let inspector = `
       ${isBoid ? `
         <div class="sim-inspector-sessionBar">
-          <div class="sim-inspector-sessionBarCard">
-            <div class="sim-inspector-title">Simulation Session Editor</div>
-            <div class="sim-inspector-sessionBarRow">
-              <span class="sim-inspector-sessionBarLabel">Editing Session</span>
-              <span class="sim-stage-badge ${sessionContext.isSaved ? 'active' : 'muted'}">${_escapeHtml(sessionContext.typeLabel)}</span>
-            </div>
-            <div class="sim-inspector-sessionBarControls">
-              <label class="sim-session-switcher">
-                <span>Session Selector</span>
-                <select class="sim-stage-select" data-sim-active-session-select ${this.simulation.sessions.length ? '' : 'disabled'}>
-                  <option value="" ${sessionContext.isSaved ? '' : 'selected'} disabled>${sessionContext.isSaved ? 'Choose a saved session...' : 'Unsaved Draft'}</option>
-                  ${this.simulation.sessions.map((session, index) => `<option value="${index}" ${index === sessionContext.activeIndex ? 'selected' : ''}>${_escapeHtml(session.name || `Session ${index + 1}`)}</option>`).join('')}
-                </select>
-              </label>
-              <div class="sim-inspector-sessionBarActions">
-                <button data-sim-new-session="1">New Draft</button>
-                <button data-sim-save-session="1">${sessionContext.isSaved ? 'Update Saved Session' : 'Save Draft Session'}</button>
-                <button data-sim-open-setup="1">Stage Setup</button>
-              </div>
-            </div>
-            <div class="sim-inspector-note">Simulation controls below edit ${sessionContext.isSaved ? `saved session “${_escapeHtml(sessionContext.name)}”` : 'the current unsaved draft'}.</div>
-          </div>
+          ${sessionCardMarkup}
         </div>
       ` : `
         <div class="sim-inspector-header">
@@ -8599,6 +8601,11 @@ export class App {
     });
     panel.querySelector('[data-sim-open-setup]')?.addEventListener('click', event => {
       this._showSimulationSetupExplorer(event.currentTarget);
+    });
+    panel.querySelector('[data-sim-open-inspector]')?.addEventListener('click', () => {
+      if (!this.simulation.enabled) this._toggleSimulationMode(true);
+      this.simulation.inspectorCollapsed = false;
+      this._syncSimulationUI?.();
     });
     const commitStageInspectorChange = ({ rerender = true } = {}) => {
       if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);

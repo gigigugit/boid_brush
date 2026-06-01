@@ -96,6 +96,39 @@ function _nudgeRangeValue(target, delta) {
   _updateSliderValue(target, (Number(target?.value) || 0) + delta);
 }
 
+export function renderSimulationSessionCard({
+  title = 'Simulation Session',
+  badgeId = '',
+  badgeTone = 'muted',
+  badgeLabel = 'Unsaved Draft',
+  sessionSelectMarkup = '',
+  actionsMarkup = '',
+  sessionNameId = '',
+  sessionName = '',
+  sessionMetaId = '',
+  sessionMeta = '',
+} = {}) {
+  const badgeIdAttr = badgeId ? ` id="${badgeId}"` : '';
+  const sessionNameIdAttr = sessionNameId ? ` id="${sessionNameId}"` : '';
+  const sessionMetaIdAttr = sessionMetaId ? ` id="${sessionMetaId}"` : '';
+  return `
+    <div class="sim-inspector-sessionBarCard">
+      <div class="sim-inspector-title">${title}</div>
+      <div class="sim-inspector-sessionBarRow">
+        <span class="sim-inspector-sessionBarLabel">Editing Session</span>
+        <span${badgeIdAttr} class="sim-stage-badge ${badgeTone}">${badgeLabel}</span>
+      </div>
+      <div class="sim-inspector-sessionBarControls">
+        ${sessionSelectMarkup}
+        <div class="sim-inspector-sessionBarActions">
+          ${actionsMarkup}
+        </div>
+      </div>
+      <div${sessionNameIdAttr} class="sim-session-context-title">${sessionName}</div>
+      <div${sessionMetaIdAttr} class="sim-session-context-meta">${sessionMeta}</div>
+    </div>`;
+}
+
 export const LEADER_OVERRIDE_FIELDS = Object.freeze([
   { key: 'seek', sourceId: 'seek', id: 'leaderSeek', overrideId: 'leaderOverrideSeek', type: 'range', label: 'Seek', min: 0, max: 100, defaultValue: 75, readControl: ({ val }) => val('leaderSeek') / 100 },
   { key: 'cohesion', sourceId: 'cohesion', id: 'leaderCohesion', overrideId: 'leaderOverrideCohesion', type: 'range', label: 'Cohesion', min: 0, max: 100, defaultValue: 37, readControl: ({ val }) => val('leaderCohesion') / 100 },
@@ -181,29 +214,27 @@ export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
     <div id="simBrushSessionCardHost" data-brushes="boid">
-      <div class="sim-inspector-sessionBarCard">
-        <div class="sim-inspector-title">Simulation Session</div>
-        <div class="sim-inspector-sessionBarRow">
-          <span class="sim-inspector-sessionBarLabel">Editing Session</span>
-          <span id="simSidebarSessionBadge" class="sim-stage-badge muted">Unsaved Draft</span>
-        </div>
-        <div class="sim-inspector-sessionBarControls">
+      ${renderSimulationSessionCard({
+        badgeId: 'simSidebarSessionBadge',
+        badgeTone: 'muted',
+        badgeLabel: 'Unsaved Draft',
+        sessionSelectMarkup: `
           <label class="sim-session-switcher">
             <span>Session Selector</span>
             <select id="simSidebarSessionSelect" class="sim-stage-select" disabled>
               <option value="" disabled selected>Unsaved Draft</option>
             </select>
-          </label>
-          <div class="sim-inspector-sessionBarActions">
-            <button id="simSidebarNewDraft" type="button">New Draft</button>
-            <button id="simSidebarSave" type="button">Save Draft Session</button>
-            <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
-            <button id="btnOpenSimulationInspector" type="button">Session Editor</button>
-          </div>
-        </div>
-        <div id="simSidebarSessionName" class="sim-session-context-title">Simulation session: Unsaved Draft</div>
-        <div id="simSidebarSessionMeta" class="sim-session-context-meta">Brush sidebar changes can be captured into the current simulation draft or saved session.</div>
-      </div>
+          </label>`,
+        actionsMarkup: `
+          <button id="simSidebarNewDraft" type="button">New Draft</button>
+          <button id="simSidebarSave" type="button">Save Draft Session</button>
+          <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
+          <button id="btnOpenSimulationInspector" type="button">Session Editor</button>`,
+        sessionNameId: 'simSidebarSessionName',
+        sessionName: 'Simulation session: Unsaved Draft',
+        sessionMetaId: 'simSidebarSessionMeta',
+        sessionMeta: 'Brush sidebar changes can be captured into the current simulation draft or saved session.',
+      })}
     </div>
 
     <!-- Color History -->
