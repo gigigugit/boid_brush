@@ -124,6 +124,7 @@
     const reader = new FileReader();
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : '';
+      // Match a standard data URL: data:mime/type;base64,<base64 payload>, allowing optional whitespace in the payload.
       const match = result.match(/^data:[^;]+;base64,([A-Za-z0-9+/=\s]+)$/s);
       if (!match) {
         reject(new Error('Unexpected data URL format'));
@@ -138,7 +139,7 @@
   const blobToBase64 = blob => fileToBase64(blob);
 
   const saveBlob = async (blob, filename, options = {}) => {
-    if (!blob || !(blob instanceof Blob)) throw new Error('Expected a Blob to save');
+    if (!blob || !(blob instanceof Blob)) throw new Error(`Expected a Blob to save, but received ${blob === null ? 'null' : typeof blob}`);
     if (!isNativeShell()) return { saved: false, native: false };
     const Filesystem = getPlugin('Filesystem');
     if (!Filesystem?.writeFile) return { saved: false, native: false };
@@ -164,7 +165,7 @@
   };
 
   const shareBlob = async (blob, filename, options = {}) => {
-    if (!blob || !(blob instanceof Blob)) throw new Error('Expected a Blob to share');
+    if (!blob || !(blob instanceof Blob)) throw new Error(`Expected a Blob to share, but received ${blob === null ? 'null' : typeof blob}`);
     if (!isNativeShell()) return { shared: false, native: false };
     const Share = getPlugin('Share');
     if (!Share?.share) return { shared: false, native: false };
@@ -211,14 +212,14 @@
     if (typeof file.arrayBuffer === 'function') return file.arrayBuffer();
     if (typeof file === 'string') {
       const Filesystem = getPlugin('Filesystem');
-      if (!Filesystem?.readFile) throw new Error('Filesystem plugin unavailable');
+      if (!Filesystem?.readFile) throw new Error('Filesystem plugin unavailable - cannot read file from native path');
       const { data } = await Filesystem.readFile({ path: file });
       const binary = atob(data);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
       return bytes.buffer;
     }
-    throw new Error('Unsupported file source');
+    throw new Error('Unsupported file source type. Expected File object, Blob, or native file path string.');
   };
 
   const pathJoin = (...parts) => parts

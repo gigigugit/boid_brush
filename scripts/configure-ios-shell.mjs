@@ -12,20 +12,22 @@ if (!existsSync(plistPath)) {
 
 const insertBooleanKeyAfter = (source, afterKey, newKey) => {
   if (source.includes(`<key>${newKey}</key>`)) return source;
-  const pattern = new RegExp(`(<key>${afterKey}</key>\s*<true\/>\s*)`);
-  if (!pattern.test(source)) throw new Error(`Unable to locate plist key: ${afterKey}`);
-  return source.replace(pattern, `$1	<key>${newKey}</key>
-	<true/>
-`);
+  const pattern = new RegExp(`<key>${afterKey}</key>[\\s\\r\\n]*<true/>[\\s\\r\\n]*`);
+  const match = source.match(pattern);
+  if (!match) {
+    throw new Error(`Unable to locate plist key '${afterKey}' in ${plistPath}. Verify that the iOS shell was generated correctly.`);
+  }
+  return source.replace(pattern, `${match[0]}\t<key>${newKey}</key>\n\t<true/>\n`);
 };
 
 const insertBooleanKeyBefore = (source, beforeKey, newKey) => {
   if (source.includes(`<key>${newKey}</key>`)) return source;
-  const pattern = new RegExp(`(<key>${beforeKey}</key>\s*<true\/>\s*)`);
-  if (!pattern.test(source)) throw new Error(`Unable to locate plist key: ${beforeKey}`);
-  return source.replace(pattern, `	<key>${newKey}</key>
-	<true/>
-$1`);
+  const pattern = new RegExp(`<key>${beforeKey}</key>[\\s\\r\\n]*<true/>[\\s\\r\\n]*`);
+  const match = source.match(pattern);
+  if (!match) {
+    throw new Error(`Unable to locate plist key '${beforeKey}' in ${plistPath}. Verify that the iOS shell was generated correctly.`);
+  }
+  return source.replace(pattern, `\t<key>${newKey}</key>\n\t<true/>\n${match[0]}`);
 };
 
 let text = readFileSync(plistPath, 'utf8');
