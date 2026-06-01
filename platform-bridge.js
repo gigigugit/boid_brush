@@ -27,12 +27,15 @@
   const serializeLocalStorage = () => {
     const snapshot = {};
     try {
+      const keys = [];
       for (let index = 0; index < window.localStorage.length; index += 1) {
         const key = window.localStorage.key(index);
-        if (!key) continue;
+        if (key) keys.push(key);
+      }
+      keys.forEach(key => {
         const value = window.localStorage.getItem(key);
         if (typeof value === 'string') snapshot[key] = value;
-      }
+      });
     } catch (error) {
       console.warn('Local storage snapshot failed:', error);
     }
@@ -121,7 +124,12 @@
     const reader = new FileReader();
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : '';
-      resolve(result.includes(',') ? result.split(',')[1] : result);
+      const match = result.match(/^data:[^;]+;base64,([A-Za-z0-9+/=\s]+)$/s);
+      if (!match) {
+        reject(new Error('Unexpected data URL format'));
+        return;
+      }
+      resolve(match[1].replace(/\s+/g, ''));
     };
     reader.onerror = () => reject(reader.error || new Error('Unable to read file'));
     reader.readAsDataURL(file);

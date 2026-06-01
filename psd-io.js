@@ -113,6 +113,25 @@ export async function exportPSD(app) {
   }
 }
 
+
+async function _pickImportFile(accept) {
+  const platform = window.BoidBrushPlatform;
+  if (platform?.pickFile) return platform.pickFile({ accept });
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const picked = input.files[0] || null;
+      if (input.parentNode) document.body.removeChild(input);
+      resolve(picked);
+    }, { once: true });
+    input.click();
+  });
+}
+
 // ── Import ──────────────────────────────────────────────────────────────────
 
 /**
@@ -122,21 +141,7 @@ export async function exportPSD(app) {
 export async function importPSD(app) {
   const platform = window.BoidBrushPlatform;
   const accept = '.psd,image/vnd.adobe.photoshop,application/x-photoshop,application/photoshop';
-  const file = platform?.pickFile
-    ? await platform.pickFile({ accept })
-    : await new Promise(resolve => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = accept;
-      input.style.display = 'none';
-      document.body.appendChild(input);
-      input.addEventListener('change', () => {
-        const picked = input.files[0] || null;
-        if (input.parentNode) document.body.removeChild(input);
-        resolve(picked);
-      }, { once: true });
-      input.click();
-    });
+  const file = await _pickImportFile(accept);
   if (!file) return;
   try {
       app.showToast('⏳ Importing PSD…');

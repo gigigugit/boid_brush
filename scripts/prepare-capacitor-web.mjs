@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,14 +42,15 @@ const copyItem = async relativePath => {
 
 const writeNativeIndex = async () => {
   const source = await readFile(path.join(repoRoot, 'index.html'), 'utf8');
+  const redirect = `<script>\n  const target = new URL('./app.html', window.location.href);\n  target.search = window.location.search;\n  target.hash = window.location.hash;\n  window.location.replace(target.toString());\n</script>`;
   const nativeIndex = source.replace(
     '<a class="main-app" href="app.html">',
-    '<script>location.replace("./app.html" + location.search + location.hash);</script>\n  <a class="main-app" href="app.html">'
+    `${redirect}\n  <a class="main-app" href="app.html">`
   );
   await writeFile(path.join(targetRoot, 'index.html'), nativeIndex, 'utf8');
 };
 
-await rm(targetRoot, { recursive: true, force: true });
+if (existsSync(targetRoot)) await rm(targetRoot, { recursive: true });
 await mkdir(targetRoot, { recursive: true });
 await Promise.all([...rootFiles, ...rootDirs].map(copyItem));
 await writeNativeIndex();

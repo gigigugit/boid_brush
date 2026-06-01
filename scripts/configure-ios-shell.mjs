@@ -10,18 +10,26 @@ if (!existsSync(plistPath)) {
   process.exit(0);
 }
 
+const insertBooleanKeyAfter = (source, afterKey, newKey) => {
+  if (source.includes(`<key>${newKey}</key>`)) return source;
+  const pattern = new RegExp(`(<key>${afterKey}</key>\s*<true\/>\s*)`);
+  if (!pattern.test(source)) throw new Error(`Unable to locate plist key: ${afterKey}`);
+  return source.replace(pattern, `$1	<key>${newKey}</key>
+	<true/>
+`);
+};
+
+const insertBooleanKeyBefore = (source, beforeKey, newKey) => {
+  if (source.includes(`<key>${newKey}</key>`)) return source;
+  const pattern = new RegExp(`(<key>${beforeKey}</key>\s*<true\/>\s*)`);
+  if (!pattern.test(source)) throw new Error(`Unable to locate plist key: ${beforeKey}`);
+  return source.replace(pattern, `	<key>${newKey}</key>
+	<true/>
+$1`);
+};
+
 let text = readFileSync(plistPath, 'utf8');
-if (!text.includes('<key>LSSupportsOpeningDocumentsInPlace</key>')) {
-  text = text.replace(
-    '\t<key>LSRequiresIPhoneOS</key>\n\t<true/>\n',
-    '\t<key>LSRequiresIPhoneOS</key>\n\t<true/>\n\t<key>LSSupportsOpeningDocumentsInPlace</key>\n\t<true/>\n',
-  );
-}
-if (!text.includes('<key>UIFileSharingEnabled</key>')) {
-  text = text.replace(
-    '\t<key>UIViewControllerBasedStatusBarAppearance</key>\n\t<true/>\n',
-    '\t<key>UIFileSharingEnabled</key>\n\t<true/>\n\t<key>UIViewControllerBasedStatusBarAppearance</key>\n\t<true/>\n',
-  );
-}
+text = insertBooleanKeyAfter(text, 'LSRequiresIPhoneOS', 'LSSupportsOpeningDocumentsInPlace');
+text = insertBooleanKeyBefore(text, 'UIViewControllerBasedStatusBarAppearance', 'UIFileSharingEnabled');
 writeFileSync(plistPath, text);
 console.log('Configured iOS Files app integration.');
