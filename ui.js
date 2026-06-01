@@ -180,6 +180,32 @@ function _syncLeaderOverrideUI() {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <div id="simBrushSessionCardHost" data-brushes="boid">
+      <div class="sim-inspector-sessionBarCard">
+        <div class="sim-inspector-title">Simulation Session</div>
+        <div class="sim-inspector-sessionBarRow">
+          <span class="sim-inspector-sessionBarLabel">Editing Session</span>
+          <span id="simSidebarSessionBadge" class="sim-stage-badge muted">Unsaved Draft</span>
+        </div>
+        <div class="sim-inspector-sessionBarControls">
+          <label class="sim-session-switcher">
+            <span>Session Selector</span>
+            <select id="simSidebarSessionSelect" class="sim-stage-select" disabled>
+              <option value="" disabled selected>Unsaved Draft</option>
+            </select>
+          </label>
+          <div class="sim-inspector-sessionBarActions">
+            <button id="simSidebarNewDraft" type="button">New Draft</button>
+            <button id="simSidebarSave" type="button">Save Draft Session</button>
+            <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
+            <button id="btnOpenSimulationInspector" type="button">Session Editor</button>
+          </div>
+        </div>
+        <div id="simSidebarSessionName" class="sim-session-context-title">Simulation session: Unsaved Draft</div>
+        <div id="simSidebarSessionMeta" class="sim-session-context-meta">Brush sidebar changes can be captured into the current simulation draft or saved session.</div>
+      </div>
+    </div>
+
     <!-- Color History -->
     <div class="section-header" data-section="colorHistory">Colors <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -617,32 +643,6 @@ export function buildSidebar(app) {
       ${sliderRow('taperCurve', 'Curve', 10, 300, 100, v => (v/100).toFixed(1))}
       <label>Taper Size <input type="checkbox" id="taperSize" checked></label>
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
-    </div>
-
-    <div id="simBrushSessionCardHost" data-brushes="boid">
-      <div class="sim-inspector-sessionBarCard">
-        <div class="sim-inspector-title">Simulation Session</div>
-        <div class="sim-inspector-sessionBarRow">
-          <span class="sim-inspector-sessionBarLabel">Editing Session</span>
-          <span id="simSidebarSessionBadge" class="sim-stage-badge muted">Unsaved Draft</span>
-        </div>
-        <div class="sim-inspector-sessionBarControls">
-          <label class="sim-session-switcher">
-            <span>Session Selector</span>
-            <select id="simSidebarSessionSelect" class="sim-stage-select" disabled>
-              <option value="" disabled selected>Unsaved Draft</option>
-            </select>
-          </label>
-          <div class="sim-inspector-sessionBarActions">
-            <button id="simSidebarNewDraft" type="button">New Draft</button>
-            <button id="simSidebarSave" type="button">Save Draft Session</button>
-            <button id="btnOpenSimulationSetup" type="button">Stage Setup</button>
-            <button id="btnOpenSimulationInspector" type="button">Session Editor</button>
-          </div>
-        </div>
-        <div id="simSidebarSessionName" class="sim-session-context-title">Simulation session: Unsaved Draft</div>
-        <div id="simSidebarSessionMeta" class="sim-session-context-meta">Brush sidebar changes can be captured into the current simulation draft or saved session.</div>
-      </div>
     </div>
 
     <!-- Sensing (boid + ant) -->
