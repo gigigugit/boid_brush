@@ -6287,7 +6287,9 @@ export class App {
 
   _captureSimulationSessionControlState() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select, #sidebar input[type="number"]').forEach(el => {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return controls;
+    sidebar.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
       if (!el.id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(el.id)) return;
       controls[el.id] = el.type === 'checkbox' ? !!el.checked : el.value;
     });
@@ -6326,19 +6328,22 @@ export class App {
 
   _applySimulationSessionControlState(controlState, { sync = true } = {}) {
     if (!controlState || typeof controlState !== 'object') return false;
+    let applied = false;
     for (const [id, value] of Object.entries(controlState)) {
       if (!id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(id)) continue;
       const el = document.getElementById(id);
       if (!el) continue;
       if (el.type === 'checkbox') el.checked = !!value;
       else el.value = value;
+      applied = true;
     }
+    if (!applied) return false;
     this._paramsDirty = true;
     if (sync) {
       syncUI(this);
       this._refreshSensingLayerSourceUi?.();
     }
-    return true;
+    return applied;
   }
 
   _syncActiveSimulationSessionFromDraft() {
@@ -6385,8 +6390,9 @@ export class App {
   }
 
   _newSimulationSession() {
+    const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
-    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(this._captureSimulationSessionParamSnapshot());
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
     this.simulation.brushData = {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
