@@ -10,6 +10,8 @@
   --status-h: 24px;
   --sidebar-w: 280px;
   --layers-w: 230px;
+  --panel-top: var(--topbar-h);
+  --panel-tabs-top: calc(var(--panel-top) + 24px);
   --ink-0: #f2f4f8;
   --ink-1: #cdd2de;
   --ink-2: #9ea7b8;
@@ -143,7 +145,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #swapColors:hover{color:#fff;transform:rotate(180deg);}
 
 /* ---- Layers panel (left) ---- */
-#leftPanel{position:fixed;top:var(--topbar-h);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#leftPanel{position:fixed;top:var(--panel-top);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
 #leftPanel.open{transform:translateX(0);}
 #leftPanel::-webkit-scrollbar{width:5px;}
 #leftPanel::-webkit-scrollbar-track{background:transparent;}
@@ -151,7 +153,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #layersPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 
 /* ---- Right Panel (tabbed) ---- */
-#rightPanel{position:fixed;top:var(--topbar-h);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#rightPanel{position:fixed;top:var(--panel-top);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
 #rightPanel.open{transform:translateX(0);}
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
@@ -160,7 +162,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
 
 /* ---- Panel Tabs (drawer handles) ---- */
-.panel-tabs{position:fixed;top:calc(var(--topbar-h) + 24px);z-index:21;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transform:translateX(0);transition:opacity 220ms ease,transform 220ms ease;}
+.panel-tabs{position:fixed;top:var(--panel-tabs-top);z-index:21;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transform:translateX(0);transition:opacity 220ms ease,transform 220ms ease;}
 .panel-tabs--visible{opacity:1;pointer-events:auto;}
 .panel-tabs--left{left:0;}
 .panel-tabs--right{right:0;}
@@ -492,6 +494,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simTopbarRow .sim-row-guide ul{margin:4px 0 0 14px;padding:0;}
 #simTopbarRow .sim-row-guide li{margin-bottom:2px;}
 body.sim-topbar-row-open #canvasArea{top:calc(var(--topbar-h) + var(--sim-row-h, 36px));}
+body.sim-topbar-row-open{--panel-top:calc(var(--topbar-h) + var(--sim-row-h, 36px));}
 
 .sim-distribute-panel{position:relative;width:min(440px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;display:grid;gap:14px;}
 .sim-distribute-panel h2{margin:0;font-size:18px;color:#fff;}
