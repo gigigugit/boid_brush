@@ -34,7 +34,24 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 
 ## Usage
 
-Open `app.html` in a modern browser (or `index.html` for the landing page with links to forks). Works on desktop and tablet (iPad) — no server or build step required.
+### Browser
+
+- Open `app.html` directly in a modern browser for the original browser-first workflow.
+- Or run `npm run start:web` after `npm install` to serve the same files over `http://127.0.0.1:4173/app.html`.
+- `index.html` remains the landing page with links to forks and experiments.
+
+### Desktop
+
+1. Run `npm install` once from the repository root.
+2. Start the shared renderer inside Electron with `npm run start:desktop`.
+3. Package a desktop build with `npm run package:desktop` (or `npm run build:desktop` for an unpacked output).
+
+### Shared Architecture
+
+- `app.html`, `app.js`, `ui.js`, `brushes.js`, `compositor.js`, `wasm-bridge.js`, and the rest of the renderer stay as the single source of truth for both browser and desktop.
+- The Electron wrapper lives in `/electron` and only handles shell concerns: app startup, preload isolation, and serving the existing renderer files over a local loopback server.
+- The desktop window loads the same `app.html` entrypoint as the browser version, which keeps renderer changes shared across both targets.
+- Desktop-only APIs should stay behind the preload bridge (`window.boidBrushDesktop`) instead of being mixed into the core painting code.
 
 ### Keyboard Shortcuts
 
