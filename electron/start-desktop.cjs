@@ -23,7 +23,22 @@ function getPlatformBinaryPath(platform = process.platform) {
   }
 }
 
+function assertPathWithin(parentDir, candidatePath, label) {
+  const resolvedParent = path.resolve(parentDir);
+  const resolvedCandidate = path.resolve(candidatePath);
+  const relativePath = path.relative(resolvedParent, resolvedCandidate);
+
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error(`${label} must stay within ${resolvedParent}`);
+  }
+
+  return resolvedCandidate;
+}
+
 function extractElectronZip(zipPath, distDir) {
+  const validatedZipPath = path.resolve(zipPath);
+  const validatedDistDir = assertPathWithin(electronPackageDir, distDir, 'Electron dist directory');
+
   if (process.platform === 'win32') {
     try {
       execFileSync('powershell.exe', [
@@ -31,12 +46,12 @@ function extractElectronZip(zipPath, distDir) {
         '-NonInteractive',
         '-Command',
         'param($zipPath, $distDir) Expand-Archive -LiteralPath $zipPath -DestinationPath $distDir -Force',
-        zipPath,
-        distDir
+        validatedZipPath,
+        validatedDistDir
       ], { stdio: 'inherit' });
     } catch (error) {
       throw new Error(
-        `Failed to extract Electron on Windows. Ensure PowerShell is available in PATH or install it from https://aka.ms/powershell, then retry unpacking ${zipPath}.`,
+        `Failed to extract Electron on Windows. Ensure PowerShell is available in PATH or install it from https://aka.ms/powershell, then retry unpacking ${validatedZipPath}.`,
         { cause: error }
       );
     }
@@ -44,10 +59,10 @@ function extractElectronZip(zipPath, distDir) {
   }
 
   try {
-    execFileSync('unzip', ['-q', zipPath, '-d', distDir], { stdio: 'inherit' });
+    execFileSync('unzip', ['-q', validatedZipPath, '-d', validatedDistDir], { stdio: 'inherit' });
     return;
   } catch (error) {
-    execFileSync('python3', ['-m', 'zipfile', '-e', zipPath, distDir], { stdio: 'inherit' });
+    execFileSync('python3', ['-m', 'zipfile', '-e', validatedZipPath, validatedDistDir], { stdio: 'inherit' });
   }
 }
 

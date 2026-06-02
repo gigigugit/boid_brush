@@ -23,11 +23,20 @@ function resolveAppRoot() {
 
 function toFilePath(rootDir, requestPath, defaultPage) {
   const decodedPath = decodeURIComponent(requestPath);
+  if (decodedPath.includes('\\')) {
+    return null;
+  }
+
   const normalizedPath = decodedPath === '/'
     ? `/${defaultPage}`
     : path.posix.normalize(decodedPath);
   const strippedPath = normalizedPath.replace(/^\/+/, '');
-  const absolutePath = path.resolve(rootDir, strippedPath);
+  const pathSegments = strippedPath.split('/').filter(Boolean);
+  if (pathSegments.some(segment => segment === '..')) {
+    return null;
+  }
+
+  const absolutePath = path.resolve(rootDir, ...pathSegments);
   const relativePath = path.relative(rootDir, absolutePath);
 
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
