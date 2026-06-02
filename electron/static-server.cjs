@@ -68,8 +68,9 @@ function createRequestHandler({ rootDir, defaultPage }) {
       });
       fs.createReadStream(filePath).pipe(res);
     } catch (error) {
+      console.error('Electron static server error:', error);
       res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end(error instanceof Error ? error.message : 'Server error');
+      res.end('Internal server error');
     }
   };
 }

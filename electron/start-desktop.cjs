@@ -25,14 +25,18 @@ function getPlatformBinaryPath(platform = process.platform) {
 
 function extractElectronZip(zipPath, distDir) {
   if (process.platform === 'win32') {
-    execFileSync('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'param($zipPath, $distDir) Expand-Archive -LiteralPath $zipPath -DestinationPath $distDir -Force',
-      zipPath,
-      distDir
-    ], { stdio: 'inherit' });
+    try {
+      execFileSync('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'param($zipPath, $distDir) Expand-Archive -LiteralPath $zipPath -DestinationPath $distDir -Force',
+        zipPath,
+        distDir
+      ], { stdio: 'inherit' });
+    } catch (error) {
+      throw new Error(`Failed to extract Electron on Windows. PowerShell is required to unpack ${zipPath}.`, { cause: error });
+    }
     return;
   }
 
