@@ -35,7 +35,10 @@ function extractElectronZip(zipPath, distDir) {
         distDir
       ], { stdio: 'inherit' });
     } catch (error) {
-      throw new Error(`Failed to extract Electron on Windows. PowerShell is required to unpack ${zipPath}.`, { cause: error });
+      throw new Error(
+        `Failed to extract Electron on Windows. Ensure PowerShell is available in PATH or install it from https://aka.ms/powershell, then retry unpacking ${zipPath}.`,
+        { cause: error }
+      );
     }
     return;
   }
@@ -71,7 +74,7 @@ async function ensureElectronBinary() {
   extractElectronZip(zipPath, distDir);
   await fs.promises.writeFile(pathFile, executableRelativePath, 'utf8');
   await fs.promises.chmod(executablePath, 0o755).catch((error) => {
-    console.warn(`Unable to mark Electron binary as executable at ${executablePath}:`, error);
+    console.warn(`Unable to mark Electron binary as executable at ${executablePath}. This may prevent the desktop app from launching; check file permissions or run chmod manually.`, error);
   });
 
   if (!fs.existsSync(executablePath)) {
