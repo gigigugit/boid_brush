@@ -15995,13 +15995,33 @@ export class App {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  _createStableNavigationId(prefix, raw, index = 0) {
+    const parts = [
+      prefix,
+      typeof raw?.id === 'string' ? raw.id : '',
+      typeof raw?.name === 'string' ? raw.name : '',
+      typeof raw?.label === 'string' ? raw.label : '',
+      typeof raw?.createdAt === 'string' ? raw.createdAt : '',
+      typeof raw?.updatedAt === 'string' ? raw.updatedAt : '',
+      typeof raw?.timestamp === 'string' ? raw.timestamp : '',
+      Number.isFinite(Number(raw?.view?.zoom)) ? Number(raw.view.zoom).toFixed(3) : '',
+      Number.isFinite(Number(raw?.view?.panX)) ? Math.round(Number(raw.view.panX)) : '',
+      Number.isFinite(Number(raw?.view?.panY)) ? Math.round(Number(raw.view.panY)) : '',
+      Number.isFinite(Number(raw?.view?.rotation)) ? Number(raw.view.rotation).toFixed(3) : '',
+      raw?.view?.flipped ? 'flip' : '',
+      index,
+    ].join('-').toLowerCase();
+    const slug = parts.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72);
+    return slug ? `${prefix}-${slug}` : `${prefix}-${index + 1}`;
+  }
+
   _sanitizeViewBookmarkEntry(raw, index = 0) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const view = this._normalizeViewState(raw.view);
     if (!view) return null;
     const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString();
     return {
-      id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `${VIEW_BOOKMARK_DEFAULT_NAME.toLowerCase()}-${index + 1}`,
+      id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : this._createStableNavigationId('view', raw, index),
       name: this._sanitizeBookmarkName(raw.name, `${VIEW_BOOKMARK_DEFAULT_NAME} ${index + 1}`),
       createdAt,
       updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : createdAt,
@@ -16030,7 +16050,7 @@ export class App {
     const view = this._normalizeViewState(marker.view);
     if (!view) return null;
     return {
-      id: typeof marker.id === 'string' && marker.id.trim() ? marker.id.trim() : this._createBookmarkId('change'),
+      id: typeof marker.id === 'string' && marker.id.trim() ? marker.id.trim() : this._createStableNavigationId('change', marker),
       label: this._sanitizeBookmarkName(marker.label, 'Last change'),
       timestamp: typeof marker.timestamp === 'string' ? marker.timestamp : new Date().toISOString(),
       view,
