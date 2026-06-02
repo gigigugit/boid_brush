@@ -5,9 +5,9 @@
 // session persistence, and wires all modules together.
 // =============================================================================
 
-import { Compositor, BLEND_MODE_MAP } from './compositor.js';
+import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -17,7 +17,7 @@ const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-26-sim-phase4-playback-export-1';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
-const WORKSPACE_SETTINGS_VERSION = 1;
+const WORKSPACE_SETTINGS_VERSION = 2;
 const SIM_SETUP_FORMAT = 'boid-brush-simulation-setup';
 const SIM_SETUP_VERSION = 1;
 const SIM_EXPORT_TIMESLICE_MS = 250;
@@ -40,6 +40,7 @@ const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'autoSaveSession',
   'perfTelemetryEnabled',
   'perfWakeLockEnabled',
+  'showSimulationOverlayControls',
   'simSidebarSessionSelect',
 ]);
 const FACTORY_DEFAULTS = Object.freeze({
@@ -252,6 +253,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   impasto: false,
   perfTelemetryEnabled: false,
   perfWakeLockEnabled: false,
+  showSimulationOverlayControls: false,
   spawnShape: 'circle',
   boidHoverAction: 'spawn',
   boidTouchAction: 'spawn',
@@ -1946,7 +1948,10 @@ export class App {
 
     // Sidebar UI
     buildSidebar(this);
+    buildFavoritesPanel(this);
+    buildSettingsPanel(this);
     buildLayersPanel(this);
+    buildSimulationControlsPanel(this);
     initEdgeSliders(this);
     this._initPerformanceTelemetry();
 
@@ -2150,6 +2155,148 @@ export class App {
       this._closeColorPicker({ recordHistory: false });
     }
     document.getElementById('canvasSizeModal')?.classList.remove('open');
+  }
+
+  _getWorkspaceJsonModalElements() {
+    return {
+      modal: document.getElementById('workspaceJsonModal'),
+      editor: document.getElementById('workspaceJsonEditor'),
+      status: document.getElementById('workspaceJsonStatus'),
+      meta: document.getElementById('workspaceJsonMeta'),
+      documentName: document.getElementById('workspaceJsonDocumentName'),
+    };
+  }
+
+  _setWorkspaceJsonModalStatus(message = 'Ready to edit the current workspace bundle.', level = '') {
+    const { status } = this._getWorkspaceJsonModalElements();
+    if (!status) return;
+    status.textContent = message;
+    status.className = `workspace-json-status${level ? ` ${level}` : ''}`;
+  }
+
+  _populateWorkspaceJsonEditor(bundle = this.createWorkspaceSettingsBundle()) {
+    const { editor, meta, documentName } = this._getWorkspaceJsonModalElements();
+    if (documentName) documentName.textContent = 'Workspace Settings JSON';
+    if (meta) {
+      const exportedAt = bundle?.exportedAt ? new Date(bundle.exportedAt) : null;
+      meta.textContent = exportedAt && Number.isFinite(exportedAt.getTime())
+        ? `Format ${bundle?.format || 'workspace'} v${bundle?.version ?? '?'} · Snapshot generated ${exportedAt.toLocaleString()}.`
+        : 'Loaded from the current live workspace state. Use Validate before Apply if you hand-edit the JSON.';
+    }
+    if (editor) editor.value = JSON.stringify(bundle, null, 2);
+    this._setWorkspaceJsonModalStatus();
+  }
+
+  _showWorkspaceJsonModal() {
+    const { modal, editor } = this._getWorkspaceJsonModalElements();
+    if (!modal || !editor) return;
+    this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle());
+    modal.classList.add('open');
+    requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(0, 0);
+    });
+  }
+
+  _hideWorkspaceJsonModal() {
+    if (this._colorPicker?.open) {
+      this._closeColorPicker({ recordHistory: false });
+    }
+    document.getElementById('workspaceJsonModal')?.classList.remove('open');
+  }
+
+  _readWorkspaceJsonEditorBundle({ requireSession = true } = {}) {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    const raw = editor?.value || '';
+    if (!raw.trim()) {
+      throw new Error('Workspace JSON editor is empty.');
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`JSON parse error: ${error?.message || 'Invalid JSON.'}`);
+    }
+    const normalized = this._normalizeWorkspaceSettingsBundle(parsed);
+    if (requireSession && (!normalized.session || typeof normalized.session !== 'object' || Array.isArray(normalized.session))) {
+      throw new Error('Workspace bundle is missing session settings.');
+    }
+    return { parsed, normalized };
+  }
+
+  _formatWorkspaceJsonEditor() {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    if (!editor) return false;
+    const { parsed } = this._readWorkspaceJsonEditorBundle({ requireSession: false });
+    editor.value = JSON.stringify(parsed, null, 2);
+    this._setWorkspaceJsonModalStatus('Workspace JSON formatted.', 'success');
+    return true;
+  }
+
+  _validateWorkspaceJsonEditor() {
+    const { normalized } = this._readWorkspaceJsonEditorBundle();
+    const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
+      ? Object.keys(normalized.presets).length
+      : 0;
+    this._setWorkspaceJsonModalStatus(
+      `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+      'success',
+    );
+    return true;
+  }
+
+  async _copyWorkspaceJsonEditorText() {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    if (!editor?.value) {
+      this._setWorkspaceJsonModalStatus('Nothing to copy from the workspace JSON editor.', 'warn');
+      return false;
+    }
+    try {
+      await navigator.clipboard.writeText(editor.value);
+      this._setWorkspaceJsonModalStatus('Workspace JSON copied to the clipboard.', 'success');
+      this.showToast('📋 Workspace JSON copied');
+      return true;
+    } catch (error) {
+      console.error('Workspace JSON copy failed:', error);
+      this._setWorkspaceJsonModalStatus('Clipboard copy failed. You can still select the JSON manually.', 'error');
+      return false;
+    }
+  }
+
+  async _applyWorkspaceJsonEditor() {
+    let parsed;
+    let normalized;
+    try {
+      ({ parsed, normalized } = this._readWorkspaceJsonEditorBundle());
+    } catch (error) {
+      this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+      return false;
+    }
+    const confirmMessage = this.simulation?.enabled
+      ? 'Apply workspace JSON and replace the current workspace state? This will stop simulation and restore the saved workspace state.'
+      : 'Apply workspace JSON and replace the current workspace state?';
+    if (!confirm(confirmMessage)) {
+      this._setWorkspaceJsonModalStatus('Apply cancelled.', 'warn');
+      return false;
+    }
+    try {
+      await this.applyWorkspaceSettingsBundle(parsed);
+      refreshWorkspaceSettingsUi(this);
+      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle());
+      const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
+        ? Object.keys(normalized.presets).length
+        : 0;
+      this._setWorkspaceJsonModalStatus(
+        `Workspace JSON applied successfully.${presetCount ? ` Loaded ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+        'success',
+      );
+      this.showToast('💾 Workspace JSON applied');
+      return true;
+    } catch (error) {
+      console.error('Workspace JSON apply failed:', error);
+      this._setWorkspaceJsonModalStatus(error?.message || 'Workspace apply failed.', 'error');
+      return false;
+    }
   }
 
   _createSimulationExportState() {
@@ -2725,14 +2872,63 @@ export class App {
     const rightTabs = document.getElementById('rightPanelTabs');
     const leftOpen = leftPanel?.classList.contains('open');
     const rightOpen = rightPanel?.classList.contains('open');
+    const simDrawerTab = leftTabs?.querySelector('.panel-tab[data-panel-view="simulationControls"]');
+    const simDrawerAvailable = !!simDrawerTab && !simDrawerTab.classList.contains('panel-tab-hidden');
     if (leftTabs) {
-      leftTabs.classList.toggle('panel-tabs--visible', alwaysShow || leftOpen);
+      leftTabs.classList.toggle('panel-tabs--visible', alwaysShow || leftOpen || simDrawerAvailable);
       leftTabs.classList.toggle('panel-tabs--open', !!leftOpen);
     }
     if (rightTabs) {
       rightTabs.classList.toggle('panel-tabs--visible', alwaysShow || rightOpen);
       rightTabs.classList.toggle('panel-tabs--open', !!rightOpen);
     }
+  }
+
+  _isSimulationOverlayHudEnabled() {
+    return !!document.getElementById('showSimulationOverlayControls')?.checked;
+  }
+
+  _showSimulationControlsDrawer({ activate = false } = {}) {
+    const leftTabs = document.getElementById('leftPanelTabs');
+    const leftPanel = document.getElementById('leftPanel');
+    const simTab = leftTabs?.querySelector('.panel-tab[data-panel-view="simulationControls"]');
+    const simView = document.getElementById('simulationControlsPanel');
+    if (!leftTabs || !leftPanel || !simTab || !simView) return;
+    simTab.classList.remove('panel-tab-hidden');
+    if (activate) {
+      leftTabs.querySelectorAll('.panel-tab').forEach(tab => tab.classList.remove('active'));
+      leftPanel.querySelectorAll(':scope > .panel-view').forEach(view => view.classList.remove('active'));
+      simTab.classList.add('active');
+      simView.classList.add('active');
+      leftPanel.classList.add('open');
+      document.getElementById('layersToggle')?.classList.add('active');
+    }
+    this._updateTabVisibility();
+  }
+
+  _hideSimulationControlsDrawer({ closeIfActive = false } = {}) {
+    const leftTabs = document.getElementById('leftPanelTabs');
+    const leftPanel = document.getElementById('leftPanel');
+    const layersTab = leftTabs?.querySelector('.panel-tab[data-panel-view="layers"]');
+    const simTab = leftTabs?.querySelector('.panel-tab[data-panel-view="simulationControls"]');
+    const layersView = document.getElementById('layersPanel');
+    const simView = document.getElementById('simulationControlsPanel');
+    const activeViewName = leftPanel?.querySelector(':scope > .panel-view.active')?.dataset.panelView;
+    const wasActive = activeViewName === 'simulationControls' || !!simTab?.classList.contains('active');
+    if (simTab) {
+      simTab.classList.add('panel-tab-hidden');
+      simTab.classList.remove('active');
+    }
+    simView?.classList.remove('active');
+    if (wasActive) {
+      layersTab?.classList.add('active');
+      layersView?.classList.add('active');
+      if (closeIfActive) {
+        leftPanel?.classList.remove('open');
+        document.getElementById('layersToggle')?.classList.remove('active');
+      }
+    }
+    this._updateTabVisibility();
   }
 
   swapPaintColors() {
@@ -3984,7 +4180,7 @@ export class App {
     lower.ctx.save();
     lower.ctx.setTransform(1, 0, 0, 1, 0, 0);
     lower.ctx.globalAlpha = upper.opacity;
-    lower.ctx.globalCompositeOperation = upper.blend;
+    lower.ctx.globalCompositeOperation = getCanvasBlendMode(upper.blend);
     lower.ctx.drawImage(upper.canvas, 0, 0);
     lower.ctx.restore();
     lower.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
@@ -4006,7 +4202,7 @@ export class App {
       const l = paintLayers[i];
       if (!l.visible) continue;
       ctx.globalAlpha = l.opacity;
-      ctx.globalCompositeOperation = l.blend;
+      ctx.globalCompositeOperation = getCanvasBlendMode(l.blend);
       ctx.drawImage(l.canvas, 0, 0);
     }
     ctx.restore(); ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
@@ -7917,8 +8113,8 @@ export class App {
           <div class="sim-inspector-actions">
             <button data-sim-export-setup="1">Save Setup JSON</button>
             <button data-sim-import-setup="1">Load Setup JSON</button>
-            <button data-sim-export-workspace="1">Export Workspace</button>
-            <button data-sim-import-workspace="1">Import Workspace</button>
+            <button data-sim-export-workspace="1">Save Workspace File</button>
+            <button data-sim-import-workspace="1">Open Workspace File</button>
           </div>
         `)}
       `
@@ -8721,6 +8917,7 @@ export class App {
     if (!this._isMotionBrush()) return;
     const wasEnabled = !!this.simulation.enabled;
     const next = typeof force === 'boolean' ? force : !this.simulation.enabled;
+    const overlayHudEnabled = this._isSimulationOverlayHudEnabled();
     if (!wasEnabled && next) this._captureSimulationPriorDrawSeek();
     if (!next) {
       this.stopSimulation(false);
@@ -8747,6 +8944,7 @@ export class App {
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
     this._syncSimulationUI();
+    if (next && !overlayHudEnabled) this._showSimulationControlsDrawer({ activate: true });
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
   }
 
@@ -8764,12 +8962,17 @@ export class App {
     const hud = document.getElementById('simHud');
     const playbackBar = document.getElementById('simPlaybackBar');
     const hudCollapseBtn = document.getElementById('simHudCollapseBtn');
-    const heatmapBtn = document.getElementById('simHeatmapToggle');
-    const stepBackBtn = document.getElementById('simStepBackBtn');
-    const stepForwardBtn = document.getElementById('simStepForwardBtn');
+    const heatmapButtons = [document.getElementById('simHeatmapToggle'), document.getElementById('simDrawerHeatmapToggle')];
+    const stepBackButtons = [document.getElementById('simStepBackBtn'), document.getElementById('simDrawerStepBackBtn')];
+    const stepForwardButtons = [document.getElementById('simStepForwardBtn'), document.getElementById('simDrawerStepForwardBtn')];
+    const guidesButtons = [document.getElementById('simGuidesToggle'), document.getElementById('simDrawerGuidesToggle')];
+    const inspectorButtons = [document.getElementById('simInspectorToggle'), document.getElementById('simDrawerInspectorToggle')];
     const handle = document.getElementById('simOverlayHandle');
     const overflowHelpBtn = document.getElementById('simHelpMenuBtn');
     const isMotion = this._isMotionBrush();
+    const overlayHudEnabled = this._isSimulationOverlayHudEnabled();
+    const showOverlayHud = !!this.simulation.enabled && isMotion && overlayHudEnabled;
+    const showSimulationDrawer = !!this.simulation.enabled && isMotion && !overlayHudEnabled;
     const boidPaths = this.activeBrush === 'boid'
       ? (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
       : [];
@@ -8787,9 +8990,11 @@ export class App {
       }
     }
     if (hud) {
-      hud.classList.toggle('open', !!this.simulation.enabled && isMotion);
+      hud.classList.toggle('open', showOverlayHud);
       hud.classList.toggle('collapsed', !!this.simulation.hudCollapsed);
     }
+    if (showSimulationDrawer) this._showSimulationControlsDrawer();
+    else this._hideSimulationControlsDrawer({ closeIfActive: true });
     if (playbackBar) {
       playbackBar.classList.toggle('open', !!this.simulation.enabled && isMotion);
     }
@@ -8805,8 +9010,7 @@ export class App {
       handle.style.display = 'none';
     }
 
-    const toolRow = document.getElementById('simToolRow');
-    if (toolRow) {
+    document.querySelectorAll('#simToolRow, #simDrawerToolRow').forEach(toolRow => {
       toolRow.querySelectorAll('[data-sim-tool]').forEach(el => {
         const tool = el.dataset.simTool;
         const hide =
@@ -8816,10 +9020,11 @@ export class App {
         el.style.display = hide ? 'none' : '';
         el.classList.toggle('active', this.simulation.editorTool === tool);
       });
-    }
+    });
 
     document.getElementById('simRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simHudRunBtn')?.classList.toggle('active', this.simulation.running);
+    document.getElementById('simDrawerRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
     const ephemeralBtn = document.getElementById('simEphemeralToggle');
     if (ephemeralBtn) {
@@ -8833,25 +9038,28 @@ export class App {
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
     const simTabActive = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]')?.classList.contains('active');
-    document.getElementById('simInspectorToggle')?.classList.toggle('active', !!simTabActive);
-    const guidesBtn = document.getElementById('simGuidesToggle');
-    if (guidesBtn) {
-      guidesBtn.classList.toggle('active', this.simulation.guidesVisible !== false);
-      guidesBtn.textContent = this.simulation.guidesVisible !== false ? 'Hide Guides' : 'Show Guides';
-      guidesBtn.setAttribute('aria-pressed', this.simulation.guidesVisible !== false ? 'true' : 'false');
-    }
-    if (heatmapBtn) {
-      heatmapBtn.classList.toggle('active', !!this.simulation.heatmapVisible);
-      heatmapBtn.setAttribute('aria-pressed', this.simulation.heatmapVisible ? 'true' : 'false');
-    }
-    if (stepBackBtn) {
-      stepBackBtn.style.display = showPathStepButtons ? '' : 'none';
-      stepBackBtn.disabled = !canStepPaths;
-    }
-    if (stepForwardBtn) {
-      stepForwardBtn.style.display = showPathStepButtons ? '' : 'none';
-      stepForwardBtn.disabled = !canStepPaths;
-    }
+    inspectorButtons.forEach(button => button?.classList.toggle('active', !!simTabActive));
+    guidesButtons.forEach(button => {
+      if (!button) return;
+      button.classList.toggle('active', this.simulation.guidesVisible !== false);
+      button.textContent = this.simulation.guidesVisible !== false ? 'Hide Guides' : 'Show Guides';
+      button.setAttribute('aria-pressed', this.simulation.guidesVisible !== false ? 'true' : 'false');
+    });
+    heatmapButtons.forEach(button => {
+      if (!button) return;
+      button.classList.toggle('active', !!this.simulation.heatmapVisible);
+      button.setAttribute('aria-pressed', this.simulation.heatmapVisible ? 'true' : 'false');
+    });
+    stepBackButtons.forEach(button => {
+      if (!button) return;
+      button.style.display = showPathStepButtons ? '' : 'none';
+      button.disabled = !canStepPaths;
+    });
+    stepForwardButtons.forEach(button => {
+      if (!button) return;
+      button.style.display = showPathStepButtons ? '' : 'none';
+      button.disabled = !canStepPaths;
+    });
     const status = document.getElementById('simStatus');
     if (status) {
       const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
@@ -12362,6 +12570,8 @@ export class App {
     document.getElementById('undoBtn')?.addEventListener('click', () => this.doUndo());
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
+    document.getElementById('saveWorkspaceBtn')?.addEventListener('click', () => document.getElementById('btnExportWorkspace')?.click());
+    document.getElementById('openWorkspaceBtn')?.addEventListener('click', () => document.getElementById('btnImportWorkspace')?.click());
     document.getElementById('saveBtn')?.addEventListener('click', () => this.saveImage());
     document.getElementById('reloadAppBtn')?.addEventListener('click', () => this.reloadAppWithCacheBust());
     document.getElementById('exportPsdBtn')?.addEventListener('click', () => exportPSD(this));
@@ -12452,13 +12662,17 @@ export class App {
       if (this.simulation.paused) this.resumeSimulation();
       else this.startSimulation();
     });
-    document.getElementById('simHudRunBtn')?.addEventListener('click', () => {
-      if (this.simulation.paused) this.resumeSimulation();
-      else this.startSimulation();
+    ['simHudRunBtn', 'simDrawerRunBtn'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => {
+        if (this.simulation.paused) this.resumeSimulation();
+        else this.startSimulation();
+      });
     });
     document.getElementById('simPauseBtn')?.addEventListener('click', () => this.pauseSimulation());
     document.getElementById('simStopBtn')?.addEventListener('click', () => this.stopSimulation());
-    document.getElementById('simHudStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    ['simHudStopBtn', 'simDrawerStopBtn'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this.stopSimulation());
+    });
     document.getElementById('simResetBtn')?.addEventListener('click', () => this.resetSimulationPlayback());
     document.getElementById('simEphemeralToggle')?.addEventListener('click', () => {
       const source = document.getElementById('simEphemeralMode');
@@ -12483,29 +12697,43 @@ export class App {
     });
     document.getElementById('simRecordBtn')?.addEventListener('click', () => void this._toggleSimulationRecordingRequest());
     document.getElementById('simExportBtn')?.addEventListener('click', () => this._showSimulationExportModal());
-    document.getElementById('simGuidesToggle')?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
-    document.getElementById('simHeatmapToggle')?.addEventListener('click', () => this._toggleSimulationHeatmap());
-    document.getElementById('simCanvasClearBtn')?.addEventListener('click', () => this.clearActiveLayer());
-    document.getElementById('simClearBtn')?.addEventListener('click', () => this.clearSimulationGuides());
-    document.getElementById('simStepBackBtn')?.addEventListener('click', () => this._stepSimulationPathPosition(-1));
-    document.getElementById('simStepForwardBtn')?.addEventListener('click', () => this._stepSimulationPathPosition(1));
+    ['simGuidesToggle', 'simDrawerGuidesToggle'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this._toggleSimulationGuidesVisibility());
+    });
+    ['simHeatmapToggle', 'simDrawerHeatmapToggle'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this._toggleSimulationHeatmap());
+    });
+    ['simCanvasClearBtn', 'simDrawerCanvasClearBtn'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this.clearActiveLayer());
+    });
+    ['simClearBtn', 'simDrawerClearBtn'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this.clearSimulationGuides());
+    });
+    ['simStepBackBtn', 'simDrawerStepBackBtn'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this._stepSimulationPathPosition(-1));
+    });
+    ['simStepForwardBtn', 'simDrawerStepForwardBtn'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => this._stepSimulationPathPosition(1));
+    });
     document.getElementById('simHudCollapseBtn')?.addEventListener('click', () => {
       this.simulation.hudCollapsed = !this.simulation.hudCollapsed;
       this._syncSimulationUI();
     });
-    document.getElementById('simInspectorToggle')?.addEventListener('click', () => {
-      // Toggle simulation tab visibility in right panel
-      const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
-      if (simTab) {
-        if (simTab.classList.contains('active')) {
-          // Switch back to brush
-          const brushTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]');
-          if (brushTab) brushTab.click();
-        } else {
-          simTab.click();
+    ['simInspectorToggle', 'simDrawerInspectorToggle'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => {
+        // Toggle simulation tab visibility in right panel
+        const simTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]');
+        if (simTab) {
+          if (simTab.classList.contains('active')) {
+            // Switch back to brush
+            const brushTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]');
+            if (brushTab) brushTab.click();
+          } else {
+            simTab.click();
+          }
         }
-      }
-      this._syncSimulationUI();
+        this._syncSimulationUI();
+      });
     });
     document.getElementById('simOverlayHandle')?.addEventListener('click', () => {
       // Switch to simulation tab in right panel
@@ -12557,6 +12785,29 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('workspaceJsonClose')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
+    document.getElementById('workspaceJsonBackdrop')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
+    document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
+    document.getElementById('workspaceJsonFormat')?.addEventListener('click', () => {
+      try {
+        this._formatWorkspaceJsonEditor();
+      } catch (error) {
+        this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
+      }
+    });
+    document.getElementById('workspaceJsonValidate')?.addEventListener('click', () => {
+      try {
+        this._validateWorkspaceJsonEditor();
+      } catch (error) {
+        this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+      }
+    });
+    document.getElementById('workspaceJsonCopy')?.addEventListener('click', () => {
+      void this._copyWorkspaceJsonEditorText();
+    });
+    document.getElementById('workspaceJsonApply')?.addEventListener('click', () => {
+      void this._applyWorkspaceJsonEditor();
+    });
     document.getElementById('simExportClose')?.addEventListener('click', () => this._hideSimulationExportModal());
     document.getElementById('simExportBackdrop')?.addEventListener('click', () => this._hideSimulationExportModal());
     document.getElementById('simSetupClose')?.addEventListener('click', () => this._hideSimulationSetupExplorer({ discard: true }));
@@ -12591,7 +12842,7 @@ export class App {
       try {
         await this.importWorkspaceSettingsText(await file.text());
         this._hideSimulationSetupExplorer({ discard: true });
-        this.showToast('Workspace settings imported');
+        this.showToast(`📂 Loaded workspace file ${file.name}`);
       } catch (error) {
         console.error('Workspace import failed:', error);
         this._setSimulationSetupStatus(error?.message || 'Workspace import failed.', 'error');
@@ -12617,6 +12868,14 @@ export class App {
       } else if (!event.shiftKey && document.activeElement === last) {
         event.preventDefault();
         first.focus();
+      }
+    });
+    document.addEventListener('keydown', event => {
+      const modal = document.getElementById('workspaceJsonModal');
+      if (!modal?.classList.contains('open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this._hideWorkspaceJsonModal();
       }
     });
     document.addEventListener('pointerdown', event => {
@@ -15324,7 +15583,7 @@ export class App {
     const drawLayer = layer => {
       if (!layer) return;
       tc.globalAlpha = layer.opacity;
-      tc.globalCompositeOperation = layer.blend;
+      tc.globalCompositeOperation = getCanvasBlendMode(layer.blend);
       tc.drawImage(layer.canvas, 0, 0);
     };
 
@@ -15367,7 +15626,7 @@ export class App {
       const l = this.layers[i];
       if (!l.visible) continue;
       ctx.globalAlpha = l.opacity;
-      ctx.globalCompositeOperation = l.blend;
+      ctx.globalCompositeOperation = getCanvasBlendMode(l.blend);
       ctx.drawImage(l.canvas, 0, 0);
     }
     ctx.restore();
@@ -15608,18 +15867,20 @@ export class App {
 
   _captureSessionControls() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
       if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
-    document.querySelectorAll('#sidebar input[type="number"]').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {
       if (el.id) controls[el.id] = el.value;
     });
     controls.primaryColor = this.primaryEl.value;
     controls.secondaryColor = this.secondaryEl.value;
     controls.bgColor = this.bgColorEl ? this.bgColorEl.value : '#ffffff';
     controls.activeBrush = this.activeBrush;
+    controls.activeTool = this.activeTool;
     controls._colorHistory = this._colorHistory;
     controls._tilingMode = this.tilingMode;
+    controls._view = this._captureViewState();
     if (this._docSized) {
       controls._docSized = true;
       controls._docW = this._docW;
@@ -15648,6 +15909,150 @@ export class App {
     return controls;
   }
 
+  _captureViewState() {
+    return {
+      zoom: Number.isFinite(this.viewZoom) ? this.viewZoom : 1,
+      panX: Number.isFinite(this.viewPanX) ? this.viewPanX : 0,
+      panY: Number.isFinite(this.viewPanY) ? this.viewPanY : 0,
+      rotation: Number.isFinite(this.viewRotation) ? this.viewRotation : 0,
+      flipped: !!this.viewFlipped,
+    };
+  }
+
+  _applyViewState(view) {
+    if (!view || typeof view !== 'object' || Array.isArray(view)) return false;
+    const zoom = Number(view.zoom);
+    const panX = Number(view.panX);
+    const panY = Number(view.panY);
+    const rotation = Number(view.rotation);
+    this.viewZoom = Number.isFinite(zoom) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) : 1;
+    this.viewPanX = Number.isFinite(panX) ? panX : 0;
+    this.viewPanY = Number.isFinite(panY) ? panY : 0;
+    this.viewRotation = Number.isFinite(rotation) ? rotation : 0;
+    this.viewFlipped = !!view.flipped;
+    this._applyViewTransform();
+    return true;
+  }
+
+  _captureWorkspaceDocumentState() {
+    const activeLayer = this.getActiveLayer();
+    return {
+      width: this.W,
+      height: this.H,
+      docSized: !!this._docSized,
+      activeLayerId: activeLayer && !activeLayer.isBackground ? activeLayer.id : null,
+      activeLayerIndex: this.getActiveLayerIndex(),
+      nextLayerId: this._nextLayerId,
+      layers: this.layers.map(layer => ({
+        id: layer.id,
+        name: layer.name || '',
+        visible: layer.visible !== false,
+        opacity: Number.isFinite(layer.opacity) ? Math.max(0, Math.min(1, layer.opacity)) : 1,
+        blend: typeof layer.blend === 'string' ? layer.blend : 'source-over',
+        alphaLock: !!layer.alphaLock,
+        isBackground: !!layer.isBackground,
+        dataUrl: layer.canvas.toDataURL('image/png'),
+      })),
+    };
+  }
+
+  async _restoreWorkspaceDocumentState(documentState) {
+    if (!documentState || typeof documentState !== 'object' || Array.isArray(documentState)) return false;
+    const layerStates = Array.isArray(documentState.layers)
+      ? documentState.layers.filter(layer => layer && typeof layer === 'object')
+      : [];
+    if (!layerStates.length) return false;
+
+    const width = Math.max(1, Math.min(8192, Math.round(Number(documentState.width) || this.W || 1)));
+    const height = Math.max(1, Math.min(8192, Math.round(Number(documentState.height) || this.H || 1)));
+    if (width !== this.W || height !== this.H) {
+      await this.resizeDocument(width, height, this.bgColorEl?.value || '#ffffff');
+    }
+
+    const restoredLayers = await Promise.all(layerStates.map(async (layerState, index) => {
+      const { canvas, ctx } = this.makeLayerCanvas();
+      const layer = this._createLayerRecord(canvas, ctx, {
+        id: typeof layerState.id === 'string' && layerState.id.trim() ? layerState.id.trim() : undefined,
+        name: typeof layerState.name === 'string' && layerState.name.trim()
+          ? layerState.name.trim()
+          : (layerState.isBackground ? 'Background' : `Layer ${index + 1}`),
+        visible: layerState.visible !== false,
+        opacity: Number.isFinite(Number(layerState.opacity))
+          ? Math.max(0, Math.min(1, Number(layerState.opacity)))
+          : 1,
+        blend: typeof layerState.blend === 'string' ? layerState.blend : 'source-over',
+        alphaLock: !!layerState.alphaLock,
+        isBackground: !!layerState.isBackground,
+      });
+      if (typeof layerState.dataUrl === 'string' && layerState.dataUrl.startsWith('data:image/')) {
+        const sourceCanvas = await this._canvasFromDataUrl(layerState.dataUrl);
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      }
+      layer.dirty = true;
+      layer.dirtyTiles = null;
+      return layer;
+    }));
+
+    const backgroundIndex = restoredLayers.findIndex(layer => layer.isBackground);
+    if (backgroundIndex >= 0 && backgroundIndex !== restoredLayers.length - 1) {
+      const [backgroundLayer] = restoredLayers.splice(backgroundIndex, 1);
+      restoredLayers.push(backgroundLayer);
+    }
+
+    if (!restoredLayers.some(layer => layer.isBackground)) {
+      const { canvas, ctx } = this.makeLayerCanvas();
+      restoredLayers.push(this._createLayerRecord(canvas, ctx, {
+        name: 'Background',
+        isBackground: true,
+      }));
+    }
+
+    for (const layer of this.layers) this.compositor?.deleteLayerTex(layer);
+    this.layers = restoredLayers;
+
+    const nextLayerId = Math.round(Number(documentState.nextLayerId));
+    if (Number.isFinite(nextLayerId)) {
+      this._nextLayerId = Math.max(this._nextLayerId, nextLayerId);
+    }
+
+    const activeLayerId = typeof documentState.activeLayerId === 'string' ? documentState.activeLayerId.trim() : '';
+    let nextActiveLayer = activeLayerId
+      ? this.layers.findIndex(layer => layer.id === activeLayerId && !layer.isBackground)
+      : -1;
+    if (nextActiveLayer < 0) {
+      const activeLayerIndex = Math.round(Number(documentState.activeLayerIndex));
+      if (Number.isFinite(activeLayerIndex)
+        && activeLayerIndex >= 0
+        && activeLayerIndex < this.layers.length
+        && !this.layers[activeLayerIndex].isBackground) {
+        nextActiveLayer = activeLayerIndex;
+      }
+    }
+    if (nextActiveLayer < 0) {
+      nextActiveLayer = this.layers.findIndex(layer => !layer.isBackground);
+    }
+    this.activeLayerIdx = Math.max(0, nextActiveLayer);
+
+    this._docSized = documentState.docSized === true;
+    this._docW = width;
+    this._docH = height;
+
+    const backgroundLayer = this.layers.find(layer => layer.isBackground);
+    if (backgroundLayer && !layerStates.some(layer => layer && layer.isBackground)) {
+      this._fillBackgroundLayer();
+    }
+
+    this._syncLayerSwitcher();
+    this._syncAlphaLockUI();
+    syncUI(this);
+    this.compositeAllLayers({ forceFull: true });
+    return true;
+  }
+
   saveSession() {
     try {
       this._syncActiveSimulationSessionFromDraft();
@@ -15670,7 +16075,7 @@ export class App {
       : {};
   }
 
-  createWorkspaceSettingsBundle() {
+  createWorkspaceSettingsBundle({ includeDocument = false } = {}) {
     this.saveSession();
     const autoSaveValue = (() => {
       try {
@@ -15679,7 +16084,7 @@ export class App {
         return !!document.getElementById('autoSaveSession')?.checked;
       }
     })();
-    return {
+    const bundle = {
       format: WORKSPACE_SETTINGS_FORMAT,
       version: WORKSPACE_SETTINGS_VERSION,
       exportedAt: new Date().toISOString(),
@@ -15688,32 +16093,45 @@ export class App {
       presets: this._readWorkspacePresets(),
       autosaveEnabled: autoSaveValue,
     };
+    if (includeDocument) bundle.document = this._captureWorkspaceDocumentState();
+    return bundle;
   }
 
-  exportWorkspaceSettingsFile() {
+  createWorkspaceFileBundle() {
+    return this.createWorkspaceSettingsBundle({ includeDocument: true });
+  }
+
+  exportWorkspaceFile() {
     try {
-      const bundle = this.createWorkspaceSettingsBundle();
+      const bundle = this.createWorkspaceFileBundle();
       const stamp = new Date().toISOString().replace(/[.:]/g, '-');
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
       this._downloadBlob(blob, `boid-brush-workspace-${stamp}.json`);
-      this.showToast('💾 Workspace settings exported');
+      this.showToast('💾 Workspace file saved');
       return true;
     } catch (error) {
-      console.error('Workspace settings export failed:', error);
-      this.showToast('⚠ Workspace export failed');
+      console.error('Workspace file export failed:', error);
+      this.showToast('⚠ Workspace file export failed');
       return false;
     }
   }
 
+  exportWorkspaceSettingsFile() {
+    return this.exportWorkspaceFile();
+  }
+
   _normalizeWorkspaceSettingsBundle(bundle) {
     if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
-      throw new Error('Invalid workspace settings payload');
+      throw new Error('Invalid workspace payload');
     }
     if (bundle.format === WORKSPACE_SETTINGS_FORMAT) {
       return {
         session: bundle.session,
         presets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : {},
         autosaveValue: bundle.autosaveEnabled === true ? '1' : '0',
+        document: bundle.document && typeof bundle.document === 'object' && !Array.isArray(bundle.document)
+          ? _deepClone(bundle.document)
+          : null,
       };
     }
     if (Object.prototype.hasOwnProperty.call(bundle, 'session') || Object.prototype.hasOwnProperty.call(bundle, 'presets')) {
@@ -15723,12 +16141,16 @@ export class App {
         autosaveValue: bundle.autosaveEnabled === true || bundle.autosave === '1'
           ? '1'
           : (bundle.autosaveEnabled === false || bundle.autosave === '0' ? '0' : null),
+        document: bundle.document && typeof bundle.document === 'object' && !Array.isArray(bundle.document)
+          ? _deepClone(bundle.document)
+          : null,
       };
     }
     return {
       session: bundle,
       presets: this._readWorkspacePresets(),
       autosaveValue: null,
+      document: null,
     };
   }
 
@@ -15738,9 +16160,16 @@ export class App {
       throw new Error('Workspace bundle is missing session settings');
     }
     this.stopSimulation(false);
+    if (this.selectionMgr?.active) {
+      this.selectionMgr.clear();
+      this._syncSelectionUI();
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized.session));
     localStorage.setItem(PRESETS_KEY, JSON.stringify(this._sanitizeWorkspacePresets(normalized.presets)));
     await this._restoreSession();
+    if (normalized.document) {
+      await this._restoreWorkspaceDocumentState(normalized.document);
+    }
     const checkbox = document.getElementById('autoSaveSession');
     const autoSaveValue = normalized.autosaveValue ?? (checkbox?.checked ? '1' : '0');
     try {
@@ -15759,12 +16188,14 @@ export class App {
   _applyControlState(controls = {}) {
     for (const [id, val] of Object.entries(controls)) {
       if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
+      if (id === '_view') continue;
       if (id === '_canvasTextureState') continue;
       if (id === '_stampImageState') continue;
       if (id === 'primaryColor' || id === '_primaryColor') { this.setColorValue('primary', val); continue; }
       if (id === 'secondaryColor' || id === '_secondaryColor') { this.setColorValue('secondary', val); continue; }
       if (id === 'bgColor') { this.setBackgroundColor(val); continue; }
       if (id === 'activeBrush' || id === '_activeBrush') { this.setBrush(val); continue; }
+      if (id === 'activeTool' || id === '_activeTool') { this.setTool(typeof val === 'string' ? val : 'brush'); continue; }
       if (id === '_colorHistory') {
         if (Array.isArray(val)) {
           this._colorHistory = val.filter(v => typeof v === 'string' && /^#[0-9a-f]{6}$/.test(v));
@@ -15854,6 +16285,9 @@ export class App {
       }
       const controls = JSON.parse(raw);
       const hasSavedStampImageState = Object.prototype.hasOwnProperty.call(controls, '_stampImageState');
+      const restoredView = controls && typeof controls._view === 'object' && !Array.isArray(controls._view)
+        ? controls._view
+        : null;
       if (controls._canvasTextureState) {
         await this._restoreCanvasTextureState(controls._canvasTextureState);
       }
@@ -15876,6 +16310,10 @@ export class App {
       this._syncSimulationUI();
       if (controls._docSized && controls._docW && controls._docH) {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
+      }
+      if (restoredView) this._applyViewState(restoredView);
+      if (this.activeTool === 'transform' && !this.selectionMgr?.active) {
+        this.setTool('brush');
       }
     } catch {
       await this._applyFactoryDefaults();

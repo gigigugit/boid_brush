@@ -752,28 +752,12 @@ export function buildSidebar(app) {
       </div>
     </div>
 
-    <!-- Settings -->
-    <div class="section-header" data-section="settings">Settings <span class="chevron">▼</span></div>
-    <div class="section-body">
-      <label>Always show tabs <input type="checkbox" id="alwaysShowTabs"></label>
-      <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
-      <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
-      <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
-      <div id="perfTelemetryReadout" style="white-space:pre-wrap;line-height:1.35;font-size:9px;color:rgba(230,236,248,0.92);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px;min-height:92px;">Telemetry is off.</div>
-      <span class="slider-desc">Tracks frame timing, slow-frame attribution, long tasks, tab visibility/focus changes, and optional wake-lock state. Wake lock can reduce device sleep, but browsers may still throttle hidden tabs.</span>
-      <div style="display:flex;gap:3px;margin:2px 0 4px;">
-        <button id="btnCopyPerfTelemetry">📋 Copy Perf</button>
-        <button id="btnResetPerfTelemetry">♻ Reset Perf</button>
-      </div>
-      <div style="display:flex;gap:3px;margin:2px 0 4px;">
-        <button id="btnImportWorkspace">📥 Import Workspace</button>
-        <button id="btnExportWorkspace">📤 Export Workspace</button>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
-        <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
-        <button id="btnResetDefaults" class="reset-btn">🧼 Fresh Start</button>
-      </div>
+    <div class="section-header closed" data-brushes="boid ant" data-section="brushSettings">Brush Settings <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid ant">
+      <label>Show Sim Overlay <input type="checkbox" id="showSimulationOverlayControls"></label>
+      <span class="slider-desc">Off keeps simulation quick controls in the left drawer. On restores the floating overlay HUD.</span>
     </div>
+
     <div id="simControlStore" style="display:none" aria-hidden="true">
       <label>Ephemeral Mode <input type="checkbox" id="simEphemeralMode"></label>
       <label>Speed <span id="v_simSpeed">1.0×</span><input type="range" id="simSpeed" min="10" max="300" value="100"></label>
@@ -859,6 +843,9 @@ export function buildSidebar(app) {
   // Checkbox & select → invalidate params
   sb.querySelectorAll('input[type="checkbox"], select, input[type="number"]').forEach(el => {
     el.addEventListener('change', () => app.invalidateParams());
+  });
+  document.getElementById('showSimulationOverlayControls')?.addEventListener('change', () => {
+    app._syncSimulationUI?.();
   });
 
   const sensingSourceSelect = document.getElementById('sensingSource');
@@ -959,28 +946,17 @@ export function buildSidebar(app) {
   document.getElementById('btnImportPreset')?.addEventListener('click', () => _importPreset(app));
   document.getElementById('btnExportPresets')?.addEventListener('click', () => _exportPresets(app));
 
-  const workspaceImportInput = document.createElement('input');
-  workspaceImportInput.type = 'file';
-  workspaceImportInput.accept = '.json,application/json';
-  workspaceImportInput.addEventListener('change', async () => {
-    const file = workspaceImportInput.files?.[0];
-    workspaceImportInput.value = '';
-    if (!file) return;
-    try {
-      await app.importWorkspaceSettingsText(await file.text());
-      _renderUserPresets(app);
-      syncUI(app);
-      app.showToast(`📥 Imported workspace from ${file.name}`);
-    } catch (error) {
-      console.error('Workspace settings import failed:', error);
-      app.showToast('⚠ Invalid workspace file');
-    }
+  const triggerSidebarAutoSave = () => {
+    const autoSaveCb = document.getElementById('autoSaveSession');
+    if (!autoSaveCb?.checked) return;
+    clearTimeout(app._sidebarAutoSaveTimer);
+    app._sidebarAutoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
+  };
+  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
+    el.addEventListener('input', triggerSidebarAutoSave);
+    el.addEventListener('change', triggerSidebarAutoSave);
   });
 
-  // Settings
-  document.getElementById('btnSaveSession')?.addEventListener('click', () => {
-    app.saveSession(); app.showToast('💾 Session saved');
-  });
   document.getElementById('btnOpenSimulationInspector')?.addEventListener('click', () => {
     if (!app.simulation.enabled) app._toggleSimulationMode(true);
     app.simulation.inspectorCollapsed = false;
@@ -1001,18 +977,91 @@ export function buildSidebar(app) {
   document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
     app._showSimulationSetupExplorer?.(event.currentTarget);
   });
+  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
+    el.addEventListener('input', () => app._syncActiveSimulationSessionFromDraft?.());
+    el.addEventListener('change', () => app._syncActiveSimulationSessionFromDraft?.());
+  });
+  app._refreshSensingLayerSourceUi?.();
+  app._syncSimulationSessionContextUi?.();
+
+  // Initial brush-specific visibility
+  app._toggleBrushSections(app.activeBrush);
+  app._syncMotionPathUI?.();
+
+  // ── Ant Math overlay panel ──
+  _buildAntMathPanel(app);
+}
+
+function _workspaceSettingsMarkup() {
+  return `
+    <div class="section-header" data-section="appSettings">Settings <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Always show tabs <input type="checkbox" id="alwaysShowTabs"></label>
+      <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
+      <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
+      <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
+      <div id="perfTelemetryReadout" style="white-space:pre-wrap;line-height:1.35;font-size:9px;color:rgba(230,236,248,0.92);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px;min-height:92px;">Telemetry is off.</div>
+      <span class="slider-desc">Tracks frame timing, slow-frame attribution, long tasks, tab visibility/focus changes, and optional wake-lock state. Wake lock can reduce device sleep, but browsers may still throttle hidden tabs.</span>
+      <div style="display:flex;gap:3px;margin:2px 0 4px;">
+        <button id="btnCopyPerfTelemetry">📋 Copy Perf</button>
+        <button id="btnResetPerfTelemetry">♻ Reset Perf</button>
+      </div>
+      <div style="display:flex;gap:3px;margin:2px 0 4px;">
+        <button id="btnImportWorkspace">📂 Open Workspace File</button>
+        <button id="btnExportWorkspace">💾 Save Workspace File</button>
+      </div>
+      <div style="display:flex;gap:3px;margin:2px 0 4px;">
+        <button id="btnEditWorkspaceJson">📝 Edit Workspace Settings JSON</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
+        <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
+        <button id="btnResetDefaults" class="reset-btn">🧼 Fresh Start</button>
+      </div>
+    </div>
+  `;
+}
+
+function _wireWorkspaceSettingsPanel(app, panel) {
+  panel.querySelectorAll('.section-header').forEach(h => {
+    h.addEventListener('click', () => toggleSection(h));
+  });
+
+  const workspaceImportInput = document.createElement('input');
+  workspaceImportInput.type = 'file';
+  workspaceImportInput.accept = '.json,application/json';
+  workspaceImportInput.addEventListener('change', async () => {
+    const file = workspaceImportInput.files?.[0];
+    workspaceImportInput.value = '';
+    if (!file) return;
+    try {
+      await app.importWorkspaceSettingsText(await file.text());
+      refreshWorkspaceSettingsUi(app);
+      app.showToast(`📂 Loaded workspace file ${file.name}`);
+    } catch (error) {
+      console.error('Workspace file import failed:', error);
+      app.showToast('⚠ Invalid workspace file');
+    }
+  });
+
+  document.getElementById('btnSaveSession')?.addEventListener('click', () => {
+    app.saveSession();
+    app.showToast('💾 Session saved');
+  });
   document.getElementById('btnImportWorkspace')?.addEventListener('click', () => {
-    if (!confirm('Import workspace settings from a file and replace the current saved workspace settings?')) return;
+    if (!confirm('Open a workspace file and replace the current canvas, layers, brush settings, and simulation state?')) return;
     workspaceImportInput.click();
   });
   document.getElementById('btnExportWorkspace')?.addEventListener('click', () => {
     app.exportWorkspaceSettingsFile();
   });
-  document.getElementById('perfTelemetryEnabled')?.addEventListener('change', e => {
-    app.setPerformanceTelemetryEnabled(e.target.checked);
+  document.getElementById('btnEditWorkspaceJson')?.addEventListener('click', () => {
+    app._showWorkspaceJsonModal?.();
   });
-  document.getElementById('perfWakeLockEnabled')?.addEventListener('change', e => {
-    app.setPerformanceWakeLockEnabled(e.target.checked);
+  document.getElementById('perfTelemetryEnabled')?.addEventListener('change', event => {
+    app.setPerformanceTelemetryEnabled(event.target.checked);
+  });
+  document.getElementById('perfWakeLockEnabled')?.addEventListener('change', event => {
+    app.setPerformanceWakeLockEnabled(event.target.checked);
   });
   document.getElementById('btnCopyPerfTelemetry')?.addEventListener('click', () => {
     app.copyPerformanceTelemetrySnapshot();
@@ -1025,7 +1074,7 @@ export function buildSidebar(app) {
       await app.reloadAppWithCacheBust({ wipeSession: true });
     }
   });
-  // Auto-save toggle
+
   const autoSaveCb = document.getElementById('autoSaveSession');
   if (autoSaveCb) {
     autoSaveCb.checked = localStorage.getItem(AUTOSAVE_STORAGE_KEY) === '1';
@@ -1033,32 +1082,80 @@ export function buildSidebar(app) {
       localStorage.setItem(AUTOSAVE_STORAGE_KEY, autoSaveCb.checked ? '1' : '0');
       app.showToast(autoSaveCb.checked ? '⏱ Auto-save enabled' : 'Auto-save disabled');
     });
-    // Debounced auto-save: save session when params change
-    let _autoSaveTimer = null;
+    let autoSaveTimer = null;
     const triggerAutoSave = () => {
       if (!autoSaveCb.checked) return;
-      clearTimeout(_autoSaveTimer);
-      _autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
     };
-    sb.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
+    panel.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
       el.addEventListener('input', triggerAutoSave);
       el.addEventListener('change', triggerAutoSave);
     });
   }
-  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
-    el.addEventListener('input', () => app._syncActiveSimulationSessionFromDraft?.());
-    el.addEventListener('change', () => app._syncActiveSimulationSessionFromDraft?.());
-  });
+
   app._refreshPerformanceTelemetryUI(true);
-  app._refreshSensingLayerSourceUi?.();
-  app._syncSimulationSessionContextUi?.();
+}
 
-  // Initial brush-specific visibility
-  app._toggleBrushSections(app.activeBrush);
-  app._syncMotionPathUI?.();
+export function buildFavoritesPanel(app) {
+  const panel = document.getElementById('favoritesPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="section-header" data-section="favorites">Favorites <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div style="display:grid;gap:8px;">
+        <div style="font-size:12px;font-weight:700;color:rgba(120,241,220,0.96);letter-spacing:0.06em;text-transform:uppercase;">Starred Controls</div>
+        <div style="line-height:1.5;color:var(--ink-1);">Favorites now has a dedicated panel shell. The next pass will add selection mode and mirrored control rows here.</div>
+      </div>
+    </div>
+  `;
+  panel.querySelectorAll('.section-header').forEach(h => {
+    h.addEventListener('click', () => toggleSection(h));
+  });
+}
 
-  // ── Ant Math overlay panel ──
-  _buildAntMathPanel(app);
+export function buildSettingsPanel(app) {
+  const panel = document.getElementById('settingsPanel');
+  if (!panel) return;
+  panel.innerHTML = _workspaceSettingsMarkup();
+  _wireWorkspaceSettingsPanel(app, panel);
+}
+
+export function buildSimulationControlsPanel(app) {
+  const panel = document.getElementById('simulationControlsPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="section-header" data-section="simulationControls">Simulation Controls <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div class="sim-row" id="simDrawerToolRow">
+        <button class="sim-pill" data-sim-tool="select">Select</button>
+        <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
+        <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
+        <button class="sim-pill" data-sim-tool="attract">Attract</button>
+        <button class="sim-pill" data-sim-tool="repel">Repel</button>
+        <button class="sim-pill" data-sim-tool="path">Path</button>
+        <button class="sim-pill" data-sim-tool="edge">Edge</button>
+        <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+      </div>
+      <div class="sim-row">
+        <button class="sim-pill active" id="simDrawerGuidesToggle">Hide Guides</button>
+        <button class="sim-pill" id="simDrawerHeatmapToggle" aria-pressed="false">Heatmap</button>
+        <button class="sim-pill warn" id="simDrawerCanvasClearBtn">Clear Canvas</button>
+        <button class="sim-pill warn" id="simDrawerClearBtn">Clear</button>
+      </div>
+      <div class="sim-row">
+        <button class="sim-pill" id="simDrawerRunBtn" type="button">▶ Run</button>
+        <button class="sim-pill warn" id="simDrawerStopBtn" type="button">⏹ Stop</button>
+        <button class="sim-pill" id="simDrawerStepBackBtn" type="button">Step Path -</button>
+        <button class="sim-pill" id="simDrawerStepForwardBtn" type="button">Step Path +</button>
+        <button class="sim-pill active" id="simDrawerInspectorToggle">Settings</button>
+      </div>
+      <span class="slider-desc">Use Brush Settings → Show Sim Overlay to switch between this drawer and the floating simulation HUD.</span>
+    </div>
+  `;
+  panel.querySelectorAll('.section-header').forEach(h => {
+    h.addEventListener('click', () => toggleSection(h));
+  });
 }
 
 // ── Build Layers Panel (left panel) ─────────────────────────
@@ -1082,6 +1179,7 @@ export function buildLayersPanel(app) {
           <option value="source-over">Normal</option><option value="multiply">Multiply</option>
           <option value="screen">Screen</option><option value="overlay">Overlay</option>
           <option value="darken">Darken</option><option value="lighten">Lighten</option>
+          <option value="add">Add</option>
           <option value="color-dodge">Dodge</option><option value="color-burn">Burn</option>
           <option value="hard-light">Hard Light</option><option value="soft-light">Soft Light</option>
           <option value="difference">Difference</option><option value="exclusion">Exclusion</option>
@@ -1312,7 +1410,7 @@ export function syncUI(app) {
   const l = app.getActiveLayer();
   if (l) {
     const be = document.getElementById('layerBlend');
-    if (be) be.value = l.blend;
+    if (be) be.value = l.blend === 'lighter' ? 'add' : l.blend;
     const oe = document.getElementById('layerOpacity');
     if (oe) { oe.value = Math.round(l.opacity * 100); }
     const vs = document.getElementById('v_layerOpacity');
@@ -1325,6 +1423,11 @@ export function syncUI(app) {
   _syncLeaderOverrideUI();
   app._refreshSensingLayerSourceUi?.();
   app._syncMotionPathUI?.();
+}
+
+export function refreshWorkspaceSettingsUi(app) {
+  _renderUserPresets(app);
+  syncUI(app);
 }
 
 export function syncTextureUI(app) {
@@ -1755,7 +1858,7 @@ function _syncLayerControls(app) {
   const l = app.getActiveLayer();
   if (!l) return;
   const be = document.getElementById('layerBlend');
-  if (be) be.value = l.blend;
+  if (be) be.value = l.blend === 'lighter' ? 'add' : l.blend;
   const oe = document.getElementById('layerOpacity');
   if (oe) oe.value = Math.round(l.opacity * 100);
   const vs = document.getElementById('v_layerOpacity');

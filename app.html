@@ -25,6 +25,7 @@
   --accent-a: #3a6ae8;
   --accent-b: #5b8af0;
   --accent-c: #8bb3ff;
+  --favorite-accent: #28dec0;
   --warn-a: #b43b3b;
   --shadow-lg: 0 14px 38px rgba(0, 0, 0, 0.45);
   --rad-1: 8px;
@@ -150,7 +151,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #leftPanel::-webkit-scrollbar{width:5px;}
 #leftPanel::-webkit-scrollbar-track{background:transparent;}
 #leftPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-#layersPanel{-webkit-overflow-scrolling:touch;padding:10px;}
+#layersPanel,#simulationControlsPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 
 /* ---- Right Panel (tabbed) ---- */
 #rightPanel{position:fixed;top:var(--panel-top);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
@@ -158,7 +159,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
 #rightPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-#sidebar{-webkit-overflow-scrolling:touch;padding:10px;}
+#sidebar,#favoritesPanel,#settingsPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
 
 /* ---- Panel Tabs (drawer handles) ---- */
@@ -173,6 +174,9 @@ html,body{overflow:hidden;width:100%;height:100%;
 .panel-tabs--right .panel-tab{border-radius:var(--rad-1) 0 0 var(--rad-1);border-right:none;}
 .panel-tab:hover{background:var(--panel-0);border-color:var(--line-1);color:var(--ink-0);}
 .panel-tab.active{background:var(--panel-0);border-color:var(--line-1);color:var(--accent-b);}
+.panel-tab--favorites{color:rgba(120,241,220,0.94);}
+.panel-tab--favorites:hover,.panel-tab--favorites.active{color:var(--favorite-accent);}
+.panel-tab--favorites.active{border-color:rgba(40,222,192,0.38);box-shadow:0 0 12px rgba(40,222,192,0.16);}
 .panel-tab-hidden{display:none!important;}
 .panel-view{display:none;flex:1;min-height:0;overflow-y:auto;}
 .panel-view.active{display:block;}
@@ -188,22 +192,22 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar .section-body[data-sim-section-body="sceneVariables"]:not(.collapsed){max-height:none;}
 
 /* Controls */
-#sidebar label,#layersPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
-#sidebar label span,#layersPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
+#sidebar label,#layersPanel label,#favoritesPanel label,#settingsPanel label,#simulationControlsPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
+#sidebar label span,#layersPanel label span,#favoritesPanel label span,#settingsPanel label span,#simulationControlsPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
 .slider-desc{display:block;font-size:8px;color:var(--ink-3);margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
-#sidebar input[type="range"],#layersPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
-#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
-#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
-#sidebar select,#layersPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
-#sidebar select:hover,#layersPanel select:hover{border-color:rgba(255,255,255,0.2);}
-#sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
-#sidebar button,#layersPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
-#sidebar button:hover,#layersPanel button:hover{background:rgba(255,255,255,0.15);color:#fff;}
-#sidebar input[type="checkbox"],#layersPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
-#sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
-#sidebar input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+#sidebar input[type="range"],#layersPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
+#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb,#favoritesPanel input[type="range"]::-moz-range-thumb,#settingsPanel input[type="range"]::-moz-range-thumb,#simulationControlsPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track,#favoritesPanel input[type="range"]::-moz-range-track,#settingsPanel input[type="range"]::-moz-range-track,#simulationControlsPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#sidebar select,#layersPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
+#sidebar select:hover,#layersPanel select:hover,#favoritesPanel select:hover,#settingsPanel select:hover,#simulationControlsPanel select:hover{border-color:rgba(255,255,255,0.2);}
+#sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup,#favoritesPanel select option,#favoritesPanel select optgroup,#settingsPanel select option,#settingsPanel select optgroup,#simulationControlsPanel select option,#simulationControlsPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#sidebar button,#layersPanel button,#favoritesPanel button,#settingsPanel button,#simulationControlsPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
+#sidebar button:hover,#layersPanel button:hover,#favoritesPanel button:hover,#settingsPanel button:hover,#simulationControlsPanel button:hover{background:rgba(255,255,255,0.15);color:#fff;}
+#sidebar input[type="checkbox"],#layersPanel input[type="checkbox"],#favoritesPanel input[type="checkbox"],#settingsPanel input[type="checkbox"],#simulationControlsPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
+#sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked,#favoritesPanel input[type="checkbox"]:checked,#settingsPanel input[type="checkbox"]:checked,#simulationControlsPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
+#sidebar input[type="checkbox"]:checked::after,#favoritesPanel input[type="checkbox"]:checked::after,#settingsPanel input[type="checkbox"]:checked::after,#simulationControlsPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
 .save-btn{background:rgba(42,110,63,0.7)!important;border:1px solid rgba(52,199,89,0.3)!important;}
 .save-btn:hover{background:rgba(52,199,89,0.5)!important;}
 .reset-btn{background:rgba(139,58,58,0.7)!important;border:1px solid rgba(255,59,48,0.3)!important;}
@@ -606,6 +610,33 @@ html,body{overflow:hidden;width:100%;height:100%;
   #simSetupModal .sim-setup-footerGroup{width:100%;}
   #simSetupModal .sim-setup-footer button{flex:1;}
 }
+#workspaceJsonModal{display:none;position:fixed;inset:0;z-index:203;align-items:center;justify-content:center;}
+#workspaceJsonModal.open{display:flex;}
+#workspaceJsonModal .workspace-json-panel{display:flex;flex-direction:column;width:min(880px,94vw);max-height:88vh;overflow:hidden;padding:20px 20px 18px;background:linear-gradient(180deg,rgba(22,27,39,0.99),rgba(11,15,24,0.99));border-color:rgba(126,156,220,0.18);}
+#workspaceJsonModal .workspace-json-meta{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(7,11,20,0.48);}
+#workspaceJsonModal .workspace-json-doc{display:grid;gap:3px;min-width:0;}
+#workspaceJsonModal .workspace-json-label{display:block;color:#8fa3c6;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;}
+#workspaceJsonModal .workspace-json-doc strong{color:#edf3ff;font-size:12px;}
+#workspaceJsonModal .workspace-json-metaText{color:#9ba9c4;font-size:11px;line-height:1.45;max-width:460px;}
+#workspaceJsonModal .workspace-json-editorWrap{display:grid;gap:6px;min-height:0;flex:1;}
+#workspaceJsonModal #workspaceJsonEditor{width:100%;min-height:340px;flex:1;resize:vertical;box-sizing:border-box;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(5,9,16,0.8);color:#eaf0ff;padding:14px 16px;font:12px/1.45 Consolas,"Courier New",monospace;tab-size:2;color-scheme:dark;}
+#workspaceJsonModal #workspaceJsonEditor:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
+#workspaceJsonModal .workspace-json-status{margin-top:12px;min-height:18px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#adc0e2;font-size:11px;line-height:1.45;white-space:pre-wrap;}
+#workspaceJsonModal .workspace-json-status.success{border-color:rgba(106,213,127,0.24);background:rgba(36,96,51,0.18);color:#c6efcf;}
+#workspaceJsonModal .workspace-json-status.warn{border-color:rgba(255,194,102,0.22);background:rgba(145,91,17,0.14);color:#ffd08a;}
+#workspaceJsonModal .workspace-json-status.error{border-color:rgba(255,115,115,0.24);background:rgba(118,34,34,0.16);color:#ffb0b0;}
+#workspaceJsonModal .workspace-json-footer{margin-top:14px;justify-content:space-between;align-items:center;flex-wrap:wrap;}
+#workspaceJsonModal .workspace-json-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#workspaceJsonModal .workspace-json-footer button{padding:8px 14px;border-radius:8px;font-size:11px;cursor:pointer;}
+#workspaceJsonModal .workspace-json-footer button:not(.ai-save-btn){border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#e8eefb;}
+#workspaceJsonModal .workspace-json-footer button:not(.ai-save-btn):hover{background:rgba(255,255,255,0.12);}
+@media (max-width: 760px){
+  #workspaceJsonModal .workspace-json-panel{width:calc(100vw - 18px);padding:18px 14px 14px;}
+  #workspaceJsonModal #workspaceJsonEditor{min-height:280px;padding:12px 12px;}
+  #workspaceJsonModal .workspace-json-footer{align-items:stretch;}
+  #workspaceJsonModal .workspace-json-actions{width:100%;}
+  #workspaceJsonModal .workspace-json-footer button{flex:1 1 120px;}
+}
 #motionPathEditor{display:none;position:fixed;inset:0;z-index:205;}
 #motionPathEditor.open{display:block;}
 .motion-path-editor-backdrop{position:absolute;inset:0;background:rgba(4,8,16,0.82);backdrop-filter:blur(10px);}
@@ -751,7 +782,9 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="cutBtn" title="Cut (Ctrl+X)">✂ Cut</button>
   <button id="pasteBtn" title="Paste (Ctrl+V)">📌 Paste</button>
   <div class="tb-sep"></div>
-  <button id="saveBtn">💾 Save</button>
+  <button id="saveWorkspaceBtn" title="Save the full workspace file">💾 Save File</button>
+  <button id="openWorkspaceBtn" title="Open a saved workspace file">📂 Open File</button>
+  <button id="saveBtn" title="Export a flattened PNG image">🖼 Save PNG</button>
   <button id="reloadAppBtn" title="Hard reload (clear browser caches/service workers and reload)">⟳ Reload</button>
   <button id="exportPsdBtn" title="Export as Photoshop PSD">📤 Export PSD</button>
   <button id="importPsdBtn" title="Import Photoshop PSD">📥 Import PSD</button>
@@ -922,19 +955,25 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <!-- ══════════ Layers Panel (left) ══════════ -->
 <div class="panel-tabs panel-tabs--left" id="leftPanelTabs">
   <button class="panel-tab active" data-panel-view="layers" data-panel-target="leftPanel">Layers</button>
+  <button class="panel-tab panel-tab-hidden" data-panel-view="simulationControls" data-panel-target="leftPanel">Simulation</button>
 </div>
 <aside id="leftPanel">
   <div id="layersPanel" class="panel-view active" data-panel-view="layers"></div>
+  <div id="simulationControlsPanel" class="panel-view" data-panel-view="simulationControls"></div>
 </aside>
 
 <!-- ══════════ Right Panel (tabbed) ══════════ -->
 <div class="panel-tabs panel-tabs--right" id="rightPanelTabs">
+  <button class="panel-tab panel-tab--favorites" data-panel-view="favorites" data-panel-target="rightPanel">★</button>
   <button class="panel-tab active" data-panel-view="brush" data-panel-target="rightPanel">Brush</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="simulation" data-panel-target="rightPanel">Simulation</button>
+  <button class="panel-tab" data-panel-view="settings" data-panel-target="rightPanel">Settings</button>
 </div>
 <aside id="rightPanel">
+  <div id="favoritesPanel" class="panel-view" data-panel-view="favorites"></div>
   <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
   <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
+  <div id="settingsPanel" class="panel-view" data-panel-view="settings"></div>
 </aside>
 <div id="simFormatMenu"></div>
 
@@ -1111,8 +1150,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <div class="sim-setup-footerGroup">
         <button id="simSetupSaveJson" type="button">Save Setup JSON</button>
         <button id="simSetupLoadJson" type="button">Load Setup JSON</button>
-        <button id="simSetupExportWorkspace" type="button">Export Workspace</button>
-        <button id="simSetupImportWorkspace" type="button">Import Workspace</button>
+        <button id="simSetupExportWorkspace" type="button">Save Workspace File</button>
+        <button id="simSetupImportWorkspace" type="button">Open Workspace File</button>
       </div>
       <div class="sim-setup-footerGroup">
         <button id="simSetupClearDefaults" class="warn" type="button">Clear Defaults</button>
@@ -1122,6 +1161,38 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </div>
     <input id="simSetupLoadFile" type="file" accept="application/json,.json" hidden>
     <input id="simSetupWorkspaceImportFile" type="file" accept="application/json,.json" hidden>
+  </div>
+</div>
+
+<div id="workspaceJsonModal">
+  <div class="ai-modal-backdrop" id="workspaceJsonBackdrop"></div>
+  <div class="ai-modal-panel workspace-json-panel" role="dialog" aria-modal="true" aria-labelledby="workspaceJsonTitle" aria-describedby="workspaceJsonIntro">
+    <button class="ai-modal-close" id="workspaceJsonClose" aria-label="Close workspace JSON editor">✕</button>
+    <h2 id="workspaceJsonTitle">📝 Workspace JSON</h2>
+    <div class="ai-subtitle" id="workspaceJsonIntro">Inspect, validate, and apply workspace JSON. Use Save/Open Workspace File for the full layer-and-settings snapshot.</div>
+    <div class="workspace-json-meta">
+      <div class="workspace-json-doc">
+        <span class="workspace-json-label">Document</span>
+        <strong id="workspaceJsonDocumentName">Workspace Settings JSON</strong>
+      </div>
+      <div class="workspace-json-metaText" id="workspaceJsonMeta">Loaded from the current live workspace state. Use Validate before Apply if you hand-edit the JSON.</div>
+    </div>
+    <label class="workspace-json-editorWrap" for="workspaceJsonEditor">
+      <span class="workspace-json-label">JSON</span>
+      <textarea id="workspaceJsonEditor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="workspaceJsonStatus"></textarea>
+    </label>
+    <div class="workspace-json-status" id="workspaceJsonStatus" aria-live="polite">Ready to edit the current workspace bundle.</div>
+    <div class="ai-modal-footer workspace-json-footer">
+      <div class="workspace-json-actions">
+        <button id="workspaceJsonFormat" type="button">✨ Format</button>
+        <button id="workspaceJsonValidate" type="button">✓ Validate</button>
+        <button id="workspaceJsonCopy" type="button">📋 Copy</button>
+      </div>
+      <div class="workspace-json-actions">
+        <button id="workspaceJsonCloseAction" type="button">Close</button>
+        <button id="workspaceJsonApply" class="ai-save-btn" type="button">Apply</button>
+      </div>
+    </div>
   </div>
 </div>
 

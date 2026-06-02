@@ -41,6 +41,8 @@ const CSS_TO_PSD_BLEND = {
   'overlay':     'overlay',
   'darken':      'darken',
   'lighten':     'lighten',
+  'add':         'linear dodge',
+  'lighter':     'linear dodge',
   'color-dodge': 'color dodge',
   'color-burn':  'color burn',
   'hard-light':  'hard light',

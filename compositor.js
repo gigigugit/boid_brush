@@ -1,7 +1,7 @@
 // =============================================================================
 // compositor.js — WebGL2-accelerated layer compositing
 //
-// Ported from index.html L504–680. Ping-pong FBO approach with 16 CSS blend
+// Ported from index.html L504–680. Ping-pong FBO approach with 17 CSS blend
 // modes implemented in GLSL. Falls back to Canvas 2D if WebGL2 unavailable.
 //
 // Usage:
@@ -16,9 +16,16 @@ const BLEND_MODE_MAP = {
   'source-over':0,'multiply':1,'screen':2,'overlay':3,
   'darken':4,'lighten':5,'color-dodge':6,'color-burn':7,
   'hard-light':8,'soft-light':9,'difference':10,'exclusion':11,
-  'hue':12,'saturation':13,'color':14,'luminosity':15
+  'hue':12,'saturation':13,'color':14,'luminosity':15,
+  'add':16,'lighter':16
 };
 const DIRTY_TILE_SIZE = 256;
+
+export function getCanvasBlendMode(mode) {
+  // Canvas2D exposes additive blending as "lighter"; keep "add" as the app-facing name.
+  if (mode === 'add' || mode === 'lighter') return 'lighter';
+  return mode || 'source-over';
+}
 
 function _tileSetToRects(tileSet, cssW, cssH) {
   const rows = new Map();
@@ -113,6 +120,7 @@ vec3 blend(vec3 b,vec3 s,int m){
   if(m==13)return hsl2rgb(vec3(bh.x,sh.y,bh.z));
   if(m==14)return hsl2rgb(vec3(sh.x,sh.y,bh.z));
   if(m==15)return hsl2rgb(vec3(bh.x,bh.y,sh.z));
+  if(m==16)return min(b+s,vec3(1.0));
   return s;}
 void main(){
   vec4 base=texture(uBase,vUV);
@@ -587,7 +595,7 @@ export class Compositor {
         const l = layers[i];
         if (!l.visible) continue;
         ctx.globalAlpha = l.opacity;
-        ctx.globalCompositeOperation = l.blend;
+        ctx.globalCompositeOperation = getCanvasBlendMode(l.blend);
         ctx.drawImage(l.canvas, 0, 0, l.canvas.width, l.canvas.height, 0, 0, cssW, cssH);
         if (l.gpuPreviewCanvas) {
           ctx.globalAlpha = 1;

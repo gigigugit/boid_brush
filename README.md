@@ -20,7 +20,8 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 - **Taper** – Configurable stroke tapering for natural brush-lift effects.
 - **Pressure Sensitivity** – Supports pen/stylus pressure for size and opacity.
 - **Selection & Clipboard** – Rectangular selection, cut, copy, and paste.
-- **Settings Persistence** – Auto-saves settings; supports save/load defaults and JSON export/import.
+- **Workspace Files** – Save and reopen the full workspace as JSON, including layer pixels, layer metadata, brush settings, simulation sessions, presets, and custom asset references.
+- **Settings Persistence** – Auto-saves control settings between reloads; also supports editing/applying workspace settings JSON in-app.
 
 ### GPU Acceleration
 
@@ -53,7 +54,7 @@ Open `app.html` in a modern browser (or `index.html` for the landing page with l
 | `Ctrl/⌘ + C` | Copy |
 | `Ctrl/⌘ + X` | Cut |
 | `Ctrl/⌘ + V` | Paste |
-| `Ctrl/⌘ + S` | Save |
+| `Ctrl/⌘ + S` | Save PNG |
 | `X` | Swap Colors |
 | `0` | Reset View |
 
