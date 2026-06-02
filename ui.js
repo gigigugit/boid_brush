@@ -1190,6 +1190,15 @@ export function buildLayersPanel(app) {
       </div>
       <div id="layerList"></div>
     </div>
+    <div class="section-header" data-section="viewBookmarks">View Bookmarks <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div class="view-bookmark-toolbar">
+        <button id="btnSaveViewBookmark">+ Save View</button>
+        <button id="btnJumpLastChange">↩ Last Change</button>
+      </div>
+      <div id="viewBookmarkLastChange"></div>
+      <div id="viewBookmarkList" class="view-bookmark-list"></div>
+    </div>
   `;
 
   // Wire section toggle
@@ -1205,6 +1214,14 @@ export function buildLayersPanel(app) {
   document.getElementById('btnLayerDown')?.addEventListener('click', () => { app.moveLayerDown(); _refreshLayers(app); });
   document.getElementById('btnMergeDown')?.addEventListener('click', () => { app.mergeDown(); _refreshLayers(app); });
   document.getElementById('btnFlatten')?.addEventListener('click', () => { app.flattenAll(); _refreshLayers(app); });
+  document.getElementById('btnSaveViewBookmark')?.addEventListener('click', () => {
+    const name = prompt('Bookmark name:', app.getSuggestedViewBookmarkName?.() || 'View 1');
+    if (name === null) return;
+    app.saveCurrentViewBookmark?.({ name });
+  });
+  document.getElementById('btnJumpLastChange')?.addEventListener('click', () => {
+    app.jumpToLastChange?.();
+  });
 
   // Layer blend & opacity
   document.getElementById('layerBlend')?.addEventListener('change', () => {
@@ -1220,9 +1237,11 @@ export function buildLayersPanel(app) {
 
   // Store layer list renderer on app for external refresh
   app._renderLayerList = () => _renderLayerList(app);
+  app._renderViewBookmarksPanel = () => _renderViewBookmarksPanel(app);
 
   // Initial layer list
   _renderLayerList(app);
+  _renderViewBookmarksPanel(app);
 }
 
 // ── Ant Math overlay panel ──────────────────────────────────
@@ -1831,6 +1850,128 @@ function _renderLayerList(app) {
     _refreshLayers(app);
   };
   app._refreshSensingLayerSourceUi?.();
+}
+
+function _formatBookmarkTimestamp(timestamp) {
+  if (!timestamp) return 'No time saved';
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return 'No time saved';
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function _appendBookmarkMetaLine(container, text) {
+  const line = document.createElement('div');
+  line.textContent = text;
+  container.appendChild(line);
+}
+
+function _renderViewBookmarksPanel(app) {
+  const list = document.getElementById('viewBookmarkList');
+  const lastChange = document.getElementById('viewBookmarkLastChange');
+  const jumpLastBtn = document.getElementById('btnJumpLastChange');
+  if (!list || !lastChange) return;
+
+  list.innerHTML = '';
+  lastChange.innerHTML = '';
+
+  const activeBookmarkId = app.getActiveViewBookmarkId?.() || null;
+  const bookmarks = Array.isArray(app.viewBookmarks) ? app.viewBookmarks : [];
+  if (!bookmarks.length) {
+    const empty = document.createElement('div');
+    empty.className = 'view-bookmark-empty';
+    empty.textContent = 'Save named views here to jump back to important canvas locations.';
+    list.appendChild(empty);
+  } else {
+    bookmarks.forEach(bookmark => {
+      const item = document.createElement('div');
+      item.className = 'view-bookmark-item' + (bookmark.id === activeBookmarkId ? ' active' : '');
+
+      const main = document.createElement('button');
+      main.type = 'button';
+      main.className = 'view-bookmark-main';
+      main.title = `Jump to ${bookmark.name}`;
+      main.addEventListener('click', () => app.jumpToViewBookmark?.(bookmark.id));
+
+      const title = document.createElement('div');
+      title.className = 'view-bookmark-title';
+      title.textContent = bookmark.name;
+      main.appendChild(title);
+
+      const meta = document.createElement('div');
+      meta.className = 'view-bookmark-meta';
+      _appendBookmarkMetaLine(meta, `Saved ${_formatBookmarkTimestamp(bookmark.updatedAt || bookmark.createdAt)}`);
+      if (bookmark.layerName) _appendBookmarkMetaLine(meta, `Layer: ${bookmark.layerName}`);
+      main.appendChild(meta);
+      item.appendChild(main);
+
+      const actions = document.createElement('div');
+      actions.className = 'view-bookmark-actions';
+      const actionSpecs = [
+        {
+          label: 'Overwrite',
+          title: `Overwrite ${bookmark.name} with the current view`,
+          onClick: () => app.saveCurrentViewBookmark?.({ overwriteId: bookmark.id, name: bookmark.name }),
+        },
+        {
+          label: 'Rename',
+          title: `Rename ${bookmark.name}`,
+          onClick: () => {
+            const name = prompt('Rename bookmark:', bookmark.name);
+            if (name === null) return;
+            app.renameViewBookmark?.(bookmark.id, name);
+          },
+        },
+        {
+          label: 'Delete',
+          title: `Delete ${bookmark.name}`,
+          onClick: () => app.deleteViewBookmark?.(bookmark.id),
+        },
+      ];
+      actionSpecs.forEach(spec => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = spec.label;
+        button.title = spec.title;
+        button.addEventListener('click', spec.onClick);
+        actions.appendChild(button);
+      });
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+  }
+
+  const marker = app.lastChangeMarker;
+  if (marker) {
+    const card = document.createElement('div');
+    card.className = 'view-bookmark-lastchange';
+    const meta = document.createElement('div');
+    meta.className = 'view-bookmark-meta';
+    const title = document.createElement('div');
+    title.className = 'view-bookmark-title';
+    title.textContent = marker.label || 'Last change';
+    card.appendChild(title);
+    _appendBookmarkMetaLine(meta, `Updated ${_formatBookmarkTimestamp(marker.timestamp)}`);
+    if (marker.layerName) _appendBookmarkMetaLine(meta, `Layer: ${marker.layerName}`);
+    card.appendChild(meta);
+    const jump = document.createElement('button');
+    jump.type = 'button';
+    jump.textContent = 'Jump to last change';
+    jump.addEventListener('click', () => app.jumpToLastChange?.());
+    card.appendChild(jump);
+    lastChange.appendChild(card);
+  } else {
+    const empty = document.createElement('div');
+    empty.className = 'view-bookmark-empty';
+    empty.textContent = 'No recent committed change has been recorded yet.';
+    lastChange.appendChild(empty);
+  }
+
+  if (jumpLastBtn) jumpLastBtn.disabled = !marker;
 }
 
 // ── Drop indicator helpers ──────────────────────────────────

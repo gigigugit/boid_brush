@@ -18,6 +18,13 @@ const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-26-sim-phase4-playback-export-1';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 2;
+const MAX_VIEW_BOOKMARKS = 48;
+const VIEW_BOOKMARK_DEFAULT_NAME = 'View';
+const MAX_VIEW_BOOKMARK_NAME_LENGTH = 80;
+const MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH = 120;
+const VIEW_BOOKMARK_ACTIVE_ZOOM_EPSILON = 0.025;
+const VIEW_BOOKMARK_ACTIVE_PAN_EPSILON = 48;
+const VIEW_BOOKMARK_ACTIVE_ROTATION_EPSILON = Math.PI / 90;
 const SIM_SETUP_FORMAT = 'boid-brush-simulation-setup';
 const SIM_SETUP_VERSION = 1;
 const SIM_EXPORT_TIMESLICE_MS = 250;
@@ -1758,6 +1765,8 @@ export class App {
 
     // Flip view
     this.viewFlipped = false;
+    this.viewBookmarks = [];
+    this.lastChangeMarker = null;
 
     // Tiling mode
     this.tilingMode = false;
@@ -2756,6 +2765,21 @@ export class App {
   getActiveLayer() {
     const overrideLayer = this._getLayerById(this._simulationContextOverride?.layerId);
     return overrideLayer || this.layers[this.activeLayerIdx];
+  }
+
+  getSuggestedViewBookmarkName() {
+    const activeLayer = this.getActiveLayer();
+    const baseName = typeof activeLayer?.name === 'string' && activeLayer.name.trim()
+      ? activeLayer.name.trim()
+      : VIEW_BOOKMARK_DEFAULT_NAME;
+    let suffix = this.viewBookmarks.length + 1;
+    let candidate = `${baseName} ${suffix}`;
+    const existing = new Set(this.viewBookmarks.map(bookmark => String(bookmark?.name || '').trim().toLowerCase()).filter(Boolean));
+    while (existing.has(candidate.toLowerCase())) {
+      suffix += 1;
+      candidate = `${baseName} ${suffix}`;
+    }
+    return candidate;
   }
 
   toggleAlphaLock() {
@@ -4108,6 +4132,7 @@ export class App {
       this.activeLayerIdx = idx;
       this._syncLayerSwitcher();
       this._syncAlphaLockUI();
+      this._renderViewBookmarksPanel?.();
     }
   }
 
@@ -4123,6 +4148,7 @@ export class App {
     if (this.activeLayerIdx >= this.layers.length) this.activeLayerIdx = this.layers.length - 1;
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layer deleted');
   }
 
   duplicateLayer() {
@@ -4139,6 +4165,7 @@ export class App {
     }));
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layer duplicated');
   }
 
   moveLayerUp() {
@@ -4152,6 +4179,7 @@ export class App {
     this.activeLayerIdx--;
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layer reordered');
   }
 
   moveLayerDown() {
@@ -4169,6 +4197,7 @@ export class App {
     this.activeLayerIdx++;
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layer reordered');
   }
 
   mergeDown() {
@@ -4189,6 +4218,7 @@ export class App {
     this.layers.splice(this.activeLayerIdx, 1);
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layers merged');
   }
 
   flattenAll() {
@@ -4212,6 +4242,7 @@ export class App {
     this.activeLayerIdx = 0;
     this._syncLayerSwitcher();
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layers flattened');
   }
 
   clearActiveLayer() {
@@ -4239,6 +4270,7 @@ export class App {
       this._heightDirty = true;
     }
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Layer cleared');
     this.showToast('🗑 Layer cleared');
   }
 
@@ -9202,6 +9234,7 @@ export class App {
     } else if (this.simulation.running && brush?.onUp) {
       brush.onUp(this.leaderX, this.leaderY);
     }
+    if (wasActive) this.recordLastChangeMarker('Simulation stroke');
     if (wasActive && !hadMultiSessionPlayback && brush?.deactivate) brush.deactivate();
     this.simulation.starting = false;
     this.simulation.running = false;
@@ -13562,6 +13595,7 @@ export class App {
     this._resetStrokeWaveState();
 
     this._recordColor(this.primaryEl.value);
+    this.recordLastChangeMarker('Stroke');
 
     // Start taper if configured
     if (p.taperLength > 0) {
@@ -13851,6 +13885,7 @@ export class App {
     el.style.width = this.W + 'px';
     el.style.height = this.H + 'px';
     el.style.transform = `translate(${baseX + this.viewPanX}px, ${baseY + this.viewPanY}px) translate(${centerX}px, ${centerY}px) rotate(${deg}deg) scale(${this.viewZoom}) scaleX(${flipScale}) translate(${-centerX}px, ${-centerY}px)`;
+    this._renderViewBookmarksPanel?.();
   }
 
   resetView() {
@@ -15074,6 +15109,7 @@ export class App {
     layer.ctx.restore();
     layer.dirty = true;
     this.compositeAllLayers();
+    this.recordLastChangeMarker('Fill');
     this.showToast('🪣 Filled');
   }
 
@@ -15718,6 +15754,7 @@ export class App {
         l.ctx.drawImage(img, 0, 0, img.width, img.height, x, y, w, h);
         l.dirty = true;
         this.compositeAllLayers();
+        this.recordLastChangeMarker('Paste');
         URL.revokeObjectURL(url);
         this.showToast('📋 Pasted at original location');
         return;
@@ -15736,6 +15773,7 @@ export class App {
           l.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           l.dirty = true;
           this.compositeAllLayers();
+          this.recordLastChangeMarker('Paste');
           URL.revokeObjectURL(url);
           this.showToast('📋 Pasted into selection');
           return;
@@ -15759,6 +15797,7 @@ export class App {
       l.ctx.drawImage(img, 0, 0, img.width, img.height, destX, destY, destW, destH);
       l.dirty = true;
       this.compositeAllLayers();
+      this.recordLastChangeMarker('Paste');
       URL.revokeObjectURL(url);
       this.showToast('📋 Pasted');
     };
@@ -15825,6 +15864,7 @@ export class App {
       this.selectionMgr.clearPixels(l.ctx, this.DPR);
       l.dirty = true;
       this.compositeAllLayers();
+      this.recordLastChangeMarker('Cut');
       this.showToast('✂ Cut');
     } catch { this.showToast('⚠ Cut failed'); }
   }
@@ -15881,6 +15921,8 @@ export class App {
     controls._colorHistory = this._colorHistory;
     controls._tilingMode = this.tilingMode;
     controls._view = this._captureViewState();
+    controls._viewBookmarks = _deepClone(this.viewBookmarks);
+    controls._lastChangeMarker = _deepClone(this.lastChangeMarker);
     if (this._docSized) {
       controls._docSized = true;
       controls._docW = this._docW;
@@ -15919,18 +15961,233 @@ export class App {
     };
   }
 
-  _applyViewState(view) {
-    if (!view || typeof view !== 'object' || Array.isArray(view)) return false;
+  _normalizeViewState(view) {
+    if (!view || typeof view !== 'object' || Array.isArray(view)) return null;
     const zoom = Number(view.zoom);
     const panX = Number(view.panX);
     const panY = Number(view.panY);
     const rotation = Number(view.rotation);
-    this.viewZoom = Number.isFinite(zoom) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) : 1;
-    this.viewPanX = Number.isFinite(panX) ? panX : 0;
-    this.viewPanY = Number.isFinite(panY) ? panY : 0;
-    this.viewRotation = Number.isFinite(rotation) ? rotation : 0;
-    this.viewFlipped = !!view.flipped;
+    return {
+      zoom: Number.isFinite(zoom) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) : 1,
+      panX: Number.isFinite(panX) ? panX : 0,
+      panY: Number.isFinite(panY) ? panY : 0,
+      rotation: Number.isFinite(rotation) ? rotation : 0,
+      flipped: !!view.flipped,
+    };
+  }
+
+  _sanitizeBookmarkName(name, fallback = VIEW_BOOKMARK_DEFAULT_NAME) {
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    return trimmed ? trimmed.slice(0, MAX_VIEW_BOOKMARK_NAME_LENGTH) : fallback;
+  }
+
+  _createViewNavigationSnapshot() {
+    const activeLayer = this.getActiveLayer();
+    return {
+      view: this._captureViewState(),
+      layerId: activeLayer?.id || null,
+      layerName: typeof activeLayer?.name === 'string' ? activeLayer.name.slice(0, MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH) : (activeLayer?.isBackground ? 'Background' : ''),
+      activeLayerIndex: this.getActiveLayerIndex(),
+    };
+  }
+
+  _createBookmarkId(prefix = 'view') {
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  _createStableNavigationId(prefix, raw, index = 0) {
+    const parts = [
+      prefix,
+      typeof raw?.id === 'string' ? raw.id : '',
+      typeof raw?.name === 'string' ? raw.name : '',
+      typeof raw?.label === 'string' ? raw.label : '',
+      typeof raw?.createdAt === 'string' ? raw.createdAt : '',
+      typeof raw?.updatedAt === 'string' ? raw.updatedAt : '',
+      typeof raw?.timestamp === 'string' ? raw.timestamp : '',
+      Number.isFinite(Number(raw?.view?.zoom)) ? Number(raw.view.zoom).toFixed(3) : '',
+      Number.isFinite(Number(raw?.view?.panX)) ? Math.round(Number(raw.view.panX)) : '',
+      Number.isFinite(Number(raw?.view?.panY)) ? Math.round(Number(raw.view.panY)) : '',
+      Number.isFinite(Number(raw?.view?.rotation)) ? Number(raw.view.rotation).toFixed(3) : '',
+      raw?.view?.flipped ? 'flip' : '',
+      index,
+    ].join('-').toLowerCase();
+    const slug = parts.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72);
+    return slug ? `${prefix}-${slug}` : `${prefix}-${index + 1}`;
+  }
+
+  _sanitizeViewBookmarkEntry(raw, index = 0) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const view = this._normalizeViewState(raw.view);
+    if (!view) return null;
+    const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString();
+    return {
+      id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : this._createStableNavigationId('view', raw, index),
+      name: this._sanitizeBookmarkName(raw.name, `${VIEW_BOOKMARK_DEFAULT_NAME} ${index + 1}`),
+      createdAt,
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : createdAt,
+      view,
+      layerId: typeof raw.layerId === 'string' && raw.layerId.trim() ? raw.layerId.trim() : null,
+      layerName: typeof raw.layerName === 'string' ? raw.layerName.slice(0, MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH) : '',
+      activeLayerIndex: Number.isFinite(Number(raw.activeLayerIndex)) ? Math.max(0, Math.round(Number(raw.activeLayerIndex))) : 0,
+    };
+  }
+
+  _sanitizeViewBookmarks(bookmarks) {
+    if (!Array.isArray(bookmarks)) return [];
+    const seen = new Set();
+    const sanitized = [];
+    bookmarks.forEach((bookmark, index) => {
+      const next = this._sanitizeViewBookmarkEntry(bookmark, index);
+      if (!next || seen.has(next.id)) return;
+      seen.add(next.id);
+      sanitized.push(next);
+    });
+    return sanitized.slice(0, MAX_VIEW_BOOKMARKS);
+  }
+
+  _sanitizeLastChangeMarker(marker) {
+    if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null;
+    const view = this._normalizeViewState(marker.view);
+    if (!view) return null;
+    return {
+      id: typeof marker.id === 'string' && marker.id.trim() ? marker.id.trim() : this._createStableNavigationId('change', marker),
+      label: this._sanitizeBookmarkName(marker.label, 'Last change'),
+      timestamp: typeof marker.timestamp === 'string' ? marker.timestamp : new Date().toISOString(),
+      view,
+      layerId: typeof marker.layerId === 'string' && marker.layerId.trim() ? marker.layerId.trim() : null,
+      layerName: typeof marker.layerName === 'string' ? marker.layerName.slice(0, MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH) : '',
+      activeLayerIndex: Number.isFinite(Number(marker.activeLayerIndex)) ? Math.max(0, Math.round(Number(marker.activeLayerIndex))) : 0,
+    };
+  }
+
+  _applyViewState(view) {
+    const normalized = this._normalizeViewState(view);
+    if (!normalized) return false;
+    this.viewZoom = normalized.zoom;
+    this.viewPanX = normalized.panX;
+    this.viewPanY = normalized.panY;
+    this.viewRotation = normalized.rotation;
+    this.viewFlipped = normalized.flipped;
     this._applyViewTransform();
+    return true;
+  }
+
+  saveCurrentViewBookmark({ name, overwriteId = null } = {}) {
+    const snapshot = this._createViewNavigationSnapshot();
+    const timestamp = new Date().toISOString();
+    const overwriteIndex = overwriteId
+      ? this.viewBookmarks.findIndex(bookmark => bookmark.id === overwriteId)
+      : -1;
+    if (overwriteIndex >= 0) {
+      const existing = this.viewBookmarks[overwriteIndex];
+      this.viewBookmarks[overwriteIndex] = {
+        ...existing,
+        ...snapshot,
+        name: this._sanitizeBookmarkName(name, existing.name),
+        updatedAt: timestamp,
+      };
+      this.viewBookmarks = [...this.viewBookmarks];
+    } else {
+      this.viewBookmarks = [
+        {
+          id: this._createBookmarkId('view'),
+          name: this._sanitizeBookmarkName(name, this.getSuggestedViewBookmarkName()),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ...snapshot,
+        },
+        ...this.viewBookmarks,
+      ].slice(0, MAX_VIEW_BOOKMARKS);
+    }
+    this._renderViewBookmarksPanel?.();
+    this.saveSession();
+    this.showToast(overwriteIndex >= 0 ? '🔖 Bookmark updated' : '🔖 Bookmark saved');
+    return true;
+  }
+
+  renameViewBookmark(id, name) {
+    const index = this.viewBookmarks.findIndex(bookmark => bookmark.id === id);
+    if (index < 0) return false;
+    const nextName = this._sanitizeBookmarkName(name, this.viewBookmarks[index].name);
+    this.viewBookmarks[index] = {
+      ...this.viewBookmarks[index],
+      name: nextName,
+      updatedAt: new Date().toISOString(),
+    };
+    this.viewBookmarks = [...this.viewBookmarks];
+    this._renderViewBookmarksPanel?.();
+    this.saveSession();
+    this.showToast(`✏️ ${nextName}`);
+    return true;
+  }
+
+  deleteViewBookmark(id) {
+    const bookmark = this.viewBookmarks.find(entry => entry.id === id);
+    if (!bookmark) return false;
+    this.viewBookmarks = this.viewBookmarks.filter(entry => entry.id !== id);
+    this._renderViewBookmarksPanel?.();
+    this.saveSession();
+    this.showToast(`🗑 ${bookmark.name}`);
+    return true;
+  }
+
+  _applyNavigationSnapshot(snapshot, toastLabel) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const targetIndex = snapshot.layerId
+      ? this.layers.findIndex(layer => layer.id === snapshot.layerId && !layer.isBackground)
+      : -1;
+    if (targetIndex >= 0) {
+      this.setActiveLayer(targetIndex);
+    } else if (Number.isFinite(Number(snapshot.activeLayerIndex))) {
+      this.setActiveLayer(Math.round(Number(snapshot.activeLayerIndex)));
+    }
+    const applied = this._applyViewState(snapshot.view);
+    syncUI(this);
+    this._renderViewBookmarksPanel?.();
+    this.saveSession();
+    if (toastLabel) this.showToast(toastLabel);
+    return applied;
+  }
+
+  jumpToViewBookmark(id) {
+    const bookmark = this.viewBookmarks.find(entry => entry.id === id);
+    if (!bookmark) return false;
+    return this._applyNavigationSnapshot(bookmark, `🔖 ${bookmark.name}`);
+  }
+
+  jumpToLastChange() {
+    if (!this.lastChangeMarker) {
+      this.showToast('⚠ No recent change recorded');
+      return false;
+    }
+    const label = this.lastChangeMarker.label ? `↩ ${this.lastChangeMarker.label}` : '↩ Last change';
+    return this._applyNavigationSnapshot(this.lastChangeMarker, label);
+  }
+
+  getActiveViewBookmarkId() {
+    const current = this._captureViewState();
+    const activeLayerId = this.getActiveLayer()?.id || null;
+    const match = this.viewBookmarks.find(bookmark => {
+      if (!bookmark?.view) return false;
+      return Math.abs((bookmark.view.zoom || 1) - (current.zoom || 1)) <= VIEW_BOOKMARK_ACTIVE_ZOOM_EPSILON
+        && Math.abs((bookmark.view.panX || 0) - (current.panX || 0)) <= VIEW_BOOKMARK_ACTIVE_PAN_EPSILON
+        && Math.abs((bookmark.view.panY || 0) - (current.panY || 0)) <= VIEW_BOOKMARK_ACTIVE_PAN_EPSILON
+        && Math.abs((bookmark.view.rotation || 0) - (current.rotation || 0)) <= VIEW_BOOKMARK_ACTIVE_ROTATION_EPSILON
+        && !!bookmark.view.flipped === !!current.flipped
+        && (!bookmark.layerId || bookmark.layerId === activeLayerId);
+    });
+    return match?.id || null;
+  }
+
+  recordLastChangeMarker(label = 'Last change', { persistSession = true } = {}) {
+    this.lastChangeMarker = this._sanitizeLastChangeMarker({
+      id: this._createBookmarkId('change'),
+      label,
+      timestamp: new Date().toISOString(),
+      ...this._createViewNavigationSnapshot(),
+    });
+    this._renderViewBookmarksPanel?.();
+    if (persistSession) this.saveSession();
     return true;
   }
 
@@ -16208,6 +16465,16 @@ export class App {
         this._syncTilingUI();
         continue;
       }
+      if (id === '_viewBookmarks') {
+        this.viewBookmarks = this._sanitizeViewBookmarks(val);
+        this._renderViewBookmarksPanel?.();
+        continue;
+      }
+      if (id === '_lastChangeMarker') {
+        this.lastChangeMarker = this._sanitizeLastChangeMarker(val);
+        this._renderViewBookmarksPanel?.();
+        continue;
+      }
       if (id === '_simulation') {
         if (val?.brushData) this.simulation.brushData = val.brushData;
         if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
@@ -16265,9 +16532,12 @@ export class App {
 
   async _applyFactoryDefaults() {
     await this._loadDefaultStampImage();
+    this.viewBookmarks = [];
+    this.lastChangeMarker = null;
     this._applyControlState(FACTORY_DEFAULTS);
     this._paramsDirty = true;
     syncUI(this);
+    this._renderViewBookmarksPanel?.();
     this._normalizeSimulationData();
     this._ensureSimulationSpawns();
     this._normalizeMotionPathState();
@@ -16296,6 +16566,8 @@ export class App {
       } else {
         await this._loadDefaultStampImage();
       }
+      this.viewBookmarks = [];
+      this.lastChangeMarker = null;
       this._applyControlState(controls);
       if (!hasSavedStampImageState && this.activeBrush === 'boid') {
         const stampImageToggle = document.getElementById('stampImageEnabled');
