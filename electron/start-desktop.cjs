@@ -23,6 +23,25 @@ function getPlatformBinaryPath(platform = process.platform) {
   }
 }
 
+function extractElectronZip(zipPath, distDir) {
+  if (process.platform === 'win32') {
+    execFileSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${distDir.replace(/'/g, "''")}' -Force`
+    ], { stdio: 'inherit' });
+    return;
+  }
+
+  try {
+    execFileSync('unzip', ['-q', zipPath, '-d', distDir], { stdio: 'inherit' });
+    return;
+  } catch (error) {
+    execFileSync('python3', ['-m', 'zipfile', '-e', zipPath, distDir], { stdio: 'inherit' });
+  }
+}
+
 async function ensureElectronBinary() {
   const executableRelativePath = getPlatformBinaryPath();
   const distDir = path.join(electronPackageDir, 'dist');
@@ -43,7 +62,7 @@ async function ensureElectronBinary() {
 
   await fs.promises.rm(distDir, { recursive: true, force: true });
   await fs.promises.mkdir(distDir, { recursive: true });
-  execFileSync('unzip', ['-q', zipPath, '-d', distDir]);
+  extractElectronZip(zipPath, distDir);
   await fs.promises.writeFile(pathFile, executableRelativePath, 'utf8');
   await fs.promises.chmod(executablePath, 0o755).catch(() => {});
 
@@ -55,10 +74,16 @@ async function ensureElectronBinary() {
 }
 
 async function main() {
-  const electronBinary = await ensureElectronBinary();
-  const child = spawn(electronBinary, [appRoot, ...process.argv.slice(2)], {
+  await ensureElectronBinary();
+  const electronCli = path.join(electronPackageDir, 'cli.js');
+  const child = spawn(process.execPath, [electronCli, appRoot, ...process.argv.slice(2)], {
     stdio: 'inherit',
     env: process.env
+  });
+
+  child.on('error', (error) => {
+    console.error(error);
+    process.exit(1);
   });
 
   child.on('exit', (code, signal) => {

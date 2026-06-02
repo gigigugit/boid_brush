@@ -51,7 +51,9 @@ async function shutdownStaticServer() {
   if (!staticServer) return;
   const serverToClose = staticServer;
   staticServer = null;
-  await serverToClose.close().catch(() => {});
+  await serverToClose.close().catch((error) => {
+    console.error('Failed to close Electron static server:', error);
+  });
 }
 
 app.whenReady().then(async () => {
