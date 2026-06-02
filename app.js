@@ -20,6 +20,8 @@ const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 2;
 const MAX_VIEW_BOOKMARKS = 48;
 const VIEW_BOOKMARK_DEFAULT_NAME = 'View';
+const MAX_VIEW_BOOKMARK_NAME_LENGTH = 80;
+const MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH = 120;
 const VIEW_BOOKMARK_ACTIVE_ZOOM_EPSILON = 0.025;
 const VIEW_BOOKMARK_ACTIVE_PAN_EPSILON = 48;
 const VIEW_BOOKMARK_ACTIVE_ROTATION_EPSILON = Math.PI / 90;
@@ -15976,7 +15978,7 @@ export class App {
 
   _sanitizeBookmarkName(name, fallback = VIEW_BOOKMARK_DEFAULT_NAME) {
     const trimmed = typeof name === 'string' ? name.trim() : '';
-    return trimmed ? trimmed.slice(0, 80) : fallback;
+    return trimmed ? trimmed.slice(0, MAX_VIEW_BOOKMARK_NAME_LENGTH) : fallback;
   }
 
   _createViewNavigationSnapshot() {
@@ -15984,7 +15986,7 @@ export class App {
     return {
       view: this._captureViewState(),
       layerId: activeLayer?.id || null,
-      layerName: typeof activeLayer?.name === 'string' ? activeLayer.name.slice(0, 120) : (activeLayer?.isBackground ? 'Background' : ''),
+      layerName: typeof activeLayer?.name === 'string' ? activeLayer.name.slice(0, MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH) : (activeLayer?.isBackground ? 'Background' : ''),
       activeLayerIndex: this.getActiveLayerIndex(),
     };
   }
@@ -15997,14 +15999,15 @@ export class App {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const view = this._normalizeViewState(raw.view);
     if (!view) return null;
+    const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString();
     return {
       id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `${VIEW_BOOKMARK_DEFAULT_NAME.toLowerCase()}-${index + 1}`,
       name: this._sanitizeBookmarkName(raw.name, `${VIEW_BOOKMARK_DEFAULT_NAME} ${index + 1}`),
-      createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
-      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : (typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString()),
+      createdAt,
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : createdAt,
       view,
       layerId: typeof raw.layerId === 'string' && raw.layerId.trim() ? raw.layerId.trim() : null,
-      layerName: typeof raw.layerName === 'string' ? raw.layerName.slice(0, 120) : '',
+      layerName: typeof raw.layerName === 'string' ? raw.layerName.slice(0, MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH) : '',
       activeLayerIndex: Number.isFinite(Number(raw.activeLayerIndex)) ? Math.max(0, Math.round(Number(raw.activeLayerIndex))) : 0,
     };
   }
@@ -16032,7 +16035,7 @@ export class App {
       timestamp: typeof marker.timestamp === 'string' ? marker.timestamp : new Date().toISOString(),
       view,
       layerId: typeof marker.layerId === 'string' && marker.layerId.trim() ? marker.layerId.trim() : null,
-      layerName: typeof marker.layerName === 'string' ? marker.layerName.slice(0, 120) : '',
+      layerName: typeof marker.layerName === 'string' ? marker.layerName.slice(0, MAX_VIEW_BOOKMARK_LAYER_NAME_LENGTH) : '',
       activeLayerIndex: Number.isFinite(Number(marker.activeLayerIndex)) ? Math.max(0, Math.round(Number(marker.activeLayerIndex))) : 0,
     };
   }
@@ -16156,7 +16159,7 @@ export class App {
     return match?.id || null;
   }
 
-  recordLastChangeMarker(label = 'Last change', { save = true } = {}) {
+  recordLastChangeMarker(label = 'Last change', { persistSession = true } = {}) {
     this.lastChangeMarker = this._sanitizeLastChangeMarker({
       id: this._createBookmarkId('change'),
       label,
@@ -16164,7 +16167,7 @@ export class App {
       ...this._createViewNavigationSnapshot(),
     });
     this._renderViewBookmarksPanel?.();
-    if (save) this.saveSession();
+    if (persistSession) this.saveSession();
     return true;
   }
 

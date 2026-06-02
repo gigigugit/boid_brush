@@ -1215,7 +1215,7 @@ export function buildLayersPanel(app) {
   document.getElementById('btnMergeDown')?.addEventListener('click', () => { app.mergeDown(); _refreshLayers(app); });
   document.getElementById('btnFlatten')?.addEventListener('click', () => { app.flattenAll(); _refreshLayers(app); });
   document.getElementById('btnSaveViewBookmark')?.addEventListener('click', () => {
-    const name = prompt('Bookmark name:', app.getSuggestedViewBookmarkName?.() || `View ${((app.viewBookmarks?.length || 0) + 1)}`);
+    const name = prompt('Bookmark name:', app.getSuggestedViewBookmarkName?.() || 'View 1');
     if (name === null) return;
     app.saveCurrentViewBookmark?.({ name });
   });
