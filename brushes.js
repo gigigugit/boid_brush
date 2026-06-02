@@ -1873,7 +1873,7 @@ export class BoidBrush {
    *  shape is visible before the pencil touches down. */
   onHoverFrame(elapsed) {
     if (!this._ready || !this._hoverSpawned) return;
-    const p = this.app.getP();
+    const p = this._spawnOverrides ? { ...this.app.getP(), ...this._spawnOverrides } : this.app.getP();
     const guideState = _collectSimulationGuides(this, p);
     _syncSimulationGuidesToGpu(this, guideState);
     // Write params with the current hover leader position so boids follow
@@ -1893,35 +1893,36 @@ export class BoidBrush {
       taperLength: p.taperLength || 0,
     });
     if (this._gpuPreviewActive) this._clearGpuPreview({ composite: true });
+    const selectedEntry = this.app._getSelectedSimulationEntry?.();
+    const selectedSpawn = selectedEntry?.kind === 'spawn' ? selectedEntry.target : null;
+    const simSpawns = this.app._ensureSimulationSpawns('boid');
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
-      ? (this.app._ensureSimulationSpawns('boid').find(spawn => spawn.enabled !== false) || this.app._ensureSimulationSpawns('boid')[0])
+      ? ((selectedSpawn && selectedSpawn.enabled !== false) ? selectedSpawn : (simSpawns.find(spawn => spawn.enabled !== false) || simSpawns[0]))
       : null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
-    const strokeP = spawnConfig
-      ? {
-          ...p,
-          count: spawnConfig.count,
-          color: spawnConfig.color,
-          stampOpacity: spawnConfig.opacity,
-          spawnShape: spawnConfig.shape,
-          spawnAngle: spawnConfig.angle,
-          spawnJitter: spawnConfig.jitter,
-          spawnRadius: spawnConfig.radius,
-          spawnMask: spawnConfig.mask,
-          spawnDistribution: spawnConfig.distribution,
-          spawnNoiseScale: spawnConfig.noiseScale,
-          stampSize: spawnConfig.stampSize,
-          stampSeparation: spawnConfig.stampSeparation,
-          trailFlow: spawnConfig.trailFlow,
-          smudge: spawnConfig.smudge,
-          hueVar: spawnConfig.hueVar,
-          satVar: spawnConfig.satVar,
-          litVar: spawnConfig.litVar,
-          sizeVar: spawnConfig.sizeVar,
-          opacityVar: spawnConfig.opacityVar,
-          speedVar: spawnConfig.speedVar,
-        }
-      : p;
+    this._spawnOverrides = spawnConfig ? {
+      count: spawnConfig.count,
+      color: spawnConfig.color,
+      stampOpacity: spawnConfig.opacity,
+      spawnShape: spawnConfig.shape,
+      spawnAngle: spawnConfig.angle,
+      spawnJitter: spawnConfig.jitter,
+      spawnRadius: spawnConfig.radius,
+      spawnMask: spawnConfig.mask,
+      spawnDistribution: spawnConfig.distribution,
+      spawnNoiseScale: spawnConfig.noiseScale,
+      stampSize: spawnConfig.stampSize,
+      stampSeparation: spawnConfig.stampSeparation,
+      trailFlow: spawnConfig.trailFlow,
+      smudge: spawnConfig.smudge,
+      hueVar: spawnConfig.hueVar,
+      satVar: spawnConfig.satVar,
+      litVar: spawnConfig.litVar,
+      sizeVar: spawnConfig.sizeVar,
+      opacityVar: spawnConfig.opacityVar,
+      speedVar: spawnConfig.speedVar,
+    } : null;
+    const strokeP = this._spawnOverrides ? { ...p, ...this._spawnOverrides } : p;
 
     this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
     // Touch-down ends any prior hover preview; the stroke now owns agent motion.
@@ -2048,6 +2049,7 @@ export class BoidBrush {
     const p = this.app.getP();
     this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
     this._hoverSpawned = false;
+    this._spawnOverrides = null;
   }
 
   configureSimulation(data, p) {
@@ -2102,7 +2104,7 @@ export class BoidBrush {
 
   onFrame(elapsed) {
     if (!this._ready) return;
-    const p = this.app.getP();
+    const p = this._spawnOverrides ? { ...this.app.getP(), ...this._spawnOverrides } : this.app.getP();
     const simP = this._applySimVars(p);
     const app = this.app;
 

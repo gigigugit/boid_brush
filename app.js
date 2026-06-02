@@ -7,7 +7,7 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -48,6 +48,7 @@ const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'perfTelemetryEnabled',
   'perfWakeLockEnabled',
   'showSimulationOverlayControls',
+  'showSimulationSelectionOverlay',
   'simSidebarSessionSelect',
 ]);
 const FACTORY_DEFAULTS = Object.freeze({
@@ -242,9 +243,9 @@ const FACTORY_DEFAULTS = Object.freeze({
   pressureSize: true,
   pressureOpacity: true,
   flatStroke: false,
-  stampImageEnabled: false,
+  stampImageEnabled: true,
   stampImageTint: true,
-  canvasTextureEnabled: true,
+  canvasTextureEnabled: false,
   canvasTextureInvert: false,
   symmetryEnabled: false,
   symmetryMirror: false,
@@ -261,6 +262,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   perfTelemetryEnabled: false,
   perfWakeLockEnabled: false,
   showSimulationOverlayControls: false,
+  showSimulationSelectionOverlay: true,
   spawnShape: 'circle',
   boidHoverAction: 'spawn',
   boidTouchAction: 'spawn',
@@ -272,6 +274,10 @@ const FACTORY_DEFAULTS = Object.freeze({
   sensingMode: 'avoid',
   sensingChannel: 'darkness',
   sensingSource: 'below',
+  bgColor: '#313131',
+  _docSized: true,
+  _docW: 1024,
+  _docH: 1024,
   _primaryColor: '#1a1a1a',
   _secondaryColor: '#ffffff',
   _activeBrush: 'boid',
@@ -282,6 +288,7 @@ const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
 const WHEEL_ROTATION_DEG = 2;
+const WORKSPACE_MARGIN_PX = 96;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
@@ -1684,6 +1691,7 @@ export class App {
     this.compositeCanvas = document.getElementById('compositeDisplay');
     this.liveCanvas = document.getElementById('liveCanvas');
     this.interactionCanvas = document.getElementById('interactionCanvas');
+    this.canvasFrame = document.getElementById('canvasFrame');
     this.statusEl = document.getElementById('status');
     this.toastEl = document.getElementById('toast');
 
@@ -1692,6 +1700,7 @@ export class App {
     this.DPR = 1;
     this.W = 0;
     this.H = 0;
+    this._workspaceMargin = WORKSPACE_MARGIN_PX;
 
     // Layers
     this.layers = [];
@@ -1960,6 +1969,7 @@ export class App {
     buildFavoritesPanel(this);
     buildSettingsPanel(this);
     buildLayersPanel(this);
+    buildGuidesPanel(this);
     buildSimulationControlsPanel(this);
     initEdgeSliders(this);
     this._initPerformanceTelemetry();
@@ -2071,21 +2081,31 @@ export class App {
   async resizeDocument(newW, newH, bgColor) {
     newW = Math.max(1, Math.min(8192, Math.round(newW)));
     newH = Math.max(1, Math.min(8192, Math.round(newH)));
+    const oldDocW = Math.max(1, this._docW || this.W || newW);
+    const oldDocH = Math.max(1, this._docH || this.H || newH);
+    const oldWorkspaceW = Math.max(1, this.W || oldDocW);
+    const oldWorkspaceH = Math.max(1, this.H || oldDocH);
+    const oldOffsetX = Math.max(0, Math.round((oldWorkspaceW - oldDocW) / 2));
+    const oldOffsetY = Math.max(0, Math.round((oldWorkspaceH - oldDocH) / 2));
+    const margin = Math.max(0, Math.round(this._workspaceMargin || 0));
+    const workspaceW = newW + (margin * 2);
+    const workspaceH = newH + (margin * 2);
 
     this._docSized = true;
     this._docW = newW;
     this._docH = newH;
 
     this.DPR = 1;
-    this.W = newW;
-    this.H = newH;
+    this.W = workspaceW;
+    this.H = workspaceH;
+    this.sharedMotionSim?.setDisplaySize?.(workspaceW, workspaceH);
 
     // Resize display canvases
     for (const c of [this.compositeCanvas, this.liveCanvas, this.interactionCanvas]) {
-      c.width = newW;
-      c.height = newH;
-      c.style.width = newW + 'px';
-      c.style.height = newH + 'px';
+      c.width = workspaceW;
+      c.height = workspaceH;
+      c.style.width = workspaceW + 'px';
+      c.style.height = workspaceH + 'px';
     }
     this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true });
     this.lctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2096,15 +2116,15 @@ export class App {
       tmp.width = l.canvas.width;
       tmp.height = l.canvas.height;
       tmp.getContext('2d').drawImage(l.canvas, 0, 0);
-      l.canvas.width = newW;
-      l.canvas.height = newH;
+      l.canvas.width = workspaceW;
+      l.canvas.height = workspaceH;
       l.ctx = l.canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
-      l.ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
+      l.ctx.drawImage(tmp, oldOffsetX, oldOffsetY, oldDocW, oldDocH, margin, margin, newW, newH);
       l.dirty = true;
       this.compositor?.deleteLayerTex(l);
     }
 
-    this.compositor?.resize(newW, newH, 1);
+    this.compositor?.resize(workspaceW, workspaceH, 1);
 
     // Background
     if (bgColor) {
@@ -2118,9 +2138,9 @@ export class App {
       tmp.width = this._heightCanvas.width;
       tmp.height = this._heightCanvas.height;
       tmp.getContext('2d').drawImage(this._heightCanvas, 0, 0);
-      this._heightCanvas.width = newW;
-      this._heightCanvas.height = newH;
-      this._heightCtx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, newW, newH);
+      this._heightCanvas.width = workspaceW;
+      this._heightCanvas.height = workspaceH;
+      this._heightCtx.drawImage(tmp, oldOffsetX, oldOffsetY, oldDocW, oldDocH, margin, margin, newW, newH);
     }
 
     // Reinit WASM sims
@@ -2133,7 +2153,7 @@ export class App {
 
     // Zoom to fit
     const viewRect = document.getElementById('canvasArea').getBoundingClientRect();
-    const fitZoom = Math.min(viewRect.width / newW, viewRect.height / newH, 1) * 0.95;
+    const fitZoom = Math.min(viewRect.width / workspaceW, viewRect.height / workspaceH, 1) * 0.95;
     this.viewZoom = fitZoom;
     this.viewPanX = 0;
     this.viewPanY = 0;
@@ -2152,10 +2172,12 @@ export class App {
     const wEl = document.getElementById('canvasSizeW');
     const hEl = document.getElementById('canvasSizeH');
     const bgEl = document.getElementById('canvasSizeBg');
-    if (wEl) wEl.value = this.W;
-    if (hEl) hEl.value = this.H;
-    if (bgEl) bgEl.value = this.bgColorEl?.value || '#ffffff';
-    this._syncCanvasSizeColorTrigger(bgEl?.value || '#ffffff');
+    const presetEl = document.getElementById('canvasSizePreset');
+    if (wEl) wEl.value = this._docW || this.W;
+    if (hEl) hEl.value = this._docH || this.H;
+    if (bgEl) bgEl.value = this.bgColorEl?.value || '#313131';
+    if (presetEl) presetEl.value = `${this._docW || this.W}x${this._docH || this.H}`;
+    this._syncCanvasSizeColorTrigger(bgEl?.value || '#313131');
     modal.classList.add('open');
   }
 
@@ -2173,7 +2195,241 @@ export class App {
       status: document.getElementById('workspaceJsonStatus'),
       meta: document.getElementById('workspaceJsonMeta'),
       documentName: document.getElementById('workspaceJsonDocumentName'),
+      docSelect: document.getElementById('workspaceJsonDocumentSelect'),
+      sessionSelect: document.getElementById('workspaceJsonSessionSelect'),
+      sessionSelectWrap: document.getElementById('workspaceJsonSessionSelectWrap'),
+      docHint: document.getElementById('workspaceJsonDocHint'),
     };
+  }
+
+  _getWorkspaceJsonDocumentSpecs() {
+    return [
+      {
+        key: 'workspace',
+        group: 'Workspace',
+        label: 'Workspace Bundle',
+        description: 'Full workspace snapshot with session controls, presets, autosave, and document state.',
+        kind: 'bundle',
+      },
+      { key: 'brush-boid', group: 'Brush Settings', label: 'Brush: Boid', description: 'Boid brush controls, including shared boid-specific stamp and motion settings.', kind: 'brush', brush: 'boid' },
+      { key: 'brush-ant', group: 'Brush Settings', label: 'Brush: Ant', description: 'Ant brush controls and the shared brush settings it uses.', kind: 'brush', brush: 'ant' },
+      { key: 'brush-bristle', group: 'Brush Settings', label: 'Brush: Bristle', description: 'Bristle brush geometry, physics, and visual tuning.', kind: 'brush', brush: 'bristle' },
+      { key: 'brush-simple', group: 'Brush Settings', label: 'Brush: Simple', description: 'Simple brush and other shared drawing-mode controls.', kind: 'brush', brush: 'simple' },
+      { key: 'brush-eraser', group: 'Brush Settings', label: 'Brush: Eraser', description: 'Eraser brush settings and any shared stamp controls it reuses.', kind: 'brush', brush: 'eraser' },
+      { key: 'brush-fluid', group: 'Brush Settings', label: 'Brush: Fluid', description: 'Fluid brush injection, flow, and render controls.', kind: 'brush', brush: 'fluid' },
+      { key: 'brush-fluid3d', group: 'Brush Settings', label: 'Brush: 3D Fluid', description: '3D fluid brush emitter, dynamics, and rendering controls.', kind: 'brush', brush: 'fluid3d' },
+      { key: 'brush-motionPath', group: 'Brush Settings', label: 'Brush: Motion Path', description: 'Motion-path brush graph and runtime controls.', kind: 'brush', brush: 'motionPath' },
+      {
+        key: 'simulation-global',
+        group: 'Simulation',
+        label: 'Simulation: Global',
+        description: 'Global simulation runtime state shared by all sessions and brushes.',
+        kind: 'simulation-global',
+      },
+      {
+        key: 'simulation-session',
+        group: 'Simulation',
+        label: 'Simulation: Session',
+        description: 'The currently selected simulation session, or the live draft when no session is selected.',
+        kind: 'simulation-session',
+        supportsSessionSelect: true,
+      },
+      {
+        key: 'canvas',
+        group: 'Canvas',
+        label: 'Canvas Parameters',
+        description: 'Document size, canvas view, and other canvas-surface parameters.',
+        kind: 'canvas',
+      },
+      {
+        key: 'other',
+        group: 'Other',
+        label: 'Other Settings',
+        description: 'Remaining workspace settings, app options, and uncategorized controls.',
+        kind: 'other',
+      },
+    ];
+  }
+
+  _getWorkspaceJsonDocumentSpec(docKey) {
+    return this._getWorkspaceJsonDocumentSpecs().find(spec => spec.key === docKey) || this._getWorkspaceJsonDocumentSpecs()[0];
+  }
+
+  _workspaceJsonControlBrushTokens(controlId) {
+    const element = document.getElementById(controlId);
+    if (!element) return [];
+    const tokens = new Set();
+    let current = element;
+    while (current) {
+      const attr = current.getAttribute?.('data-brushes');
+      if (attr) {
+        for (const token of attr.split(/\s+/).map(part => part.trim()).filter(Boolean)) tokens.add(token);
+      }
+      current = current.parentElement;
+    }
+    return [...tokens];
+  }
+
+  _workspaceJsonControlSectionId(controlId) {
+    const element = document.getElementById(controlId);
+    if (!element) return '';
+    const sectionBody = element.closest('.section-body');
+    const sectionHeader = sectionBody?.previousElementSibling;
+    return sectionHeader?.dataset?.section || '';
+  }
+
+  _workspaceJsonBrushSectionIds(brush) {
+    const shared = ['brushScale', 'fill', 'stamp', 'stampImage', 'canvasTexture', 'symmetry', 'taper', 'trailBlur', 'kmMix', 'impasto', 'pencilHover'];
+    const brushSections = {
+      boid: ['spawn', 'swarm', 'forces', 'quorum', 'variance', 'motion', 'leaders', 'visual', 'sensing', 'antPheromone'],
+      ant: ['spawn', 'swarm', 'forces', 'variance', 'motion', 'visual', 'sensing', 'antPheromone'],
+      bristle: ['bristleShape', 'bristlePhysics', 'bristleVariance', 'bristleVisual'],
+      simple: [],
+      eraser: [],
+      fluid: ['fluidBrush', 'fluidForces', 'fluidMidrange', 'fluidFlow', 'fluidSettling', 'fluidRendering'],
+      fluid3d: ['fluid3dBrush', 'fluid3dDynamics', 'fluid3dInteraction', 'fluid3dRendering'],
+      motionPath: ['motionPathGraph', 'motionPathRuntime'],
+    };
+    return new Set([...shared, ...(brushSections[brush] || [])]);
+  }
+
+  _workspaceJsonControlBelongsToBrush(controlId, brush) {
+    if (!brush) return false;
+    const tokens = this._workspaceJsonControlBrushTokens(controlId);
+    if (tokens.includes(brush)) return true;
+    const sectionId = this._workspaceJsonControlSectionId(controlId);
+    return this._workspaceJsonBrushSectionIds(brush).has(sectionId);
+  }
+
+  _workspaceJsonCanvasKeys() {
+    return new Set(['bgColor', '_docSized', '_docW', '_docH', '_view', '_tilingMode', '_canvasTextureState', '_stampImageState']);
+  }
+
+  _getWorkspaceJsonSessionSelectValue() {
+    const { sessionSelect } = this._getWorkspaceJsonModalElements();
+    const raw = sessionSelect?.value;
+    if (raw === '' || raw === 'draft' || raw == null) return 'draft';
+    const index = Number(raw);
+    return Number.isFinite(index) ? index : 'draft';
+  }
+
+  _buildWorkspaceJsonBrushDocument(bundle, brush) {
+    const controls = bundle?.session && typeof bundle.session === 'object' ? bundle.session : this._captureSessionControls();
+    const doc = {};
+    for (const [key, value] of Object.entries(controls)) {
+      if (key === '_simulation') continue;
+      if (!this._workspaceJsonControlBelongsToBrush(key, brush)) continue;
+      doc[key] = _deepClone(value);
+    }
+    return doc;
+  }
+
+  _buildWorkspaceJsonSimulationGlobalDocument(bundle) {
+    const sim = _deepClone(bundle?.session?._simulation || this.simulation || {});
+    delete sim.sessions;
+    delete sim.brushData;
+    delete sim.vars;
+    delete sim.runtimeSessions;
+    delete sim.cachedRuntimeSessions;
+    delete sim.priorDrawSeek;
+    delete sim.drawingPath;
+    delete sim.drawingBlob;
+    delete sim.dragTarget;
+    delete sim.selected;
+    delete sim.pathDistance;
+    return sim;
+  }
+
+  _buildWorkspaceJsonSimulationSessionDocument(bundle, sessionIndex = 'draft') {
+    const sim = bundle?.session?._simulation || this.simulation || {};
+    const sessions = Array.isArray(sim.sessions) ? sim.sessions : [];
+    if (Number.isFinite(sessionIndex) && sessionIndex >= 0 && sessions[sessionIndex]) {
+      return _deepClone(sessions[sessionIndex]);
+    }
+    return {
+      name: 'Current Draft',
+      brushData: _deepClone(sim.brushData || {}),
+      vars: _deepClone(sim.vars || {}),
+      sensingSourceSelection: _deepClone(sim.sensingSourceSelection || []),
+      activeSessionIndex: Number.isFinite(sim.activeSessionIndex) ? sim.activeSessionIndex : -1,
+      multiSessionEnabled: sim.multiSessionEnabled === true,
+      multiSessionBindings: _deepClone(sim.multiSessionBindings || []),
+    };
+  }
+
+  _buildWorkspaceJsonCanvasDocument(bundle) {
+    const controls = bundle?.session && typeof bundle.session === 'object' ? bundle.session : this._captureSessionControls();
+    const canvasKeys = this._workspaceJsonCanvasKeys();
+    const doc = {};
+    for (const [key, value] of Object.entries(controls)) {
+      if (key === '_simulation') continue;
+      if (!canvasKeys.has(key)) continue;
+      doc[key] = _deepClone(value);
+    }
+    return doc;
+  }
+
+  _buildWorkspaceJsonOtherDocument(bundle) {
+    const controls = bundle?.session && typeof bundle.session === 'object' ? bundle.session : this._captureSessionControls();
+    const canvasKeys = this._workspaceJsonCanvasKeys();
+    const doc = {
+      autosaveEnabled: !!bundle?.autosaveEnabled,
+      presets: _deepClone(bundle?.presets || {}),
+    };
+    for (const [key, value] of Object.entries(controls)) {
+      if (key === '_simulation') continue;
+      if (canvasKeys.has(key)) continue;
+      if (this._getWorkspaceJsonDocumentSpecs().some(spec => spec.kind === 'brush' && this._workspaceJsonControlBelongsToBrush(key, spec.brush))) continue;
+      doc[key] = _deepClone(value);
+    }
+    return doc;
+  }
+
+  _buildWorkspaceJsonDocument(bundle, docKey, state = {}) {
+    const spec = this._getWorkspaceJsonDocumentSpec(docKey);
+    if (spec.kind === 'bundle') return _deepClone(bundle);
+    if (spec.kind === 'brush') return this._buildWorkspaceJsonBrushDocument(bundle, spec.brush);
+    if (spec.kind === 'simulation-global') return this._buildWorkspaceJsonSimulationGlobalDocument(bundle);
+    if (spec.kind === 'simulation-session') return this._buildWorkspaceJsonSimulationSessionDocument(bundle, state.sessionIndex);
+    if (spec.kind === 'canvas') return this._buildWorkspaceJsonCanvasDocument(bundle);
+    if (spec.kind === 'other') return this._buildWorkspaceJsonOtherDocument(bundle);
+    return {};
+  }
+
+  _populateWorkspaceJsonDocumentSelect(docKey = 'workspace') {
+    const { docSelect, sessionSelect, sessionSelectWrap, docHint } = this._getWorkspaceJsonModalElements();
+    const specs = this._getWorkspaceJsonDocumentSpecs();
+    if (docSelect) {
+      const groups = new Map();
+      for (const spec of specs) {
+        const groupName = spec.group || 'Other';
+        if (!groups.has(groupName)) groups.set(groupName, []);
+        groups.get(groupName).push(spec);
+      }
+      docSelect.innerHTML = Array.from(groups.entries()).map(([groupName, groupSpecs]) => `
+        <optgroup label="${groupName}">
+          ${groupSpecs.map(spec => `<option value="${spec.key}">${spec.label}</option>`).join('')}
+        </optgroup>
+      `).join('');
+      docSelect.value = specs.some(spec => spec.key === docKey) ? docKey : 'workspace';
+    }
+    const selectedSpec = this._getWorkspaceJsonDocumentSpec(docSelect?.value || docKey);
+    if (sessionSelectWrap) sessionSelectWrap.hidden = !selectedSpec.supportsSessionSelect;
+    if (sessionSelect) {
+      const simulation = this.simulation || {};
+      const sessions = Array.isArray(simulation.sessions) ? simulation.sessions : [];
+      sessionSelect.innerHTML = [
+        `<option value="draft">Current Draft</option>`,
+        ...sessions.map((session, index) => `<option value="${index}">${session.name || `Session ${index + 1}`}</option>`),
+      ].join('');
+      const savedIndex = Number.isFinite(this._workspaceJsonEditorSessionIndex)
+        ? this._workspaceJsonEditorSessionIndex
+        : (Number.isFinite(simulation.activeSessionIndex) && simulation.activeSessionIndex >= 0 ? simulation.activeSessionIndex : 'draft');
+      sessionSelect.value = selectedSpec.supportsSessionSelect && savedIndex !== 'draft' && sessions[savedIndex]
+        ? String(savedIndex)
+        : 'draft';
+    }
+    if (docHint) docHint.textContent = selectedSpec.description;
   }
 
   _setWorkspaceJsonModalStatus(message = 'Ready to edit the current workspace bundle.', level = '') {
@@ -2185,20 +2441,35 @@ export class App {
 
   _populateWorkspaceJsonEditor(bundle = this.createWorkspaceSettingsBundle()) {
     const { editor, meta, documentName } = this._getWorkspaceJsonModalElements();
-    if (documentName) documentName.textContent = 'Workspace Settings JSON';
+    const { docSelect, sessionSelect } = this._getWorkspaceJsonModalElements();
+    const docKey = docSelect?.value || this._workspaceJsonEditorDocKey || 'workspace';
+    const sessionIndex = docKey === 'simulation-session' ? this._getWorkspaceJsonSessionSelectValue() : 'draft';
+    this._workspaceJsonEditorDocKey = docKey;
+    this._workspaceJsonEditorSessionIndex = sessionIndex === 'draft' ? -1 : sessionIndex;
+    if (documentName) documentName.textContent = this._getWorkspaceJsonDocumentSpec(docKey).label;
     if (meta) {
       const exportedAt = bundle?.exportedAt ? new Date(bundle.exportedAt) : null;
-      meta.textContent = exportedAt && Number.isFinite(exportedAt.getTime())
-        ? `Format ${bundle?.format || 'workspace'} v${bundle?.version ?? '?'} · Snapshot generated ${exportedAt.toLocaleString()}.`
-        : 'Loaded from the current live workspace state. Use Validate before Apply if you hand-edit the JSON.';
+      const spec = this._getWorkspaceJsonDocumentSpec(docKey);
+      const sessionLabel = docKey === 'simulation-session' && sessionSelect && sessionSelect.value !== 'draft'
+        ? ` Session ${sessionSelect.selectedOptions?.[0]?.textContent || sessionSelect.value}.`
+        : '';
+      meta.textContent = `${spec.description}${sessionLabel}` + (exportedAt && Number.isFinite(exportedAt.getTime())
+        ? ` Snapshot generated ${exportedAt.toLocaleString()}.`
+        : '');
     }
-    if (editor) editor.value = JSON.stringify(bundle, null, 2);
+    const documentPayload = this._buildWorkspaceJsonDocument(bundle, docKey, { sessionIndex: this._workspaceJsonEditorSessionIndex });
+    if (editor) editor.value = JSON.stringify(documentPayload, null, 2);
     this._setWorkspaceJsonModalStatus();
   }
 
   _showWorkspaceJsonModal() {
     const { modal, editor } = this._getWorkspaceJsonModalElements();
     if (!modal || !editor) return;
+    this._workspaceJsonEditorDocKey = this._workspaceJsonEditorDocKey || 'workspace';
+    this._workspaceJsonEditorSessionIndex = Number.isFinite(this._workspaceJsonEditorSessionIndex)
+      ? this._workspaceJsonEditorSessionIndex
+      : -1;
+    this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
     this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle());
     modal.classList.add('open');
     requestAnimationFrame(() => {
@@ -2215,7 +2486,7 @@ export class App {
   }
 
   _readWorkspaceJsonEditorBundle({ requireSession = true } = {}) {
-    const { editor } = this._getWorkspaceJsonModalElements();
+    const { editor, docSelect } = this._getWorkspaceJsonModalElements();
     const raw = editor?.value || '';
     if (!raw.trim()) {
       throw new Error('Workspace JSON editor is empty.');
@@ -2226,11 +2497,18 @@ export class App {
     } catch (error) {
       throw new Error(`JSON parse error: ${error?.message || 'Invalid JSON.'}`);
     }
-    const normalized = this._normalizeWorkspaceSettingsBundle(parsed);
-    if (requireSession && (!normalized.session || typeof normalized.session !== 'object' || Array.isArray(normalized.session))) {
-      throw new Error('Workspace bundle is missing session settings.');
+    const docKey = docSelect?.value || this._workspaceJsonEditorDocKey || 'workspace';
+    if (docKey === 'workspace') {
+      const normalized = this._normalizeWorkspaceSettingsBundle(parsed);
+      if (requireSession && (!normalized.session || typeof normalized.session !== 'object' || Array.isArray(normalized.session))) {
+        throw new Error('Workspace bundle is missing session settings.');
+      }
+      return { parsed, normalized, docKey };
     }
-    return { parsed, normalized };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Selected document must be a JSON object.');
+    }
+    return { parsed, normalized: parsed, docKey };
   }
 
   _formatWorkspaceJsonEditor() {
@@ -2243,14 +2521,18 @@ export class App {
   }
 
   _validateWorkspaceJsonEditor() {
-    const { normalized } = this._readWorkspaceJsonEditorBundle();
-    const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
-      ? Object.keys(normalized.presets).length
-      : 0;
-    this._setWorkspaceJsonModalStatus(
-      `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
-      'success',
-    );
+    const { normalized, docKey } = this._readWorkspaceJsonEditorBundle();
+    if (docKey === 'workspace') {
+      const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
+        ? Object.keys(normalized.presets).length
+        : 0;
+      this._setWorkspaceJsonModalStatus(
+        `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+        'success',
+      );
+      return true;
+    }
+    this._setWorkspaceJsonModalStatus('Document JSON is valid. Ready to apply.', 'success');
     return true;
   }
 
@@ -2275,37 +2557,108 @@ export class App {
   async _applyWorkspaceJsonEditor() {
     let parsed;
     let normalized;
+    let docKey;
     try {
-      ({ parsed, normalized } = this._readWorkspaceJsonEditorBundle());
+      ({ parsed, normalized, docKey } = this._readWorkspaceJsonEditorBundle());
     } catch (error) {
       this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
       return false;
     }
-    const confirmMessage = this.simulation?.enabled
-      ? 'Apply workspace JSON and replace the current workspace state? This will stop simulation and restore the saved workspace state.'
-      : 'Apply workspace JSON and replace the current workspace state?';
+    const confirmMessage = docKey === 'workspace'
+      ? (this.simulation?.enabled
+        ? 'Apply workspace JSON and replace the current workspace state? This will stop simulation and restore the saved workspace state.'
+        : 'Apply workspace JSON and replace the current workspace state?')
+      : `Apply the ${this._getWorkspaceJsonDocumentSpec(docKey).label} document into the current workspace state?`;
     if (!confirm(confirmMessage)) {
       this._setWorkspaceJsonModalStatus('Apply cancelled.', 'warn');
       return false;
     }
     try {
-      await this.applyWorkspaceSettingsBundle(parsed);
+      if (docKey === 'workspace') {
+        await this.applyWorkspaceSettingsBundle(parsed);
+      } else {
+        const bundle = this.createWorkspaceSettingsBundle({ includeDocument: true });
+        const merged = this._mergeWorkspaceJsonDocumentIntoBundle(bundle, docKey, parsed, { sessionIndex: this._workspaceJsonEditorSessionIndex });
+        await this.applyWorkspaceSettingsBundle(merged);
+      }
       refreshWorkspaceSettingsUi(this);
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle());
-      const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
-        ? Object.keys(normalized.presets).length
-        : 0;
-      this._setWorkspaceJsonModalStatus(
-        `Workspace JSON applied successfully.${presetCount ? ` Loaded ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
-        'success',
-      );
-      this.showToast('💾 Workspace JSON applied');
+      this._populateWorkspaceJsonDocumentSelect(docKey);
+      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      if (docKey === 'workspace') {
+        const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
+          ? Object.keys(normalized.presets).length
+          : 0;
+        this._setWorkspaceJsonModalStatus(
+          `Workspace JSON applied successfully.${presetCount ? ` Loaded ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+          'success',
+        );
+      } else {
+        this._setWorkspaceJsonModalStatus(`${this._getWorkspaceJsonDocumentSpec(docKey).label} applied successfully.`, 'success');
+      }
+      this.showToast(`💾 ${this._getWorkspaceJsonDocumentSpec(docKey).label} applied`);
       return true;
     } catch (error) {
       console.error('Workspace JSON apply failed:', error);
       this._setWorkspaceJsonModalStatus(error?.message || 'Workspace apply failed.', 'error');
       return false;
     }
+  }
+
+  _mergeWorkspaceJsonDocumentIntoBundle(bundle, docKey, parsed, state = {}) {
+    if (docKey === 'workspace') return parsed;
+    const nextBundle = _deepClone(bundle || this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    nextBundle.session = _deepClone(nextBundle.session || {});
+    nextBundle.session._simulation = _deepClone(nextBundle.session._simulation || {});
+    const canvasKeys = this._workspaceJsonCanvasKeys();
+    if (docKey.startsWith('brush-')) {
+      Object.assign(nextBundle.session, _deepClone(parsed));
+      return nextBundle;
+    }
+    if (docKey === 'simulation-global') {
+      const simulation = nextBundle.session._simulation;
+      for (const [key, value] of Object.entries(parsed || {})) {
+        if (key === 'sessions' || key === 'brushData' || key === 'vars' || key === 'runtimeSessions' || key === 'cachedRuntimeSessions' || key === 'priorDrawSeek' || key === 'drawingPath' || key === 'drawingBlob' || key === 'dragTarget' || key === 'selected' || key === 'pathDistance') continue;
+        simulation[key] = _deepClone(value);
+      }
+      return nextBundle;
+    }
+    if (docKey === 'simulation-session') {
+      const simulation = nextBundle.session._simulation;
+      const sessions = Array.isArray(simulation.sessions) ? _deepClone(simulation.sessions) : [];
+      const sessionIndex = Number.isFinite(state.sessionIndex) ? state.sessionIndex : -1;
+      if (sessionIndex >= 0 && sessions[sessionIndex]) {
+        sessions[sessionIndex] = { ...sessions[sessionIndex], ..._deepClone(parsed) };
+        simulation.sessions = sessions;
+      } else {
+        if (Object.prototype.hasOwnProperty.call(parsed, 'brushData')) simulation.brushData = _deepClone(parsed.brushData);
+        if (Object.prototype.hasOwnProperty.call(parsed, 'vars')) simulation.vars = _deepClone(parsed.vars);
+        if (Object.prototype.hasOwnProperty.call(parsed, 'sensingSourceSelection')) simulation.sensingSourceSelection = _deepClone(parsed.sensingSourceSelection);
+        if (Object.prototype.hasOwnProperty.call(parsed, 'multiSessionEnabled')) simulation.multiSessionEnabled = !!parsed.multiSessionEnabled;
+        if (Object.prototype.hasOwnProperty.call(parsed, 'multiSessionBindings')) simulation.multiSessionBindings = _deepClone(parsed.multiSessionBindings);
+        if (Object.prototype.hasOwnProperty.call(parsed, 'activeSessionIndex')) simulation.activeSessionIndex = Number.isFinite(Number(parsed.activeSessionIndex)) ? Math.max(-1, Math.round(Number(parsed.activeSessionIndex))) : simulation.activeSessionIndex;
+      }
+      return nextBundle;
+    }
+    if (docKey === 'canvas') {
+      for (const [key, value] of Object.entries(parsed || {})) {
+        if (!canvasKeys.has(key)) continue;
+        nextBundle.session[key] = _deepClone(value);
+      }
+      return nextBundle;
+    }
+    if (docKey === 'other') {
+      if (Object.prototype.hasOwnProperty.call(parsed, 'autosaveEnabled')) nextBundle.autosaveEnabled = !!parsed.autosaveEnabled;
+      if (Object.prototype.hasOwnProperty.call(parsed, 'presets')) nextBundle.presets = _deepClone(parsed.presets);
+      for (const [key, value] of Object.entries(parsed || {})) {
+        if (key === 'autosaveEnabled' || key === 'presets') continue;
+        if (canvasKeys.has(key)) continue;
+        if (this._workspaceJsonControlBrushTokens(key).length) continue;
+        if (key === '_simulation') continue;
+        nextBundle.session[key] = _deepClone(value);
+      }
+      return nextBundle;
+    }
+    return nextBundle;
   }
 
   _createSimulationExportState() {
@@ -2910,6 +3263,11 @@ export class App {
 
   _isSimulationOverlayHudEnabled() {
     return !!document.getElementById('showSimulationOverlayControls')?.checked;
+  }
+
+  _isSimulationSelectionOverlayEnabled() {
+    const input = document.getElementById('showSimulationSelectionOverlay');
+    return input ? !!input.checked : true;
   }
 
   _showSimulationControlsDrawer({ activate = false } = {}) {
@@ -5016,11 +5374,6 @@ export class App {
     }
     const sidebarSave = document.getElementById('simSidebarSave');
     if (sidebarSave) sidebarSave.textContent = context.isSaved ? 'Update Saved Session' : 'Save Draft Session';
-    const playbackSession = document.getElementById('simPlaybackSession');
-    if (playbackSession) {
-      playbackSession.textContent = context.playbackLabel;
-      playbackSession.title = `${context.setupLabel} ${context.modeSummary}`;
-    }
     const handle = document.getElementById('simOverlayHandle');
     if (handle) handle.title = `${context.setupLabel} ${context.modeSummary}`;
     const simSetupActiveSession = document.getElementById('simSetupActiveSession');
@@ -6791,6 +7144,7 @@ export class App {
       layerIds: this._normalizeSimulationLayerIds(binding.layerIds, binding.sessionIndex),
     }));
     const rows = sessions.map((session, sessionIndex) => {
+      const sessionVars = _normalizeSimulationVars(session.vars);
       const binding = bindings.find(candidate => candidate.sessionId === session.id)
         || bindings.find(candidate => candidate.sessionIndex === sessionIndex)
         || {
@@ -6799,8 +7153,8 @@ export class App {
           enabled: false,
           layerIds: this._normalizeSimulationLayerIds([this._getDefaultSimulationSessionLayerId(sessionIndex)], sessionIndex),
         };
-      const sensingSource = SIM_SENSING_SOURCES.includes(session.vars?.sensingSource)
-        ? session.vars.sensingSource
+      const sensingSource = SIM_SENSING_SOURCES.includes(sessionVars.sensingSource)
+        ? sessionVars.sensingSource
         : 'below';
       let sensingLayerIds = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
       if (sensingSource === 'selected' && !sensingLayerIds.length) {
@@ -6813,7 +7167,13 @@ export class App {
         savedAt: session.savedAt || 0,
         enabled: binding.enabled !== false,
         layerIds: this._normalizeSimulationLayerIds(binding.layerIds, sessionIndex),
-        sensingEnabled: session.vars?.sensingEnabled === true,
+        sensingEnabled: sessionVars.sensingEnabled === true,
+        sensingMode: SIM_SENSING_MODES.includes(sessionVars.sensingMode) ? sessionVars.sensingMode : 'avoid',
+        sensingChannel: SIM_SENSING_CHANNELS.includes(sessionVars.sensingChannel) ? sessionVars.sensingChannel : 'darkness',
+        sensingStrength: Number.isFinite(sessionVars.sensingStrength) ? _clamp(sessionVars.sensingStrength, 0, 1) : 0.5,
+        sensingRadius: Number.isFinite(sessionVars.sensingRadius) ? Math.max(0, sessionVars.sensingRadius) : 20,
+        sensingThreshold: Number.isFinite(sessionVars.sensingThreshold) ? _clamp(sessionVars.sensingThreshold, 0, 1) : 0.1,
+        sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
         sensingSource,
         sensingLayerIds,
         unresolvedLayers: [],
@@ -6874,6 +7234,75 @@ export class App {
     if (layers.length === 1) return layers[0].name || 'Unnamed layer';
     const first = layers[0].name || 'Unnamed layer';
     return `${first} +${layers.length - 1}`;
+  }
+
+  _syncSimulationSetupRowSensingVars(row, updates = {}) {
+    if (!row || !this._simulationSetupDraft) return null;
+    const session = this._simulationSetupDraft.sessions?.[row.sessionIndex];
+    if (!session) return null;
+    const nextVars = _normalizeSimulationVars({
+      ...session.vars,
+      ...updates,
+    });
+    session.vars = nextVars;
+    const liveSession = this.simulation.sessions?.[row.sessionIndex];
+    if (liveSession) {
+      liveSession.vars = _normalizeSimulationVars({
+        ...liveSession.vars,
+        ...updates,
+      });
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingEnabled')) {
+      row.sensingEnabled = nextVars.sensingEnabled === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingMode')) {
+      row.sensingMode = nextVars.sensingMode || 'avoid';
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingChannel')) {
+      row.sensingChannel = nextVars.sensingChannel || 'darkness';
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingStrength')) {
+      row.sensingStrength = Number.isFinite(nextVars.sensingStrength) ? nextVars.sensingStrength : 0.5;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingRadius')) {
+      row.sensingRadius = Number.isFinite(nextVars.sensingRadius) ? nextVars.sensingRadius : 20;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingThreshold')) {
+      row.sensingThreshold = Number.isFinite(nextVars.sensingThreshold) ? nextVars.sensingThreshold : 0.1;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingUpdateFrames')) {
+      row.sensingUpdateFrames = Number.isFinite(nextVars.sensingUpdateFrames) ? nextVars.sensingUpdateFrames : 30;
+    }
+    if (row.sessionIndex === this.simulation.activeSessionIndex) {
+      this.simulation.vars = _normalizeSimulationVars({
+        ...this.simulation.vars,
+        ...updates,
+      });
+      this._syncSimulationSessionSensingControls();
+    }
+    for (const runtime of this.simulation.runtimeSessions || []) {
+      if (runtime?.sessionIndex !== row.sessionIndex) continue;
+      runtime.vars = _normalizeSimulationVars({
+        ...runtime.vars,
+        ...updates,
+      });
+      runtime.paramSnapshot = {
+        ...(runtime.paramSnapshot || {}),
+        ..._sanitizeSimulationSessionData(updates) || {},
+      };
+    }
+    for (const runtime of this.simulation.cachedRuntimeSessions || []) {
+      if (runtime?.sessionIndex !== row.sessionIndex) continue;
+      runtime.vars = _normalizeSimulationVars({
+        ...runtime.vars,
+        ...updates,
+      });
+      runtime.paramSnapshot = {
+        ...(runtime.paramSnapshot || {}),
+        ..._sanitizeSimulationSessionData(updates) || {},
+      };
+    }
+    return session;
   }
 
   _setSimulationSetupStatus(message = '', level = '') {
@@ -6937,6 +7366,48 @@ export class App {
       id: layer.id,
       label: layer.name || (layer.isBackground ? 'Background' : 'Unnamed layer'),
     }));
+    const renderFutureControls = row => `
+      <div class="sim-setup-futureControls">
+        <label class="sim-setup-futureField">
+          <span>On</span>
+          <input type="checkbox" data-sim-setup-future-field="sensingEnabled" data-sim-setup-row="${_escapeHtml(row.sessionId)}" ${row.sensingEnabled ? 'checked' : ''}>
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Mode</span>
+          <select data-sim-setup-future-field="sensingMode" data-sim-setup-row="${_escapeHtml(row.sessionId)}">
+            <option value="avoid" ${row.sensingMode === 'avoid' ? 'selected' : ''}>Avoid</option>
+            <option value="attract" ${row.sensingMode === 'attract' ? 'selected' : ''}>Attract</option>
+          </select>
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Channel</span>
+          <select data-sim-setup-future-field="sensingChannel" data-sim-setup-row="${_escapeHtml(row.sessionId)}">
+            <option value="darkness" ${row.sensingChannel === 'darkness' ? 'selected' : ''}>Darkness</option>
+            <option value="lightness" ${row.sensingChannel === 'lightness' ? 'selected' : ''}>Lightness</option>
+            <option value="saturation" ${row.sensingChannel === 'saturation' ? 'selected' : ''}>Saturation</option>
+            <option value="red" ${row.sensingChannel === 'red' ? 'selected' : ''}>Red</option>
+            <option value="green" ${row.sensingChannel === 'green' ? 'selected' : ''}>Green</option>
+            <option value="blue" ${row.sensingChannel === 'blue' ? 'selected' : ''}>Blue</option>
+            <option value="alpha" ${row.sensingChannel === 'alpha' ? 'selected' : ''}>Alpha</option>
+          </select>
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Strength</span>
+          <input type="number" min="0" max="1" step="0.01" data-sim-setup-future-field="sensingStrength" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingStrength) ? row.sensingStrength.toFixed(2) : '0.50'}">
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Radius</span>
+          <input type="number" min="0" max="200" step="1" data-sim-setup-future-field="sensingRadius" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingRadius) ? Math.round(row.sensingRadius) : 20}">
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Threshold</span>
+          <input type="number" min="0" max="1" step="0.01" data-sim-setup-future-field="sensingThreshold" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingThreshold) ? row.sensingThreshold.toFixed(2) : '0.10'}">
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Every</span>
+          <input type="number" min="1" max="50" step="1" data-sim-setup-future-field="sensingUpdateFrames" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingUpdateFrames) ? Math.round(row.sensingUpdateFrames) : 30}">
+        </label>
+      </div>`;
     root.innerHTML = `
       <table class="sim-setup-table">
         <thead>
@@ -7014,11 +7485,30 @@ export class App {
                     <div class="sim-setup-muted">${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</div>
                   </div>
                 </td>
-                <td><div class="sim-setup-future">Reserved for per-row simulation variables, presets, and future feature routing.</div></td>
+                <td>${renderFutureControls(row)}</td>
               </tr>`;
           }).join('')}
         </tbody>
       </table>`;
+
+    document.getElementById('simSetupAddLayer')?.addEventListener('click', () => {
+      this.addLayer();
+      this._normalizeSimulationSessionBindings();
+      if (this._simulationSetupDraft) {
+        this._simulationSetupDraft = this._createSimulationSetupDraft();
+        this._renderSimulationSetupExplorer();
+      }
+      this.saveSession();
+      this.showToast('Added new layer');
+    });
+    document.getElementById('simSetupAddSession')?.addEventListener('click', () => {
+      this.simulation.activeSessionIndex = -1;
+      this._saveSimulationSession();
+      if (this._simulationSetupDraft) {
+        this._simulationSetupDraft = this._createSimulationSetupDraft();
+        this._renderSimulationSetupExplorer();
+      }
+    });
 
     root.querySelectorAll('[data-sim-setup-enabled]').forEach(input => {
       input.addEventListener('change', event => {
@@ -7075,6 +7565,35 @@ export class App {
         this._renderSimulationSetupExplorer();
       });
     });
+    root.querySelectorAll('[data-sim-setup-future-field]').forEach(input => {
+      const applyFutureValue = () => {
+        const row = this._getSimulationSetupDraftRow(input.dataset.simSetupRow);
+        if (!row) return;
+        const field = input.dataset.simSetupFutureField;
+        let value;
+        if (input.type === 'checkbox') {
+          value = input.checked;
+        } else if (field === 'sensingMode') {
+          value = input.value === 'attract' ? 'attract' : 'avoid';
+        } else if (field === 'sensingChannel') {
+          value = SIM_SENSING_CHANNELS.includes(input.value) ? input.value : 'darkness';
+        } else {
+          const rawValue = Number(input.value);
+          if (field === 'sensingStrength' || field === 'sensingThreshold') {
+            value = Number.isFinite(rawValue) ? _clamp(rawValue, 0, 1) : undefined;
+          } else if (field === 'sensingRadius') {
+            value = Number.isFinite(rawValue) ? Math.max(0, rawValue) : undefined;
+          } else if (field === 'sensingUpdateFrames') {
+            value = Number.isFinite(rawValue) ? Math.max(1, Math.min(50, Math.round(rawValue))) : undefined;
+          }
+        }
+        if (value === undefined) return;
+        row[field] = value;
+        this._syncSimulationSetupRowSensingVars(row, { [field]: value });
+      };
+      input.addEventListener('input', applyFutureValue);
+      input.addEventListener('change', applyFutureValue);
+    });
   }
 
   _getSimulationSetupDraftRow(sessionId) {
@@ -7118,6 +7637,12 @@ export class App {
       session.vars = _normalizeSimulationVars({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
+        sensingMode: row.sensingMode,
+        sensingChannel: row.sensingChannel,
+        sensingStrength: row.sensingStrength,
+        sensingRadius: row.sensingRadius,
+        sensingThreshold: row.sensingThreshold,
+        sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
       });
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
@@ -7134,6 +7659,15 @@ export class App {
       enabled: row.enabled !== false,
       layerIds: this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex),
     }));
+    for (const runtime of [...(this.simulation.runtimeSessions || []), ...(this.simulation.cachedRuntimeSessions || [])]) {
+      if (!runtime || !Number.isFinite(runtime.sessionIndex)) continue;
+      const session = sessions[runtime.sessionIndex];
+      if (!session) continue;
+      runtime.vars = _normalizeSimulationVars(session.vars);
+      runtime.paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
+      runtime.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+      runtime.sessionName = session.name;
+    }
     if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
     this._normalizeSimulationSessionBindings();
     if (this.simulation.activeSessionIndex >= 0) {
@@ -7177,6 +7711,12 @@ export class App {
       session.vars = _normalizeSimulationVars({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
+        sensingMode: row.sensingMode,
+        sensingChannel: row.sensingChannel,
+        sensingStrength: row.sensingStrength,
+        sensingRadius: row.sensingRadius,
+        sensingThreshold: row.sensingThreshold,
+        sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
       });
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
@@ -7201,6 +7741,12 @@ export class App {
       row.enabled = false;
       row.layerIds = this._normalizeSimulationLayerIds([this._getDefaultSimulationSessionLayerId(index)], index);
       row.sensingEnabled = false;
+      row.sensingMode = 'avoid';
+      row.sensingChannel = 'darkness';
+      row.sensingStrength = 0.5;
+      row.sensingRadius = 20;
+      row.sensingThreshold = 0.1;
+      row.sensingUpdateFrames = 30;
       row.sensingSource = 'below';
       row.sensingLayerIds = [];
       row.unresolvedLayers = [];
@@ -7326,6 +7872,7 @@ export class App {
       multiSessionEnabled: normalized.multiSessionEnabled,
       rows: normalized.sessions.map((session, sessionIndex) => {
         const binding = bindingsById.get(session.id);
+        const sessionVars = _normalizeSimulationVars(session.vars);
         const sensingMap = this._mapImportedSimulationSetupLayerIds(session.sensingSourceSelection, normalized.importedSetupMeta?.sourceLayers);
         return {
           sessionId: session.id,
@@ -7334,8 +7881,14 @@ export class App {
           savedAt: session.savedAt || 0,
           enabled: binding?.enabled !== false,
           layerIds: this._normalizeSimulationLayerIds(binding?.layerIds, sessionIndex),
-          sensingEnabled: session.vars?.sensingEnabled === true,
-          sensingSource: SIM_SENSING_SOURCES.includes(session.vars?.sensingSource) ? session.vars.sensingSource : 'below',
+          sensingEnabled: sessionVars.sensingEnabled === true,
+          sensingMode: SIM_SENSING_MODES.includes(sessionVars.sensingMode) ? sessionVars.sensingMode : 'avoid',
+          sensingChannel: SIM_SENSING_CHANNELS.includes(sessionVars.sensingChannel) ? sessionVars.sensingChannel : 'darkness',
+          sensingStrength: Number.isFinite(sessionVars.sensingStrength) ? _clamp(sessionVars.sensingStrength, 0, 1) : 0.5,
+          sensingRadius: Number.isFinite(sessionVars.sensingRadius) ? Math.max(0, sessionVars.sensingRadius) : 20,
+          sensingThreshold: Number.isFinite(sessionVars.sensingThreshold) ? _clamp(sessionVars.sensingThreshold, 0, 1) : 0.1,
+          sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
+          sensingSource: SIM_SENSING_SOURCES.includes(sessionVars.sensingSource) ? sessionVars.sensingSource : 'below',
           sensingLayerIds: sensingMap.resolved,
           unresolvedLayers: binding?.unresolvedLayers || [],
           unresolvedSensingLayers: sensingMap.missing,
@@ -7650,6 +8203,7 @@ export class App {
   _renderSimulationInspector() {
     const panel = document.getElementById('simOverlaySidebar');
     const formatPanel = document.getElementById('simFormatMenu');
+    const guidesPanel = document.getElementById('guidesPanelEditor');
     if (!panel) return;
     try {
       this._syncSimulationSessionContextUi();
@@ -8257,9 +8811,15 @@ export class App {
     `;
 
     let formatMarkup = '';
+    let guideEditorMarkup = '';
+    const selectionOverlayEnabled = this._isSimulationSelectionOverlayEnabled();
 
     if (!selected) {
       inspector += renderSection('selection', 'No Selection', `<div class="sim-inspector-note">Select a spawn, ${isBoid ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>`, { collapsed: false });
+      guideEditorMarkup = `
+        <div class="sim-guide-panel-summary">Select a guide in simulation mode to edit its per-item overrides here.</div>
+        <div class="sim-inspector-note">Spawn, point, path, edge, and pheromone guide settings now live in this left-side drawer instead of the floating overlay.</div>
+      `;
     } else {
       const target = selected.target;
 
@@ -8348,6 +8908,51 @@ export class App {
           <span class="sim-format-chip-label">${label}</span>
           <input type="checkbox" data-sim-field="${field}" data-sim-type="bool" ${checkedValue ? 'checked' : ''}>
         </label>`;
+      const guideColorRow = (field, label, fallbackColor = p.color) => `
+        <label class="sim-inspector-row">
+          <span>${_escapeHtml(label)}</span>
+          <span>${compactColorControl(field, fallbackColor)}</span>
+        </label>`;
+      const guideChoiceRow = (field, label, options, value = '') => `
+        <label class="sim-inspector-row">
+          <span>${_escapeHtml(label)}</span>
+          <select data-sim-field="${field}" data-sim-type="select">
+            ${options.map(option => `<option value="${option.value}" ${String(value) === String(option.value) ? 'selected' : ''}>${_escapeHtml(option.label)}</option>`).join('')}
+          </select>
+        </label>`;
+      const guideToggleRow = (field, label, checkedValue) => `
+        <label class="sim-inspector-row">
+          <span>${_escapeHtml(label)}</span>
+          <input type="checkbox" data-sim-field="${field}" data-sim-type="bool" ${checkedValue ? 'checked' : ''}>
+        </label>`;
+      const guideButtonRow = (label, markup) => `
+        <div class="sim-inspector-row">
+          <span>${_escapeHtml(label)}</span>
+          <div class="sim-inspector-list">${markup}</div>
+        </div>`;
+
+      const guideRows = [];
+      const guideResetFields = [];
+
+      const pushGuideSlider = (field, type, label, min, max, step, scale) => {
+        guideRows.push(simSlider(field, type, label, min, max, step, scale));
+        guideResetFields.push(field);
+      };
+
+      const pushGuideColor = (field, fallbackColor = p.color) => {
+        guideRows.push(guideColorRow(field, 'Color', fallbackColor));
+        guideResetFields.push(field);
+      };
+
+      const pushGuideChoice = (field, label, options, value = '') => {
+        guideRows.push(guideChoiceRow(field, label, options, value));
+        guideResetFields.push(field);
+      };
+
+      const pushGuideToggle = (field, label, checkedValue) => {
+        guideRows.push(guideToggleRow(field, label, checkedValue));
+        guideResetFields.push(field);
+      };
 
       const compactControls = [];
       const resetFields = [];
@@ -8414,18 +9019,108 @@ export class App {
         resetFields.push('radius', 'intensity');
       }
 
-      formatMarkup = `
-        <div class="sim-format-shell">
-          <div class="sim-format-row" data-sim-format-drag-root="1">
-            <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
-            ${compactControls.join('')}
-            <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
-            <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
-          </div>
-        </div>`;
+      if (selectionOverlayEnabled) {
+        formatMarkup = `
+          <div class="sim-format-shell">
+            <div class="sim-format-row" data-sim-format-drag-root="1">
+              <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
+              ${compactControls.join('')}
+              <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
+              <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
+            </div>
+          </div>`;
+      }
+
+      const guideKindTitle = selected.kind === 'spawn'
+        ? 'Spawn Overrides'
+        : selected.kind === 'point'
+          ? `${target.type === 'repel' ? 'Repel' : 'Attract'} Point Overrides`
+          : selected.kind === 'path'
+            ? 'Path Guide Overrides'
+            : selected.kind === 'edge'
+              ? 'Edge Barrier Overrides'
+              : 'Pheromone Trail Overrides';
+      if (selected.kind === 'spawn') {
+        pushGuideColor('color');
+        pushGuideSlider('count', 'integer', 'Count', 1, MAX_SWARM_COUNT, 1, 1);
+        pushGuideSlider('opacity', 'number', 'Opacity', 0, 100, 1, 0.01);
+        if (target.mask) {
+          pushGuideChoice('distribution', 'Mode', SIM_SPAWN_DISTRIBUTION_MODES.map(mode => ({ value: mode, label: mode })), target.distribution || 'uniform');
+          pushGuideSlider('noiseScale', 'number', 'Noise', 20, 300, 5, 0.01);
+        } else {
+          pushGuideChoice('shape', 'Shape', [{ value: '', label: 'Default' }, ...SIM_SPAWN_SHAPES.map(shape => ({ value: shape, label: shape }))], target.shape || '');
+          pushGuideSlider('radius', 'integer', 'Size', 1, 300, 1, 1);
+          pushGuideSlider('angle', 'angle', 'Angle', -180, 180, 1, 1);
+          pushGuideSlider('jitter', 'number', 'Jitter', 0, 100, 1, 0.01);
+        }
+        pushGuideSlider('stampSize', 'integer', 'Stamp Size', 1, 100, 1, 1);
+        pushGuideSlider('stampSeparation', 'number', 'Spacing', 0, 100, 1, 0.01);
+        pushGuideSlider('trailFlow', 'number', 'Flow', 0, 100, 1, 0.01);
+        pushGuideSlider('smudge', 'number', 'Smudge', 0, 100, 1, 0.01);
+        pushGuideSlider('hueVar', 'number', 'Hue Var', 0, 100, 1, 0.01);
+        pushGuideSlider('satVar', 'number', 'Sat Var', 0, 100, 1, 0.01);
+        pushGuideSlider('litVar', 'number', 'Lit Var', 0, 100, 1, 0.01);
+        pushGuideSlider('sizeVar', 'number', 'Size Var', 0, 100, 1, 0.01);
+        pushGuideSlider('opacityVar', 'number', 'Opacity Var', 0, 100, 1, 0.01);
+        pushGuideSlider('speedVar', 'number', 'Speed Var', 0, 100, 1, 0.01);
+      } else if (selected.kind === 'point') {
+        pushGuideColor('color');
+        pushGuideSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01);
+        pushGuideSlider('radius', 'integer', 'Radius', 1, 300, 1, 1);
+        if (target.type === 'repel') pushGuideSlider('hardness', 'number', 'Hardness', 1, 100, 5, 0.1);
+      } else if (selected.kind === 'path') {
+        const pathConfig = this._resolveSimulationPathConfig(target, p);
+        pushGuideColor('color');
+        pushGuideSlider('strength', 'number', 'Strength', 0, 200, 5, 0.01);
+        pushGuideSlider('radius', 'integer', 'Radius', 1, 300, 1, 1);
+        pushGuideSlider('influenceRadius', 'integer', 'Falloff', 1, 600, 1, 1);
+        pushGuideSlider('speed', 'number', 'Speed', 10, 400, 5, 0.01);
+        guideRows.push(guideButtonRow('Path Points', `
+          <button type="button" class="sim-format-reset" data-sim-add-speed-point="1">+Speed Pt</button>
+          <button type="button" class="sim-format-reset" data-sim-add-radius-point="1">+Radius Pt</button>
+          <button type="button" class="sim-format-reset" data-sim-distribute-points="speed">Dist Speed</button>
+          <button type="button" class="sim-format-reset" data-sim-distribute-points="radius">Dist Radius</button>
+        `));
+        pushGuideChoice('direction', 'Dir', [
+          { value: 'forward', label: 'Forward' },
+          { value: 'reverse', label: 'Reverse' },
+        ], pathConfig.direction);
+        pushGuideToggle('closed', 'Loop', !!target.closed);
+      } else if (selected.kind === 'edge') {
+        pushGuideSlider('strength', 'number', 'Force', 0, 200, 5, 0.01);
+        pushGuideSlider('radius', 'integer', 'Radius', 0, 300, 1, 1);
+      } else if (selected.kind === 'pheromonePath') {
+        pushGuideSlider('radius', 'integer', 'Radius', 1, 80, 1, 1);
+        pushGuideSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01);
+      }
+      guideEditorMarkup = `
+        <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong> · Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>${selected.kind === 'spawn' || selected.kind === 'point' || selected.kind === 'path' || selected.kind === 'edge' || selected.kind === 'pheromonePath' ? ` · ${_escapeHtml(getGuideMeta({ kind: selected.kind, collection: selected.collection }, target))}` : ''}</div>
+        ${renderInspectorSubgroup(guideKindTitle, guideRows.length ? guideRows.join('') : '<div class="sim-inspector-note">No per-item overrides available for this guide.</div>')}
+        ${guideResetFields.length ? `<div class="sim-inspector-actions" style="margin-top:6px"><button type="button" data-sim-reset-all="${guideResetFields.join(',')}">Reset Selected</button><button type="button" data-sim-clear-selection="1">Clear Selection</button></div>` : ''}
+      `;
     }
 
+    formatMarkup = '';
+
     panel.innerHTML = inspector;
+    if (guidesPanel) {
+      guidesPanel.innerHTML = guideEditorMarkup;
+    }
+    if (selected) {
+      const leftPanel = document.getElementById('leftPanel');
+      const leftTabs = document.getElementById('leftPanelTabs');
+      const guidesTab = leftTabs?.querySelector('.panel-tab[data-panel-view="guides"]');
+      const guidesView = leftPanel?.querySelector('.panel-view[data-panel-view="guides"]');
+      if (leftPanel && leftTabs && guidesTab && guidesView && !guidesTab.classList.contains('active')) {
+        leftTabs.querySelectorAll('.panel-tab').forEach(tab => tab.classList.remove('active'));
+        leftPanel.querySelectorAll(':scope > .panel-view').forEach(view => view.classList.remove('active'));
+        guidesTab.classList.add('active');
+        guidesView.classList.add('active');
+        leftPanel.classList.add('open');
+        document.getElementById('layersToggle')?.classList.add('active');
+        this._updateTabVisibility();
+      }
+    }
     if (formatPanel) {
       if (formatMarkup) {
         formatPanel.innerHTML = formatMarkup;
@@ -8439,7 +9134,9 @@ export class App {
       }
     }
 
-    const interactionRoots = [panel, formatPanel].filter(Boolean);
+    this._renderSimulationTreePanel?.();
+
+    const interactionRoots = [panel, formatPanel, guidesPanel].filter(Boolean);
     const queryAllInRoots = selector => interactionRoots.flatMap(root => Array.from(root.querySelectorAll(selector)));
     const getRootForControl = control => interactionRoots.find(root => root.contains(control)) || panel;
 
@@ -9027,6 +9724,7 @@ export class App {
     }
     if (showSimulationDrawer) this._showSimulationControlsDrawer();
     else this._hideSimulationControlsDrawer({ closeIfActive: true });
+    this._renderSimulationTreePanel?.();
     if (playbackBar) {
       playbackBar.classList.toggle('open', !!this.simulation.enabled && isMotion);
     }
@@ -9094,12 +9792,15 @@ export class App {
     });
     const status = document.getElementById('simStatus');
     if (status) {
+      const context = this._getSimulationSessionContextSummary();
       const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
       const extras = [];
+      const sessionLabel = context.playbackLabel || 'Session';
       if (this.simulation.heatmapVisible) extras.push('Heatmap');
       if (this._simulationExport.armedOnStart) extras.push('REC Armed');
       if (this._simulationExport.recording) extras.push('REC');
-      status.textContent = extras.length ? `${base} · ${extras.join(' · ')}` : base;
+      const stateLabel = extras.length ? `${base} · ${extras.join(' · ')}` : base;
+      status.textContent = `${sessionLabel} · ${stateLabel}`;
     }
     this._syncSimulationSessionContextUi();
     this._refreshSimulationExportUi();
@@ -12662,7 +13363,11 @@ export class App {
     // ── Always show tabs setting ──
     const alwaysShowTabsCb = document.getElementById('alwaysShowTabs');
     if (alwaysShowTabsCb) {
-      alwaysShowTabsCb.checked = localStorage.getItem('bb_alwaysShowTabs') === 'true';
+      const storedAlwaysShowTabs = localStorage.getItem('bb_alwaysShowTabs');
+      alwaysShowTabsCb.checked = storedAlwaysShowTabs == null ? true : storedAlwaysShowTabs === 'true';
+      if (storedAlwaysShowTabs == null) {
+        localStorage.setItem('bb_alwaysShowTabs', 'true');
+      }
       alwaysShowTabsCb.addEventListener('change', () => {
         localStorage.setItem('bb_alwaysShowTabs', alwaysShowTabsCb.checked);
         this._updateTabVisibility();
@@ -12686,7 +13391,11 @@ export class App {
     // Transform tool
     document.getElementById('transformBtn')?.addEventListener('click', () => this._toggleTransform());
     document.getElementById('proportionalToggle')?.addEventListener('click', () => this._toggleProportional());
-    document.getElementById('simulationBtn')?.addEventListener('click', () => this._toggleSimulationMode());
+    document.getElementById('simulationBtn')?.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      this._toggleSimulationMode(!this.simulation.enabled);
+    });
     document.getElementById('simHelpMenuBtn')?.addEventListener('click', () => {
       this._closeTopbarOverflowMenu?.();
       this._toggleSimTopbarGuide();
@@ -12821,6 +13530,16 @@ export class App {
     document.getElementById('workspaceJsonClose')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonBackdrop')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
+    document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
+      this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
+      this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
+      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    });
+    document.getElementById('workspaceJsonSessionSelect')?.addEventListener('change', event => {
+      this._workspaceJsonEditorSessionIndex = event.target.value === 'draft' ? -1 : Number(event.target.value);
+      if (!Number.isFinite(this._workspaceJsonEditorSessionIndex)) this._workspaceJsonEditorSessionIndex = -1;
+      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    });
     document.getElementById('workspaceJsonFormat')?.addEventListener('click', () => {
       try {
         this._formatWorkspaceJsonEditor();
@@ -13283,12 +14002,24 @@ export class App {
 
   _getCanvasViewMetrics() {
     const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
+    const workspaceW = Math.max(1, this.W || 1);
+    const workspaceH = Math.max(1, this.H || 1);
+    const docW = Math.max(1, this._docW || workspaceW);
+    const docH = Math.max(1, this._docH || workspaceH);
+    const docOffsetX = Math.max(0, Math.round((workspaceW - docW) / 2));
+    const docOffsetY = Math.max(0, Math.round((workspaceH - docH) / 2));
     return {
       areaRect,
-      baseX: (areaRect.width - this.W) / 2,
-      baseY: (areaRect.height - this.H) / 2,
-      centerX: this.W / 2,
-      centerY: this.H / 2,
+      baseX: (areaRect.width - workspaceW) / 2,
+      baseY: (areaRect.height - workspaceH) / 2,
+      centerX: workspaceW / 2,
+      centerY: workspaceH / 2,
+      workspaceW,
+      workspaceH,
+      docW,
+      docH,
+      docOffsetX,
+      docOffsetY,
     };
   }
 
@@ -13879,12 +14610,18 @@ export class App {
   _applyViewTransform() {
     const el = document.getElementById('canvasTransform');
     if (!el) return;
-    const { baseX, baseY, centerX, centerY } = this._getCanvasViewMetrics();
+    const { baseX, baseY, centerX, centerY, docOffsetX, docOffsetY, docW, docH } = this._getCanvasViewMetrics();
     const deg = this.viewRotation * 180 / Math.PI;
     const flipScale = this.viewFlipped ? -1 : 1;
     el.style.width = this.W + 'px';
     el.style.height = this.H + 'px';
     el.style.transform = `translate(${baseX + this.viewPanX}px, ${baseY + this.viewPanY}px) translate(${centerX}px, ${centerY}px) rotate(${deg}deg) scale(${this.viewZoom}) scaleX(${flipScale}) translate(${-centerX}px, ${-centerY}px)`;
+    if (this.canvasFrame) {
+      this.canvasFrame.style.left = `${docOffsetX}px`;
+      this.canvasFrame.style.top = `${docOffsetY}px`;
+      this.canvasFrame.style.width = `${docW}px`;
+      this.canvasFrame.style.height = `${docH}px`;
+    }
     this._renderViewBookmarksPanel?.();
   }
 
@@ -16194,8 +16931,8 @@ export class App {
   _captureWorkspaceDocumentState() {
     const activeLayer = this.getActiveLayer();
     return {
-      width: this.W,
-      height: this.H,
+      width: this._docW || this.W,
+      height: this._docH || this.H,
       docSized: !!this._docSized,
       activeLayerId: activeLayer && !activeLayer.isBackground ? activeLayer.id : null,
       activeLayerIndex: this.getActiveLayerIndex(),
@@ -16222,7 +16959,7 @@ export class App {
 
     const width = Math.max(1, Math.min(8192, Math.round(Number(documentState.width) || this.W || 1)));
     const height = Math.max(1, Math.min(8192, Math.round(Number(documentState.height) || this.H || 1)));
-    if (width !== this.W || height !== this.H) {
+    if (width !== this._docW || height !== this._docH) {
       await this.resizeDocument(width, height, this.bgColorEl?.value || '#ffffff');
     }
 
@@ -16535,6 +17272,7 @@ export class App {
     this.viewBookmarks = [];
     this.lastChangeMarker = null;
     this._applyControlState(FACTORY_DEFAULTS);
+    await this.resizeDocument(FACTORY_DEFAULTS._docW || 1024, FACTORY_DEFAULTS._docH || 1024, FACTORY_DEFAULTS.bgColor || '#313131');
     this._paramsDirty = true;
     syncUI(this);
     this._renderViewBookmarksPanel?.();

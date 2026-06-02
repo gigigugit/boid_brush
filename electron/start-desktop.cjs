@@ -41,13 +41,13 @@ function extractElectronZip(zipPath, distDir) {
 
   if (process.platform === 'win32') {
     try {
+      const escapedZipPath = validatedZipPath.replace(/'/g, "''");
+      const escapedDistDir = validatedDistDir.replace(/'/g, "''");
       execFileSync('powershell.exe', [
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'param($zipPath, $distDir) Expand-Archive -LiteralPath $zipPath -DestinationPath $distDir -Force',
-        validatedZipPath,
-        validatedDistDir
+        `Expand-Archive -LiteralPath '${escapedZipPath}' -DestinationPath '${escapedDistDir}' -Force`
       ], { stdio: 'inherit' });
     } catch (error) {
       throw new Error(

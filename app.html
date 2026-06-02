@@ -57,6 +57,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #compositeDisplay{position:absolute;top:0;left:0;width:100%;height:100%;will-change:contents;}
 #liveCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 #interactionCanvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;}
+#canvasFrame{position:absolute;pointer-events:none;box-sizing:border-box;border:1px solid rgba(167,198,255,0.56);border-radius:12px;box-shadow:0 0 0 1px rgba(4,8,14,0.4), inset 0 0 0 1px rgba(255,255,255,0.08);}
 
 /* ---- Top Bar ---- */
 #topbarWrap{position:fixed;inset:0 0 auto 0;height:var(--topbar-h);display:flex;align-items:center;z-index:30;background:rgba(17,20,28,0.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--line-0);box-shadow:0 2px 16px rgba(0,0,0,0.45);}
@@ -106,7 +107,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 .canvas-size-color-chip{width:24px;height:24px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);flex:none;}
 .canvas-size-color-value{font-size:11px;font-weight:700;letter-spacing:.04em;color:#eef3ff;text-transform:uppercase;}
 
-#colorPickerPanel{position:fixed;display:none;z-index:65;width:min(92vw,360px);padding:14px;border:1px solid var(--line-1);border-radius:18px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);touch-action:pan-y;}
+#colorPickerPanel{position:fixed;display:none;z-index:260;width:min(92vw,360px);padding:14px;border:1px solid var(--line-1);border-radius:18px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);touch-action:pan-y;}
 #colorPickerPanel.open{display:block;}
 .color-picker-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px;}
 .color-picker-target{display:grid;gap:2px;}
@@ -151,7 +152,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #leftPanel::-webkit-scrollbar{width:5px;}
 #leftPanel::-webkit-scrollbar-track{background:transparent;}
 #leftPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-#layersPanel,#simulationControlsPanel{-webkit-overflow-scrolling:touch;padding:10px;}
+#layersPanel,#guidesPanel,#simulationControlsPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 
 /* ---- Right Panel (tabbed) ---- */
 #rightPanel{position:fixed;top:var(--panel-top);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
@@ -192,22 +193,22 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simOverlaySidebar .section-body[data-sim-section-body="sceneVariables"]:not(.collapsed){max-height:none;}
 
 /* Controls */
-#sidebar label,#layersPanel label,#favoritesPanel label,#settingsPanel label,#simulationControlsPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
-#sidebar label span,#layersPanel label span,#favoritesPanel label span,#settingsPanel label span,#simulationControlsPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
+#sidebar label,#layersPanel label,#guidesPanel label,#favoritesPanel label,#settingsPanel label,#simulationControlsPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
+#sidebar label span,#layersPanel label span,#guidesPanel label span,#favoritesPanel label span,#settingsPanel label span,#simulationControlsPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
 .slider-desc{display:block;font-size:8px;color:var(--ink-3);margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
-#sidebar input[type="range"],#layersPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
-#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
-#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb,#favoritesPanel input[type="range"]::-moz-range-thumb,#settingsPanel input[type="range"]::-moz-range-thumb,#simulationControlsPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track,#favoritesPanel input[type="range"]::-moz-range-track,#settingsPanel input[type="range"]::-moz-range-track,#simulationControlsPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
-#sidebar select,#layersPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
-#sidebar select:hover,#layersPanel select:hover,#favoritesPanel select:hover,#settingsPanel select:hover,#simulationControlsPanel select:hover{border-color:rgba(255,255,255,0.2);}
-#sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup,#favoritesPanel select option,#favoritesPanel select optgroup,#settingsPanel select option,#settingsPanel select optgroup,#simulationControlsPanel select option,#simulationControlsPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
-#sidebar button,#layersPanel button,#favoritesPanel button,#settingsPanel button,#simulationControlsPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
-#sidebar button:hover,#layersPanel button:hover,#favoritesPanel button:hover,#settingsPanel button:hover,#simulationControlsPanel button:hover{background:rgba(255,255,255,0.15);color:#fff;}
-#sidebar input[type="checkbox"],#layersPanel input[type="checkbox"],#favoritesPanel input[type="checkbox"],#settingsPanel input[type="checkbox"],#simulationControlsPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
-#sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked,#favoritesPanel input[type="checkbox"]:checked,#settingsPanel input[type="checkbox"]:checked,#simulationControlsPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
-#sidebar input[type="checkbox"]:checked::after,#favoritesPanel input[type="checkbox"]:checked::after,#settingsPanel input[type="checkbox"]:checked::after,#simulationControlsPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+#sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#guidesPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
+#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#guidesPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb,#guidesPanel input[type="range"]::-moz-range-thumb,#favoritesPanel input[type="range"]::-moz-range-thumb,#settingsPanel input[type="range"]::-moz-range-thumb,#simulationControlsPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track,#guidesPanel input[type="range"]::-moz-range-track,#favoritesPanel input[type="range"]::-moz-range-track,#settingsPanel input[type="range"]::-moz-range-track,#simulationControlsPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#sidebar select,#layersPanel select,#guidesPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
+#sidebar select:hover,#layersPanel select:hover,#guidesPanel select:hover,#favoritesPanel select:hover,#settingsPanel select:hover,#simulationControlsPanel select:hover{border-color:rgba(255,255,255,0.2);}
+#sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup,#guidesPanel select option,#guidesPanel select optgroup,#favoritesPanel select option,#favoritesPanel select optgroup,#settingsPanel select option,#settingsPanel select optgroup,#simulationControlsPanel select option,#simulationControlsPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#sidebar button,#layersPanel button,#guidesPanel button,#favoritesPanel button,#settingsPanel button,#simulationControlsPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
+#sidebar button:hover,#layersPanel button:hover,#guidesPanel button:hover,#favoritesPanel button:hover,#settingsPanel button:hover,#simulationControlsPanel button:hover{background:rgba(255,255,255,0.15);color:#fff;}
+#sidebar input[type="checkbox"],#layersPanel input[type="checkbox"],#guidesPanel input[type="checkbox"],#favoritesPanel input[type="checkbox"],#settingsPanel input[type="checkbox"],#simulationControlsPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
+#sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked,#guidesPanel input[type="checkbox"]:checked,#favoritesPanel input[type="checkbox"]:checked,#settingsPanel input[type="checkbox"]:checked,#simulationControlsPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
+#sidebar input[type="checkbox"]:checked::after,#guidesPanel input[type="checkbox"]:checked::after,#favoritesPanel input[type="checkbox"]:checked::after,#settingsPanel input[type="checkbox"]:checked::after,#simulationControlsPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
 .save-btn{background:rgba(42,110,63,0.7)!important;border:1px solid rgba(52,199,89,0.3)!important;}
 .save-btn:hover{background:rgba(52,199,89,0.5)!important;}
 .reset-btn{background:rgba(139,58,58,0.7)!important;border:1px solid rgba(255,59,48,0.3)!important;}
@@ -424,6 +425,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-slider-controls{display:flex;align-items:center;gap:6px;}
 .sim-slider-controls input[type="range"]{flex:1 1 auto;min-width:0;}
 #simOverlaySidebar .sim-slider-controls input[type="number"]{width:64px;background:rgba(20,25,36,0.98);color:#eef3ff;border:1px solid var(--line-1);border-radius:7px;padding:4px 6px;font-size:10px;min-height:24px;flex:0 0 64px;}
+#guidesPanel .sim-slider-controls input[type="number"]{width:64px;background:rgba(20,25,36,0.98);color:#eef3ff;border:1px solid var(--line-1);border-radius:7px;padding:4px 6px;font-size:10px;min-height:24px;flex:0 0 64px;}
 #simOverlaySidebar .sim-fld-reset{padding:0!important;width:16px!important;height:16px!important;border-radius:50%;font-size:9px;flex-shrink:0;line-height:1;}
 .sim-inspector-row input[type="number"],.sim-inspector-row select{width:100%;background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:8px;padding:6px 8px;font-size:11px;min-height:34px;}
 .sim-inspector-row select{color-scheme:dark;}
@@ -447,6 +449,36 @@ html,body{overflow:hidden;width:100%;height:100%;
 .sim-guide-layer-toggle.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b))!important;border-color:rgba(117,162,255,0.55)!important;color:#fff!important;}
 .sim-guide-layer-delete{background:rgba(138,52,52,0.72)!important;border-color:rgba(225,99,99,0.28)!important;color:#ffd6d6!important;}
 .sim-guide-layer-delete:hover{background:rgba(255,59,48,0.38)!important;color:#fff!important;}
+.sim-tree-sessionMeta{font-size:9px;color:#9aa7bd;line-height:1.3;text-align:right;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sim-tree-panel{display:grid;gap:8px;margin-top:4px;}
+.sim-tree-root{display:grid;gap:8px;}
+.sim-tree-global,.sim-tree-sessionsWrap,.sim-tree-session,.sim-tree-group{border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(255,255,255,0.03);overflow:hidden;}
+.sim-tree-groupHeader{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.06);}
+.sim-tree-groupTitle{font-size:10px;font-weight:700;color:#cfd8ea;letter-spacing:.08em;text-transform:uppercase;}
+.sim-tree-globalBody,.sim-tree-sessionBody{display:grid;gap:8px;padding:8px;}
+.sim-tree-session{margin-top:8px;}
+.sim-tree-sessionSummary{list-style:none;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 10px;cursor:pointer;user-select:none;}
+.sim-tree-sessionSummary::-webkit-details-marker{display:none;}
+.sim-tree-sessionSummary.active{background:rgba(58,106,232,0.16);}
+.sim-tree-sessionSummaryMain{min-width:0;display:grid;gap:2px;}
+.sim-tree-sessionTitle{font-size:11px;font-weight:700;color:#eef3ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sim-tree-sessionMeta{font-size:9px;color:#8e98aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sim-tree-sessionSummaryActions{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.sim-tree-list{display:grid;gap:6px;}
+.sim-tree-node{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px 10px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);cursor:pointer;transition:background 140ms ease,border-color 140ms ease,transform 140ms ease,opacity 140ms ease;text-align:left;width:100%;}
+.sim-tree-node:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.16);transform:translateY(-1px);}
+.sim-tree-node.active{background:rgba(58,106,232,0.18);border-color:rgba(117,162,255,0.48);box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset;}
+.sim-tree-node.disabled{opacity:0.68;}
+.sim-tree-node-icon{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.08);color:#f1f5ff;font-size:13px;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.05);}
+.sim-tree-node-main{min-width:0;display:grid;gap:2px;}
+.sim-tree-node-title{font-size:11px;font-weight:700;color:#eef3ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sim-tree-node-meta{font-size:9px;color:#8e98aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sim-tree-node-actions{display:flex;align-items:center;gap:6px;}
+.sim-tree-chipRow{display:flex;flex-wrap:wrap;gap:4px;}
+.sim-tree-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,0.08);color:#dfe7f8;font-size:9px;font-weight:700;line-height:1.2;}
+.sim-tree-chip-label{font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9fb0cf;}
+.sim-tree-empty{padding:8px 10px;color:#9aa7bd;font-size:10px;line-height:1.4;}
+.sim-tree-globalBody .sim-tree-empty{margin-bottom:2px;}
 #simFormatMenu{position:fixed;top:calc(var(--topbar-h) + 18px);right:calc(min(296px, 92vw) + 18px);width:auto;max-width:calc(100vw - 16px);overflow:visible;display:none;z-index:23;padding:0;border-radius:12px;background:rgba(12,15,22,0.96);backdrop-filter:blur(20px);border:1px solid var(--line-1);box-shadow:var(--shadow-lg);cursor:grab;}
 #simFormatMenu.open{display:block;}
 #simFormatMenu.docked{cursor:default;}
@@ -578,6 +610,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simSetupModal .sim-setup-toolbar strong{color:#edf3ff;font-size:12px;}
 #simSetupModal .sim-setup-toolbar span{color:#9ba9c4;font-size:11px;line-height:1.4;}
 #simSetupModal .sim-setup-toolbar .sim-setup-context{display:block;margin-top:4px;color:#c9d6ef;}
+#simSetupModal .sim-setup-toolbarActions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
 #simSetupModal .sim-setup-toggle{display:flex;align-items:center;gap:8px;color:#dbe6fb;font-size:11px;font-weight:650;}
 #simSetupModal .sim-setup-toggle input{accent-color:var(--accent-b);}
 #simSetupModal .sim-setup-tableWrap{width:max-content;max-width:100%;overflow:auto;border:1px solid rgba(255,255,255,0.1);background:rgba(5,9,16,0.58);}
@@ -593,6 +626,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simSetupModal .sim-setup-check{display:flex;align-items:center;justify-content:center;min-height:34px;}
 #simSetupModal .sim-setup-table input[type="checkbox"]{accent-color:var(--accent-b);}
 #simSetupModal .sim-setup-table select,#simSetupModal .sim-setup-table button,#simSetupModal .sim-setup-footer button,#simSetupModal .sim-setup-toolbar button{min-height:30px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;}
+#simSetupModal .sim-setup-table input[type="number"]{width:100%;box-sizing:border-box;min-height:30px;padding:6px 8px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(17,23,36,0.96);color:#e8eefb;font-size:11px;font-family:inherit;}
 #simSetupModal .sim-setup-table select{width:100%;padding:6px 8px;color-scheme:dark;background:var(--select-bg);}
 #simSetupModal .sim-setup-table select option,#simSetupModal .sim-setup-table select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
 #simSetupModal .sim-setup-table button,#simSetupModal .sim-setup-footer button,#simSetupModal .sim-setup-toolbar button{padding:6px 10px;cursor:pointer;font-weight:650;}
@@ -603,6 +637,9 @@ html,body{overflow:hidden;width:100%;height:100%;
 #simSetupModal .sim-setup-multiList.open{display:grid;gap:6px;}
 #simSetupModal .sim-setup-multiList label{display:flex;align-items:center;gap:7px;color:#d9e4f7;font-size:11px;}
 #simSetupModal .sim-setup-warning{color:#ffcf8a;font-size:10px;line-height:1.35;}
+#simSetupModal .sim-setup-futureControls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:150px;}
+#simSetupModal .sim-setup-futureField{display:grid;gap:3px;color:#b8c6df;font-size:10px;line-height:1.25;}
+#simSetupModal .sim-setup-futureField span{color:#9cabca;font-size:9px;letter-spacing:.04em;text-transform:uppercase;}
 #simSetupModal .sim-setup-future{min-width:150px;color:#9cabca;font-size:10px;line-height:1.45;}
 #simSetupModal .sim-setup-status{min-height:18px;color:#adc0e2;font-size:11px;line-height:1.45;}
 #simSetupModal .sim-setup-status.warn{color:#ffd08a;}
@@ -628,6 +665,11 @@ html,body{overflow:hidden;width:100%;height:100%;
 #workspaceJsonModal .workspace-json-label{display:block;color:#8fa3c6;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;}
 #workspaceJsonModal .workspace-json-doc strong{color:#edf3ff;font-size:12px;}
 #workspaceJsonModal .workspace-json-metaText{color:#9ba9c4;font-size:11px;line-height:1.45;max-width:460px;}
+#workspaceJsonModal .workspace-json-toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:end;margin-bottom:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(7,11,20,0.42);}
+#workspaceJsonModal .workspace-json-toolbarField{display:grid;gap:5px;min-width:0;}
+#workspaceJsonModal .workspace-json-toolbarField select{width:100%;box-sizing:border-box;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);color:#f5f8ff;padding:8px 10px;font:12px/1.35 Consolas,"Courier New",monospace;font-weight:600;cursor:pointer;}
+#workspaceJsonModal .workspace-json-toolbarField select:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
+#workspaceJsonModal .workspace-json-toolbarHint{grid-column:1 / -1;color:#9ba9c4;font-size:11px;line-height:1.45;}
 #workspaceJsonModal .workspace-json-editorWrap{display:grid;gap:6px;min-height:0;flex:1;}
 #workspaceJsonModal #workspaceJsonEditor{width:100%;min-height:340px;flex:1;resize:vertical;box-sizing:border-box;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);color:#f5f8ff;padding:14px 16px;font:13px/1.5 Consolas,"Courier New",monospace;font-weight:600;tab-size:2;color-scheme:dark;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:auto;-webkit-user-select:text;user-select:text;cursor:text;overscroll-behavior:contain;}
 #workspaceJsonModal #workspaceJsonEditor:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
@@ -642,6 +684,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #workspaceJsonModal .workspace-json-footer button:not(.ai-save-btn):hover{background:rgba(255,255,255,0.12);}
 @media (max-width: 760px){
   #workspaceJsonModal .workspace-json-panel{width:calc(100vw - 18px);padding:18px 14px 14px;}
+  #workspaceJsonModal .workspace-json-toolbar{grid-template-columns:1fr;gap:8px;}
   #workspaceJsonModal #workspaceJsonEditor{min-height:280px;padding:12px 12px;font-size:13px;}
   #workspaceJsonModal .workspace-json-footer{align-items:stretch;}
   #workspaceJsonModal .workspace-json-actions{width:100%;}
@@ -784,7 +827,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="eyedropperBtn" title="Eyedropper — pick color from canvas (E)">🔬 Pick</button>
   <button id="deselectBtn" title="Deselect (Esc)" style="display:none">✕ Desel</button>
   <button id="transformBtn" title="Transform (T)" style="display:none">⟷↔ Transform</button>
-  <button id="simulationBtn" title="Simulation mode" style="display:none">◎ Simulation</button>
+  <button id="simulationBtn" type="button" title="Simulation mode" style="display:none">◎ Simulation</button>
   <button id="proportionalToggle" title="Keep proportional (default on)"
     style="display:none; background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(106,154,255,0.5);color:#fff;box-shadow:0 0 8px rgba(74,126,255,0.3);">🔒</button>
   <div class="tb-sep"></div>
@@ -813,7 +856,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <input type="hidden" id="primaryColor" class="color-input-state" value="#1a1a1a">
 <input type="hidden" id="secondaryColor" class="color-input-state" value="#ffffff">
-<input type="hidden" id="bgColor" class="color-input-state" value="#ffffff">
+<input type="hidden" id="bgColor" class="color-input-state" value="#313131">
 
 <!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
 <div id="brushDropdown">
@@ -876,6 +919,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <canvas id="compositeDisplay"></canvas>
     <canvas id="liveCanvas"></canvas>
     <canvas id="interactionCanvas"></canvas>
+    <div id="canvasFrame" aria-hidden="true"></div>
   </div>
 </div>
 
@@ -930,7 +974,6 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <span class="sim-playback-divider" aria-hidden="true"></span>
   <button class="sim-pill" id="simRecordBtn" type="button">⏺ Record</button>
   <button class="sim-pill" id="simExportBtn" type="button">Export</button>
-  <span class="sim-playback-readout sim-session-readout" id="simPlaybackSession">Session Unsaved Draft</span>
   <span class="sim-status" id="simStatus">Ready</span>
 </div>
 
@@ -965,10 +1008,12 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <!-- ══════════ Layers Panel (left) ══════════ -->
 <div class="panel-tabs panel-tabs--left" id="leftPanelTabs">
   <button class="panel-tab active" data-panel-view="layers" data-panel-target="leftPanel">Layers</button>
+  <button class="panel-tab" data-panel-view="guides" data-panel-target="leftPanel">Guides</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="simulationControls" data-panel-target="leftPanel">Simulation</button>
 </div>
 <aside id="leftPanel">
   <div id="layersPanel" class="panel-view active" data-panel-view="layers"></div>
+  <div id="guidesPanel" class="panel-view" data-panel-view="guides"></div>
   <div id="simulationControlsPanel" class="panel-view" data-panel-view="simulationControls"></div>
 </aside>
 
@@ -1152,6 +1197,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
           <input id="simSetupMultiToggle" type="checkbox">
           <span>Enable multi-session playback</span>
         </label>
+        <div class="sim-setup-toolbarActions">
+          <button id="simSetupAddLayer" type="button">Add Layer</button>
+          <button id="simSetupAddSession" type="button">Add Saved Session</button>
+        </div>
         <div class="sim-setup-status" id="simSetupStatus"></div>
       </div>
       <div class="sim-setup-tableWrap" id="simSetupRows"></div>
@@ -1186,6 +1235,17 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         <strong id="workspaceJsonDocumentName">Workspace Settings JSON</strong>
       </div>
       <div class="workspace-json-metaText" id="workspaceJsonMeta">Loaded from the current live workspace state. Use Validate before Apply if you hand-edit the JSON.</div>
+    </div>
+    <div class="workspace-json-toolbar">
+      <label class="workspace-json-toolbarField" for="workspaceJsonDocumentSelect">
+        <span class="workspace-json-label">Area</span>
+        <select id="workspaceJsonDocumentSelect"></select>
+      </label>
+      <label class="workspace-json-toolbarField" for="workspaceJsonSessionSelect" id="workspaceJsonSessionSelectWrap" hidden>
+        <span class="workspace-json-label">Session</span>
+        <select id="workspaceJsonSessionSelect"></select>
+      </label>
+      <div class="workspace-json-toolbarHint" id="workspaceJsonDocHint">Select a document area to inspect or edit a focused slice of the workspace state.</div>
     </div>
     <label class="workspace-json-editorWrap" for="workspaceJsonEditor">
       <span class="workspace-json-label">JSON</span>
@@ -1250,21 +1310,21 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
       <div style="flex:1;">
         <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Width (px)</label>
-        <input type="number" id="canvasSizeW" min="1" max="8192" value="1920" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
+        <input type="number" id="canvasSizeW" min="1" max="8192" value="1024" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
       </div>
       <button id="canvasSizeSwap" style="margin-top:18px;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ccc;cursor:pointer;font-size:14px;" title="Swap width/height">⇄</button>
       <div style="flex:1;">
         <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Height (px)</label>
-        <input type="number" id="canvasSizeH" min="1" max="8192" value="1080" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
+        <input type="number" id="canvasSizeH" min="1" max="8192" value="1024" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
       </div>
     </div>
 
     <div style="margin-bottom:12px;">
       <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Background</label>
-      <input type="hidden" id="canvasSizeBg" value="#ffffff">
+      <input type="hidden" id="canvasSizeBg" value="#313131">
       <button id="canvasSizeBgTrigger" class="canvas-size-color-trigger" type="button" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false">
         <span class="canvas-size-color-chip"></span>
-        <span class="canvas-size-color-value" id="canvasSizeBgValue">#FFFFFF</span>
+        <span class="canvas-size-color-value" id="canvasSizeBgValue">#313131</span>
       </button>
     </div>
 

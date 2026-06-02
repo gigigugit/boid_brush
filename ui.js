@@ -96,6 +96,14 @@ function _nudgeRangeValue(target, delta) {
   _updateSliderValue(target, (Number(target?.value) || 0) + delta);
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export function renderSimulationSessionCard({
   title = 'Simulation Session',
   badgeId = '',
@@ -609,7 +617,7 @@ export function buildSidebar(app) {
     <!-- Stamp Image -->
     <div class="section-header closed" data-brushes="boid ant bristle simple eraser motionPath" data-section="stampImage">Stamp Image <span class="chevron">▼</span></div>
     <div class="section-body collapsed" data-brushes="boid ant bristle simple eraser motionPath">
-      <label>Enable <input type="checkbox" id="stampImageEnabled"></label>
+      <label>Enable <input type="checkbox" id="stampImageEnabled" checked></label>
       <div id="stampPresetSwitcher"></div>
       <span class="slider-desc">Built-in free silhouettes for quick switching. Upload still works for custom stamps.</span>
       <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
@@ -630,7 +638,7 @@ export function buildSidebar(app) {
     <!-- Canvas Texture -->
     <div class="section-header closed" data-section="canvasTexture">Canvas Texture <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
-      <label>Enable <input type="checkbox" id="canvasTextureEnabled" checked></label>
+      <label>Enable <input type="checkbox" id="canvasTextureEnabled"></label>
       <label>Show On Canvas <input type="checkbox" id="canvasTextureShowOnCanvas"></label>
       <label>Active <select id="canvasTexturePreset"></select></label>
       <div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;">
@@ -676,9 +684,9 @@ export function buildSidebar(app) {
       <label>Taper Opac <input type="checkbox" id="taperOpacity" checked></label>
     </div>
 
-    <!-- Sensing (boid + ant) -->
-    <div class="section-header" data-brushes="boid ant" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant" data-section="sensing">
+    <!-- Sensing -->
+    <div class="section-header" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body" data-section="sensing">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
@@ -996,7 +1004,7 @@ function _workspaceSettingsMarkup() {
   return `
     <div class="section-header" data-section="appSettings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
-      <label>Always show tabs <input type="checkbox" id="alwaysShowTabs"></label>
+      <label>Always show tabs <input type="checkbox" id="alwaysShowTabs" checked></label>
       <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
       <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
       <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
@@ -1017,6 +1025,11 @@ function _workspaceSettingsMarkup() {
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>
         <button id="btnResetDefaults" class="reset-btn">🧼 Fresh Start</button>
       </div>
+    </div>
+    <div class="section-header" data-section="simulationSettings">Simulation <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <label>Show Selected Overlay <input type="checkbox" id="showSimulationSelectionOverlay"></label>
+      <span class="slider-desc">Show or hide the draggable spawn/guide format bar that appears when a simulation item is selected.</span>
     </div>
   `;
 }
@@ -1074,6 +1087,10 @@ function _wireWorkspaceSettingsPanel(app, panel) {
       await app.reloadAppWithCacheBust({ wipeSession: true });
     }
   });
+  document.getElementById('showSimulationSelectionOverlay')?.addEventListener('change', () => {
+    app._closeSimulationFormatMenuPopover?.({ rerender: false });
+    app._renderSimulationInspector?.();
+  });
 
   const autoSaveCb = document.getElementById('autoSaveSession');
   if (autoSaveCb) {
@@ -1125,34 +1142,328 @@ export function buildSimulationControlsPanel(app) {
   const panel = document.getElementById('simulationControlsPanel');
   if (!panel) return;
   panel.innerHTML = `
-    <div class="section-header" data-section="simulationControls">Simulation Controls <span class="chevron">▼</span></div>
-    <div class="section-body">
-      <div class="sim-row" id="simDrawerToolRow">
-        <button class="sim-pill" data-sim-tool="select">Select</button>
-        <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
-        <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
-        <button class="sim-pill" data-sim-tool="attract">Attract</button>
-        <button class="sim-pill" data-sim-tool="repel">Repel</button>
-        <button class="sim-pill" data-sim-tool="path">Path</button>
-        <button class="sim-pill" data-sim-tool="edge">Edge</button>
-        <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+    <div class="sim-card">
+      <div class="sim-hud-header">
+        <div class="sim-label">Simulation</div>
+        <div id="simTreeSessionMeta" class="sim-tree-sessionMeta"></div>
       </div>
-      <div class="sim-row">
-        <button class="sim-pill active" id="simDrawerGuidesToggle">Hide Guides</button>
-        <button class="sim-pill" id="simDrawerHeatmapToggle" aria-pressed="false">Heatmap</button>
-        <button class="sim-pill warn" id="simDrawerCanvasClearBtn">Clear Canvas</button>
-        <button class="sim-pill warn" id="simDrawerClearBtn">Clear</button>
+      <div class="sim-hud-body">
+        <div class="sim-row sim-stack" id="simDrawerToolRow">
+          <button class="sim-pill" data-sim-tool="select">Select</button>
+          <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
+          <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
+          <button class="sim-pill" data-sim-tool="attract">Attract</button>
+          <button class="sim-pill" data-sim-tool="repel">Repel</button>
+          <button class="sim-pill" data-sim-tool="path">Path</button>
+          <button class="sim-pill" data-sim-tool="edge">Edge</button>
+          <button class="sim-pill" data-sim-tool="pheromone">Pheromone</button>
+          <button class="sim-pill active" id="simDrawerGuidesToggle">Hide Guides</button>
+          <button class="sim-pill" id="simDrawerHeatmapToggle" aria-pressed="false">Heatmap</button>
+          <button class="sim-pill warn" id="simDrawerCanvasClearBtn">Clear Canvas</button>
+          <button class="sim-pill warn" id="simDrawerClearBtn">Clear</button>
+        </div>
+        <div class="sim-row sim-stack">
+          <button class="sim-pill" id="simDrawerRunBtn" type="button">▶ Run</button>
+          <button class="sim-pill warn" id="simDrawerStopBtn" type="button">⏹ Stop</button>
+          <button class="sim-pill" id="simDrawerStepBackBtn" type="button">Step Path -</button>
+          <button class="sim-pill" id="simDrawerStepForwardBtn" type="button">Step Path +</button>
+          <button class="sim-pill active" id="simDrawerInspectorToggle">Settings</button>
+        </div>
+        <div id="simTreePanel" class="sim-tree-panel"></div>
       </div>
-      <div class="sim-row">
-        <button class="sim-pill" id="simDrawerRunBtn" type="button">▶ Run</button>
-        <button class="sim-pill warn" id="simDrawerStopBtn" type="button">⏹ Stop</button>
-        <button class="sim-pill" id="simDrawerStepBackBtn" type="button">Step Path -</button>
-        <button class="sim-pill" id="simDrawerStepForwardBtn" type="button">Step Path +</button>
-        <button class="sim-pill active" id="simDrawerInspectorToggle">Settings</button>
-      </div>
-      <span class="slider-desc">Use Brush Settings → Show Sim Overlay to switch between this drawer and the floating simulation HUD.</span>
     </div>
   `;
+
+  const treePanel = panel.querySelector('#simTreePanel');
+  const sessionMeta = panel.querySelector('#simTreeSessionMeta');
+  const currentBrush = () => app._getSimulationContextBrush?.() || app.activeBrush;
+  const currentVars = () => app._getSimulationVars?.() || app.simulation?.vars || {};
+  const activeSessionIndex = () => Number.isFinite(app.simulation?.activeSessionIndex) ? Math.round(app.simulation.activeSessionIndex) : -1;
+  const selectedEntry = () => app._getSelectedSimulationEntry?.() || null;
+
+  const fmt = value => Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '—';
+  const chip = (label, value) => value == null || value === '—' ? '' : `<span class="sim-tree-chip"><span class="sim-tree-chip-label">${escapeHtml(label)}</span> ${escapeHtml(value)}</span>`;
+  const chipRow = items => {
+    const filtered = items.filter(Boolean).join('');
+    return filtered ? `<div class="sim-tree-chipRow">${filtered}</div>` : '';
+  };
+
+  const spawnMeta = item => {
+    const meta = [];
+    if (item.mask) meta.push('Blob');
+    else if (item.shape) meta.push(item.shape);
+    if (Number.isFinite(item.count)) meta.push(`Count ${Math.round(item.count)}`);
+    if (Number.isFinite(item.stampSize)) meta.push(`Size ${Math.round(item.stampSize)}`);
+    if (Number.isFinite(item.opacity)) meta.push(`Opacity ${Math.round((item.opacity <= 1 ? item.opacity * 100 : item.opacity))}%`);
+    return meta.slice(0, 3).join(' · ');
+  };
+
+  const pointMeta = item => {
+    const meta = [item.type === 'repel' ? 'Repel' : 'Attract'];
+    if (Number.isFinite(item.radius)) meta.push(`Radius ${Math.round(item.radius)}px`);
+    if (Number.isFinite(item.strength)) meta.push(`Force ${fmt(item.strength)}`);
+    return meta.join(' · ');
+  };
+
+  const pathMeta = item => {
+    const meta = [item.closed ? 'Closed' : 'Open'];
+    if (Array.isArray(item.points)) meta.push(`${item.points.length} pts`);
+    if (Number.isFinite(item.radius)) meta.push(`Radius ${Math.round(item.radius)}px`);
+    if (Number.isFinite(item.strength)) meta.push(`Force ${fmt(item.strength)}`);
+    return meta.join(' · ');
+  };
+
+  const edgeMeta = item => {
+    const meta = [];
+    if (Array.isArray(item.points)) meta.push(`${item.points.length} pts`);
+    if (Number.isFinite(item.radius)) meta.push(`Radius ${Math.round(item.radius)}px`);
+    if (Number.isFinite(item.strength)) meta.push(`Force ${fmt(item.strength)}`);
+    return meta.join(' · ');
+  };
+
+  const pheromoneMeta = item => {
+    const meta = [];
+    if (Array.isArray(item.points)) meta.push(`${item.points.length} pts`);
+    if (Number.isFinite(item.radius)) meta.push(`Radius ${Math.round(item.radius)}px`);
+    if (Number.isFinite(item.intensity)) meta.push(`Intensity ${fmt(item.intensity)}`);
+    return meta.join(' · ');
+  };
+
+  const itemButton = ({ icon, title, meta, chips, active, disabled, attrs = '' }) => `
+    <button type="button" class="sim-tree-node${active ? ' active' : ''}${disabled ? ' disabled' : ''}" ${attrs}>
+      <span class="sim-tree-node-icon">${escapeHtml(icon)}</span>
+      <span class="sim-tree-node-main">
+        <span class="sim-tree-node-title">${escapeHtml(title)}</span>
+        <span class="sim-tree-node-meta">${escapeHtml(meta || 'No details')}</span>
+        ${chips ? `<span class="sim-tree-chipRow">${chips}</span>` : ''}
+      </span>
+      ${disabled ? '<span class="sim-stage-badge muted">Off</span>' : ''}
+    </button>`;
+
+  const renderGroup = ({ title, items, collection, kind, sessionIndex, iconFor, metaFor, chipFor }) => {
+    if (!items.length) {
+      return `<div class="sim-tree-group"><div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">${escapeHtml(title)}</span><span class="sim-stage-badge muted">0</span></div><div class="sim-tree-empty">No ${escapeHtml(title.toLowerCase())} yet.</div></div>`;
+    }
+    const selected = selectedEntry();
+    return `
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader">
+          <span class="sim-tree-groupTitle">${escapeHtml(title)}</span>
+          <span class="sim-stage-badge muted">${items.length}</span>
+        </div>
+        <div class="sim-tree-list">
+          ${items.map((item, index) => itemButton({
+            icon: iconFor(item, index),
+            title: `${title.replace(/s$/, '')} ${index + 1}`,
+            meta: metaFor(item, index),
+            chips: chipFor(item, index),
+            active: !!selected && selected.collection === collection && selected.kind === kind && selected.id === item.id,
+            disabled: item.enabled === false,
+            attrs: `data-sim-tree-select="1" data-sim-tree-session-index="${sessionIndex}" data-sim-tree-collection="${collection}" data-sim-tree-kind="${kind}" data-sim-tree-id="${item.id}"`,
+          })).join('')}
+        </div>
+      </div>`;
+  };
+
+  const renderSession = (session, sessionIndex, isDraft = false) => {
+    const brush = currentBrush();
+    const liveSessionIndex = activeSessionIndex();
+    const data = isDraft || sessionIndex === liveSessionIndex
+      ? (app._getSimulationBrushData?.(brush) || null)
+      : (session?.brushData?.[brush] || null);
+    const spawns = Array.isArray(data?.spawns) ? data.spawns : [];
+    const points = Array.isArray(data?.points) ? data.points : [];
+    const attractPoints = points.filter(point => point?.type !== 'repel');
+    const repelPoints = points.filter(point => point?.type === 'repel');
+    const paths = brush === 'boid' ? (Array.isArray(data?.paths) ? data.paths : []) : [];
+    const edges = brush === 'ant' ? (Array.isArray(data?.edges) ? data.edges : []) : [];
+    const pheromonePaths = brush === 'ant' ? (Array.isArray(data?.pheromonePaths) ? data.pheromonePaths : []) : [];
+    const isActive = isDraft ? activeSessionIndex() < 0 : activeSessionIndex() === sessionIndex;
+    const title = isDraft ? 'Unsaved Draft' : (session?.name || `Session ${sessionIndex + 1}`);
+    const meta = [
+      `${spawns.length} spawn${spawns.length === 1 ? '' : 's'}`,
+      `${points.length} point${points.length === 1 ? '' : 's'}`,
+      brush === 'boid' ? `${paths.length} path${paths.length === 1 ? '' : 's'}` : `${edges.length} edge${edges.length === 1 ? '' : 's'}`,
+    ].join(' · ');
+    const vars = isDraft || sessionIndex === liveSessionIndex ? currentVars() : (session?.vars || {});
+    const sessionChips = chipRow([
+      chip('Seek', Number.isFinite(vars.seek) ? fmt(vars.seek) : null),
+      chip('Max', Number.isFinite(vars.maxSpeed) ? fmt(vars.maxSpeed) : null),
+      chip('Sense', typeof vars.sensingEnabled === 'boolean' ? (vars.sensingEnabled ? 'On' : 'Off') : null),
+    ]);
+    return `
+      <details class="sim-tree-session"${isActive || isDraft ? ' open' : ''}>
+        <summary class="sim-tree-sessionSummary${isActive ? ' active' : ''}" data-sim-tree-session="${sessionIndex}" data-sim-tree-draft="${isDraft ? '1' : '0'}">
+          <span class="sim-tree-sessionSummaryMain">
+            <span class="sim-tree-sessionTitle">${escapeHtml(title)}</span>
+            <span class="sim-tree-sessionMeta">${escapeHtml(meta)}${isDraft ? ' · current edits' : ''}</span>
+            ${sessionChips}
+          </span>
+          <span class="sim-tree-sessionSummaryActions"><span class="sim-stage-badge ${isActive ? 'active' : 'muted'}">${isDraft ? 'Draft' : (isActive ? 'Active' : 'Saved')}</span></span>
+        </summary>
+        <div class="sim-tree-sessionBody">
+          ${renderGroup({
+            title: 'Spawns',
+            items: spawns,
+            collection: 'spawns',
+            kind: 'spawn',
+            sessionIndex,
+            iconFor: item => item.mask ? '◉' : '◎',
+            metaFor: item => spawnMeta(item),
+            chipFor: item => chipRow([
+              chip('Count', Number.isFinite(item.count) ? Math.round(item.count) : null),
+              chip('Size', Number.isFinite(item.stampSize) ? Math.round(item.stampSize) : null),
+              chip('Opacity', Number.isFinite(item.opacity) ? `${Math.round((item.opacity <= 1 ? item.opacity * 100 : item.opacity))}%` : null),
+            ]),
+          })}
+          ${renderGroup({
+            title: 'Attract Points',
+            items: attractPoints,
+            collection: 'points',
+            kind: 'point',
+            sessionIndex,
+            iconFor: () => '↗',
+            metaFor: item => pointMeta(item),
+            chipFor: item => chipRow([
+              chip('Force', Number.isFinite(item.strength) ? fmt(item.strength) : null),
+              chip('Radius', Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : null),
+            ]),
+          })}
+          ${renderGroup({
+            title: 'Repel Points',
+            items: repelPoints,
+            collection: 'points',
+            kind: 'point',
+            sessionIndex,
+            iconFor: () => '↘',
+            metaFor: item => pointMeta(item),
+            chipFor: item => chipRow([
+              chip('Force', Number.isFinite(item.strength) ? fmt(item.strength) : null),
+              chip('Radius', Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : null),
+              chip('Hard', Number.isFinite(item.hardness) ? fmt(item.hardness) : null),
+            ]),
+          })}
+          ${brush === 'boid' ? renderGroup({
+            title: 'Paths',
+            items: paths,
+            collection: 'paths',
+            kind: 'path',
+            sessionIndex,
+            iconFor: item => item.primitiveKind ? '⬡' : '≈',
+            metaFor: item => pathMeta(item),
+            chipFor: item => chipRow([
+              chip('Strength', Number.isFinite(item.strength) ? fmt(item.strength) : null),
+              chip('Radius', Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : null),
+            ]),
+          }) : ''}
+          ${brush === 'ant' ? renderGroup({
+            title: 'Edges',
+            items: edges,
+            collection: 'edges',
+            kind: 'edge',
+            sessionIndex,
+            iconFor: () => '⛶',
+            metaFor: item => edgeMeta(item),
+            chipFor: item => chipRow([
+              chip('Force', Number.isFinite(item.strength) ? fmt(item.strength) : null),
+              chip('Radius', Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : null),
+            ]),
+          }) : ''}
+          ${brush === 'ant' ? renderGroup({
+            title: 'Pheromones',
+            items: pheromonePaths,
+            collection: 'pheromonePaths',
+            kind: 'pheromonePath',
+            sessionIndex,
+            iconFor: () => '∿',
+            metaFor: item => pheromoneMeta(item),
+            chipFor: item => chipRow([
+              chip('Radius', Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : null),
+              chip('Intensity', Number.isFinite(item.intensity) ? fmt(item.intensity) : null),
+            ]),
+          }) : ''}
+        </div>
+      </details>`;
+  };
+
+  const renderTree = () => {
+    if (!treePanel) return;
+    const brush = currentBrush();
+    const vars = currentVars();
+    const sessions = Array.isArray(app.simulation?.sessions) ? app.simulation.sessions : [];
+    const currentName = app._getSimulationSessionContextSummary?.()?.name || 'Unsaved Draft';
+    if (sessionMeta) sessionMeta.textContent = `${currentName} · ${brush}`;
+    const globalChips = chipRow([
+      chip('Seek', Number.isFinite(vars.seek) ? fmt(vars.seek) : null),
+      chip('Cohesion', Number.isFinite(vars.cohesion) ? fmt(vars.cohesion) : null),
+      chip('Separation', Number.isFinite(vars.separation) ? fmt(vars.separation) : null),
+      chip('Max', Number.isFinite(vars.maxSpeed) ? fmt(vars.maxSpeed) : null),
+      chip('Damping', Number.isFinite(vars.damping) ? fmt(vars.damping) : null),
+    ]);
+    const entries = [];
+    if (activeSessionIndex() < 0) entries.push(renderSession(null, -1, true));
+    sessions.forEach((session, index) => entries.push(renderSession(session, index, false)));
+    treePanel.innerHTML = `
+      <div class="sim-tree-root">
+        <div class="sim-tree-global" data-sim-tree-global="1">
+          <div class="sim-tree-groupHeader">
+            <span class="sim-tree-groupTitle">Global</span>
+            <span class="sim-stage-badge ${selectedEntry() ? 'muted' : 'active'}">${selectedEntry() ? 'Context' : 'Selected'}</span>
+          </div>
+          <div class="sim-tree-globalBody">
+            <div class="sim-tree-empty">Current simulation defaults for the active brush.</div>
+            ${globalChips}
+          </div>
+        </div>
+        <div class="sim-tree-sessionsWrap">
+          <div class="sim-tree-groupHeader">
+            <span class="sim-tree-groupTitle">Sessions</span>
+            <span class="sim-stage-badge muted">${entries.length}</span>
+          </div>
+          <div class="sim-tree-list">${entries.join('') || '<div class="sim-tree-empty">No simulation sessions yet.</div>'}</div>
+        </div>
+      </div>`;
+
+    treePanel.querySelectorAll('[data-sim-tree-session]').forEach(summary => {
+      summary.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (summary.dataset.simTreeDraft === '1') {
+          app._setSimulationSelection?.(null);
+          return;
+        }
+        const index = Number(summary.dataset.simTreeSession);
+        if (Number.isFinite(index) && index >= 0) {
+          app._setActiveSimulationSessionIndex?.(index);
+          app._setSimulationSelection?.(null);
+        }
+      });
+    });
+
+    treePanel.querySelectorAll('[data-sim-tree-select]').forEach(button => {
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const index = Number(button.dataset.simTreeSessionIndex);
+        if (Number.isFinite(index) && index >= 0 && index !== activeSessionIndex()) {
+          app._setActiveSimulationSessionIndex?.(index);
+        }
+        app._setSimulationSelection?.({
+          collection: button.dataset.simTreeCollection,
+          kind: button.dataset.simTreeKind,
+          id: Number(button.dataset.simTreeId),
+        });
+      });
+    });
+
+    treePanel.querySelectorAll('[data-sim-tree-global]').forEach(button => {
+      button.addEventListener('click', () => app._setSimulationSelection?.(null));
+    });
+  };
+
+  app._renderSimulationTreePanel = renderTree;
+  renderTree();
+
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
@@ -1242,6 +1553,24 @@ export function buildLayersPanel(app) {
   // Initial layer list
   _renderLayerList(app);
   _renderViewBookmarksPanel(app);
+}
+
+export function buildGuidesPanel(app) {
+  const panel = document.getElementById('guidesPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="section-header" data-section="guides">Guides <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div id="guidesPanelEditor" class="sim-guide-editor">
+        <div class="sim-guide-panel-summary">Select a guide in simulation mode to edit its per-item overrides here.</div>
+        <div class="sim-inspector-note">Spawn, point, path, edge, and pheromone guide settings now live in this left-side drawer instead of the floating overlay.</div>
+      </div>
+    </div>
+  `;
+
+  panel.querySelectorAll('.section-header').forEach(h => {
+    h.addEventListener('click', () => toggleSection(h));
+  });
 }
 
 // ── Ant Math overlay panel ──────────────────────────────────
