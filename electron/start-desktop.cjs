@@ -29,7 +29,9 @@ function extractElectronZip(zipPath, distDir) {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${distDir.replace(/'/g, "''")}' -Force`
+      'param($zipPath, $distDir) Expand-Archive -LiteralPath $zipPath -DestinationPath $distDir -Force',
+      zipPath,
+      distDir
     ], { stdio: 'inherit' });
     return;
   }
@@ -64,7 +66,9 @@ async function ensureElectronBinary() {
   await fs.promises.mkdir(distDir, { recursive: true });
   extractElectronZip(zipPath, distDir);
   await fs.promises.writeFile(pathFile, executableRelativePath, 'utf8');
-  await fs.promises.chmod(executablePath, 0o755).catch(() => {});
+  await fs.promises.chmod(executablePath, 0o755).catch((error) => {
+    console.warn(`Unable to mark Electron binary as executable at ${executablePath}:`, error);
+  });
 
   if (!fs.existsSync(executablePath)) {
     throw new Error(`Electron executable was not extracted to ${executablePath}`);
