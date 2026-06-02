@@ -7,7 +7,7 @@
   "scripts": {
     "setup": "npm install",
     "start:web": "node electron/start-web.cjs",
-    "start:desktop": "electron .",
+    "start:desktop": "node electron/start-desktop.cjs",
     "build:desktop": "electron-builder --dir",
     "package:desktop": "electron-builder"
   },
