@@ -46,6 +46,18 @@ A Capacitor iOS wrapper is now wired for shipping the existing web app inside a 
 
 The native shell defaults to `app.html`, mirrors `localStorage` into Capacitor Preferences for more durable state restoration, routes exports through Capacitor Filesystem when available, and exposes a native share action for the current canvas.
 
+### GitHub Actions iOS build
+
+This repository now includes `.github/workflows/ios-build.yml` for building the Capacitor iOS app on GitHub-hosted macOS runners. The workflow:
+
+- installs Node dependencies with `npm ci`
+- runs the existing Rust/WASM tests with `npm test`
+- refreshes the iOS shell with `npm run cap:sync`
+- builds an unsigned simulator app with `xcodebuild`
+- uploads the built `.app` bundle and Xcode logs as workflow artifacts
+
+Use **Actions → iOS build → Run workflow** if you want to kick off an iOS build without local Mac access. This produces an unsigned simulator build; shipping to physical devices, TestFlight, or the App Store still requires Apple signing setup.
+
 ### Keyboard Shortcuts
 
 | Key | Action |
