@@ -16,6 +16,7 @@ This is a browser-based painting application built with vanilla JS (ES modules),
 | `selection.js` | `SelectionManager`: rect, ellipse, lasso selection tools + transform handles |
 | `ai-server.js` | `AIServer` class: manages connection to local AI diffusion backend |
 | `psd-io.js` | PSD import/export (`exportPSD`, `importPSD`) |
+| `platform-bridge.js` | Native-shell bridge for Capacitor storage mirroring, save/share flows, and file-picker fallbacks |
 | `wasm-sim/` | Rust source for the boid/ant WASM simulation; compiled pkg in `wasm-sim/pkg/` |
 | `server/` | Python backend for AI diffusion brush (Flask); `setup.bat`/`setup.sh` for env setup |
 
@@ -64,6 +65,7 @@ The scrollable `#topbar` contains buttons and controls in this left-to-right ord
 | Canvas Size | `#canvasSizeBtn` | 📐 Size |
 | Clear | `#clearBtn` | 🗑 Clear |
 | Save | `#saveBtn` | 💾 Save |
+| Share | `#shareBtn` | ⇪ Share |
 | Export PSD | `#exportPsdBtn` | 📤 Export PSD |
 | Import PSD | `#importPsdBtn` | 📥 Import PSD |
 | Reset View | `#resetViewBtn` | 🔍 Reset View |

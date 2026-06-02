@@ -4,8 +4,7 @@ wasm-sim/.cargo/
 
 # Node
 node_modules/
-package.json
-package-lock.json
+capacitor/www/
 
 # OS files
 Thumbs.db

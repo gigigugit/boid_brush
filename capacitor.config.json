@@ -1,0 +1,8 @@
+{
+  "appId": "com.gigigugit.boidbrush",
+  "appName": "Boid Brush",
+  "webDir": "capacitor/www",
+  "ios": {
+    "contentInset": "never"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "boid-brush",
+  "version": "1.0.0",
+  "description": "A browser-based brush/painting application that explores boid-flocking behavior as a digital art tool.",
+  "main": "app.js",
+  "scripts": {
+    "test": "cd wasm-sim && cargo test -q",
+    "cap:prepare": "node ./scripts/prepare-capacitor-web.mjs",
+    "cap:add:ios": "npm run cap:prepare && node ./scripts/ensure-ios-shell.mjs && node ./scripts/configure-ios-shell.mjs",
+    "cap:sync": "npm run cap:prepare && npx cap sync ios && node ./scripts/configure-ios-shell.mjs",
+    "cap:open:ios": "npx cap open ios"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gigigugit/boid_brush.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/gigigugit/boid_brush/issues"
+  },
+  "homepage": "https://github.com/gigigugit/boid_brush#readme",
+  "dependencies": {
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/ios": "^8.3.4",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.1"
+  },
+  "private": true
+}

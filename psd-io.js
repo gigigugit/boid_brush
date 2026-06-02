@@ -105,20 +105,31 @@ export async function exportPSD(app) {
 
     const buffer = writePsd(psd);
     const blob = new Blob([buffer], { type: 'image/vnd.adobe.photoshop' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.download = 'boid-brush.psd';
-    a.href = url;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    await app._downloadBlob(blob, 'boid-brush.psd');
     app.showToast('💾 Exported PSD');
   } catch (err) {
     console.error('PSD export failed:', err);
     app.showToast('⚠ PSD export failed: ' + (err.message || String(err)));
   }
+}
+
+
+async function _pickImportFile(accept) {
+  const platform = window.BoidBrushPlatform;
+  if (platform?.pickFile) return platform.pickFile({ accept });
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const picked = input.files[0] || null;
+      if (input.parentNode) document.body.removeChild(input);
+      resolve(picked);
+    }, { once: true });
+    input.click();
+  });
 }
 
 // ── Import ──────────────────────────────────────────────────────────────────
@@ -128,19 +139,16 @@ export async function exportPSD(app) {
  * @param {App} app  The application instance
  */
 export async function importPSD(app) {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.psd,image/vnd.adobe.photoshop,application/x-photoshop,application/photoshop';
-  input.style.display = 'none';
-  document.body.appendChild(input);
-  input.addEventListener('change', async () => {
-    if (input.parentNode) document.body.removeChild(input);
-    const file = input.files[0];
-    if (!file) return;
-    try {
+  const platform = window.BoidBrushPlatform;
+  const accept = '.psd,image/vnd.adobe.photoshop,application/x-photoshop,application/photoshop';
+  const file = await _pickImportFile(accept);
+  if (!file) return;
+  try {
       app.showToast('⏳ Importing PSD…');
       const { readPsd } = await _loadAgPsd();
-      const arrayBuffer = await file.arrayBuffer();
+      const arrayBuffer = platform?.readArrayBuffer
+        ? await platform.readArrayBuffer(file)
+        : await file.arrayBuffer();
       const psd = readPsd(new Uint8Array(arrayBuffer));
 
       // Collect raster layers from children, or fall back to composite image
@@ -294,6 +302,4 @@ export async function importPSD(app) {
       console.error('PSD import failed:', err);
       app.showToast('⚠ PSD import failed: ' + (err.message || String(err)));
     }
-  });
-  input.click();
 }

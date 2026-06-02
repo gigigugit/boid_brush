@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Boid Brush</title>
 <style>
 :root {
@@ -10,7 +10,13 @@
   --status-h: 24px;
   --sidebar-w: 280px;
   --layers-w: 230px;
-  --panel-top: var(--topbar-h);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --topbar-total-h: calc(var(--topbar-h) + var(--safe-top));
+  --status-total-h: calc(var(--status-h) + var(--safe-bottom));
+  --panel-top: var(--topbar-total-h);
   --panel-tabs-top: calc(var(--panel-top) + 24px);
   --ink-0: #f2f4f8;
   --ink-1: #cdd2de;
@@ -51,14 +57,14 @@ html,body{overflow:hidden;width:100%;height:100%;
 #topbar,#topbar *{touch-action:pan-x;}
 
 /* ---- Canvas Area ---- */
-#canvasArea{position:absolute;top:var(--topbar-h);left:0;right:0;bottom:var(--status-h);overflow:hidden;}
+#canvasArea{position:absolute;top:var(--topbar-total-h);left:0;right:0;bottom:var(--status-total-h);overflow:hidden;}
 #canvasTransform{position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0;will-change:transform;}
 #compositeDisplay{position:absolute;top:0;left:0;width:100%;height:100%;will-change:contents;}
 #liveCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 #interactionCanvas{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;}
 
 /* ---- Top Bar ---- */
-#topbarWrap{position:fixed;inset:0 0 auto 0;height:var(--topbar-h);display:flex;align-items:center;z-index:30;background:rgba(17,20,28,0.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--line-0);box-shadow:0 2px 16px rgba(0,0,0,0.45);}
+#topbarWrap{position:fixed;inset:0 0 auto 0;height:var(--topbar-total-h);padding:var(--safe-top) var(--safe-right) 0 var(--safe-left);display:flex;align-items:center;z-index:30;background:rgba(17,20,28,0.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--line-0);box-shadow:0 2px 16px rgba(0,0,0,0.45);}
 #topbar{flex:1;min-width:0;height:100%;display:flex;align-items:center;padding:0 6px;gap:7px;overflow:hidden;background:transparent;}
 #topbar>*{flex-shrink:0;}
 #sidebarToggle,#layersToggle{flex-shrink:0;margin:0 8px 0 0;padding:8px 12px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.05);color:var(--ink-1);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;min-height:var(--tap-min);transition:all 140ms ease;}
@@ -145,7 +151,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #swapColors:hover{color:#fff;transform:rotate(180deg);}
 
 /* ---- Layers panel (left) ---- */
-#leftPanel{position:fixed;top:var(--panel-top);left:0;bottom:var(--status-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#leftPanel{position:fixed;top:var(--panel-top);left:0;bottom:var(--status-total-h);width:var(--layers-w);background:var(--panel-0);backdrop-filter:blur(22px);border-right:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(-100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
 #leftPanel.open{transform:translateX(0);}
 #leftPanel::-webkit-scrollbar{width:5px;}
 #leftPanel::-webkit-scrollbar-track{background:transparent;}
@@ -153,7 +159,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 #layersPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 
 /* ---- Right Panel (tabbed) ---- */
-#rightPanel{position:fixed;top:var(--panel-top);right:0;bottom:var(--status-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+#rightPanel{position:fixed;top:var(--panel-top);right:0;bottom:var(--status-total-h);width:var(--sidebar-w);background:var(--panel-0);backdrop-filter:blur(22px);border-left:1px solid var(--line-0);z-index:20;overflow:hidden;transform:translateX(100%);transition:transform 220ms ease;font-size:11px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
 #rightPanel.open{transform:translateX(0);}
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
@@ -243,14 +249,14 @@ html,body{overflow:hidden;width:100%;height:100%;
 .blend-row input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
 
 /* ---- Status Bar ---- */
-#status{position:fixed;bottom:0;left:0;right:0;height:var(--status-h);background:rgba(8,10,14,0.94);border-top:1px solid var(--line-0);color:#99a3b7;padding:0 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;z-index:26;display:flex;align-items:center;letter-spacing:0.25px;}
+#status{position:fixed;bottom:0;left:0;right:0;height:var(--status-total-h);background:rgba(8,10,14,0.94);border-top:1px solid var(--line-0);color:#99a3b7;padding:0 calc(12px + var(--safe-right)) var(--safe-bottom) calc(12px + var(--safe-left));font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;z-index:26;display:flex;align-items:center;letter-spacing:0.25px;}
 
 /* ---- Toast ---- */
-#toast{position:fixed;bottom:calc(var(--status-h) + 14px);left:50%;transform:translateX(-50%) translateY(8px);background:rgba(12,15,22,0.95);backdrop-filter:blur(16px);color:#f5f7ff;padding:10px 22px;border-radius:12px;font-size:12px;pointer-events:none;opacity:0;transition:all 0.3s ease;z-index:100;border:1px solid var(--line-1);box-shadow:var(--shadow-lg);}
+#toast{position:fixed;bottom:calc(var(--status-total-h) + 14px);left:50%;transform:translateX(-50%) translateY(8px);background:rgba(12,15,22,0.95);backdrop-filter:blur(16px);color:#f5f7ff;padding:10px 22px;border-radius:12px;font-size:12px;pointer-events:none;opacity:0;transition:all 0.3s ease;z-index:100;border:1px solid var(--line-1);box-shadow:var(--shadow-lg);}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
 /* Simulation HUD */
-#simHud{position:fixed;left:58px;top:calc(var(--topbar-h) + 14px);z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
+#simHud{position:fixed;left:calc(58px + var(--safe-left));top:calc(var(--topbar-total-h) + 14px);z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
 #simHud.open{display:flex;}
 .sim-card{pointer-events:auto;background:rgba(17,20,29,0.88);backdrop-filter:blur(14px);border:1px solid var(--line-0);border-radius:12px;padding:8px;box-shadow:var(--shadow-lg);}
 #simHud .sim-card{width:100%;}
@@ -512,7 +518,7 @@ html,body{overflow:hidden;width:100%;height:100%;
 
 /* Edge sliders - left side quick controls */
 #edgeSliders,#edgeSliders *{touch-action:none;}
-#edgeSliders{position:fixed;left:0;top:var(--topbar-h);bottom:var(--status-h);z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:16px;pointer-events:none;padding-left:8px;}
+#edgeSliders{position:fixed;left:0;top:var(--topbar-total-h);bottom:var(--status-total-h);z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:16px;pointer-events:none;padding-left:calc(8px + var(--safe-left));}
 .edge-slider{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:36px;background:rgba(0,0,0,0.35);border-radius:0 10px 10px 0;padding:10px 6px 6px;cursor:pointer;}
 .edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
 .edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
@@ -752,6 +758,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button id="pasteBtn" title="Paste (Ctrl+V)">📌 Paste</button>
   <div class="tb-sep"></div>
   <button id="saveBtn">💾 Save</button>
+  <button id="shareBtn" title="Share the current image">⇪ Share</button>
   <button id="reloadAppBtn" title="Hard reload (clear browser caches/service workers and reload)">⟳ Reload</button>
   <button id="exportPsdBtn" title="Export as Photoshop PSD">📤 Export PSD</button>
   <button id="importPsdBtn" title="Import Photoshop PSD">📥 Import PSD</button>
@@ -1363,9 +1370,11 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 </div>
 
 <!-- ══════════ Scripts ══════════ -->
+<script src="./platform-bridge.js"></script>
 <script type="module">
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken ? `./app.js?bb_reload=${encodeURIComponent(reloadToken)}` : './app.js';
+await window.BoidBrushPlatform?.preload?.();
 const { App } = await import(appModuleUrl);
 const app = new App();
 window._app = app; // expose for debugging
