@@ -203,6 +203,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   symmetryCount: 4,
   symmetryCenterX: 50,
   symmetryCenterY: 50,
+  symmetryMode: 'radial',
   taperLength: 0,
   taperCurve: 100,
   sensingStrength: 50,
@@ -248,6 +249,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   canvasTextureEnabled: false,
   canvasTextureInvert: false,
   symmetryEnabled: false,
+  symmetryGuideVisible: true,
   symmetryMirror: false,
   taperSize: true,
   taperOpacity: true,
@@ -391,6 +393,11 @@ const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
 const MOTION_PATH_HANDLE_RADIUS = 7;
 const MOTION_PATH_HIT_RADIUS = 12;
+const SYMMETRY_GUIDE_HANDLE_RADIUS = 9;
+const SYMMETRY_GUIDE_HIT_RADIUS = 18;
+const SYMMETRY_GUIDE_SLOT_RADIUS = 4;
+const SYMMETRY_GUIDE_DEFAULT_START = Object.freeze({ x: 0.2, y: 0.8 });
+const SYMMETRY_GUIDE_DEFAULT_END = Object.freeze({ x: 0.8, y: 0.2 });
 const MOTION_PATH_POINT_SIZE_MIN = 0.2;
 const MOTION_PATH_POINT_SIZE_MAX = 4;
 const MOTION_PATH_POINT_SIZE_STEP = 0.05;
@@ -1793,6 +1800,9 @@ export class App {
     // Params
     this._paramsDirty = true;
     this._cachedP = null;
+    this.symmetry = this._createDefaultSymmetryState();
+    this._symmetryDrag = null;
+    this._symmetryStrokeState = null;
 
     // Canvas texture
     this._builtinCanvasTextures = new Map();
@@ -1915,6 +1925,186 @@ export class App {
 
     // Kick off
     this._init().catch(error => this._handleInitError(error));
+  }
+
+  _createDefaultSymmetryState() {
+    return {
+      pathStart: { ...SYMMETRY_GUIDE_DEFAULT_START },
+      pathEnd: { ...SYMMETRY_GUIDE_DEFAULT_END },
+    };
+  }
+
+  _normalizeSymmetryState(state) {
+    const next = this._createDefaultSymmetryState();
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return next;
+    const assignPoint = (target, source) => {
+      if (!source || typeof source !== 'object' || Array.isArray(source)) return;
+      if (Number.isFinite(source.x)) target.x = _clamp01(source.x);
+      if (Number.isFinite(source.y)) target.y = _clamp01(source.y);
+    };
+    assignPoint(next.pathStart, state.pathStart);
+    assignPoint(next.pathEnd, state.pathEnd);
+    return next;
+  }
+
+  _serializeSymmetryState() {
+    return _deepClone(this._normalizeSymmetryState(this.symmetry));
+  }
+
+  _getSymmetryPathPoints() {
+    const symmetry = this._normalizeSymmetryState(this.symmetry);
+    return [
+      { x: symmetry.pathStart.x * this.W, y: symmetry.pathStart.y * this.H },
+      { x: symmetry.pathEnd.x * this.W, y: symmetry.pathEnd.y * this.H },
+    ];
+  }
+
+  _getSymmetryPathSlots(count) {
+    const points = this._getSymmetryPathPoints();
+    const copies = Math.max(1, Math.round(count || 1));
+    if (copies <= 1) return [{ ...points[0] }];
+    const slots = [];
+    for (let i = 0; i < copies; i++) {
+      const sample = _samplePolylinePointAtDistance(points, (i / Math.max(1, copies - 1)) * Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y), false);
+      slots.push(sample ? { x: sample.x, y: sample.y } : { ...points[0] });
+    }
+    return slots;
+  }
+
+  _resolvePathSymmetryBaseSlotIndex(x, y, count) {
+    const slots = this._getSymmetryPathSlots(count);
+    if (slots.length <= 1) return 0;
+    const closest = _getClosestPolylineDistance(this._getSymmetryPathPoints(), x, y, false);
+    if (!closest || !Number.isFinite(closest.totalLength) || closest.totalLength <= 1e-6) return 0;
+    return Math.max(0, Math.min(slots.length - 1, Math.round((closest.distanceAlongPath / closest.totalLength) * (slots.length - 1))));
+  }
+
+  _setSymmetryPathPoints(start, end) {
+    const clampPoint = point => ({
+      x: this.W > 0 ? _clamp01((point.x || 0) / this.W) : 0,
+      y: this.H > 0 ? _clamp01((point.y || 0) / this.H) : 0,
+    });
+    this.symmetry = {
+      ...this.symmetry,
+      pathStart: clampPoint(start),
+      pathEnd: clampPoint(end),
+    };
+  }
+
+  _beginSymmetryStroke(x, y, p = this.getP()) {
+    if (!p.symmetryEnabled) {
+      this._symmetryStrokeState = null;
+      return;
+    }
+    if (p.symmetryMode === 'path') {
+      this._symmetryStrokeState = {
+        mode: 'path',
+        baseSlotIndex: this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount),
+      };
+      return;
+    }
+    this._symmetryStrokeState = { mode: 'radial' };
+  }
+
+  _clearSymmetryStrokeState() {
+    this._symmetryStrokeState = null;
+  }
+
+  _findSymmetryGuideHit(x, y, p = this.getP()) {
+    if (!p.symmetryEnabled || p.symmetryMode !== 'path' || p.symmetryGuideVisible === false || this.activeTool !== 'brush') return null;
+    const [start, end] = this._getSymmetryPathPoints();
+    const mid = { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
+    if (Math.hypot(x - start.x, y - start.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathStart' };
+    if (Math.hypot(x - end.x, y - end.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathEnd' };
+    if (Math.hypot(x - mid.x, y - mid.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathTranslate' };
+    const segment = _closestPointOnSegment(x, y, start.x, start.y, end.x, end.y);
+    if (segment.distance <= SYMMETRY_GUIDE_HIT_RADIUS * 0.75) return { kind: 'pathTranslate' };
+    return null;
+  }
+
+  _handleSymmetryPointerDown(x, y) {
+    const hit = this._findSymmetryGuideHit(x, y);
+    if (!hit) return false;
+    this._symmetryDrag = { ...hit, lastX: x, lastY: y };
+    return true;
+  }
+
+  _handleSymmetryPointerMove(x, y) {
+    if (!this._symmetryDrag) return false;
+    const [start, end] = this._getSymmetryPathPoints();
+    if (this._symmetryDrag.kind === 'pathStart') {
+      this._setSymmetryPathPoints({ x, y }, end);
+    } else if (this._symmetryDrag.kind === 'pathEnd') {
+      this._setSymmetryPathPoints(start, { x, y });
+    } else {
+      const dx = x - this._symmetryDrag.lastX;
+      const dy = y - this._symmetryDrag.lastY;
+      const clampedDx = _clamp(dx, -Math.min(start.x, end.x), this.W - Math.max(start.x, end.x));
+      const clampedDy = _clamp(dy, -Math.min(start.y, end.y), this.H - Math.max(start.y, end.y));
+      this._setSymmetryPathPoints(
+        { x: start.x + clampedDx, y: start.y + clampedDy },
+        { x: end.x + clampedDx, y: end.y + clampedDy },
+      );
+    }
+    this._symmetryDrag.lastX = x;
+    this._symmetryDrag.lastY = y;
+    return true;
+  }
+
+  _handleSymmetryPointerUp() {
+    if (!this._symmetryDrag) return false;
+    this._symmetryDrag = null;
+    return true;
+  }
+
+  _drawSymmetryGuideOverlay(ctx, p = this.getP()) {
+    if (!p.symmetryEnabled || p.symmetryGuideVisible === false) return;
+    ctx.save();
+    if (p.symmetryMode === 'path') {
+      const [start, end] = this._getSymmetryPathPoints();
+      const mid = { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
+      const slots = this._getSymmetryPathSlots(p.symmetryCount);
+      ctx.strokeStyle = 'rgba(123,255,186,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(123,255,186,0.9)';
+      for (const slot of slots) {
+        ctx.beginPath();
+        ctx.arc(slot.x, slot.y, SYMMETRY_GUIDE_SLOT_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(255,170,230,0.95)';
+      [start, end, mid].forEach(handle => {
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SYMMETRY_GUIDE_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } else {
+      const cx = p.symmetryCenterX * this.W;
+      const cy = p.symmetryCenterY * this.H;
+      const radius = Math.max(this.W, this.H) * 0.5;
+      ctx.strokeStyle = 'rgba(123,255,186,0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 6]);
+      for (let i = 0; i < Math.max(1, p.symmetryCount); i++) {
+        const angle = (i / Math.max(1, p.symmetryCount)) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,170,230,0.95)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, SYMMETRY_GUIDE_SLOT_RADIUS + 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   _captureSimulationPriorDrawSeek() {
@@ -4939,6 +5129,8 @@ export class App {
       // Symmetry
       symmetryEnabled: chk('symmetryEnabled'),
       symmetryCount: val('symmetryCount') || 4,
+      symmetryMode: sel('symmetryMode') || 'radial',
+      symmetryGuideVisible: has('symmetryGuideVisible') ? chk('symmetryGuideVisible') : true,
       symmetryMirror: chk('symmetryMirror'),
       symmetryCenterX: (val('symmetryCenterX') || 50) / 100,
       symmetryCenterY: (val('symmetryCenterY') || 50) / 100,
@@ -14138,6 +14330,7 @@ export class App {
     const { x, y } = this._getEventCoords(e);
     this._captureTilt(e);
     if (this._handleSimulationPointerDown(x, y)) return;
+    if (this._handleSymmetryPointerDown(x, y)) return;
     // Move selection by dragging inside it (works in any tool mode)
     if (this.selectionMgr?.active && !this.selectionMgr.transformActive) {
       if (this.selectionMgr.moveOnDown(x, y)) {
@@ -14192,6 +14385,7 @@ export class App {
     this.isTapering = false;
     this.strokeFrame = 0;
     const p = this.getP();
+    this._beginSymmetryStroke(x, y, p);
     this._resetStrokeWaveState();
     const waveStart = this._applyStrokeWavePoint(x, y, p, { reset: true });
     this.leaderX = waveStart.x;
@@ -14212,6 +14406,7 @@ export class App {
     if (this._pinchActive) return;
     const simCoords = this._getEventCoords(e);
     if (this._handleSimulationPointerMove(simCoords.x, simCoords.y)) return;
+    if (this._handleSymmetryPointerMove(simCoords.x, simCoords.y)) return;
     // Move-drag dispatch (any tool mode)
     if (this.selectionMgr?._isMoving) {
       const { x, y } = this._getEventCoords(e);
@@ -14280,6 +14475,7 @@ export class App {
   _onPointerUp(e) {
     this._activePointers.delete(e.pointerId);
     if (this._handleSimulationPointerUp()) return;
+    if (this._handleSymmetryPointerUp()) return;
     // Move-drag end (any tool mode) — keep pixels floating
     if (this.selectionMgr?._isMoving) {
       this.selectionMgr.moveOnUp();
@@ -14333,6 +14529,8 @@ export class App {
       this.isTapering = true;
       this.taperFrame = 0;
       this.taperTotal = p.taperLength;
+    } else {
+      this._clearSymmetryStrokeState();
     }
   }
 
@@ -15343,6 +15541,7 @@ export class App {
       const t = this.taperFrame / this.taperTotal;
       if (t >= 1) {
         this.isTapering = false;
+        this._clearSymmetryStrokeState();
       } else {
         brush.taperFrame(t, p);
       }
@@ -15393,6 +15592,7 @@ export class App {
       this.lctx.restore();
     }
 
+    if (!showingCanvasTexturePreview) this._drawSymmetryGuideOverlay(this.lctx, p);
     if (!showingCanvasTexturePreview && brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, p);
     }
@@ -16031,6 +16231,25 @@ export class App {
   getSymmetryPoints(x, y) {
     const p = this.getP();
     if (!p.symmetryEnabled) return [{ x, y }];
+    if (p.symmetryMode === 'path') {
+      const slots = this._getSymmetryPathSlots(p.symmetryCount);
+      if (slots.length <= 1) return [{ x, y }];
+      let baseIndex = this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount);
+      if ((this.isDrawing || this.isTapering) && this._symmetryStrokeState?.mode === 'path') {
+        baseIndex = Math.max(0, Math.min(slots.length - 1, this._symmetryStrokeState.baseSlotIndex || 0));
+      }
+      const base = slots[baseIndex] || slots[0];
+      const seen = new Set();
+      return slots.filter(slot => {
+        const key = `${Math.round(slot.x * 1000)}:${Math.round(slot.y * 1000)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).map(slot => ({
+        x: x + slot.x - base.x,
+        y: y + slot.y - base.y,
+      }));
+    }
     const cx = p.symmetryCenterX * this.W;
     const cy = p.symmetryCenterY * this.H;
     const pts = [];
@@ -16681,6 +16900,7 @@ export class App {
       multiSessionEnabled: this.simulation.multiSessionEnabled,
       multiSessionBindings: this.simulation.multiSessionBindings,
     };
+    controls._symmetryState = this._serializeSymmetryState();
     controls._sensingSourceSelection = this._serializeSensingSourceSelection();
     controls._motionPath = this._serializeMotionPathState();
     controls._canvasTextureState = this._serializeCanvasTextureState();
@@ -17241,6 +17461,10 @@ export class App {
         this.simulation.multiSessionBindings = Array.isArray(val?.multiSessionBindings) ? _deepClone(val.multiSessionBindings) : [];
         continue;
       }
+      if (id === '_symmetryState') {
+        this.symmetry = this._normalizeSymmetryState(val);
+        continue;
+      }
       if (id === '_sensingSourceSelection') {
         this._restoreSensingSourceSelection(val);
         continue;
@@ -17271,6 +17495,9 @@ export class App {
     await this._loadDefaultStampImage();
     this.viewBookmarks = [];
     this.lastChangeMarker = null;
+    this.symmetry = this._createDefaultSymmetryState();
+    this._symmetryDrag = null;
+    this._clearSymmetryStrokeState();
     this._applyControlState(FACTORY_DEFAULTS);
     await this.resizeDocument(FACTORY_DEFAULTS._docW || 1024, FACTORY_DEFAULTS._docH || 1024, FACTORY_DEFAULTS.bgColor || '#313131');
     this._paramsDirty = true;

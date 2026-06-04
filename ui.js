@@ -56,6 +56,13 @@ function toggleSection(header) {
   if (body) body.classList.toggle('collapsed');
 }
 
+function _syncSymmetryModeUi() {
+  const mode = document.getElementById('symmetryMode')?.value || 'radial';
+  document.querySelectorAll('[data-symmetry-mode-panel]').forEach(panel => {
+    panel.style.display = panel.dataset.symmetryModePanel === mode ? '' : 'none';
+  });
+}
+
 // ── Build a slider row ──────────────────────────────────────
 function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
@@ -669,10 +676,17 @@ export function buildSidebar(app) {
     <div class="section-header closed" data-section="symmetry">Symmetry <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
       <label>Enable <input type="checkbox" id="symmetryEnabled"></label>
+      <label>Mode <select id="symmetryMode"><option value="radial">Radial</option><option value="path">Path</option></select></label>
+      <label>Show Guide <input type="checkbox" id="symmetryGuideVisible" checked></label>
       ${sliderRow('symmetryCount', 'Count', 2, 16, 4)}
-      <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
-      ${sliderRow('symmetryCenterX', 'Center X', 0, 100, 50, v => v + '%')}
-      ${sliderRow('symmetryCenterY', 'Center Y', 0, 100, 50, v => v + '%')}
+      <div data-symmetry-mode-panel="radial">
+        <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
+        ${sliderRow('symmetryCenterX', 'Center X', 0, 100, 50, v => v + '%')}
+        ${sliderRow('symmetryCenterY', 'Center Y', 0, 100, 50, v => v + '%')}
+      </div>
+      <div data-symmetry-mode-panel="path" style="display:none;">
+        <span class="slider-desc">Drag the guide handles on the canvas to place the copy path in real time.</span>
+      </div>
     </div>
 
     <!-- Taper -->
@@ -852,6 +866,8 @@ export function buildSidebar(app) {
   sb.querySelectorAll('input[type="checkbox"], select, input[type="number"]').forEach(el => {
     el.addEventListener('change', () => app.invalidateParams());
   });
+  document.getElementById('symmetryMode')?.addEventListener('change', _syncSymmetryModeUi);
+  _syncSymmetryModeUi();
   document.getElementById('showSimulationOverlayControls')?.addEventListener('change', () => {
     app._syncSimulationUI?.();
   });
@@ -1769,6 +1785,7 @@ export function syncUI(app) {
   syncStampImageUI(app);
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
+  _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
   app._syncMotionPathUI?.();
 }
