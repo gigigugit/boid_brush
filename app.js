@@ -1296,6 +1296,20 @@ function _sampleQuadraticBezierPoint(start, control, end, t) {
   };
 }
 
+function _parseSymmetrySizeMultipliers(value) {
+  if (Array.isArray(value)) {
+    const parsed = value
+      .map(entry => Number.parseFloat(String(entry).replace(/×/g, '').trim()))
+      .filter(entry => Number.isFinite(entry) && entry > 0);
+    return parsed.length ? parsed : [1];
+  }
+  const parsed = String(value ?? '')
+    .split(/[,\s;|/]+/)
+    .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
+    .filter(entry => Number.isFinite(entry) && entry > 0);
+  return parsed.length ? parsed : [1];
+}
+
 function _buildPolylineSegments(points, closed = false) {
   const validPoints = Array.isArray(points)
     ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
@@ -1311,19 +1325,6 @@ function _buildPolylineSegments(points, closed = false) {
     totalLength += length;
   }
 
-  function _parseSymmetrySizeMultipliers(value) {
-    if (Array.isArray(value)) {
-      const parsed = value
-        .map(entry => Number.parseFloat(String(entry).replace(/×/g, '').trim()))
-        .filter(entry => Number.isFinite(entry) && entry > 0);
-      return parsed.length ? parsed : [1];
-    }
-    const parsed = String(value ?? '')
-      .split(/[,\s;|/]+/)
-      .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
-      .filter(entry => Number.isFinite(entry) && entry > 0);
-    return parsed.length ? parsed : [1];
-  }
   if (closed && validPoints.length > 2) {
     const a = validPoints[validPoints.length - 1];
     const b = validPoints[0];
@@ -2033,6 +2034,12 @@ export class App {
       x: p.symmetryCenterX * this.W,
       y: p.symmetryCenterY * this.H,
     };
+  }
+
+  _getSymmetrySizeMultipliers(p = this.getP()) {
+    return Array.isArray(p.symmetrySizeMultipliers) && p.symmetrySizeMultipliers.length
+      ? p.symmetrySizeMultipliers
+      : [1];
   }
 
   _resolvePathSymmetryBaseSlotIndex(x, y, count, p = this.getP()) {
@@ -16309,17 +16316,17 @@ export class App {
 
   getSymmetryPoints(x, y) {
     const p = this.getP();
-    const sizeMultipliers = Array.isArray(p.symmetrySizeMultipliers) && p.symmetrySizeMultipliers.length
-      ? p.symmetrySizeMultipliers
-      : [1];
+    const sizeMultipliers = this._getSymmetrySizeMultipliers(p);
     const getSizeMultiplier = index => sizeMultipliers[Math.max(0, Math.min(sizeMultipliers.length - 1, index))] ?? 1;
     if (!p.symmetryEnabled) return [{ x, y, index: 0, mirrored: false, sizeMultiplier: 1 }];
     if (p.symmetryMode === 'path') {
       const slots = this._getSymmetryPathSlots(p.symmetryCount, p);
       if (slots.length <= 1) return [{ x, y, index: 0, mirrored: false, sizeMultiplier: getSizeMultiplier(0) }];
-      let baseIndex = this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount, p);
+      let baseIndex = 0;
       if ((this.isDrawing || this.isTapering) && this._symmetryStrokeState?.mode === 'path') {
         baseIndex = Math.max(0, Math.min(slots.length - 1, this._symmetryStrokeState.baseSlotIndex || 0));
+      } else {
+        baseIndex = this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount, p);
       }
       const base = slots[baseIndex] || slots[0];
       const baseAngle = Number.isFinite(base?.angle) ? base.angle : 0;

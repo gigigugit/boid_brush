@@ -679,7 +679,8 @@ export function buildSidebar(app) {
       <label>Mode <select id="symmetryMode"><option value="radial">Radial</option><option value="path">Path</option></select></label>
       <label>Show Guide <input type="checkbox" id="symmetryGuideVisible" checked></label>
       ${sliderRow('symmetryCount', 'Count', 2, 16, 4)}
-      <label>Copy Sizes <input type="text" id="symmetrySizeMultipliers" value="1" placeholder="1, 0.9, 0.8"></label>
+      <label for="symmetrySizeMultipliers">Copy Sizes <input type="text" id="symmetrySizeMultipliers" value="1" placeholder="1, 0.9, 0.8" aria-describedby="symmetrySizeMultipliersDesc"></label>
+      <span class="slider-desc" id="symmetrySizeMultipliersDesc">Comma- or space-separated size multipliers applied to copies in order; the last value repeats for remaining copies.</span>
       <div data-symmetry-mode-panel="radial">
         <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
         ${sliderRow('symmetryCenterX', 'Center X', 0, 100, 50, v => v + '%')}
