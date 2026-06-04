@@ -12,6 +12,7 @@ import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
+import { MIN_FLOW_PARTICLES, MAX_FLOW_PARTICLES, DEFAULT_FLOW_PARTICLES } from './webgpu-flow-field.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
@@ -93,7 +94,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   motionPathAngleSmoothing: 90,
   motionPathMovementSmoothing: 65,
   motionPathPathSmoothing: 35,
-  flowParticleCount: 12000,
+  flowParticleCount: DEFAULT_FLOW_PARTICLES,
   flowParticleScale: 18,
   flowParticleStrength: 82,
   flowParticleDamping: 96,
@@ -1857,6 +1858,8 @@ export class App {
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+        // Flow sessions currently reuse the shared spawn/point guide model:
+        // spawns define emission centers and points define attract/repel guides.
         flow: { spawns: [], points: [] },
       },
       // Scene-level variable overrides (applied during simulation playback).
@@ -4932,7 +4935,7 @@ export class App {
       motionPathAngleSmoothing: (val('motionPathAngleSmoothing') || 90) / 100,
       motionPathMovementSmoothing: (val('motionPathMovementSmoothing') || 65) / 100,
       motionPathPathSmoothing: (val('motionPathPathSmoothing') || 35) / 100,
-      flowParticleCount: Math.max(256, Math.min(40000, Math.round(numOr('flowParticleCount', 12000)))),
+      flowParticleCount: Math.max(MIN_FLOW_PARTICLES, Math.min(MAX_FLOW_PARTICLES, Math.round(numOr('flowParticleCount', DEFAULT_FLOW_PARTICLES)))),
       flowParticleScale: numOr('flowParticleScale', 18) / 1000,
       flowParticleStrength: numOr('flowParticleStrength', 82) / 100,
       flowParticleDamping: numOr('flowParticleDamping', 96) / 100,
@@ -5568,10 +5571,10 @@ export class App {
   }
 
   _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
-    const flowCount = Math.max(256, Math.min(40000, Math.round(p.flowParticleCount || 12000)));
+    const flowCount = Math.max(MIN_FLOW_PARTICLES, Math.min(MAX_FLOW_PARTICLES, Math.round(p.flowParticleCount || DEFAULT_FLOW_PARTICLES)));
     return {
       count: Number.isFinite(spawn?.count)
-        ? Math.max(1, Math.min(40000, Math.round(spawn.count)))
+        ? Math.max(1, Math.min(MAX_FLOW_PARTICLES, Math.round(spawn.count)))
         : (this._getSimulationContextBrush?.() === 'flow' ? flowCount : p.count),
       shape: spawn?.shape || p.spawnShape,
       radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : p.spawnRadius,

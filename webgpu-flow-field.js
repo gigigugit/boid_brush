@@ -3,6 +3,9 @@ const BYTES_PER_F32 = 4;
 const PARAM_FLOATS = 32;
 const MAX_GUIDE_POINTS = 32;
 const WORKGROUP_SIZE = 64;
+export const MIN_FLOW_PARTICLES = 256;
+export const MAX_FLOW_PARTICLES = 40000;
+export const DEFAULT_FLOW_PARTICLES = 12000;
 const PALETTE_MODES = Object.freeze({
   mono: 0,
   duo: 1,
@@ -569,7 +572,10 @@ struct Params {
 @group(0) @binding(3) var<storage, read> guides : array<vec4f>;
 
 fn hash11(n : f32) -> f32 {
-  return fract(sin(n) * 43758.5453123);
+  var x = fract(n * 0.1031);
+  x = x * (x + 33.33);
+  x = x * (x + x);
+  return fract(x);
 }
 
 fn scalarField(pos : vec2f, seed : f32, time : f32, scale : f32) -> f32 {

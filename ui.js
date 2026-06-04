@@ -2,6 +2,8 @@
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
 // =============================================================================
 
+import { MIN_FLOW_PARTICLES, MAX_FLOW_PARTICLES, DEFAULT_FLOW_PARTICLES } from './webgpu-flow-field.js';
+
 export const PRESETS_KEY = 'bb_presets_v1';
 export const AUTOSAVE_STORAGE_KEY = 'bb_autosave';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
@@ -379,7 +381,7 @@ export function buildSidebar(app) {
 
     <div class="section-header" data-brushes="flow" data-section="flowParticles">Flow Field Particles <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="flow">
-      ${sliderRow('flowParticleCount', 'Particles', 256, 40000, 12000)}
+      ${sliderRow('flowParticleCount', 'Particles', MIN_FLOW_PARTICLES, MAX_FLOW_PARTICLES, DEFAULT_FLOW_PARTICLES)}
       ${sliderRow('flowParticleScale', 'Field Scale', 1, 80, 18, v => (v / 1000).toFixed(3), 'Lower values create broader vortex streams; higher values tighten the curl field')}
       ${sliderRow('flowParticleStrength', 'Flow Strength', 0, 200, 82, v => (v / 100).toFixed(2), 'How strongly particles follow the procedural flow field each frame')}
       ${sliderRow('flowParticleDamping', 'Damping', 70, 100, 96, v => (v / 100).toFixed(2), 'Velocity retention between compute steps')}
@@ -390,7 +392,7 @@ export function buildSidebar(app) {
       ${sliderRow('flowParticleSegmentWidth', 'Ribbon Width', 4, 80, 32, v => (v / 10).toFixed(1), 'Thickness of each particle ribbon')}
       ${sliderRow('flowParticleRespawn', 'Respawn', 0, 100, 18, v => (v / 100).toFixed(2), 'How quickly particles recycle back into the active spawn area')}
       ${sliderRow('flowParticleOpacity', 'Opacity', 0, 100, 70, v => (v / 100).toFixed(2), 'Overall translucency of the flow accumulation')}
-      <label>Palette <select id="flowParticlePalette">
+      <label for="flowParticlePalette">Palette <select id="flowParticlePalette">
         <option value="mono">Monochrome Ink</option>
         <option value="duo" selected>Duo Wash</option>
         <option value="prism">Prism Smoke</option>
@@ -1304,7 +1306,7 @@ export function buildSimulationControlsPanel(app) {
       ? `${paths.length} path${paths.length === 1 ? '' : 's'}`
       : (brush === 'ant'
           ? `${edges.length} edge${edges.length === 1 ? '' : 's'}`
-          : `${points.length} force${points.length === 1 ? '' : 's'}`);
+          : `${points.length} guide${points.length === 1 ? '' : 's'}`);
     const meta = [
       `${spawns.length} spawn${spawns.length === 1 ? '' : 's'}`,
       `${points.length} point${points.length === 1 ? '' : 's'}`,

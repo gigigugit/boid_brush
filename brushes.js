@@ -11,7 +11,7 @@ import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
-import { WebGPUFlowFieldSystem } from './webgpu-flow-field.js';
+import { WebGPUFlowFieldSystem, MIN_FLOW_PARTICLES, MAX_FLOW_PARTICLES, DEFAULT_FLOW_PARTICLES } from './webgpu-flow-field.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
@@ -6339,8 +6339,8 @@ export class FlowFieldBrush {
           : {};
         this.system = await WebGPUFlowFieldSystem.create({
           ...sharedGpu,
-          maxParticles: 40000,
-          initialParticles: 12000,
+          maxParticles: MAX_FLOW_PARTICLES,
+          initialParticles: DEFAULT_FLOW_PARTICLES,
         });
         this._ready = !!this.system?.ready;
       } catch (error) {
@@ -6451,9 +6451,9 @@ export class FlowFieldBrush {
         const config = this.app._resolveSimulationSpawnConfig?.(spawn, p) || {};
         return sum + Math.max(1, Number(config.count) || 1);
       }, 0);
-      return Math.max(256, Math.min(40000, Math.round(total || p.flowParticleCount || 12000)));
+      return Math.max(MIN_FLOW_PARTICLES, Math.min(MAX_FLOW_PARTICLES, Math.round(total || p.flowParticleCount || DEFAULT_FLOW_PARTICLES)));
     }
-    return Math.max(256, Math.min(40000, Math.round(p.flowParticleCount || 12000)));
+    return Math.max(MIN_FLOW_PARTICLES, Math.min(MAX_FLOW_PARTICLES, Math.round(p.flowParticleCount || DEFAULT_FLOW_PARTICLES)));
   }
 
   _ensureParticles(p, data = this._getSimulationData()) {
