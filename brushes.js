@@ -6317,6 +6317,7 @@ export class FlowFieldBrush {
     this._lastElapsed = null;
     this._particleCount = 0;
     this._resetQueued = true;
+    this._pendingCommit = null;
   }
 
   async init({ force = false } = {}) {
@@ -6362,6 +6363,23 @@ export class FlowFieldBrush {
     if (!this.system || !layer) return;
     this.system.onPreviewUpdated = (canvas) => {
       if (!canvas || this._strokeLayer !== layer || !this.app.layers.includes(layer)) return;
+      const pending = this._pendingCommit;
+      if (pending?.layer === layer) {
+        const ok = this.system.copyTo2D(
+          layer.ctx,
+          layer.canvas.width,
+          layer.canvas.height,
+          pending.compositeOperation,
+        );
+        this._pendingCommit = null;
+        this.system.onPreviewUpdated = null;
+        this.system.clearSurface(layer.canvas.width, layer.canvas.height);
+        layer.gpuPreviewCanvas = null;
+        if (!ok) return;
+        layer.dirty = true;
+        if (pending.composite) this.app.compositeAllLayers();
+        return;
+      }
       layer.gpuPreviewCanvas = canvas;
       layer.dirty = true;
       this.app.compositeAllLayers();
@@ -6370,6 +6388,7 @@ export class FlowFieldBrush {
 
   _clearPreview({ composite = false } = {}) {
     const layer = this._strokeLayer;
+    this._pendingCommit = null;
     if (layer?.gpuPreviewCanvas) {
       layer.gpuPreviewCanvas = null;
       layer.dirty = true;
@@ -6387,12 +6406,19 @@ export class FlowFieldBrush {
       this._clearPreview({ composite });
       return false;
     }
+    const compositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
+    if (!this.system._hasLivePreviewFrame) {
+      this._pendingCommit = { layer, composite, compositeOperation };
+      this._bindPreviewUpdater(layer);
+      return true;
+    }
     const ok = this.system.copyTo2D(
       layer.ctx,
       layer.canvas.width,
       layer.canvas.height,
-      layer.alphaLock ? 'source-atop' : 'source-over',
+      compositeOperation,
     );
+    this._pendingCommit = null;
     this.system.onPreviewUpdated = null;
     this.system.clearSurface(layer.canvas.width, layer.canvas.height);
     layer.gpuPreviewCanvas = null;
