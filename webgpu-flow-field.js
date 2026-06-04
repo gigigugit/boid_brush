@@ -135,6 +135,7 @@ export class WebGPUFlowFieldSystem {
     this._debugSeq = 0;
     this._debugMaxEvents = 160;
     this._lastRenderSignature = '';
+    this._lastGuideSignature = '';
   }
 
   _pushDebugEvent(type, details = {}) {
@@ -174,6 +175,7 @@ export class WebGPUFlowFieldSystem {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._lastRenderSignature = '';
+    this._lastGuideSignature = '';
     return true;
   }
 
@@ -378,7 +380,7 @@ export class WebGPUFlowFieldSystem {
     const { packed, count } = buildGuideData(points);
     this.device.queue.writeBuffer(this.guideBuffer, 0, packed);
     this.params[20] = count;
-    this._pushDebugEvent('set-guides', {
+    const guideSignature = JSON.stringify({
       count,
       firstGuide: count > 0 ? {
         x: Number(points[0]?.x ?? 0),
@@ -387,6 +389,10 @@ export class WebGPUFlowFieldSystem {
         radius: Number(points[0]?.radius ?? 0),
       } : null,
     });
+    if (guideSignature !== this._lastGuideSignature) {
+      this._lastGuideSignature = guideSignature;
+      this._pushDebugEvent('set-guides', JSON.parse(guideSignature));
+    }
   }
 
   setConfig(config = {}) {
