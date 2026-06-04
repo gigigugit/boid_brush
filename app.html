@@ -1513,6 +1513,10 @@ const app = new App();
 window._app = app; // expose for debugging
 window.boidGpuDebug = () => window._app?.brushes?.boid?.getDebugState?.() || null;
 window.clearBoidGpuDebug = () => window._app?.brushes?.boid?.clearDebugState?.() || false;
+window.flowFieldDebug = () => window._app?.captureFlowFieldDebug?.() || null;
+window.showFlowFieldDebug = () => window._app?.showFlowFieldDebug?.() || null;
+window.clearFlowFieldDebug = () => window._app?.brushes?.flow?.clearDebugState?.() || false;
+window.clearFlowFieldDebugView = () => window._app?.clearFlowFieldDebugView?.() || false;
 window.ephemeralGhostDebug = (options) => window._app?.captureEphemeralGhostDebug?.(options) || null;
 window.showEphemeralGhostDebug = (options) => window._app?.showEphemeralGhostDebug?.(options) || null;
 window.clearEphemeralGhostDebug = () => window._app?.clearEphemeralGhostDebugView?.() || false;

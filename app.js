@@ -15343,6 +15343,92 @@ export class App {
     return result;
   }
 
+  captureFlowFieldDebug() {
+    const brush = this.brushes?.flow;
+    const layer = this.getActiveLayer?.() || null;
+    const params = this.getP?.() || null;
+    const result = {
+      summary: {
+        activeBrush: this.activeBrush,
+        isDrawing: !!this.isDrawing,
+        simulationRunning: !!this.simulation?.running,
+        showBoids: params?.showBoids !== false,
+        flowParticleCount: Number(params?.flowParticleCount || 0),
+        flowParticleOpacity: Number(params?.flowParticleOpacity || 0),
+        flowParticleScale: Number(params?.flowParticleScale || 0),
+        layer: layer ? {
+          width: layer.canvas?.width || 0,
+          height: layer.canvas?.height || 0,
+          hasGpuPreviewCanvas: !!layer.gpuPreviewCanvas,
+          gpuPreviewWidth: layer.gpuPreviewCanvas?.width || 0,
+          gpuPreviewHeight: layer.gpuPreviewCanvas?.height || 0,
+        } : null,
+      },
+      brush: brush?.getDebugState?.() || null,
+    };
+    console.info('Flow field debug summary:', result.summary);
+    return result;
+  }
+
+  showFlowFieldDebug() {
+    const result = this.captureFlowFieldDebug();
+    if (!result || typeof document === 'undefined') return result;
+    const summaryText = JSON.stringify(result, null, 2);
+    let panel = document.getElementById('flowFieldDebugPanel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'flowFieldDebugPanel';
+      panel.style.position = 'fixed';
+      panel.style.right = '14px';
+      panel.style.bottom = '54px';
+      panel.style.width = '380px';
+      panel.style.maxHeight = '70vh';
+      panel.style.overflow = 'auto';
+      panel.style.zIndex = '200';
+      panel.style.background = 'rgba(8,10,16,0.95)';
+      panel.style.color = '#eef3ff';
+      panel.style.border = '1px solid rgba(255,255,255,0.18)';
+      panel.style.borderRadius = '10px';
+      panel.style.boxShadow = '0 12px 32px rgba(0,0,0,0.35)';
+      panel.style.padding = '10px';
+      panel.style.font = '12px/1.4 Consolas, monospace';
+      panel.style.touchAction = 'auto';
+      panel.style.webkitUserSelect = 'text';
+      panel.style.userSelect = 'text';
+      document.body.appendChild(panel);
+    }
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <strong>Flow Field Debug</strong>
+        <div style="display:flex;gap:6px">
+          <button id="flowFieldDebugRefresh" type="button">Refresh</button>
+          <button id="flowFieldDebugCopy" type="button">Copy JSON</button>
+          <button id="flowFieldDebugClose" type="button">Close</button>
+        </div>
+      </div>
+      <textarea id="flowFieldDebugSummary" readonly spellcheck="false" style="display:block;width:100%;min-height:240px;margin:8px 0 0;padding:8px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:rgba(0,0,0,0.28);color:#eef3ff;font:12px/1.4 Consolas, monospace;white-space:pre;overflow:auto;resize:vertical;touch-action:auto;-webkit-user-select:text;user-select:text;cursor:text"></textarea>
+    `;
+    const summaryEl = panel.querySelector('#flowFieldDebugSummary');
+    if (summaryEl) summaryEl.value = summaryText;
+    panel.querySelector('#flowFieldDebugClose')?.addEventListener('click', () => this.clearFlowFieldDebugView());
+    panel.querySelector('#flowFieldDebugRefresh')?.addEventListener('click', () => this.showFlowFieldDebug());
+    panel.querySelector('#flowFieldDebugCopy')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(summaryText);
+        this.showToast('📋 Flow debug copied');
+      } catch {
+        console.info(result);
+        this.showToast('📋 Flow debug logged');
+      }
+    });
+    return result;
+  }
+
+  clearFlowFieldDebugView() {
+    document.getElementById('flowFieldDebugPanel')?.remove();
+    return true;
+  }
+
   clearEphemeralGhostDebugView() {
     document.getElementById('ephemeralGhostDebugPanel')?.remove();
     return true;

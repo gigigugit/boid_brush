@@ -6318,6 +6318,60 @@ export class FlowFieldBrush {
     this._particleCount = 0;
     this._resetQueued = true;
     this._pendingCommit = null;
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._debugMaxEvents = 160;
+    this._lastFrameSignature = '';
+    this._lastVisibilityState = '';
+  }
+
+  _pushDebugEvent(type, details = {}) {
+    const entry = {
+      seq: ++this._debugSeq,
+      type,
+      t: typeof performance !== 'undefined' && Number.isFinite(performance.now())
+        ? Number(performance.now().toFixed(2))
+        : Date.now(),
+      ...details,
+    };
+    this._debugEvents.push(entry);
+    if (this._debugEvents.length > this._debugMaxEvents) {
+      this._debugEvents.splice(0, this._debugEvents.length - this._debugMaxEvents);
+    }
+    return entry;
+  }
+
+  getDebugState() {
+    const layer = this._strokeLayer || this.app.getActiveLayer?.() || null;
+    return {
+      ready: this._ready,
+      active: this._active,
+      particleCount: this._particleCount,
+      resetQueued: this._resetQueued,
+      pendingCommit: this._pendingCommit ? {
+        composite: !!this._pendingCommit.composite,
+        compositeOperation: this._pendingCommit.compositeOperation || 'source-over',
+      } : null,
+      lastPointer: this._lastPointer ? { ...this._lastPointer } : null,
+      strokeLayer: layer ? {
+        width: layer.canvas?.width || 0,
+        height: layer.canvas?.height || 0,
+        hasGpuPreviewCanvas: !!layer.gpuPreviewCanvas,
+        gpuPreviewWidth: layer.gpuPreviewCanvas?.width || 0,
+        gpuPreviewHeight: layer.gpuPreviewCanvas?.height || 0,
+      } : null,
+      events: this._debugEvents.slice(),
+      system: this.system?.getDebugState?.() || null,
+    };
+  }
+
+  clearDebugState() {
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._lastFrameSignature = '';
+    this._lastVisibilityState = '';
+    this.system?.clearDebugState?.();
+    return true;
   }
 
   async init({ force = false } = {}) {
@@ -6344,10 +6398,18 @@ export class FlowFieldBrush {
           initialParticles: DEFAULT_FLOW_PARTICLES,
         });
         this._ready = !!this.system?.ready;
+        this._pushDebugEvent('init-ready', {
+          ready: this._ready,
+          sharedGpu: !!sharedGpu.device,
+          maxParticles: MAX_FLOW_PARTICLES,
+        });
       } catch (error) {
         console.warn('FlowFieldBrush: WebGPU init failed.', error);
         this._ready = false;
         this.system = null;
+        this._pushDebugEvent('init-failed', {
+          message: error?.message || String(error),
+        });
       }
       return this.system;
     })();
@@ -6371,6 +6433,13 @@ export class FlowFieldBrush {
           layer.canvas.height,
           pending.compositeOperation,
         );
+        this._pushDebugEvent('preview-updated', {
+          mode: 'commit',
+          width: canvas.width || 0,
+          height: canvas.height || 0,
+          copyOk: !!ok,
+          compositeOperation: pending.compositeOperation,
+        });
         this._pendingCommit = null;
         this.system.onPreviewUpdated = null;
         this.system.clearSurface(layer.canvas.width, layer.canvas.height);
@@ -6380,6 +6449,12 @@ export class FlowFieldBrush {
         if (pending.composite) this.app.compositeAllLayers();
         return;
       }
+      this._pushDebugEvent('preview-updated', {
+        mode: 'preview',
+        width: canvas.width || 0,
+        height: canvas.height || 0,
+        pendingCommit: false,
+      });
       layer.gpuPreviewCanvas = canvas;
       layer.dirty = true;
       this.app.compositeAllLayers();
@@ -6403,11 +6478,20 @@ export class FlowFieldBrush {
   _commitPreviewToLayer({ composite = true } = {}) {
     const layer = this._strokeLayer;
     if (!layer || !this.system?.ready) {
+      this._pushDebugEvent('commit-preview-skipped', {
+        reason: !layer ? 'no-layer' : 'system-not-ready',
+      });
       this._clearPreview({ composite });
       return false;
     }
     const compositeOperation = layer.alphaLock ? 'source-atop' : 'source-over';
     if (!this.system._hasLivePreviewFrame) {
+      this._pushDebugEvent('commit-preview-deferred', {
+        composite,
+        compositeOperation,
+        previewCanvasWidth: this.system.previewCanvas?.width || 0,
+        previewCanvasHeight: this.system.previewCanvas?.height || 0,
+      });
       this._pendingCommit = { layer, composite, compositeOperation };
       this._bindPreviewUpdater(layer);
       return true;
@@ -6418,6 +6502,12 @@ export class FlowFieldBrush {
       layer.canvas.height,
       compositeOperation,
     );
+    this._pushDebugEvent('commit-preview', {
+      composite,
+      compositeOperation,
+      copyOk: !!ok,
+      usedLivePreview: !!this.system._hasLivePreviewFrame,
+    });
     this._pendingCommit = null;
     this.system.onPreviewUpdated = null;
     this.system.clearSurface(layer.canvas.width, layer.canvas.height);
@@ -6486,12 +6576,25 @@ export class FlowFieldBrush {
     if (!this.system?.ready) return;
     const desiredCount = this._desiredParticleCount(p, data);
     if (!this._resetQueued && desiredCount === this._particleCount) return;
+    const centers = this._getSpawnCenters(p, data);
     this.system.resetParticles(desiredCount, {
       width: this.app.W || 1,
       height: this.app.H || 1,
-      centers: this._getSpawnCenters(p, data),
+      centers,
       baseSpeed: Math.max(0.5, p.flowParticleMaxSpeed * 0.22),
       segmentWidth: p.flowParticleSegmentWidth,
+    });
+    this._pushDebugEvent('reset-particles', {
+      desiredCount,
+      previousCount: this._particleCount,
+      resetQueued: this._resetQueued,
+      centerCount: centers.length,
+      firstCenter: centers.length ? {
+        x: Number(centers[0]?.x ?? 0),
+        y: Number(centers[0]?.y ?? 0),
+        radius: Number(centers[0]?.radius ?? 0),
+        weight: Number(centers[0]?.weight ?? 0),
+      } : null,
     });
     this._particleCount = desiredCount;
     this._resetQueued = false;
@@ -6523,6 +6626,7 @@ export class FlowFieldBrush {
     this._resetQueued = true;
     this._bindPreviewUpdater(this._strokeLayer);
     this._clearPreview({ composite: false });
+    this._pushDebugEvent('pointer-down', { x, y, pressure });
   }
 
   onMove(x, y, pressure) {
@@ -6532,6 +6636,7 @@ export class FlowFieldBrush {
   onUp(x, y) {
     this._lastPointer = { x, y, pressure: 1 };
     this._active = false;
+    this._pushDebugEvent('pointer-up', { x, y });
     this._commitPreviewToLayer({ composite: true });
   }
 
@@ -6553,8 +6658,42 @@ export class FlowFieldBrush {
     const secondaryHex = this.app.secondaryEl?.value || '#ffffff';
     const visible = p.showBoids !== false;
     if (!visible) {
+      if (this._lastVisibilityState !== 'hidden') {
+        this._lastVisibilityState = 'hidden';
+        this._pushDebugEvent('render-hidden', {
+          reason: 'showBoids-disabled',
+          active: this._active,
+          simulationRunning: !!this.app.simulation?.running,
+        });
+      }
       this._clearPreview({ composite: true });
       return;
+    }
+    if (this._lastVisibilityState !== 'visible') {
+      this._lastVisibilityState = 'visible';
+      this._pushDebugEvent('render-visible', {
+        active: this._active,
+        simulationRunning: !!this.app.simulation?.running,
+      });
+    }
+    const frameSignature = JSON.stringify({
+      layerWidth: layer.canvas.width || 0,
+      layerHeight: layer.canvas.height || 0,
+      particleCount: this._particleCount,
+      active: this._active,
+      simulationRunning: !!this.app.simulation?.running,
+      hasLivePreviewFrame: !!this.system._hasLivePreviewFrame,
+    });
+    if (frameSignature !== this._lastFrameSignature) {
+      this._lastFrameSignature = frameSignature;
+      this._pushDebugEvent('render-frame', {
+        particleCount: this._particleCount,
+        active: this._active,
+        simulationRunning: !!this.app.simulation?.running,
+        layerWidth: layer.canvas.width || 0,
+        layerHeight: layer.canvas.height || 0,
+        hasLivePreviewFrame: !!this.system._hasLivePreviewFrame,
+      });
     }
     const ok = this.system.render({
       width: this.app.W || 1,
@@ -6585,8 +6724,21 @@ export class FlowFieldBrush {
       opacity: p.flowParticleOpacity,
       paletteMix: 0.72,
     });
-    if (!ok) return;
+    if (!ok) {
+      this._pushDebugEvent('render-failed', {
+        particleCount: this._particleCount,
+        layerWidth: layer.canvas.width || 0,
+        layerHeight: layer.canvas.height || 0,
+      });
+      return;
+    }
     layer.gpuPreviewCanvas = this.system.previewCanvas || this.system.canvas;
+    if (!layer.gpuPreviewCanvas?.width || !layer.gpuPreviewCanvas?.height) {
+      this._pushDebugEvent('preview-canvas-empty', {
+        previewWidth: layer.gpuPreviewCanvas?.width || 0,
+        previewHeight: layer.gpuPreviewCanvas?.height || 0,
+      });
+    }
     layer.dirty = true;
     this.app.compositeAllLayers();
   }
@@ -6607,7 +6759,11 @@ export class FlowFieldBrush {
 
   getStatusInfo() {
     if (!this._ready || !this.system) return 'Flow Field | WebGPU unavailable';
-    return `Flow Field | gpu ${this._particleCount || 0} particles`;
+    const preview = this.system._hasLivePreviewFrame
+      ? 'preview live'
+      : (this._pendingCommit ? 'preview pending' : 'preview none');
+    const hidden = this.app.getP?.()?.showBoids === false ? ' hidden' : '';
+    return `Flow Field | gpu ${this._particleCount || 0} particles | ${preview}${hidden}`;
   }
 
   deactivate() {

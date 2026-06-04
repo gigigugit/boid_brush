@@ -131,6 +131,50 @@ export class WebGPUFlowFieldSystem {
     this._previewSyncQueued = false;
     this._hasLivePreviewFrame = false;
     this.onPreviewUpdated = null;
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._debugMaxEvents = 160;
+    this._lastRenderSignature = '';
+  }
+
+  _pushDebugEvent(type, details = {}) {
+    const entry = {
+      seq: ++this._debugSeq,
+      type,
+      t: typeof performance !== 'undefined' && Number.isFinite(performance.now())
+        ? Number(performance.now().toFixed(2))
+        : Date.now(),
+      ...details,
+    };
+    this._debugEvents.push(entry);
+    if (this._debugEvents.length > this._debugMaxEvents) {
+      this._debugEvents.splice(0, this._debugEvents.length - this._debugMaxEvents);
+    }
+    return entry;
+  }
+
+  getDebugState() {
+    return {
+      ready: this.ready,
+      failed: this.failed,
+      unavailableReason: this.unavailableReason,
+      activeParticleCount: this.activeParticleCount,
+      canvas: this.canvas ? { width: this.canvas.width || 0, height: this.canvas.height || 0 } : null,
+      previewCanvas: this.previewCanvas ? { width: this.previewCanvas.width || 0, height: this.previewCanvas.height || 0 } : null,
+      previewSyncPending: this._previewSyncPending,
+      previewSyncQueued: this._previewSyncQueued,
+      hasLivePreviewFrame: this._hasLivePreviewFrame,
+      activeParticleBufferIndex: this._activeParticleBufferIndex,
+      activeAccumulationIndex: this._activeAccumulationIndex,
+      events: this._debugEvents.slice(),
+    };
+  }
+
+  clearDebugState() {
+    this._debugEvents = [];
+    this._debugSeq = 0;
+    this._lastRenderSignature = '';
+    return true;
   }
 
   async init() {
@@ -250,6 +294,11 @@ export class WebGPUFlowFieldSystem {
     this._rebuildParticleBindGroups();
     this.resetParticles(this.activeParticleCount, { width: 1, height: 1 });
     this.ready = true;
+    this._pushDebugEvent('init-ready', {
+      maxParticles: this.maxParticles,
+      activeParticleCount: this.activeParticleCount,
+      sharedDevice: !!this._sharedDevice,
+    });
     return true;
   }
 
@@ -329,6 +378,15 @@ export class WebGPUFlowFieldSystem {
     const { packed, count } = buildGuideData(points);
     this.device.queue.writeBuffer(this.guideBuffer, 0, packed);
     this.params[20] = count;
+    this._pushDebugEvent('set-guides', {
+      count,
+      firstGuide: count > 0 ? {
+        x: Number(points[0]?.x ?? 0),
+        y: Number(points[0]?.y ?? 0),
+        strength: Number(points[0]?.strength ?? 0),
+        radius: Number(points[0]?.radius ?? 0),
+      } : null,
+    });
   }
 
   setConfig(config = {}) {
@@ -376,6 +434,21 @@ export class WebGPUFlowFieldSystem {
     this._activeParticleBufferIndex = 0;
     this.params[4] = this.activeParticleCount;
     this.device.queue.writeBuffer(this.paramsBuffer, 0, this.params);
+    const centers = Array.isArray(options.centers) ? options.centers : [];
+    this._pushDebugEvent('reset-particles', {
+      count: this.activeParticleCount,
+      width: Number(options.width || 0),
+      height: Number(options.height || 0),
+      centerCount: centers.length,
+      firstCenter: centers.length ? {
+        x: Number(centers[0]?.x ?? 0),
+        y: Number(centers[0]?.y ?? 0),
+        radius: Number(centers[0]?.radius ?? 0),
+        weight: Number(centers[0]?.weight ?? 0),
+      } : null,
+      baseSpeed: Number(options.baseSpeed || 0),
+      segmentWidth: Number(options.segmentWidth || 0),
+    });
   }
 
   invalidatePreview() {
@@ -414,6 +487,7 @@ export class WebGPUFlowFieldSystem {
     presentPass.end();
     this.device.queue.submit([encoder.finish()]);
     this.invalidatePreview();
+    this._pushDebugEvent('clear-surface', { widthPx, heightPx });
     return true;
   }
 
@@ -426,9 +500,22 @@ export class WebGPUFlowFieldSystem {
       targetCtx.globalCompositeOperation = compositeOperation;
       targetCtx.drawImage(source, 0, 0, widthPx, heightPx);
       targetCtx.restore();
+      this._pushDebugEvent('copy-to-2d', {
+        source: this._hasLivePreviewFrame ? 'preview' : 'canvas',
+        widthPx,
+        heightPx,
+        compositeOperation,
+      });
       return true;
-    } catch {
+    } catch (error) {
       try { targetCtx.restore(); } catch {}
+      this._pushDebugEvent('copy-to-2d-failed', {
+        source: this._hasLivePreviewFrame ? 'preview' : 'canvas',
+        widthPx,
+        heightPx,
+        compositeOperation,
+        message: error?.message || String(error),
+      });
       return false;
     }
   }
@@ -441,6 +528,11 @@ export class WebGPUFlowFieldSystem {
       return;
     }
     this._previewSyncPending = true;
+    this._pushDebugEvent('preview-sync-start', {
+      widthPx,
+      heightPx,
+      hadOnPreviewUpdated: typeof this.onPreviewUpdated === 'function',
+    });
     const finalize = () => {
       const syncWidth = this._pendingPreviewWidth;
       const syncHeight = this._pendingPreviewHeight;
@@ -450,9 +542,20 @@ export class WebGPUFlowFieldSystem {
         this._previewCtx.clearRect(0, 0, syncWidth, syncHeight);
         this._previewCtx.drawImage(this.canvas, 0, 0, syncWidth, syncHeight);
         this._hasLivePreviewFrame = true;
+        this._pushDebugEvent('preview-sync-success', {
+          widthPx: syncWidth,
+          heightPx: syncHeight,
+          hadOnPreviewUpdated: typeof this.onPreviewUpdated === 'function',
+        });
         this.onPreviewUpdated?.(this.previewCanvas);
-      } catch {
+      } catch (error) {
         this._hasLivePreviewFrame = false;
+        this._pushDebugEvent('preview-sync-failed', {
+          widthPx: syncWidth,
+          heightPx: syncHeight,
+          hadOnPreviewUpdated: typeof this.onPreviewUpdated === 'function',
+          message: error?.message || String(error),
+        });
       }
       if (this._previewSyncQueued) {
         this._previewSyncQueued = false;
@@ -476,6 +579,29 @@ export class WebGPUFlowFieldSystem {
     this._ensurePreviewCanvas(widthPx, heightPx);
     this._ensureAccumulationTextures(widthPx, heightPx);
     this.setConfig(config);
+    const renderSignature = JSON.stringify({
+      widthPx,
+      heightPx,
+      renderWidthPx: Number(config.renderWidthPx || 0),
+      renderHeightPx: Number(config.renderHeightPx || 0),
+      particleCount: this.activeParticleCount,
+      brushActive: !!config.brushActive,
+      guideCount: Number(this.params[20] || 0),
+    });
+    if (renderSignature !== this._lastRenderSignature) {
+      this._lastRenderSignature = renderSignature;
+      this._pushDebugEvent('render-submitted', {
+        widthPx,
+        heightPx,
+        renderWidthPx: Number(config.renderWidthPx || 0),
+        renderHeightPx: Number(config.renderHeightPx || 0),
+        activeParticleCount: this.activeParticleCount,
+        brushActive: !!config.brushActive,
+        inputIndex: this._activeParticleBufferIndex,
+        accumulationIndex: this._activeAccumulationIndex,
+        hasLivePreviewFrame: this._hasLivePreviewFrame,
+      });
+    }
 
     const inputIndex = this._activeParticleBufferIndex;
     const outputIndex = inputIndex ^ 1;
