@@ -395,7 +395,9 @@ const MOTION_PATH_HANDLE_RADIUS = 7;
 const MOTION_PATH_HIT_RADIUS = 12;
 const SYMMETRY_GUIDE_HANDLE_RADIUS = 9;
 const SYMMETRY_GUIDE_HIT_RADIUS = 18;
+const SYMMETRY_GUIDE_SEGMENT_HIT_FACTOR = 0.75;
 const SYMMETRY_GUIDE_SLOT_RADIUS = 4;
+const SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION = 1000;
 const SYMMETRY_GUIDE_DEFAULT_START = Object.freeze({ x: 0.2, y: 0.8 });
 const SYMMETRY_GUIDE_DEFAULT_END = Object.freeze({ x: 0.8, y: 0.2 });
 const MOTION_PATH_POINT_SIZE_MIN = 0.2;
@@ -1963,12 +1965,20 @@ export class App {
     const points = this._getSymmetryPathPoints();
     const copies = Math.max(1, Math.round(count || 1));
     if (copies <= 1) return [{ ...points[0] }];
+    const totalLength = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
     const slots = [];
     for (let i = 0; i < copies; i++) {
-      const sample = _samplePolylinePointAtDistance(points, (i / Math.max(1, copies - 1)) * Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y), false);
+      const sample = _samplePolylinePointAtDistance(points, (i / Math.max(1, copies - 1)) * totalLength, false);
       slots.push(sample ? { x: sample.x, y: sample.y } : { ...points[0] });
     }
     return slots;
+  }
+
+  _getSymmetryRadialCenter(p = this.getP()) {
+    return {
+      x: p.symmetryCenterX * this.W,
+      y: p.symmetryCenterY * this.H,
+    };
   }
 
   _resolvePathSymmetryBaseSlotIndex(x, y, count) {
@@ -2018,7 +2028,7 @@ export class App {
     if (Math.hypot(x - end.x, y - end.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathEnd' };
     if (Math.hypot(x - mid.x, y - mid.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathTranslate' };
     const segment = _closestPointOnSegment(x, y, start.x, start.y, end.x, end.y);
-    if (segment.distance <= SYMMETRY_GUIDE_HIT_RADIUS * 0.75) return { kind: 'pathTranslate' };
+    if (segment.distance <= SYMMETRY_GUIDE_HIT_RADIUS * SYMMETRY_GUIDE_SEGMENT_HIT_FACTOR) return { kind: 'pathTranslate' };
     return null;
   }
 
@@ -2085,8 +2095,7 @@ export class App {
         ctx.fill();
       });
     } else {
-      const cx = p.symmetryCenterX * this.W;
-      const cy = p.symmetryCenterY * this.H;
+      const { x: cx, y: cy } = this._getSymmetryRadialCenter(p);
       const radius = Math.max(this.W, this.H) * 0.5;
       ctx.strokeStyle = 'rgba(123,255,186,0.35)';
       ctx.lineWidth = 1;
@@ -16241,7 +16250,7 @@ export class App {
       const base = slots[baseIndex] || slots[0];
       const seen = new Set();
       return slots.filter(slot => {
-        const key = `${Math.round(slot.x * 1000)}:${Math.round(slot.y * 1000)}`;
+        const key = `${Math.round(slot.x * SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION)}:${Math.round(slot.y * SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION)}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -16250,8 +16259,7 @@ export class App {
         y: y + slot.y - base.y,
       }));
     }
-    const cx = p.symmetryCenterX * this.W;
-    const cy = p.symmetryCenterY * this.H;
+    const { x: cx, y: cy } = this._getSymmetryRadialCenter(p);
     const pts = [];
     const n = p.symmetryCount;
     const dx = x - cx, dy = y - cy;
