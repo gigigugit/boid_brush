@@ -204,6 +204,9 @@ const FACTORY_DEFAULTS = Object.freeze({
   symmetryCenterX: 50,
   symmetryCenterY: 50,
   symmetryMode: 'radial',
+  symmetryPathMirror: false,
+  symmetryPathUseCurve: false,
+  symmetrySizeMultipliers: '1',
   taperLength: 0,
   taperCurve: 100,
   sensingStrength: 50,
@@ -400,6 +403,8 @@ const SYMMETRY_GUIDE_SLOT_RADIUS = 4;
 const SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION = 1000;
 const SYMMETRY_GUIDE_DEFAULT_START = Object.freeze({ x: 0.2, y: 0.8 });
 const SYMMETRY_GUIDE_DEFAULT_END = Object.freeze({ x: 0.8, y: 0.2 });
+const SYMMETRY_GUIDE_DEFAULT_CONTROL = Object.freeze({ x: 0.5, y: 0.5 });
+const SYMMETRY_PATH_CURVE_SAMPLES = 64;
 const MOTION_PATH_POINT_SIZE_MIN = 0.2;
 const MOTION_PATH_POINT_SIZE_MAX = 4;
 const MOTION_PATH_POINT_SIZE_STEP = 0.05;
@@ -1282,6 +1287,15 @@ function _sampleMotionPathTrack(track, distanceAlongPath) {
   };
 }
 
+function _sampleQuadraticBezierPoint(start, control, end, t) {
+  const clamped = _clamp01(t);
+  const inv = 1 - clamped;
+  return {
+    x: inv * inv * start.x + 2 * inv * clamped * control.x + clamped * clamped * end.x,
+    y: inv * inv * start.y + 2 * inv * clamped * control.y + clamped * clamped * end.y,
+  };
+}
+
 function _buildPolylineSegments(points, closed = false) {
   const validPoints = Array.isArray(points)
     ? points.filter(pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y))
@@ -1295,6 +1309,20 @@ function _buildPolylineSegments(points, closed = false) {
     if (length <= 1e-6) continue;
     segments.push({ a, b, length });
     totalLength += length;
+  }
+
+  function _parseSymmetrySizeMultipliers(value) {
+    if (Array.isArray(value)) {
+      const parsed = value
+        .map(entry => Number.parseFloat(String(entry).replace(/×/g, '').trim()))
+        .filter(entry => Number.isFinite(entry) && entry > 0);
+      return parsed.length ? parsed : [1];
+    }
+    const parsed = String(value ?? '')
+      .split(/[,\s;|/]+/)
+      .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
+      .filter(entry => Number.isFinite(entry) && entry > 0);
+    return parsed.length ? parsed : [1];
   }
   if (closed && validPoints.length > 2) {
     const a = validPoints[validPoints.length - 1];
@@ -1933,6 +1961,7 @@ export class App {
     return {
       pathStart: { ...SYMMETRY_GUIDE_DEFAULT_START },
       pathEnd: { ...SYMMETRY_GUIDE_DEFAULT_END },
+      pathControl: { ...SYMMETRY_GUIDE_DEFAULT_CONTROL },
     };
   }
 
@@ -1946,6 +1975,7 @@ export class App {
     };
     assignPoint(next.pathStart, state.pathStart);
     assignPoint(next.pathEnd, state.pathEnd);
+    assignPoint(next.pathControl, state.pathControl);
     return next;
   }
 
@@ -1953,23 +1983,47 @@ export class App {
     return _deepClone(this._normalizeSymmetryState(this.symmetry));
   }
 
-  _getSymmetryPathPoints() {
+  _getSymmetryPathHandles() {
     const symmetry = this._normalizeSymmetryState(this.symmetry);
-    return [
-      { x: symmetry.pathStart.x * this.W, y: symmetry.pathStart.y * this.H },
-      { x: symmetry.pathEnd.x * this.W, y: symmetry.pathEnd.y * this.H },
-    ];
+    return {
+      start: { x: symmetry.pathStart.x * this.W, y: symmetry.pathStart.y * this.H },
+      end: { x: symmetry.pathEnd.x * this.W, y: symmetry.pathEnd.y * this.H },
+      control: { x: symmetry.pathControl.x * this.W, y: symmetry.pathControl.y * this.H },
+    };
   }
 
-  _getSymmetryPathSlots(count) {
-    const points = this._getSymmetryPathPoints();
+  _getSymmetryPathPoints() {
+    const { start, end } = this._getSymmetryPathHandles();
+    return [start, end];
+  }
+
+  _getSymmetryPathGuidePoints(p = this.getP()) {
+    const { start, end, control } = this._getSymmetryPathHandles();
+    if (!p.symmetryPathUseCurve) return [start, end];
+    const sampled = [];
+    for (let i = 0; i <= SYMMETRY_PATH_CURVE_SAMPLES; i++) {
+      sampled.push(_sampleQuadraticBezierPoint(start, control, end, i / SYMMETRY_PATH_CURVE_SAMPLES));
+    }
+    return sampled;
+  }
+
+  _getSymmetryPathTrack(p = this.getP()) {
+    return _buildMotionPathTrack(this._getSymmetryPathGuidePoints(p), false);
+  }
+
+  _getSymmetryPathSlots(count, p = this.getP()) {
     const copies = Math.max(1, Math.round(count || 1));
-    if (copies <= 1) return [{ ...points[0] }];
-    const totalLength = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+    const track = this._getSymmetryPathTrack(p);
+    const points = this._getSymmetryPathGuidePoints(p);
+    if (!track || !points.length) return [];
+    if (copies <= 1) {
+      const sample = _sampleMotionPathTrack(track, 0);
+      return [sample ? { x: sample.x, y: sample.y, angle: sample.angle || 0 } : { ...points[0], angle: 0 }];
+    }
     const slots = [];
     for (let i = 0; i < copies; i++) {
-      const sample = _samplePolylinePointAtDistance(points, (i / Math.max(1, copies - 1)) * totalLength, false);
-      slots.push(sample ? { x: sample.x, y: sample.y } : { ...points[0] });
+      const sample = _sampleMotionPathTrack(track, (i / Math.max(1, copies - 1)) * track.totalLength);
+      slots.push(sample ? { x: sample.x, y: sample.y, angle: sample.angle || 0 } : { ...points[0], angle: 0 });
     }
     return slots;
   }
@@ -1981,15 +2035,15 @@ export class App {
     };
   }
 
-  _resolvePathSymmetryBaseSlotIndex(x, y, count) {
-    const slots = this._getSymmetryPathSlots(count);
+  _resolvePathSymmetryBaseSlotIndex(x, y, count, p = this.getP()) {
+    const slots = this._getSymmetryPathSlots(count, p);
     if (slots.length <= 1) return 0;
-    const closest = _getClosestPolylineDistance(this._getSymmetryPathPoints(), x, y, false);
+    const closest = _getClosestPolylineDistance(this._getSymmetryPathGuidePoints(p), x, y, false);
     if (!closest || !Number.isFinite(closest.totalLength) || closest.totalLength <= 1e-6) return 0;
     return Math.max(0, Math.min(slots.length - 1, Math.round((closest.distanceAlongPath / closest.totalLength) * (slots.length - 1))));
   }
 
-  _setSymmetryPathPoints(start, end) {
+  _setSymmetryPathPoints(start, end, control = null) {
     const clampPoint = point => ({
       x: this.W > 0 ? _clamp01((point.x || 0) / this.W) : 0,
       y: this.H > 0 ? _clamp01((point.y || 0) / this.H) : 0,
@@ -1998,6 +2052,7 @@ export class App {
       ...this.symmetry,
       pathStart: clampPoint(start),
       pathEnd: clampPoint(end),
+      pathControl: clampPoint(control || this._getSymmetryPathHandles().control),
     };
   }
 
@@ -2009,7 +2064,7 @@ export class App {
     if (p.symmetryMode === 'path') {
       this._symmetryStrokeState = {
         mode: 'path',
-        baseSlotIndex: this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount),
+        baseSlotIndex: this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount, p),
       };
       return;
     }
@@ -2022,13 +2077,19 @@ export class App {
 
   _findSymmetryGuideHit(x, y, p = this.getP()) {
     if (!p.symmetryEnabled || p.symmetryMode !== 'path' || p.symmetryGuideVisible === false || this.activeTool !== 'brush') return null;
-    const [start, end] = this._getSymmetryPathPoints();
-    const mid = { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
+    const { start, end, control } = this._getSymmetryPathHandles();
+    const guidePoints = this._getSymmetryPathGuidePoints(p);
+    const mid = guidePoints[Math.floor((guidePoints.length - 1) * 0.5)] || { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
     if (Math.hypot(x - start.x, y - start.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathStart' };
     if (Math.hypot(x - end.x, y - end.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathEnd' };
-    if (Math.hypot(x - mid.x, y - mid.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathTranslate' };
-    const segment = _closestPointOnSegment(x, y, start.x, start.y, end.x, end.y);
-    if (segment.distance <= SYMMETRY_GUIDE_HIT_RADIUS * SYMMETRY_GUIDE_SEGMENT_HIT_FACTOR) return { kind: 'pathTranslate' };
+    if (p.symmetryPathUseCurve && Math.hypot(x - control.x, y - control.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathControl' };
+    if (!p.symmetryPathUseCurve && Math.hypot(x - mid.x, y - mid.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathTranslate' };
+    for (let i = 1; i < guidePoints.length; i++) {
+      const a = guidePoints[i - 1];
+      const b = guidePoints[i];
+      const segment = _closestPointOnSegment(x, y, a.x, a.y, b.x, b.y);
+      if (segment.distance <= SYMMETRY_GUIDE_HIT_RADIUS * SYMMETRY_GUIDE_SEGMENT_HIT_FACTOR) return { kind: 'pathTranslate' };
+    }
     return null;
   }
 
@@ -2041,19 +2102,24 @@ export class App {
 
   _handleSymmetryPointerMove(x, y) {
     if (!this._symmetryDrag) return false;
-    const [start, end] = this._getSymmetryPathPoints();
+    const { start, end, control } = this._getSymmetryPathHandles();
     if (this._symmetryDrag.kind === 'pathStart') {
-      this._setSymmetryPathPoints({ x, y }, end);
+      this._setSymmetryPathPoints({ x, y }, end, control);
     } else if (this._symmetryDrag.kind === 'pathEnd') {
-      this._setSymmetryPathPoints(start, { x, y });
+      this._setSymmetryPathPoints(start, { x, y }, control);
+    } else if (this._symmetryDrag.kind === 'pathControl') {
+      this._setSymmetryPathPoints(start, end, { x, y });
     } else {
       const dx = x - this._symmetryDrag.lastX;
       const dy = y - this._symmetryDrag.lastY;
-      const clampedDx = _clamp(dx, -Math.min(start.x, end.x), this.W - Math.max(start.x, end.x));
-      const clampedDy = _clamp(dy, -Math.min(start.y, end.y), this.H - Math.max(start.y, end.y));
+      const xs = [start.x, end.x, control.x];
+      const ys = [start.y, end.y, control.y];
+      const clampedDx = _clamp(dx, -Math.min(...xs), this.W - Math.max(...xs));
+      const clampedDy = _clamp(dy, -Math.min(...ys), this.H - Math.max(...ys));
       this._setSymmetryPathPoints(
         { x: start.x + clampedDx, y: start.y + clampedDy },
         { x: end.x + clampedDx, y: end.y + clampedDy },
+        { x: control.x + clampedDx, y: control.y + clampedDy },
       );
     }
     this._symmetryDrag.lastX = x;
@@ -2071,15 +2137,16 @@ export class App {
     if (!p.symmetryEnabled || p.symmetryGuideVisible === false) return;
     ctx.save();
     if (p.symmetryMode === 'path') {
-      const [start, end] = this._getSymmetryPathPoints();
-      const mid = { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
-      const slots = this._getSymmetryPathSlots(p.symmetryCount);
+      const { start, end, control } = this._getSymmetryPathHandles();
+      const guidePoints = this._getSymmetryPathGuidePoints(p);
+      const mid = guidePoints[Math.floor((guidePoints.length - 1) * 0.5)] || { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
+      const slots = this._getSymmetryPathSlots(p.symmetryCount, p);
       ctx.strokeStyle = 'rgba(123,255,186,0.9)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([8, 6]);
       ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(end.x, end.y);
+      ctx.moveTo(guidePoints[0].x, guidePoints[0].y);
+      for (let i = 1; i < guidePoints.length; i++) ctx.lineTo(guidePoints[i].x, guidePoints[i].y);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(123,255,186,0.9)';
@@ -2089,7 +2156,7 @@ export class App {
         ctx.fill();
       }
       ctx.fillStyle = 'rgba(255,170,230,0.95)';
-      [start, end, mid].forEach(handle => {
+      [start, end, ...(p.symmetryPathUseCurve ? [control] : [mid])].forEach(handle => {
         ctx.beginPath();
         ctx.arc(handle.x, handle.y, SYMMETRY_GUIDE_HANDLE_RADIUS, 0, Math.PI * 2);
         ctx.fill();
@@ -5141,6 +5208,9 @@ export class App {
       symmetryMode: sel('symmetryMode') || 'radial',
       symmetryGuideVisible: has('symmetryGuideVisible') ? chk('symmetryGuideVisible') : true,
       symmetryMirror: chk('symmetryMirror'),
+      symmetryPathMirror: chk('symmetryPathMirror'),
+      symmetryPathUseCurve: chk('symmetryPathUseCurve'),
+      symmetrySizeMultipliers: _parseSymmetrySizeMultipliers(has('symmetrySizeMultipliers') ? document.getElementById('symmetrySizeMultipliers')?.value : '1'),
       symmetryCenterX: (val('symmetryCenterX') || 50) / 100,
       symmetryCenterY: (val('symmetryCenterY') || 50) / 100,
       // Taper
@@ -15779,7 +15849,7 @@ export class App {
     const bitmap = options.bitmap || p?.stampImageCanvas;
     if (!bitmap) return;
     for (const pt of this.getSymmetryPoints(x, y)) {
-      this._drawBitmapStamp(ctx, bitmap, pt.x, pt.y, size, color, opacity, { ...options, p });
+      this._drawBitmapStamp(ctx, bitmap, pt.x, pt.y, size * (pt.sizeMultiplier || 1), color, opacity, { ...options, p });
     }
   }
 
@@ -16239,25 +16309,55 @@ export class App {
 
   getSymmetryPoints(x, y) {
     const p = this.getP();
-    if (!p.symmetryEnabled) return [{ x, y }];
+    const sizeMultipliers = Array.isArray(p.symmetrySizeMultipliers) && p.symmetrySizeMultipliers.length
+      ? p.symmetrySizeMultipliers
+      : [1];
+    const getSizeMultiplier = index => sizeMultipliers[Math.max(0, Math.min(sizeMultipliers.length - 1, index))] ?? 1;
+    if (!p.symmetryEnabled) return [{ x, y, index: 0, mirrored: false, sizeMultiplier: 1 }];
     if (p.symmetryMode === 'path') {
-      const slots = this._getSymmetryPathSlots(p.symmetryCount);
-      if (slots.length <= 1) return [{ x, y }];
-      let baseIndex = this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount);
+      const slots = this._getSymmetryPathSlots(p.symmetryCount, p);
+      if (slots.length <= 1) return [{ x, y, index: 0, mirrored: false, sizeMultiplier: getSizeMultiplier(0) }];
+      let baseIndex = this._resolvePathSymmetryBaseSlotIndex(x, y, p.symmetryCount, p);
       if ((this.isDrawing || this.isTapering) && this._symmetryStrokeState?.mode === 'path') {
         baseIndex = Math.max(0, Math.min(slots.length - 1, this._symmetryStrokeState.baseSlotIndex || 0));
       }
       const base = slots[baseIndex] || slots[0];
+      const baseAngle = Number.isFinite(base?.angle) ? base.angle : 0;
+      const baseTangentX = Math.cos(baseAngle);
+      const baseTangentY = Math.sin(baseAngle);
+      const baseNormalX = -baseTangentY;
+      const baseNormalY = baseTangentX;
+      const dx = x - base.x;
+      const dy = y - base.y;
+      const along = dx * baseTangentX + dy * baseTangentY;
+      const across = dx * baseNormalX + dy * baseNormalY;
       const seen = new Set();
-      return slots.filter(slot => {
-        const key = `${Math.round(slot.x * SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION)}:${Math.round(slot.y * SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION)}`;
-        if (seen.has(key)) return false;
+      const copies = [];
+      const pushCopy = (slot, index, mirrored = false) => {
+        const angle = Number.isFinite(slot?.angle) ? slot.angle : 0;
+        const tangentX = Math.cos(angle);
+        const tangentY = Math.sin(angle);
+        const normalX = -tangentY;
+        const normalY = tangentX;
+        const cross = mirrored ? -across : across;
+        const px = slot.x + tangentX * along + normalX * cross;
+        const py = slot.y + tangentY * along + normalY * cross;
+        const key = `${Math.round(px * SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION)}:${Math.round(py * SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION)}`;
+        if (seen.has(key)) return;
         seen.add(key);
-        return true;
-      }).map(slot => ({
-        x: x + slot.x - base.x,
-        y: y + slot.y - base.y,
-      }));
+        copies.push({
+          x: px,
+          y: py,
+          index,
+          mirrored,
+          sizeMultiplier: getSizeMultiplier(index),
+        });
+      };
+      slots.forEach((slot, index) => {
+        pushCopy(slot, index, false);
+        if (p.symmetryPathMirror) pushCopy(slot, index, true);
+      });
+      return copies;
     }
     const { x: cx, y: cy } = this._getSymmetryRadialCenter(p);
     const pts = [];
@@ -16266,9 +16366,9 @@ export class App {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
       const cos = Math.cos(a), sin = Math.sin(a);
-      pts.push({ x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos });
+      pts.push({ x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos, index: i, mirrored: false, sizeMultiplier: getSizeMultiplier(i) });
       if (p.symmetryMirror) {
-        pts.push({ x: cx + dx * cos + dy * sin, y: cy + dx * sin - dy * cos });
+        pts.push({ x: cx + dx * cos + dy * sin, y: cy + dx * sin - dy * cos, index: i, mirrored: true, sizeMultiplier: getSizeMultiplier(i) });
       }
     }
     return pts;
@@ -16276,7 +16376,7 @@ export class App {
 
   symCircleStamp(ctx, x, y, size, color, opacity) {
     for (const pt of this.getSymmetryPoints(x, y)) {
-      this.stampCircle(ctx, pt.x, pt.y, size, color, opacity);
+      this.stampCircle(ctx, pt.x, pt.y, size * (pt.sizeMultiplier || 1), color, opacity);
     }
   }
 
@@ -16871,7 +16971,7 @@ export class App {
 
   _captureSessionControls() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
       if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {

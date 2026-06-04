@@ -679,12 +679,15 @@ export function buildSidebar(app) {
       <label>Mode <select id="symmetryMode"><option value="radial">Radial</option><option value="path">Path</option></select></label>
       <label>Show Guide <input type="checkbox" id="symmetryGuideVisible" checked></label>
       ${sliderRow('symmetryCount', 'Count', 2, 16, 4)}
+      <label>Copy Sizes <input type="text" id="symmetrySizeMultipliers" value="1" placeholder="1, 0.9, 0.8"></label>
       <div data-symmetry-mode-panel="radial">
         <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
         ${sliderRow('symmetryCenterX', 'Center X', 0, 100, 50, v => v + '%')}
         ${sliderRow('symmetryCenterY', 'Center Y', 0, 100, 50, v => v + '%')}
       </div>
       <div data-symmetry-mode-panel="path" style="display:none;">
+        <label>Mirror <input type="checkbox" id="symmetryPathMirror"></label>
+        <label>Curve <input type="checkbox" id="symmetryPathUseCurve"></label>
         <span class="slider-desc">Drag the guide handles on the canvas to place the copy path in real time.</span>
       </div>
     </div>
@@ -863,8 +866,11 @@ export function buildSidebar(app) {
   });
 
   // Checkbox & select → invalidate params
-  sb.querySelectorAll('input[type="checkbox"], select, input[type="number"]').forEach(el => {
+  sb.querySelectorAll('input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
     el.addEventListener('change', () => app.invalidateParams());
+  });
+  sb.querySelectorAll('input[type="text"]').forEach(el => {
+    el.addEventListener('input', () => app.invalidateParams());
   });
   document.getElementById('symmetryMode')?.addEventListener('change', _syncSymmetryModeUi);
   _syncSymmetryModeUi();
@@ -1121,7 +1127,7 @@ function _wireWorkspaceSettingsPanel(app, panel) {
       clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
     };
-    panel.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
+    panel.querySelectorAll('input[type="range"], input[type="checkbox"], input[type="text"], select').forEach(el => {
       el.addEventListener('input', triggerAutoSave);
       el.addEventListener('change', triggerAutoSave);
     });
@@ -2427,6 +2433,9 @@ function _captureCurrentPresetValues(app) {
   });
   document.querySelectorAll('#sidebar input[type="checkbox"]').forEach(el => {
     if (el.id && el.id !== 'autoSaveSession') values[el.id] = el.checked;
+  });
+  document.querySelectorAll('#sidebar input[type="text"]').forEach(el => {
+    if (el.id) values[el.id] = el.value;
   });
   document.querySelectorAll('#sidebar select').forEach(el => {
     if (el.id && el.id !== 'layerBlend') values[el.id] = el.value;
