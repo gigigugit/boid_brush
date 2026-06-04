@@ -401,6 +401,8 @@ const SYMMETRY_GUIDE_HIT_RADIUS = 18;
 const SYMMETRY_GUIDE_SEGMENT_HIT_FACTOR = 0.75;
 const SYMMETRY_GUIDE_SLOT_RADIUS = 4;
 const SYMMETRY_GUIDE_SLOT_DEDUPE_PRECISION = 1000;
+const SYMMETRY_GUIDE_MIN_NODES = 2;
+const SYMMETRY_GUIDE_MAX_NODES = 32;
 const SYMMETRY_GUIDE_DEFAULT_START = Object.freeze({ x: 0.2, y: 0.8 });
 const SYMMETRY_GUIDE_DEFAULT_END = Object.freeze({ x: 0.8, y: 0.2 });
 const SYMMETRY_GUIDE_DEFAULT_CONTROL = Object.freeze({ x: 0.5, y: 0.5 });
@@ -1960,23 +1962,30 @@ export class App {
 
   _createDefaultSymmetryState() {
     return {
-      pathStart: { ...SYMMETRY_GUIDE_DEFAULT_START },
-      pathEnd: { ...SYMMETRY_GUIDE_DEFAULT_END },
-      pathControl: { ...SYMMETRY_GUIDE_DEFAULT_CONTROL },
+      pathNodes: [
+        { ...SYMMETRY_GUIDE_DEFAULT_START, connector: 'curve' },
+        { ...SYMMETRY_GUIDE_DEFAULT_CONTROL, connector: 'curve' },
+        { ...SYMMETRY_GUIDE_DEFAULT_END, connector: 'curve' },
+      ],
     };
   }
 
   _normalizeSymmetryState(state) {
     const next = this._createDefaultSymmetryState();
     if (!state || typeof state !== 'object' || Array.isArray(state)) return next;
-    const assignPoint = (target, source) => {
-      if (!source || typeof source !== 'object' || Array.isArray(source)) return;
-      if (Number.isFinite(source.x)) target.x = _clamp01(source.x);
-      if (Number.isFinite(source.y)) target.y = _clamp01(source.y);
-    };
-    assignPoint(next.pathStart, state.pathStart);
-    assignPoint(next.pathEnd, state.pathEnd);
-    assignPoint(next.pathControl, state.pathControl);
+    const normalizeNode = (source, fallback) => ({
+      x: Number.isFinite(source?.x) ? _clamp01(source.x) : fallback.x,
+      y: Number.isFinite(source?.y) ? _clamp01(source.y) : fallback.y,
+      connector: source?.connector === 'sharp' ? 'sharp' : 'curve',
+    });
+    const rawNodes = Array.isArray(state.pathNodes) && state.pathNodes.length
+      ? state.pathNodes
+      : [state.pathStart, state.pathControl, state.pathEnd];
+    const normalizedNodes = rawNodes
+      .map((node, index) => normalizeNode(node, next.pathNodes[Math.min(index, next.pathNodes.length - 1)]))
+      .filter(Boolean)
+      .slice(0, SYMMETRY_GUIDE_MAX_NODES);
+    if (normalizedNodes.length >= SYMMETRY_GUIDE_MIN_NODES) next.pathNodes = normalizedNodes;
     return next;
   }
 
@@ -1984,28 +1993,31 @@ export class App {
     return _deepClone(this._normalizeSymmetryState(this.symmetry));
   }
 
-  _getSymmetryPathHandles() {
+  _getSymmetryPathNodes() {
     const symmetry = this._normalizeSymmetryState(this.symmetry);
-    return {
-      start: { x: symmetry.pathStart.x * this.W, y: symmetry.pathStart.y * this.H },
-      end: { x: symmetry.pathEnd.x * this.W, y: symmetry.pathEnd.y * this.H },
-      control: { x: symmetry.pathControl.x * this.W, y: symmetry.pathControl.y * this.H },
-    };
+    return symmetry.pathNodes.map(node => ({
+      x: node.x * this.W,
+      y: node.y * this.H,
+      connector: node.connector === 'sharp' ? 'sharp' : 'curve',
+    }));
   }
 
   _getSymmetryPathPoints() {
-    const { start, end } = this._getSymmetryPathHandles();
-    return [start, end];
+    return this._getSymmetryPathNodes();
   }
 
   _getSymmetryPathGuidePoints(p = this.getP()) {
-    const { start, end, control } = this._getSymmetryPathHandles();
-    if (!p.symmetryPathUseCurve) return [start, end];
+    const nodes = this._getSymmetryPathNodes();
+    if (nodes.length < SYMMETRY_GUIDE_MIN_NODES) return nodes;
+    if (!p.symmetryPathUseCurve) return nodes;
     const sampled = [];
-    for (let i = 0; i <= SYMMETRY_PATH_CURVE_SAMPLES; i++) {
-      sampled.push(_sampleQuadraticBezierPoint(start, control, end, i / SYMMETRY_PATH_CURVE_SAMPLES));
+    for (let segmentIndex = 0; segmentIndex < nodes.length - 1; segmentIndex++) {
+      const segmentPoints = _sampleMotionPathBezierSegment(nodes, segmentIndex, false);
+      if (!segmentPoints.length) continue;
+      if (sampled.length) segmentPoints.shift();
+      sampled.push(...segmentPoints);
     }
-    return sampled;
+    return sampled.length ? sampled : nodes;
   }
 
   _getSymmetryPathTrack(p = this.getP()) {
@@ -2050,17 +2062,66 @@ export class App {
     return Math.max(0, Math.min(slots.length - 1, Math.round((closest.distanceAlongPath / closest.totalLength) * (slots.length - 1))));
   }
 
-  _setSymmetryPathPoints(start, end, control = null) {
-    const clampPoint = point => ({
-      x: this.W > 0 ? _clamp01((point.x || 0) / this.W) : 0,
-      y: this.H > 0 ? _clamp01((point.y || 0) / this.H) : 0,
-    });
+  _getSymmetryPathInsertPreview(x, y, p = this.getP()) {
+    const nodes = this._getSymmetryPathNodes();
+    if (nodes.length < SYMMETRY_GUIDE_MIN_NODES) return null;
+    let best = null;
+    const considerHit = (hit, index) => {
+      if (!hit) return;
+      if (!best || hit.distance < best.distance) {
+        best = { index, x: hit.x, y: hit.y, distance: hit.distance };
+      }
+    };
+    if (p.symmetryPathUseCurve) {
+      for (let segmentIndex = 0; segmentIndex < nodes.length - 1; segmentIndex++) {
+        const segmentPoints = _sampleMotionPathBezierSegment(nodes, segmentIndex, false);
+        for (let i = 1; i < segmentPoints.length; i++) {
+          considerHit(
+            _closestPointOnSegment(x, y, segmentPoints[i - 1].x, segmentPoints[i - 1].y, segmentPoints[i].x, segmentPoints[i].y),
+            segmentIndex + 1,
+          );
+        }
+      }
+    } else {
+      for (let index = 1; index < nodes.length; index++) {
+        considerHit(_closestPointOnSegment(x, y, nodes[index - 1].x, nodes[index - 1].y, nodes[index].x, nodes[index].y), index);
+      }
+    }
+    return best;
+  }
+
+  _setSymmetryPathNodes(nodes) {
+    const normalized = Array.isArray(nodes)
+      ? nodes
+          .filter(node => Number.isFinite(node?.x) && Number.isFinite(node?.y))
+          .map(node => ({
+            x: this.W > 0 ? _clamp01(node.x / this.W) : 0,
+            y: this.H > 0 ? _clamp01(node.y / this.H) : 0,
+            connector: node?.connector === 'sharp' ? 'sharp' : 'curve',
+          }))
+          .slice(0, SYMMETRY_GUIDE_MAX_NODES)
+      : [];
+    if (normalized.length < SYMMETRY_GUIDE_MIN_NODES) return false;
     this.symmetry = {
       ...this.symmetry,
-      pathStart: clampPoint(start),
-      pathEnd: clampPoint(end),
-      pathControl: clampPoint(control || this._getSymmetryPathHandles().control),
+      pathNodes: normalized,
     };
+    return true;
+  }
+
+  _insertSymmetryPathNode(x, y, p = this.getP()) {
+    const insertion = this._getSymmetryPathInsertPreview(x, y, p);
+    if (!insertion) return false;
+    const nodes = this._getSymmetryPathNodes();
+    nodes.splice(insertion.index, 0, { x: insertion.x, y: insertion.y, connector: 'curve' });
+    return this._setSymmetryPathNodes(nodes);
+  }
+
+  _removeSymmetryPathNode(index) {
+    const nodes = this._getSymmetryPathNodes();
+    if (nodes.length <= SYMMETRY_GUIDE_MIN_NODES || index < 0 || index >= nodes.length) return false;
+    nodes.splice(index, 1);
+    return this._setSymmetryPathNodes(nodes);
   }
 
   _beginSymmetryStroke(x, y, p = this.getP()) {
@@ -2084,13 +2145,12 @@ export class App {
 
   _findSymmetryGuideHit(x, y, p = this.getP()) {
     if (!p.symmetryEnabled || p.symmetryMode !== 'path' || p.symmetryGuideVisible === false || this.activeTool !== 'brush') return null;
-    const { start, end, control } = this._getSymmetryPathHandles();
+    const nodes = this._getSymmetryPathNodes();
     const guidePoints = this._getSymmetryPathGuidePoints(p);
-    const mid = guidePoints[Math.floor((guidePoints.length - 1) * 0.5)] || { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
-    if (Math.hypot(x - start.x, y - start.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathStart' };
-    if (Math.hypot(x - end.x, y - end.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathEnd' };
-    if (p.symmetryPathUseCurve && Math.hypot(x - control.x, y - control.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathControl' };
-    if (!p.symmetryPathUseCurve && Math.hypot(x - mid.x, y - mid.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathTranslate' };
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index];
+      if (Math.hypot(x - node.x, y - node.y) <= SYMMETRY_GUIDE_HIT_RADIUS) return { kind: 'pathNode', nodeIndex: index };
+    }
     for (let i = 1; i < guidePoints.length; i++) {
       const a = guidePoints[i - 1];
       const b = guidePoints[i];
@@ -2100,8 +2160,22 @@ export class App {
     return null;
   }
 
-  _handleSymmetryPointerDown(x, y) {
-    const hit = this._findSymmetryGuideHit(x, y);
+  _handleSymmetryPointerDown(x, y, event = null) {
+    const p = this.getP();
+    const hit = this._findSymmetryGuideHit(x, y, p);
+    if (event?.altKey && hit?.kind === 'pathNode') {
+      const removed = this._removeSymmetryPathNode(hit.nodeIndex);
+      if (!removed) this.showToast('Need at least two symmetry nodes');
+      else this.showToast('Removed symmetry node');
+      return true;
+    }
+    if (event?.shiftKey && hit?.kind === 'pathTranslate') {
+      const inserted = this._insertSymmetryPathNode(x, y, p);
+      if (inserted) {
+        this.showToast('Added symmetry node');
+        return true;
+      }
+    }
     if (!hit) return false;
     this._symmetryDrag = { ...hit, lastX: x, lastY: y };
     return true;
@@ -2109,25 +2183,27 @@ export class App {
 
   _handleSymmetryPointerMove(x, y) {
     if (!this._symmetryDrag) return false;
-    const { start, end, control } = this._getSymmetryPathHandles();
-    if (this._symmetryDrag.kind === 'pathStart') {
-      this._setSymmetryPathPoints({ x, y }, end, control);
-    } else if (this._symmetryDrag.kind === 'pathEnd') {
-      this._setSymmetryPathPoints(start, { x, y }, control);
-    } else if (this._symmetryDrag.kind === 'pathControl') {
-      this._setSymmetryPathPoints(start, end, { x, y });
+    const nodes = this._getSymmetryPathNodes();
+    if (this._symmetryDrag.kind === 'pathNode') {
+      if (!nodes[this._symmetryDrag.nodeIndex]) return false;
+      nodes[this._symmetryDrag.nodeIndex] = {
+        ...nodes[this._symmetryDrag.nodeIndex],
+        x,
+        y,
+      };
+      this._setSymmetryPathNodes(nodes);
     } else {
       const dx = x - this._symmetryDrag.lastX;
       const dy = y - this._symmetryDrag.lastY;
-      const xs = [start.x, end.x, control.x];
-      const ys = [start.y, end.y, control.y];
+      const xs = nodes.map(node => node.x);
+      const ys = nodes.map(node => node.y);
       const clampedDx = _clamp(dx, -Math.min(...xs), this.W - Math.max(...xs));
       const clampedDy = _clamp(dy, -Math.min(...ys), this.H - Math.max(...ys));
-      this._setSymmetryPathPoints(
-        { x: start.x + clampedDx, y: start.y + clampedDy },
-        { x: end.x + clampedDx, y: end.y + clampedDy },
-        { x: control.x + clampedDx, y: control.y + clampedDy },
-      );
+      this._setSymmetryPathNodes(nodes.map(node => ({
+        ...node,
+        x: node.x + clampedDx,
+        y: node.y + clampedDy,
+      })));
     }
     this._symmetryDrag.lastX = x;
     this._symmetryDrag.lastY = y;
@@ -2144,9 +2220,8 @@ export class App {
     if (!p.symmetryEnabled || p.symmetryGuideVisible === false) return;
     ctx.save();
     if (p.symmetryMode === 'path') {
-      const { start, end, control } = this._getSymmetryPathHandles();
+      const nodes = this._getSymmetryPathNodes();
       const guidePoints = this._getSymmetryPathGuidePoints(p);
-      const mid = guidePoints[Math.floor((guidePoints.length - 1) * 0.5)] || { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5 };
       const slots = this._getSymmetryPathSlots(p.symmetryCount, p);
       ctx.strokeStyle = 'rgba(123,255,186,0.9)';
       ctx.lineWidth = 1.5;
@@ -2163,7 +2238,7 @@ export class App {
         ctx.fill();
       }
       ctx.fillStyle = 'rgba(255,170,230,0.95)';
-      [start, end, ...(p.symmetryPathUseCurve ? [control] : [mid])].forEach(handle => {
+      nodes.forEach(handle => {
         ctx.beginPath();
         ctx.arc(handle.x, handle.y, SYMMETRY_GUIDE_HANDLE_RADIUS, 0, Math.PI * 2);
         ctx.fill();
@@ -14416,7 +14491,7 @@ export class App {
     const { x, y } = this._getEventCoords(e);
     this._captureTilt(e);
     if (this._handleSimulationPointerDown(x, y)) return;
-    if (this._handleSymmetryPointerDown(x, y)) return;
+    if (this._handleSymmetryPointerDown(x, y, e)) return;
     // Move selection by dragging inside it (works in any tool mode)
     if (this.selectionMgr?.active && !this.selectionMgr.transformActive) {
       if (this.selectionMgr.moveOnDown(x, y)) {

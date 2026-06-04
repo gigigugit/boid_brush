@@ -689,7 +689,7 @@ export function buildSidebar(app) {
       <div data-symmetry-mode-panel="path" style="display:none;">
         <label>Mirror <input type="checkbox" id="symmetryPathMirror"></label>
         <label>Curve <input type="checkbox" id="symmetryPathUseCurve"></label>
-        <span class="slider-desc">Drag the guide handles on the canvas to place the copy path in real time.</span>
+        <span class="slider-desc">Drag nodes on the canvas to shape the copy path. Shift-click the guide to add a node, and Alt-click a node to remove it.</span>
       </div>
     </div>
 
