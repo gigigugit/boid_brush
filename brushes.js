@@ -11,6 +11,7 @@ import { WebGPUBoidSim } from './webgpu-boid-sim.js';
 import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
+import { WebGPUFlowFieldSystem } from './webgpu-flow-field.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
@@ -6302,6 +6303,301 @@ export class EraserBrush {
   drawOverlay(ctx, p) { this._inner.drawOverlay(ctx, p); }
   getStatusInfo() { return this._inner.getStatusInfo().replace(/^Simple/, 'Eraser'); }
   deactivate() { this._inner.deactivate(); }
+}
+
+export class FlowFieldBrush {
+  constructor(app) {
+    this.app = app;
+    this.system = null;
+    this._ready = false;
+    this._active = false;
+    this._initPromise = null;
+    this._strokeLayer = null;
+    this._lastPointer = null;
+    this._lastElapsed = null;
+    this._particleCount = 0;
+    this._resetQueued = true;
+  }
+
+  async init({ force = false } = {}) {
+    if (force) {
+      this.deactivate();
+      this.system = null;
+      this._ready = false;
+      this._initPromise = null;
+      this._particleCount = 0;
+      this._resetQueued = true;
+    }
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = (async () => {
+      try {
+        const sharedGpu = this.app.brushes?.fluid3d?.renderer?.ready
+          ? {
+              device: this.app.brushes.fluid3d.renderer.device,
+              adapter: this.app.brushes.fluid3d.renderer.adapter,
+            }
+          : {};
+        this.system = await WebGPUFlowFieldSystem.create({
+          ...sharedGpu,
+          maxParticles: 40000,
+          initialParticles: 12000,
+        });
+        this._ready = !!this.system?.ready;
+      } catch (error) {
+        console.warn('FlowFieldBrush: WebGPU init failed.', error);
+        this._ready = false;
+        this.system = null;
+      }
+      return this.system;
+    })();
+    return this._initPromise;
+  }
+
+  _hasVisiblePreview() {
+    const layer = this._strokeLayer;
+    return !!(layer?.gpuPreviewCanvas || this.system?.previewCanvas || this.system?.canvas);
+  }
+
+  _bindPreviewUpdater(layer = this._strokeLayer) {
+    if (!this.system || !layer) return;
+    this.system.onPreviewUpdated = (canvas) => {
+      if (!canvas || this._strokeLayer !== layer || !this.app.layers.includes(layer)) return;
+      layer.gpuPreviewCanvas = canvas;
+      layer.dirty = true;
+      this.app.compositeAllLayers();
+    };
+  }
+
+  _clearPreview({ composite = false } = {}) {
+    const layer = this._strokeLayer;
+    if (layer?.gpuPreviewCanvas) {
+      layer.gpuPreviewCanvas = null;
+      layer.dirty = true;
+    }
+    if (this.system) {
+      this.system.onPreviewUpdated = null;
+      if (layer?.canvas) this.system.clearSurface(layer.canvas.width, layer.canvas.height);
+    }
+    if (composite && layer) this.app.compositeAllLayers();
+  }
+
+  _commitPreviewToLayer({ composite = true } = {}) {
+    const layer = this._strokeLayer;
+    if (!layer || !this.system?.ready) {
+      this._clearPreview({ composite });
+      return false;
+    }
+    const ok = this.system.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      layer.alphaLock ? 'source-atop' : 'source-over',
+    );
+    this.system.onPreviewUpdated = null;
+    this.system.clearSurface(layer.canvas.width, layer.canvas.height);
+    layer.gpuPreviewCanvas = null;
+    if (!ok) return false;
+    layer.dirty = true;
+    if (composite) this.app.compositeAllLayers();
+    return true;
+  }
+
+  _getSimulationData() {
+    if (!this.app.simulation?.enabled || this.app.activeBrush !== 'flow') return null;
+    return this.app._getSimulationBrushData?.('flow') || null;
+  }
+
+  _getSpawnCenters(p, data = this._getSimulationData()) {
+    const spawns = Array.isArray(data?.spawns) ? data.spawns.filter(spawn => spawn?.enabled !== false) : [];
+    if (spawns.length) {
+      return spawns.map(spawn => {
+        const config = this.app._resolveSimulationSpawnConfig?.(spawn, p) || {};
+        return {
+          x: Number.isFinite(spawn?.x) ? spawn.x : this.app.W * 0.5,
+          y: Number.isFinite(spawn?.y) ? spawn.y : this.app.H * 0.5,
+          radius: Math.max(8, Number(config.radius) || p.spawnRadius || 24),
+          weight: Math.max(1, Number(config.count) || 1),
+        };
+      });
+    }
+    const leaderX = Number.isFinite(this._lastPointer?.x) ? this._lastPointer.x : this.app.leaderX;
+    const leaderY = Number.isFinite(this._lastPointer?.y) ? this._lastPointer.y : this.app.leaderY;
+    return [{
+      x: Number.isFinite(leaderX) ? leaderX : this.app.W * 0.5,
+      y: Number.isFinite(leaderY) ? leaderY : this.app.H * 0.5,
+      radius: Math.max(8, p.spawnRadius || 24),
+      weight: 1,
+    }];
+  }
+
+  _getGuidePoints(p, data = this._getSimulationData()) {
+    const points = Array.isArray(data?.points) ? data.points.filter(point => point?.enabled !== false) : [];
+    return points.map(point => {
+      const config = this.app._resolveSimulationPointConfig?.(point, p) || {};
+      const sign = point?.type === 'repel' ? -1 : 1;
+      return {
+        x: point.x,
+        y: point.y,
+        strength: sign * (Number(config.strength) || 0),
+        radius: Math.max(8, Number(config.radius) || p.simPointRadius || 80),
+      };
+    });
+  }
+
+  _desiredParticleCount(p, data = this._getSimulationData()) {
+    const spawns = Array.isArray(data?.spawns) ? data.spawns.filter(spawn => spawn?.enabled !== false) : [];
+    if (spawns.length) {
+      const total = spawns.reduce((sum, spawn) => {
+        const config = this.app._resolveSimulationSpawnConfig?.(spawn, p) || {};
+        return sum + Math.max(1, Number(config.count) || 1);
+      }, 0);
+      return Math.max(256, Math.min(40000, Math.round(total || p.flowParticleCount || 12000)));
+    }
+    return Math.max(256, Math.min(40000, Math.round(p.flowParticleCount || 12000)));
+  }
+
+  _ensureParticles(p, data = this._getSimulationData()) {
+    if (!this.system?.ready) return;
+    const desiredCount = this._desiredParticleCount(p, data);
+    if (!this._resetQueued && desiredCount === this._particleCount) return;
+    this.system.resetParticles(desiredCount, {
+      width: this.app.W || 1,
+      height: this.app.H || 1,
+      centers: this._getSpawnCenters(p, data),
+      baseSpeed: Math.max(0.5, p.flowParticleMaxSpeed * 0.22),
+      segmentWidth: p.flowParticleSegmentWidth,
+    });
+    this._particleCount = desiredCount;
+    this._resetQueued = false;
+  }
+
+  _frameDelta(elapsed) {
+    const delta = this._lastElapsed == null ? (1 / 60) : _clamp(elapsed - this._lastElapsed, 1 / 240, 0.05);
+    this._lastElapsed = elapsed;
+    return delta;
+  }
+
+  configureSimulation(data, p) {
+    if (!this._ready || !this.system) return;
+    this._resetQueued = true;
+    this._ensureParticles(p, data);
+  }
+
+  onDown(x, y, pressure) {
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    if (!this._ready || !this.system) return;
+    if (this._hasVisiblePreview()) this._commitPreviewToLayer({ composite: false });
+    this._active = true;
+    this._strokeLayer = this.app.getActiveLayer();
+    this._lastPointer = { x, y, pressure };
+    this._lastElapsed = null;
+    this._resetQueued = true;
+    this._bindPreviewUpdater(this._strokeLayer);
+    this._clearPreview({ composite: false });
+  }
+
+  onMove(x, y, pressure) {
+    this._lastPointer = { x, y, pressure };
+  }
+
+  onUp(x, y) {
+    this._lastPointer = { x, y, pressure: 1 };
+    this._active = false;
+    this._commitPreviewToLayer({ composite: true });
+  }
+
+  _renderFrame(elapsed) {
+    if (!this._ready || !this.system) return;
+    const layer = this.app.getActiveLayer();
+    if (!layer) return;
+    if (this._strokeLayer && this._strokeLayer !== layer && this._hasVisiblePreview()) {
+      this._commitPreviewToLayer({ composite: false });
+    }
+    this._strokeLayer = layer;
+    this._bindPreviewUpdater(layer);
+    const p = this.app.getP();
+    const data = this._getSimulationData();
+    this._ensureParticles(p, data);
+    this.system.setGuides(this._getGuidePoints(p, data));
+    const centers = this._getSpawnCenters(p, data);
+    const primary = centers[0] || { x: this.app.W * 0.5, y: this.app.H * 0.5, radius: Math.max(8, p.spawnRadius || 24) };
+    const secondaryHex = this.app.secondaryEl?.value || '#ffffff';
+    const visible = p.showBoids !== false;
+    if (!visible) {
+      this._clearPreview({ composite: true });
+      return;
+    }
+    const ok = this.system.render({
+      width: this.app.W || 1,
+      height: this.app.H || 1,
+      targetWidthPx: layer.canvas.width,
+      targetHeightPx: layer.canvas.height,
+      renderWidthPx: layer.canvas.width,
+      renderHeightPx: layer.canvas.height,
+      dpr: this.app.DPR || 1,
+      time: elapsed,
+      dt: this._frameDelta(elapsed),
+      flowScale: p.flowParticleScale,
+      flowStrength: p.flowParticleStrength,
+      damping: p.flowParticleDamping,
+      maxSpeed: p.flowParticleMaxSpeed,
+      evolutionSpeed: p.flowParticleEvolution,
+      trailFade: p.flowParticleTrailFade,
+      segmentLength: p.flowParticleSegmentLength,
+      segmentWidth: p.flowParticleSegmentWidth,
+      spawnCenterX: primary.x,
+      spawnCenterY: primary.y,
+      spawnRadius: primary.radius,
+      respawnRate: p.flowParticleRespawn,
+      brushActive: !!(this._active || this.app.simulation?.running),
+      paletteMode: p.flowParticlePalette,
+      primaryColor: p.color,
+      secondaryColor: secondaryHex,
+      opacity: p.flowParticleOpacity,
+      paletteMix: 0.72,
+    });
+    if (!ok) return;
+    layer.gpuPreviewCanvas = this.system.previewCanvas || this.system.canvas;
+    layer.dirty = true;
+    this.app.compositeAllLayers();
+  }
+
+  onFrame(elapsed) {
+    this._renderFrame(elapsed);
+  }
+
+  onHoverFrame(elapsed) {
+    if (this.app.activeBrush !== 'flow') return;
+    if (!this.app.simulation?.enabled && !this._active && !this._hasVisiblePreview()) return;
+    this._renderFrame(elapsed);
+  }
+
+  taperFrame() {}
+
+  drawOverlay() {}
+
+  getStatusInfo() {
+    if (!this._ready || !this.system) return 'Flow Field | WebGPU unavailable';
+    return `Flow Field | gpu ${this._particleCount || 0} particles`;
+  }
+
+  deactivate() {
+    this._active = false;
+    this._lastElapsed = null;
+    this._lastPointer = null;
+    this._resetQueued = true;
+    if (!this.app.simulation?.running) this._clearPreview({ composite: true });
+  }
+
+  destroy() {
+    this.deactivate();
+    this.system = null;
+    this._ready = false;
+    this._initPromise = null;
+  }
 }
 
 const MOTION_PATH_BRUSH_BASE_SPEED = 90;

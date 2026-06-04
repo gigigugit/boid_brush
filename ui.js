@@ -221,7 +221,7 @@ function _syncLeaderOverrideUI() {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
-    <div id="simBrushSessionCardHost" data-brushes="boid">
+    <div id="simBrushSessionCardHost" data-brushes="boid flow">
       ${renderSimulationSessionCard({
         badgeId: 'simSidebarSessionBadge',
         badgeTone: 'muted',
@@ -375,6 +375,26 @@ export function buildSidebar(app) {
       ${sliderRow('motionPathAngleSmoothing', 'Angle Smooth', 0, 100, 90, v => (v / 100).toFixed(2), 'Higher values damp graph rotation changes more strongly')}
       ${sliderRow('motionPathMovementSmoothing', 'Move Smooth', 0, 100, 65, v => (v / 100).toFixed(2), 'Higher values low-pass each agent\'s resolved canvas movement after the graph motion is applied')}
       <span class="slider-desc">Scale enlarges the authored graph on canvas. These are graph-wide defaults until per-agent motion overrides are added in the editor.</span>
+    </div>
+
+    <div class="section-header" data-brushes="flow" data-section="flowParticles">Flow Field Particles <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="flow">
+      ${sliderRow('flowParticleCount', 'Particles', 256, 40000, 12000)}
+      ${sliderRow('flowParticleScale', 'Field Scale', 1, 80, 18, v => (v / 1000).toFixed(3), 'Lower values create broader vortex streams; higher values tighten the curl field')}
+      ${sliderRow('flowParticleStrength', 'Flow Strength', 0, 200, 82, v => (v / 100).toFixed(2), 'How strongly particles follow the procedural flow field each frame')}
+      ${sliderRow('flowParticleDamping', 'Damping', 70, 100, 96, v => (v / 100).toFixed(2), 'Velocity retention between compute steps')}
+      ${sliderRow('flowParticleMaxSpeed', 'Speed Cap', 2, 120, 42, v => (v / 10).toFixed(1), 'Clamp particle velocity so the ribbons stay legible')}
+      ${sliderRow('flowParticleEvolution', 'Evolution', 0, 100, 24, v => (v / 100).toFixed(2), 'Animate the field itself over time for drifting currents')}
+      ${sliderRow('flowParticleTrailFade', 'Trail Fade', 50, 100, 94, v => (v / 100).toFixed(2), 'How much the accumulation buffer persists between frames')}
+      ${sliderRow('flowParticleSegmentLength', 'Ribbon Length', 4, 80, 24, null, 'Length of each motion-aligned particle stroke')}
+      ${sliderRow('flowParticleSegmentWidth', 'Ribbon Width', 4, 80, 32, v => (v / 10).toFixed(1), 'Thickness of each particle ribbon')}
+      ${sliderRow('flowParticleRespawn', 'Respawn', 0, 100, 18, v => (v / 100).toFixed(2), 'How quickly particles recycle back into the active spawn area')}
+      ${sliderRow('flowParticleOpacity', 'Opacity', 0, 100, 70, v => (v / 100).toFixed(2), 'Overall translucency of the flow accumulation')}
+      <label>Palette <select id="flowParticlePalette">
+        <option value="mono">Monochrome Ink</option>
+        <option value="duo" selected>Duo Wash</option>
+        <option value="prism">Prism Smoke</option>
+      </select></label>
     </div>
 
     <!-- Bristle Shape (bristle only) -->
@@ -702,8 +722,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Visual (boid + ant) -->
-    <div class="section-header" data-brushes="boid ant" data-section="visual">Visual <span class="chevron">▼</span></div>
-    <div class="section-body" data-brushes="boid ant">
+    <div class="section-header" data-brushes="boid ant flow" data-section="visual">Visual <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant flow">
       <label>Show Particles <input type="checkbox" id="showBoids" checked></label>
       <label>Show Spawn <input type="checkbox" id="showSpawn" checked></label>
     </div>
@@ -760,8 +780,8 @@ export function buildSidebar(app) {
       </div>
     </div>
 
-    <div class="section-header closed" data-brushes="boid ant" data-section="brushSettings">Brush Settings <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid ant">
+    <div class="section-header closed" data-brushes="boid ant flow" data-section="brushSettings">Brush Settings <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid ant flow">
       <label>Show Sim Overlay <input type="checkbox" id="showSimulationOverlayControls"></label>
       <span class="slider-desc">Off keeps simulation quick controls in the left drawer. On restores the floating overlay HUD.</span>
     </div>
@@ -1280,10 +1300,15 @@ export function buildSimulationControlsPanel(app) {
     const pheromonePaths = brush === 'ant' ? (Array.isArray(data?.pheromonePaths) ? data.pheromonePaths : []) : [];
     const isActive = isDraft ? activeSessionIndex() < 0 : activeSessionIndex() === sessionIndex;
     const title = isDraft ? 'Unsaved Draft' : (session?.name || `Session ${sessionIndex + 1}`);
+    const guideMeta = brush === 'boid'
+      ? `${paths.length} path${paths.length === 1 ? '' : 's'}`
+      : (brush === 'ant'
+          ? `${edges.length} edge${edges.length === 1 ? '' : 's'}`
+          : `${points.length} force${points.length === 1 ? '' : 's'}`);
     const meta = [
       `${spawns.length} spawn${spawns.length === 1 ? '' : 's'}`,
       `${points.length} point${points.length === 1 ? '' : 's'}`,
-      brush === 'boid' ? `${paths.length} path${paths.length === 1 ? '' : 's'}` : `${edges.length} edge${edges.length === 1 ? '' : 's'}`,
+      guideMeta,
     ].join(' · ');
     const vars = isDraft || sessionIndex === liveSessionIndex ? currentVars() : (session?.vars || {});
     const sessionChips = chipRow([
@@ -1903,6 +1928,15 @@ const _sliderFormats = {
   motionPathPathSmoothing: v => (v / 100).toFixed(2),
   motionPathAngleSmoothing: v => (v / 100).toFixed(2),
   motionPathMovementSmoothing: v => (v / 100).toFixed(2),
+  flowParticleScale: v => (v / 1000).toFixed(3),
+  flowParticleStrength: v => (v / 100).toFixed(2),
+  flowParticleDamping: v => (v / 100).toFixed(2),
+  flowParticleMaxSpeed: v => (v / 10).toFixed(1),
+  flowParticleEvolution: v => (v / 100).toFixed(2),
+  flowParticleTrailFade: v => (v / 100).toFixed(2),
+  flowParticleSegmentWidth: v => (v / 10).toFixed(1),
+  flowParticleRespawn: v => (v / 100).toFixed(2),
+  flowParticleOpacity: v => (v / 100).toFixed(2),
   lbmStrokePull: v => (v / 100).toFixed(2),
   lbmStrokeRake: v => (v / 100).toFixed(2),
   lbmStrokeJitter: v => (v / 100).toFixed(2),

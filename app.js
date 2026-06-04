@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, FlowFieldBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
 import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
@@ -93,6 +93,18 @@ const FACTORY_DEFAULTS = Object.freeze({
   motionPathAngleSmoothing: 90,
   motionPathMovementSmoothing: 65,
   motionPathPathSmoothing: 35,
+  flowParticleCount: 12000,
+  flowParticleScale: 18,
+  flowParticleStrength: 82,
+  flowParticleDamping: 96,
+  flowParticleMaxSpeed: 42,
+  flowParticleEvolution: 24,
+  flowParticleTrailFade: 94,
+  flowParticleSegmentLength: 24,
+  flowParticleSegmentWidth: 32,
+  flowParticleRespawn: 18,
+  flowParticleOpacity: 70,
+  flowParticlePalette: 'duo',
   strokeAngleMode: 'auto',
   bristleCount: 30,
   bristleWidth: 30,
@@ -430,7 +442,7 @@ const PERF_THROTTLE_GAP_MS = 250;
 const PERF_RECENT_EVENT_LIMIT = 10;
 const DIRTY_TILE_SIZE = 256;
 const DIRTY_TILE_MAX_COVERAGE = 0.45;
-const STAMP_IMAGE_DISABLED_BRUSHES = new Set(['fluid', 'fluid3d']);
+const STAMP_IMAGE_DISABLED_BRUSHES = new Set(['fluid', 'fluid3d', 'flow']);
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -1845,6 +1857,7 @@ export class App {
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+        flow: { spawns: [], points: [] },
       },
       // Scene-level variable overrides (applied during simulation playback).
       // seek defaults to 0 so boids follow guides instead of the cursor.
@@ -1955,6 +1968,7 @@ export class App {
     this.brushes.motionPath = new MotionPathBrush(this);
     this.brushes.fluid = new FluidBrush(this);
     this.brushes.fluid3d = new ThreeDFluidBrush(this);
+    this.brushes.flow = new FlowFieldBrush(this);
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
@@ -1963,6 +1977,7 @@ export class App {
     await this.brushes.ant.init();
     await this.brushes.fluid.init();
     await this.brushes.fluid3d.init();
+    await this.brushes.flow.init();
 
     // Sidebar UI
     buildSidebar(this);
@@ -4917,6 +4932,18 @@ export class App {
       motionPathAngleSmoothing: (val('motionPathAngleSmoothing') || 90) / 100,
       motionPathMovementSmoothing: (val('motionPathMovementSmoothing') || 65) / 100,
       motionPathPathSmoothing: (val('motionPathPathSmoothing') || 35) / 100,
+      flowParticleCount: Math.max(256, Math.min(40000, Math.round(numOr('flowParticleCount', 12000)))),
+      flowParticleScale: numOr('flowParticleScale', 18) / 1000,
+      flowParticleStrength: numOr('flowParticleStrength', 82) / 100,
+      flowParticleDamping: numOr('flowParticleDamping', 96) / 100,
+      flowParticleMaxSpeed: numOr('flowParticleMaxSpeed', 42) / 10,
+      flowParticleEvolution: numOr('flowParticleEvolution', 24) / 100,
+      flowParticleTrailFade: numOr('flowParticleTrailFade', 94) / 100,
+      flowParticleSegmentLength: Math.max(4, numOr('flowParticleSegmentLength', 24)),
+      flowParticleSegmentWidth: Math.max(0.4, numOr('flowParticleSegmentWidth', 32) / 10),
+      flowParticleRespawn: numOr('flowParticleRespawn', 18) / 100,
+      flowParticleOpacity: numOr('flowParticleOpacity', 70) / 100,
+      flowParticlePalette: sel('flowParticlePalette') || 'duo',
       // Stamp
       stampSize: Math.max(1, Math.round(val('stampSize') * scale)),
       stampOpacity: val('stampOpacity') / 100,
@@ -5111,7 +5138,7 @@ export class App {
   // ========================================================
 
   _isMotionBrush(name = this.activeBrush) {
-    return name === 'boid' || name === 'ant';
+    return name === 'boid' || name === 'ant' || name === 'flow';
   }
 
   _getSimulationContextBrush() {
@@ -5420,7 +5447,7 @@ export class App {
   }
 
   _normalizeSimulationData() {
-    for (const brush of ['boid', 'ant']) {
+    for (const brush of ['boid', 'ant', 'flow']) {
       const data = this._getSimulationBrushData(brush);
       if (!data) continue;
 
@@ -5541,8 +5568,11 @@ export class App {
   }
 
   _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
+    const flowCount = Math.max(256, Math.min(40000, Math.round(p.flowParticleCount || 12000)));
     return {
-      count: Number.isFinite(spawn?.count) ? Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(spawn.count))) : p.count,
+      count: Number.isFinite(spawn?.count)
+        ? Math.max(1, Math.min(40000, Math.round(spawn.count)))
+        : (this._getSimulationContextBrush?.() === 'flow' ? flowCount : p.count),
       shape: spawn?.shape || p.spawnShape,
       radius: Number.isFinite(spawn?.radius) ? Math.max(1, spawn.radius) : p.spawnRadius,
       angle: Number.isFinite(spawn?.angle) ? spawn.angle : p.spawnAngle,
@@ -9669,6 +9699,7 @@ export class App {
     if (next) {
       this._constrainSimulationDataToBounds('boid');
       this._constrainSimulationDataToBounds('ant');
+      this._constrainSimulationDataToBounds('flow');
     }
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
@@ -9687,6 +9718,7 @@ export class App {
     if (this.activeBrush === 'boid' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
+    if (this.activeBrush === 'flow' && ['path', 'edge', 'pheromone'].includes(this.simulation.editorTool)) this.simulation.editorTool = 'spawn';
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
     const playbackBar = document.getElementById('simPlaybackBar');
@@ -9746,7 +9778,8 @@ export class App {
         const hide =
           (this.activeBrush === 'boid' && tool === 'edge') ||
           (this.activeBrush === 'ant' && tool === 'path') ||
-          (this.activeBrush === 'boid' && tool === 'pheromone');
+          (this.activeBrush === 'boid' && tool === 'pheromone') ||
+          (this.activeBrush === 'flow' && (tool === 'path' || tool === 'edge' || tool === 'pheromone'));
         el.style.display = hide ? 'none' : '';
         el.classList.toggle('active', this.simulation.editorTool === tool);
       });
@@ -10161,7 +10194,7 @@ export class App {
           x: mask.bounds.minX + (mask.bounds.width * 0.5),
           y: mask.bounds.minY + (mask.bounds.height * 0.5),
           enabled: true,
-          count: this.getP().count,
+          count: this.activeBrush === 'flow' ? this.getP().flowParticleCount : this.getP().count,
           distribution: 'uniform',
           noiseScale: 1,
           mask,
@@ -13149,7 +13182,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', motionPath: '🧭 Motion Path', fluid: '🌊 LBM Fluid', fluid3d: '💧 3D Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', motionPath: '🧭 Motion Path', fluid: '🌊 LBM Fluid', fluid3d: '💧 3D Fluid', flow: '🌀 Flow Field', simple: '🖌 Simple', eraser: '◻ Eraser' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
