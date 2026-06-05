@@ -344,12 +344,12 @@ function _emitBatchStampInstances(app, instances, p, x, y, size, colorRGB, opaci
     ? app.getSymmetryPoints(x, y)
     : [{ x, y }];
   const seen = new Set();
-  const emitInstance = (px, py) => {
+  const emitInstance = (px, py, pointSize = size) => {
     const key = `${Math.round(px * 1000)}:${Math.round(py * 1000)}`;
     if (seen.has(key)) return;
     seen.add(key);
     let instOpacity = opacity;
-    let instSize = size;
+    let instSize = pointSize;
     if (app.hasCanvasTexture?.() && p.canvasTextureEnabled) {
       instOpacity *= _textureDepositDensity(app, p, px, py);
       const edgeBreakup = app.getTextureEdgeBreakup?.(px, py, p) || 0;
@@ -366,10 +366,11 @@ function _emitBatchStampInstances(app, instances, p, x, y, size, colorRGB, opaci
   };
 
   for (const point of renderPoints) {
-    emitInstance(point.x, point.y);
+    const pointSize = size * (point.sizeMultiplier || 1);
+    emitInstance(point.x, point.y, pointSize);
     if (!app.tilingMode || !app._getStampWrapPoints) continue;
-    const wraps = app._getStampWrapPoints(point.x, point.y, size);
-    for (const wrap of wraps) emitInstance(wrap.x, wrap.y);
+    const wraps = app._getStampWrapPoints(point.x, point.y, pointSize);
+    for (const wrap of wraps) emitInstance(wrap.x, wrap.y, pointSize);
   }
 }
 
@@ -694,13 +695,14 @@ function _getBoidGroupCursorColor(groupId, alpha = 0.6) {
 function _fillRadialPool(ctx, app, x, y, radius, color, opacity) {
   if (!ctx || radius <= 0 || opacity <= 0) return;
   for (const pt of app.getSymmetryPoints(x, y)) {
-    const grad = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, radius);
+    const scaledRadius = radius * (pt.sizeMultiplier || 1);
+    const grad = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, scaledRadius);
     grad.addColorStop(0, _colorWithAlpha(color, opacity));
     grad.addColorStop(0.58, _colorWithAlpha(color, opacity * 0.52));
     grad.addColorStop(1, _colorWithAlpha(color, 0));
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.arc(pt.x, pt.y, scaledRadius, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -710,10 +712,11 @@ function _strokePoolRing(ctx, app, x, y, radius, color, opacity, width) {
   ctx.save();
   ctx.strokeStyle = _shadeColor(color);
   ctx.globalAlpha = opacity;
-  ctx.lineWidth = width;
   for (const pt of app.getSymmetryPoints(x, y)) {
+    const sizeMultiplier = pt.sizeMultiplier || 1;
+    ctx.lineWidth = width * sizeMultiplier;
     ctx.beginPath();
-    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.arc(pt.x, pt.y, radius * sizeMultiplier, 0, Math.PI * 2);
     ctx.stroke();
   }
   ctx.restore();
@@ -832,7 +835,7 @@ function _stampToBlurAccum(bctx, app, x, y, sz, color, op) {
   bctx.fillStyle = color;
   for (const pt of app.getSymmetryPoints(x, y)) {
     bctx.beginPath();
-    bctx.arc(pt.x, pt.y, sz / 2, 0, Math.PI * 2);
+    bctx.arc(pt.x, pt.y, (sz * (pt.sizeMultiplier || 1)) / 2, 0, Math.PI * 2);
     bctx.globalAlpha = op;
     bctx.fill();
   }
@@ -1654,12 +1657,12 @@ export class BoidBrush {
           ? this.app.getSymmetryPoints(x, y)
           : [{ x, y }];
         const seen = new Set();
-        const emitInstance = (px, py) => {
+        const emitInstance = (px, py, pointSize = size) => {
           const key = `${Math.round(px * 1000)}:${Math.round(py * 1000)}`;
           if (seen.has(key)) return;
           seen.add(key);
           let instOpacity = opacity;
-          let instSize = size;
+          let instSize = pointSize;
           if (textureEnabled) {
             instOpacity *= _textureDepositDensity(this.app, p, px, py);
             const edgeBreakup = this.app.getTextureEdgeBreakup?.(px, py, p) || 0;
@@ -1675,10 +1678,11 @@ export class BoidBrush {
           instances.push(px, py, instSize, color.r, color.g, color.b, instOpacity);
         };
         for (const point of renderPoints) {
-          emitInstance(point.x, point.y);
+          const pointSize = size * (point.sizeMultiplier || 1);
+          emitInstance(point.x, point.y, pointSize);
           if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
-          const wraps = this.app._getStampWrapPoints(point.x, point.y, size);
-          for (const wrap of wraps) emitInstance(wrap.x, wrap.y);
+          const wraps = this.app._getStampWrapPoints(point.x, point.y, pointSize);
+          for (const wrap of wraps) emitInstance(wrap.x, wrap.y, pointSize);
         }
       };
 
@@ -4666,21 +4670,21 @@ export class SimpleBrush {
     if (!points?.length) return [];
     const expanded = [];
     const seen = new Set();
-    const addPoint = (x, y, rotation = 0) => {
+    const addPoint = (x, y, rotation = 0, sizeMultiplier = 1) => {
       const key = `${Math.round(x * 1000)}:${Math.round(y * 1000)}`;
       if (seen.has(key)) return;
       seen.add(key);
-      expanded.push({ x, y, rotation });
+      expanded.push({ x, y, rotation, sizeMultiplier });
     };
-    const stampBounds = this._getStampBounds(stampSize);
     for (const point of points) {
       const rotation = Number.isFinite(point.rotation) ? point.rotation : 0;
       const symPoints = p.symmetryEnabled ? this.app.getSymmetryPoints(point.x, point.y) : [point];
       for (const symPoint of symPoints) {
-        addPoint(symPoint.x, symPoint.y, rotation);
+        const sizeMultiplier = symPoint.sizeMultiplier || point.sizeMultiplier || 1;
+        addPoint(symPoint.x, symPoint.y, rotation, sizeMultiplier);
         if (!this.app.tilingMode || !this.app._getStampWrapPoints) continue;
-        const wrapPoints = this.app._getStampWrapPoints(symPoint.x, symPoint.y, stampBounds);
-        for (const wrap of wrapPoints) addPoint(wrap.x, wrap.y, rotation + (wrap.rotation || 0));
+        const wrapPoints = this.app._getStampWrapPoints(symPoint.x, symPoint.y, this._getStampBounds(stampSize * sizeMultiplier));
+        for (const wrap of wrapPoints) addPoint(wrap.x, wrap.y, rotation + (wrap.rotation || 0), sizeMultiplier);
       }
     }
     return expanded;
@@ -4691,7 +4695,7 @@ export class SimpleBrush {
     const canvasTextureActive = this.app.hasCanvasTexture?.() && p.canvasTextureEnabled;
     const instances = new StampInstanceBuffer(Math.max(16, points.length));
     for (const pt of points) {
-      let sz = p.stampSize;
+      let sz = p.stampSize * (pt.sizeMultiplier || 1);
       if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
       let op = p.stampOpacity;
       if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
@@ -6718,21 +6722,24 @@ export class MotionPathBrush {
         const points = this.app.getSymmetryPoints(segment.x, segment.y);
         for (let i = 0; i < points.length; i++) {
           const point = points[i];
+          const scaledDotSize = dotSize * (point.sizeMultiplier || 1);
           for (const [ox, oy] of offsets) {
             ctx.beginPath();
-            ctx.arc(point.x + ox, point.y + oy, dotSize / 2, 0, Math.PI * 2);
+            ctx.arc(point.x + ox, point.y + oy, scaledDotSize / 2, 0, Math.PI * 2);
             ctx.fill();
           }
         }
         continue;
       }
-      ctx.lineWidth = Math.max(0.5, ((segment.size0 || width) + (segment.size1 || segment.size0 || width)) * 0.5);
       const startPoints = this.app.getSymmetryPoints(segment.x0, segment.y0);
       const endPoints = this.app.getSymmetryPoints(segment.x1, segment.y1);
       const pairCount = Math.min(startPoints.length, endPoints.length);
       for (let i = 0; i < pairCount; i++) {
         const start = startPoints[i];
         const end = endPoints[i];
+        const startSize = (segment.size0 || width) * (start.sizeMultiplier || 1);
+        const endSize = (segment.size1 || segment.size0 || width) * (end.sizeMultiplier || 1);
+        ctx.lineWidth = Math.max(0.5, (startSize + endSize) * 0.5);
         for (const [ox, oy] of offsets) {
           ctx.beginPath();
           ctx.moveTo(start.x + ox, start.y + oy);

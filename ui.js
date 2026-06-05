@@ -56,6 +56,13 @@ function toggleSection(header) {
   if (body) body.classList.toggle('collapsed');
 }
 
+function _syncSymmetryModeUi() {
+  const mode = document.getElementById('symmetryMode')?.value || 'radial';
+  document.querySelectorAll('[data-symmetry-mode-panel]').forEach(panel => {
+    panel.style.display = panel.dataset.symmetryModePanel === mode ? '' : 'none';
+  });
+}
+
 // ── Build a slider row ──────────────────────────────────────
 function sliderRow(id, label, min, max, value, fmt, desc) {
   const fmtFn = fmt || (v => v);
@@ -669,10 +676,21 @@ export function buildSidebar(app) {
     <div class="section-header closed" data-section="symmetry">Symmetry <span class="chevron">▼</span></div>
     <div class="section-body collapsed">
       <label>Enable <input type="checkbox" id="symmetryEnabled"></label>
+      <label>Mode <select id="symmetryMode"><option value="radial">Radial</option><option value="path">Path</option></select></label>
+      <label>Show Guide <input type="checkbox" id="symmetryGuideVisible" checked></label>
       ${sliderRow('symmetryCount', 'Count', 2, 16, 4)}
-      <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
-      ${sliderRow('symmetryCenterX', 'Center X', 0, 100, 50, v => v + '%')}
-      ${sliderRow('symmetryCenterY', 'Center Y', 0, 100, 50, v => v + '%')}
+      <label for="symmetrySizeMultipliers">Copy Sizes <input type="text" id="symmetrySizeMultipliers" value="1" placeholder="1, 0.9, 0.8" aria-describedby="symmetrySizeMultipliersDesc"></label>
+      <span class="slider-desc" id="symmetrySizeMultipliersDesc">Comma- or space-separated size multipliers applied to copies in order; the last value repeats for remaining copies.</span>
+      <div data-symmetry-mode-panel="radial">
+        <label>Mirror <input type="checkbox" id="symmetryMirror"></label>
+        ${sliderRow('symmetryCenterX', 'Center X', 0, 100, 50, v => v + '%')}
+        ${sliderRow('symmetryCenterY', 'Center Y', 0, 100, 50, v => v + '%')}
+      </div>
+      <div data-symmetry-mode-panel="path" style="display:none;">
+        <label>Mirror <input type="checkbox" id="symmetryPathMirror"></label>
+        <label>Curve <input type="checkbox" id="symmetryPathUseCurve"></label>
+        <span class="slider-desc">Drag nodes on the canvas to shape the copy path. Shift-click the guide to add a node, and Alt-click a node to remove it.</span>
+      </div>
     </div>
 
     <!-- Taper -->
@@ -849,9 +867,14 @@ export function buildSidebar(app) {
   });
 
   // Checkbox & select → invalidate params
-  sb.querySelectorAll('input[type="checkbox"], select, input[type="number"]').forEach(el => {
+  sb.querySelectorAll('input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
     el.addEventListener('change', () => app.invalidateParams());
   });
+  sb.querySelectorAll('input[type="text"]').forEach(el => {
+    el.addEventListener('input', () => app.invalidateParams());
+  });
+  document.getElementById('symmetryMode')?.addEventListener('change', _syncSymmetryModeUi);
+  _syncSymmetryModeUi();
   document.getElementById('showSimulationOverlayControls')?.addEventListener('change', () => {
     app._syncSimulationUI?.();
   });
@@ -1105,7 +1128,7 @@ function _wireWorkspaceSettingsPanel(app, panel) {
       clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
     };
-    panel.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
+    panel.querySelectorAll('input[type="range"], input[type="checkbox"], input[type="text"], select').forEach(el => {
       el.addEventListener('input', triggerAutoSave);
       el.addEventListener('change', triggerAutoSave);
     });
@@ -1769,6 +1792,7 @@ export function syncUI(app) {
   syncStampImageUI(app);
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
+  _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
   app._syncMotionPathUI?.();
 }
@@ -2410,6 +2434,9 @@ function _captureCurrentPresetValues(app) {
   });
   document.querySelectorAll('#sidebar input[type="checkbox"]').forEach(el => {
     if (el.id && el.id !== 'autoSaveSession') values[el.id] = el.checked;
+  });
+  document.querySelectorAll('#sidebar input[type="text"]').forEach(el => {
+    if (el.id) values[el.id] = el.value;
   });
   document.querySelectorAll('#sidebar select').forEach(el => {
     if (el.id && el.id !== 'layerBlend') values[el.id] = el.value;
