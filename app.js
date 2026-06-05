@@ -227,7 +227,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   simSpeed: 100,
   simPointStrength: 90,
   simPointRadius: 120,
-  simBoundsMargin: SIM_NEAR_INFINITE_BOUNDS_MARGIN,
+  simBoundsMargin: 0,
   simPathSpeed: 120,
   simEdgeForce: 100,
   simEdgeRadius: 28,
@@ -8782,7 +8782,7 @@ export class App {
           return (value / 100).toFixed(2);
         case 'simBoundsMargin':
           return Math.round(value) >= SIM_NEAR_INFINITE_BOUNDS_MARGIN
-            ? 'Near-inf.'
+            ? 'Near-infinite'
             : `${Math.round(value)}px`;
         case 'simPathSpeed':
           return `${Math.round(value)}px/s`;
@@ -8852,7 +8852,7 @@ export class App {
         min: 0,
         max: SIM_NEAR_INFINITE_BOUNDS_MARGIN,
         value: Math.round(p.simBoundsMargin || 0),
-        desc: 'Extends the simulation bounds beyond the canvas edge. The default keeps boids, ants, and guides effectively unbounded in simulation mode.',
+        desc: 'Extends the simulation bounds beyond the canvas edge. Increase it for near-infinite boid, ant, and guide movement in simulation mode.',
       })}`;
     const pointSettingsBody = `
       ${simPanelSlider({
