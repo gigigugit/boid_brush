@@ -34,6 +34,7 @@ const SIM_EXPORT_FFMPEG_CORE_BASE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/co
 const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
+const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -226,7 +227,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   simSpeed: 100,
   simPointStrength: 90,
   simPointRadius: 120,
-  simBoundsMargin: 0,
+  simBoundsMargin: SIM_NEAR_INFINITE_BOUNDS_MARGIN,
   simPathSpeed: 120,
   simEdgeForce: 100,
   simEdgeRadius: 28,
@@ -8780,7 +8781,9 @@ export class App {
         case 'simEphemeralFade':
           return (value / 100).toFixed(2);
         case 'simBoundsMargin':
-          return `${Math.round(value)}px`;
+          return Math.round(value) >= SIM_NEAR_INFINITE_BOUNDS_MARGIN
+            ? 'Near-inf.'
+            : `${Math.round(value)}px`;
         case 'simPathSpeed':
           return `${Math.round(value)}px/s`;
         case 'simEphemeralFrames':
@@ -8847,9 +8850,9 @@ export class App {
         id: 'simBoundsMargin',
         label: 'Bounds Margin',
         min: 0,
-        max: 240,
+        max: SIM_NEAR_INFINITE_BOUNDS_MARGIN,
         value: Math.round(p.simBoundsMargin || 0),
-        desc: 'Extends the simulation bounds beyond the canvas edge. 0 keeps agents and guides inside the canvas.',
+        desc: 'Extends the simulation bounds beyond the canvas edge. The default keeps boids, ants, and guides effectively unbounded in simulation mode.',
       })}`;
     const pointSettingsBody = `
       ${simPanelSlider({
