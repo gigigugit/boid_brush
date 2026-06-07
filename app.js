@@ -7471,6 +7471,10 @@ export class App {
   }
 
   _newSimulationSession() {
+    if (this.simulation.running || this.simulation.paused) {
+      this.stopSimulation(false);
+      this.showToast('Simulation stopped before creating a new draft');
+    }
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
     this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
@@ -7546,6 +7550,10 @@ export class App {
   }
 
   _setActiveSimulationSessionIndex(index) {
+    if (this.simulation.running || this.simulation.paused) {
+      this.stopSimulation(false);
+      this.showToast('Simulation stopped before switching sessions');
+    }
     this._syncActiveSimulationSessionFromDraft();
     if (!Number.isFinite(index) || index < 0 || !this.simulation.sessions[index]) {
       this.simulation.activeSessionIndex = -1;
@@ -10386,7 +10394,7 @@ export class App {
   stopSimulation(showToast = true) {
     const brush = this.getCurrentBrush();
     const wasActive = this.simulation.running || this.simulation.paused;
-    const hadMultiSessionPlayback = this._hasActiveMultiSessionPlayback();
+    const hadMultiSessionPlayback = this.simulation.runtimeSessions.length > 0;
     void this._stopSimulationRecording({ announce: false });
     if (hadMultiSessionPlayback) {
       this._teardownMultiSessionRuntimeSessions({
