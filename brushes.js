@@ -6469,6 +6469,8 @@ export class MotionPathBrush {
     this._hasGraphAngle = false;
     this._lastInputX = 0;
     this._lastInputY = 0;
+    this._simulationData = null;
+    this._simulationSpawnConfig = null;
     _ensureProceduralStampRendererInit(this);
   }
 
@@ -6609,6 +6611,33 @@ export class MotionPathBrush {
       this.app.symStamp(layer.ctx, point.x, point.y, point.size || baseSize, p.color, opacity);
     }
     layer.dirty = true;
+  }
+
+
+  configureSimulation(data, p = this.app.getP()) {
+    this._simulationData = data || null;
+    const spawns = Array.isArray(data?.spawns) ? data.spawns.filter(spawn => spawn?.enabled !== false) : [];
+    const spawn = spawns[0] || (Array.isArray(data?.spawns) ? data.spawns[0] : null);
+    this._simulationSpawnConfig = spawn ? this.app._resolveSimulationSpawnConfig(spawn, p) || null : null;
+  }
+
+  _getRuntimeParams(base) {
+    if (!this.app?.simulation?.enabled || !this._simulationSpawnConfig) return base;
+    const cfg = this._simulationSpawnConfig;
+    return {
+      ...base,
+      color: cfg.color || base.color,
+      stampOpacity: Number.isFinite(cfg.opacity) ? cfg.opacity : base.stampOpacity,
+      stampSize: Number.isFinite(cfg.stampSize) ? cfg.stampSize : base.stampSize,
+      stampSeparation: Number.isFinite(cfg.stampSeparation) ? cfg.stampSeparation : base.stampSeparation,
+      smudge: Number.isFinite(cfg.smudge) ? cfg.smudge : base.smudge,
+      hueVar: Number.isFinite(cfg.hueVar) ? cfg.hueVar : base.hueVar,
+      satVar: Number.isFinite(cfg.satVar) ? cfg.satVar : base.satVar,
+      litVar: Number.isFinite(cfg.litVar) ? cfg.litVar : base.litVar,
+      sizeVar: Number.isFinite(cfg.sizeVar) ? cfg.sizeVar : base.sizeVar,
+      opacityVar: Number.isFinite(cfg.opacityVar) ? cfg.opacityVar : base.opacityVar,
+      speedVar: Number.isFinite(cfg.speedVar) ? cfg.speedVar : base.speedVar,
+    };
   }
 
   _cpuRenderRibbonSegments(segments, p) {
@@ -6794,7 +6823,11 @@ export class MotionPathBrush {
 
   onFrame(elapsed) {
     if (!this._active) return;
-    const p = this.app.getP();
+    const p = this._getRuntimeParams(this.app.getP());
+    if (this.app?.simulation?.enabled && this.app?.activeBrush === 'motionPath') {
+      if (Number.isFinite(this.app.leaderX)) this._originX = this.app.leaderX;
+      if (Number.isFinite(this.app.leaderY)) this._originY = this.app.leaderY;
+    }
     this._updateGraphAngle(p, this._lastInputX, this._lastInputY, { hasPathSample: false });
     const compiled = this._ensureCompiledGraph(p);
     if (!compiled?.paths?.length || !this._runtimeAgents.length) return;
@@ -7083,6 +7116,8 @@ export class MotionPathBrush {
   deactivate() {
     if (this._gpuPreviewActive) _clearProceduralGpuPreview(this, { composite: true });
     this._active = false;
+    this._simulationData = null;
+    this._simulationSpawnConfig = null;
     this._resetRuntime(true);
   }
 }

@@ -235,6 +235,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   simPheroPaintStrength: 55,
   simEphemeralFrames: 45,
   simEphemeralFade: 100,
+  simMotionPathMode: 'path',
   pressureSpawnRadius: false,
   bristleFanEnable: false,
   pencilAngle: true,
@@ -389,6 +390,9 @@ const SIM_PATH_PRIMITIVE_KINDS = ['circle', 'star', 'square', 'diamond', 'ellips
 // Keep traveled distance bounded during long simulation runs; each path still
 // wraps or ping-pongs against its own actual length when sampled.
 const PATH_DISTANCE_WRAP_THRESHOLD = 1000000;
+const MOTION_PATH_LEADER_DELTA_MAX = 1 / 20;
+const MOTION_PATH_LEADER_DELTA_FALLBACK = 1 / 60;
+const MOTION_PATH_LEADER_DAMPING = 0.9;
 const SIM_HEATMAP_MIN_CELL_SIZE = 18;
 const SIM_HEATMAP_MAX_CELL_SIZE = 28;
 const SIM_HEATMAP_TARGET_CELLS = 48;
@@ -1439,6 +1443,10 @@ function _normalizeSimulationPathPrimitiveKind(value) {
   return SIM_PATH_PRIMITIVE_KINDS.includes(value) ? value : '';
 }
 
+function _normalizeSimulationPathType(value) {
+  return value === 'stroke' ? 'stroke' : 'standard';
+}
+
 function _normalizeSimulationPathSpeed(value) {
   return _clamp(Number.isFinite(value) ? value : DEFAULT_SIM_PATH_SPEED, SIM_PATH_SPEED_MIN, SIM_PATH_SPEED_MAX);
 }
@@ -1889,6 +1897,7 @@ export class App {
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
+        motionPath: { spawns: [], points: [], paths: [] },
       },
       // Scene-level variable overrides (applied during simulation playback).
       // seek defaults to 0 so boids follow guides instead of the cursor.
@@ -1906,6 +1915,8 @@ export class App {
       dragTarget: null,
       selected: null,
       pathDistance: 0,
+      motionPathVelocity: { x: 0, y: 0 },
+      runtimeStrokeStarts: [],
       nextId: 1,
     };
     this.motionPath = this._createDefaultMotionPathState();
@@ -5453,6 +5464,7 @@ export class App {
       simEphemeralMode: chk('simEphemeralMode'),
       simEphemeralFrames: Math.max(1, Math.round(val('simEphemeralFrames') || 45)),
       simEphemeralFade: (val('simEphemeralFade') || 100) / 100,
+      simMotionPathMode: sel('simMotionPathMode') === 'forces' ? 'forces' : 'path',
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
     return this._simulationContextOverride
@@ -5465,7 +5477,11 @@ export class App {
   // ========================================================
 
   _isMotionBrush(name = this.activeBrush) {
-    return name === 'boid' || name === 'ant';
+    return name === 'boid' || name === 'ant' || name === 'motionPath';
+  }
+
+  _usesPathGuides(brush = this.activeBrush) {
+    return brush === 'boid' || brush === 'motionPath';
   }
 
   _getSimulationContextBrush() {
@@ -5774,7 +5790,7 @@ export class App {
   }
 
   _normalizeSimulationData() {
-    for (const brush of ['boid', 'ant']) {
+    for (const brush of ['boid', 'ant', 'motionPath']) {
       const data = this._getSimulationBrushData(brush);
       if (!data) continue;
 
@@ -5811,7 +5827,7 @@ export class App {
         hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : undefined,
       }));
 
-      if (brush === 'boid') {
+      if (this._usesPathGuides(brush)) {
         const legacyPaths = [];
         if (Array.isArray(data.path) && data.path.length >= 2) legacyPaths.push({ points: data.path });
         if (Array.isArray(data.paths)) legacyPaths.push(...data.paths);
@@ -5843,6 +5859,7 @@ export class App {
               ? Math.max(8, pathItem.primitiveRadiusY)
               : undefined,
             speed: _normalizeSimulationPathSpeed(pathItem?.speed),
+            pathType: _normalizeSimulationPathType(pathItem?.pathType),
             speedPoints: _normalizeSimulationPathSpeedPoints(pathItem?.speedPoints, () => this.simulation.nextId++),
             radiusPoints: _normalizeSimulationPathRadiusPoints(pathItem?.radiusPoints, () => this.simulation.nextId++, pathItem?.radius),
             travelDistance: Number.isFinite(pathItem?.travelDistance) ? pathItem.travelDistance : 0,
@@ -6015,7 +6032,10 @@ export class App {
   _getSimulationSpawnCenter(brush = this.activeBrush) {
     const allSpawns = this._ensureSimulationSpawns(brush);
     const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
-    const activeSpawns = spawns.length ? spawns : allSpawns;
+    let activeSpawns = spawns.length ? spawns : allSpawns;
+    if (brush === 'motionPath' && Array.isArray(this.simulation.runtimeStrokeStarts) && this.simulation.runtimeStrokeStarts.length) {
+      activeSpawns = activeSpawns.concat(this.simulation.runtimeStrokeStarts);
+    }
     if (!activeSpawns.length) return { x: this.W * 0.5, y: this.H * 0.5 };
     let sx = 0;
     let sy = 0;
@@ -6026,8 +6046,8 @@ export class App {
     return { x: sx / activeSpawns.length, y: sy / activeSpawns.length };
   }
 
-  _getBoidGuideFollowTargets(p = this.getP(), advancePaths = false, elapsed = 0) {
-    const data = this._getSimulationBrushData('boid');
+  _getSimulationGuideFollowTargets(brush = this.activeBrush, p = this.getP(), advancePaths = false, elapsed = 0) {
+    const data = this._getSimulationBrushData(brush);
     if (!data) return [];
     const targets = [];
 
@@ -6050,8 +6070,79 @@ export class App {
     return targets;
   }
 
-  _getBoidGuideFollowSeek(p = this.getP()) {
-    return 0;
+
+  _getSimulationForceVectorAt(x, y, p = this.getP(), { brush = this.activeBrush, includePaths = true, advancePaths = false, elapsed = 0 } = {}) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return { x: 0, y: 0 };
+    const data = this._getSimulationBrushData(brush);
+    if (!data) return { x: 0, y: 0 };
+    let fx = 0;
+    let fy = 0;
+    const speedScale = Math.max(0.1, p.simSpeed || 1);
+    for (const point of data.points || []) {
+      if (point?.enabled === false) continue;
+      const config = this._resolveSimulationPointConfig(point, p);
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const d = Math.hypot(dx, dy);
+      const sign = point.type === 'repel' ? -1 : 1;
+      const outerRadius = sign < 0
+        ? config.radius
+        : Math.max(config.radius || 0, config.influenceRadius || config.radius || 0);
+      if (d <= 0.0001 || d > outerRadius) continue;
+      let shaped = 0;
+      if (sign < 0) {
+        const falloff = 1 - d / Math.max(config.radius, 1);
+        shaped = Math.pow(Math.max(0, falloff), Math.max(DEFAULT_SIM_HARDNESS, config.hardness || 1));
+      } else if (d <= config.radius) {
+        shaped = 1 - d / Math.max(config.radius, 1);
+      } else {
+        shaped = _pathInfluenceFalloff(d, config.radius, outerRadius);
+      }
+      const pull = config.strength * speedScale * shaped * 0.85 * sign;
+      fx += (dx / d) * pull;
+      fy += (dy / d) * pull;
+    }
+    if (includePaths) {
+      for (const pathItem of data.paths || []) {
+        if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
+        const traveled = Number.isFinite(pathItem.travelDistance) ? pathItem.travelDistance : 0;
+        let nextDistance = traveled;
+        if (advancePaths) {
+          const sample = this._getSimulationPathSample(pathItem, traveled, p);
+          const speed = sample?.speed ?? _normalizeSimulationPathSpeed(pathItem?.speed);
+          nextDistance = traveled + ((elapsed / 1000) * p.simPathSpeed * p.simSpeed * speed);
+          if (nextDistance >= PATH_DISTANCE_WRAP_THRESHOLD) nextDistance %= PATH_DISTANCE_WRAP_THRESHOLD;
+          pathItem.travelDistance = nextDistance;
+        }
+        const target = this._getAnimatedSimulationPathTarget(pathItem, p, nextDistance);
+        if (!target?.config) continue;
+        const dx = target.x - x;
+        const dy = target.y - y;
+        const d = Math.hypot(dx, dy);
+        const influenceRadius = Math.max(target.config.radius || 0, target.config.influenceRadius || 0);
+        if (d <= 0.0001 || d > influenceRadius) continue;
+        const falloff = _pathInfluenceFalloff(d, target.config.radius, influenceRadius);
+        const pull = target.config.strength * speedScale * falloff;
+        fx += (dx / d) * pull;
+        fy += (dy / d) * pull;
+      }
+    }
+    return { x: fx, y: fy };
+  }
+
+  _collectSimulationStrokeStartSpawns(brush = this.activeBrush, p = this.getP()) {
+    if (brush !== 'motionPath') return [];
+    const data = this._getSimulationBrushData(brush);
+    if (!data) return [];
+    const starts = [];
+    for (const pathItem of data.paths || []) {
+      if (pathItem?.enabled === false) continue;
+      if (_normalizeSimulationPathType(pathItem?.pathType) !== 'stroke') continue;
+      const sample = this._getSimulationPathSample(pathItem, 0, p);
+      if (!sample) continue;
+      starts.push({ id: `stroke-start-${pathItem.id}`, x: sample.x, y: sample.y, enabled: true });
+    }
+    return starts;
   }
 
   _setSimulationSelection(selection) {
@@ -6876,6 +6967,7 @@ export class App {
       radius: DEFAULT_PATH_RADIUS,
       strength: DEFAULT_PATH_STRENGTH,
       speed: DEFAULT_SIM_PATH_SPEED,
+      pathType: 'standard',
       speedPoints: [],
       radiusPoints: [],
       closed: true,
@@ -8594,6 +8686,7 @@ export class App {
       if (this.simulation.selected && !selected) this.simulation.selected = null;
       const p = this.getP();
       const isBoid = this.activeBrush === 'boid';
+      const usesPathGuides = this._usesPathGuides();
       const sessionContext = this._getSimulationSessionContextSummary();
       const isSectionOpen = sectionId => this.simulation.inspectorSections?.[sectionId] !== false;
       const renderSection = (sectionId, title, body, { collapsed = false } = {}) => {
@@ -8615,7 +8708,7 @@ export class App {
       { collection: 'spawns', kind: 'spawn', label: 'Spawn', items: data.spawns || [] },
       { collection: 'points', kind: 'point', label: 'Attract Point', items: attractPoints },
       { collection: 'points', kind: 'point', label: 'Repel Point', items: repelPoints },
-      ...(isBoid ? [{ collection: 'paths', kind: 'path', label: 'Path Guide', items: data.paths || [] }] : []),
+      ...(usesPathGuides ? [{ collection: 'paths', kind: 'path', label: 'Path Guide', items: data.paths || [] }] : []),
       ...(!isBoid ? [{ collection: 'edges', kind: 'edge', label: 'Edge Barrier', items: data.edges || [] }] : []),
       ...(!isBoid ? [{ collection: 'pheromonePaths', kind: 'pheromonePath', label: 'Pheromone Trail', items: data.pheromonePaths || [] }] : []),
     ];
@@ -8870,7 +8963,7 @@ export class App {
         value: Math.round(p.simPointRadius),
         desc: 'Attract and repel points share these defaults until an item override is set.',
       })}`;
-    const pathSettingsBody = isBoid
+    const pathSettingsBody = usesPathGuides
       ? `${simPanelSlider({
           id: 'simPathSpeed',
           label: 'Path Speed',
@@ -8881,7 +8974,7 @@ export class App {
         })}
         <div class="sim-inspector-note">Use the Path tool in Simulation mode to animate an attraction point along the guide stroke while boids paint.</div>`
       : '';
-    const pathPrimitiveButtons = isBoid
+    const pathPrimitiveButtons = usesPathGuides
       ? `<div class="sim-inspector-actions" style="margin-top:4px">${SIM_PATH_PRIMITIVE_KINDS.map(kind => `<button data-sim-add-path-primitive="${kind}">${kind[0].toUpperCase()}${kind.slice(1)}</button>`).join('')}</div>
          <div class="sim-inspector-note">Insert reusable path primitives directly onto the canvas, then drag the teal size handle to resize them.</div>`
       : '';
@@ -9171,7 +9264,7 @@ export class App {
     const selectionOverlayEnabled = this._isSimulationSelectionOverlayEnabled();
 
     if (!selected) {
-      inspector += renderSection('selection', 'No Selection', `<div class="sim-inspector-note">Select a spawn, ${isBoid ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>`, { collapsed: false });
+      inspector += renderSection('selection', 'No Selection', `<div class="sim-inspector-note">Select a spawn, ${usesPathGuides ? 'attract point, repel point, or path guide' : 'attract point, repel point, edge barrier, or pheromone trail'} on the canvas or from the lists above to edit its per-item overrides.</div>`, { collapsed: false });
       guideEditorMarkup = `
         <div class="sim-guide-panel-summary">Select a guide in simulation mode to edit its per-item overrides here.</div>
         <div class="sim-inspector-note">Spawn, point, path, edge, and pheromone guide settings now live in this left-side drawer instead of the floating overlay.</div>
@@ -9359,12 +9452,16 @@ export class App {
         compactControls.push('<button type="button" class="sim-format-reset" data-sim-add-radius-point="1">+Radius Pt</button>');
         compactControls.push('<button type="button" class="sim-format-reset" data-sim-distribute-points="speed">Dist Speed</button>');
         compactControls.push('<button type="button" class="sim-format-reset" data-sim-distribute-points="radius">Dist Radius</button>');
+        compactControls.push(compactChoiceControl('pathType', 'Type', [
+          { value: 'standard', label: 'Standard' },
+          { value: 'stroke', label: 'Stroke Start' },
+        ], _normalizeSimulationPathType(target.pathType)));
         compactControls.push(compactChoiceControl('direction', 'Dir', [
           { value: 'forward', label: 'Forward' },
           { value: 'reverse', label: 'Reverse' },
         ], pathConfig.direction));
         compactControls.push(compactToggleControl('closed', 'Loop', !!target.closed));
-        resetFields.push('color', 'strength', 'radius', 'influenceRadius', 'speed', 'direction', 'closed');
+        resetFields.push('color', 'strength', 'radius', 'influenceRadius', 'speed', 'pathType', 'direction', 'closed');
       } else if (selected.kind === 'edge') {
         compactControls.push(compactNumberControl('strength', 'number', 'Force', 0, 200, 5, 0.01));
         compactControls.push(compactNumberControl('radius', 'integer', 'Radius', 0, 300, 1, 1));
@@ -9437,6 +9534,10 @@ export class App {
           <button type="button" class="sim-format-reset" data-sim-distribute-points="speed">Dist Speed</button>
           <button type="button" class="sim-format-reset" data-sim-distribute-points="radius">Dist Radius</button>
         `));
+        pushGuideChoice('pathType', 'Type', [
+          { value: 'standard', label: 'Standard' },
+          { value: 'stroke', label: 'Stroke Start' },
+        ], _normalizeSimulationPathType(target.pathType));
         pushGuideChoice('direction', 'Dir', [
           { value: 'forward', label: 'Forward' },
           { value: 'reverse', label: 'Reverse' },
@@ -9693,6 +9794,7 @@ export class App {
         if (paramId === 'simBoundsMargin') {
           this._constrainSimulationDataToBounds('boid');
           this._constrainSimulationDataToBounds('ant');
+          this._constrainSimulationDataToBounds('motionPath');
         }
       };
       el.addEventListener('input', () => {
@@ -10025,6 +10127,7 @@ export class App {
     if (next) {
       this._constrainSimulationDataToBounds('boid');
       this._constrainSimulationDataToBounds('ant');
+      this._constrainSimulationDataToBounds('motionPath');
     }
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
@@ -10040,9 +10143,9 @@ export class App {
   }
 
   _syncSimulationUI() {
-    if (this.activeBrush === 'boid' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
+    if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
-    if (this.activeBrush === 'boid' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
+    if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
     const playbackBar = document.getElementById('simPlaybackBar');
@@ -10058,11 +10161,11 @@ export class App {
     const overlayHudEnabled = this._isSimulationOverlayHudEnabled();
     const showOverlayHud = !!this.simulation.enabled && isMotion && overlayHudEnabled;
     const showSimulationDrawer = !!this.simulation.enabled && isMotion && !overlayHudEnabled;
-    const boidPaths = this.activeBrush === 'boid'
-      ? (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
+    const guidePaths = (this._usesPathGuides())
+      ? (this._getSimulationBrushData(this.activeBrush)?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2)
       : [];
-    const canStepPaths = boidPaths.length > 0;
-    const showPathStepButtons = this.activeBrush === 'boid' && !!this.simulation.heatmapVisible;
+    const canStepPaths = guidePaths.length > 0;
+    const showPathStepButtons = (this._usesPathGuides()) && !!this.simulation.heatmapVisible;
     if (btn) {
       btn.style.display = isMotion ? '' : 'none';
       btn.classList.toggle('active', !!this.simulation.enabled);
@@ -10100,9 +10203,9 @@ export class App {
       toolRow.querySelectorAll('[data-sim-tool]').forEach(el => {
         const tool = el.dataset.simTool;
         const hide =
-          (this.activeBrush === 'boid' && tool === 'edge') ||
+          (this.activeBrush !== 'ant' && tool === 'edge') ||
           (this.activeBrush === 'ant' && tool === 'path') ||
-          (this.activeBrush === 'boid' && tool === 'pheromone');
+          (this.activeBrush !== 'ant' && tool === 'pheromone');
         el.style.display = hide ? 'none' : '';
         el.classList.toggle('active', this.simulation.editorTool === tool);
       });
@@ -10179,8 +10282,8 @@ export class App {
   }
 
   _stepSimulationPathPosition(direction = 1) {
-    if (!this.simulation.enabled || this.activeBrush !== 'boid') return;
-    const paths = (this._getSimulationBrushData('boid')?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
+    if (!this.simulation.enabled || !this._usesPathGuides()) return;
+    const paths = (this._getSimulationBrushData(this.activeBrush)?.paths || []).filter(pathItem => pathItem.enabled !== false && pathItem.points?.length >= 2);
     if (!paths.length) return;
     const p = this.getP();
     const delta = Math.max(4, (p.simPathSpeed || 0) * 0.25) * (direction < 0 ? -1 : 1);
@@ -10229,13 +10332,15 @@ export class App {
         const allSpawns = this._ensureSimulationSpawns();
         const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
         const spawn = spawns[0] || allSpawns[0];
-        if (this.activeBrush === 'boid') {
-          for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
+        if (this._usesPathGuides()) {
+          for (const pathItem of this._getSimulationBrushData(this.activeBrush)?.paths || []) {
             pathItem.travelDistance = 0;
           }
         }
+        this.simulation.runtimeStrokeStarts = this._collectSimulationStrokeStartSpawns(this.activeBrush, simParams);
+        const launchSpawn = this.simulation.runtimeStrokeStarts[0] || spawn;
         this._updateSimulationLeader(0, simParams);
-        brush.onDown?.(spawn.x, spawn.y, 1);
+        brush.onDown?.(launchSpawn.x, launchSpawn.y, 1);
         brush.configureSimulation?.(this._getSimulationBrushData(), simParams);
       }
 
@@ -10296,6 +10401,8 @@ export class App {
     this.simulation.starting = false;
     this.simulation.running = false;
     this.simulation.paused = false;
+    this.simulation.runtimeStrokeStarts = [];
+    this.simulation.motionPathVelocity = { x: 0, y: 0 };
     this.isDrawing = false;
     this.isTapering = false;
     this._syncSimulationUI();
@@ -10383,7 +10490,7 @@ export class App {
     y = clampedPoint.y;
     const tool = this.simulation.editorTool;
     const isPathCreationTool =
-      (tool === 'path' && this.activeBrush === 'boid') ||
+      ((tool === 'path') && (this._usesPathGuides())) ||
       (tool === 'edge' && this.activeBrush === 'ant') ||
       (tool === 'pheromone' && this.activeBrush === 'ant');
 
@@ -10454,7 +10561,7 @@ export class App {
         kind: tool,
         points: [{ x, y }],
       };
-    } else if ((tool === 'path' && this.activeBrush === 'boid') || (tool === 'edge' && this.activeBrush === 'ant')) {
+    } else if (((tool === 'path') && (this._usesPathGuides())) || (tool === 'edge' && this.activeBrush === 'ant')) {
       this.simulation.drawingPath = {
         kind: tool,
         points: [{ x, y }],
@@ -10535,7 +10642,7 @@ export class App {
       const data = this._getSimulationBrushData();
       if (data && path.length >= 2) {
         this.pushUndo();
-        if (this.simulation.drawingPath.kind === 'path' && this.activeBrush === 'boid') {
+        if (this.simulation.drawingPath.kind === 'path' && (this._usesPathGuides())) {
           const entry = {
             id: this.simulation.nextId++,
             points: path,
@@ -10547,6 +10654,7 @@ export class App {
             direction: 'forward',
             startOffset: 0,
             speed: DEFAULT_SIM_PATH_SPEED,
+            pathType: 'standard',
             speedPoints: [],
             radiusPoints: [],
             travelDistance: 0,
@@ -10609,7 +10717,7 @@ export class App {
     if (hasGuides) this.pushUndo();
     data.spawns = [];
     data.points = [];
-    if (this.activeBrush === 'boid') data.paths = [];
+    if (this._usesPathGuides()) data.paths = [];
     if (this.activeBrush === 'ant') {
       data.edges = [];
       data.pheromonePaths = [];
@@ -10664,7 +10772,7 @@ export class App {
       value += sign * config.strength * simSpeed * guideSpeedScale * shaped * 0.85;
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this._usesPathGuides()) {
       for (const pathItem of data.paths || []) {
         if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
@@ -10722,7 +10830,7 @@ export class App {
       }
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this._usesPathGuides()) {
       for (const pathItem of data.paths || []) {
         if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
@@ -10880,7 +10988,7 @@ export class App {
       if (Math.hypot(x - point.x, y - point.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'point', target: point, collection: 'points' };
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this._usesPathGuides()) {
       for (const pathItem of data.paths || []) {
         const del = checkDelete(pathItem, 'paths', 'path');
         if (del) return del;
@@ -10913,7 +11021,27 @@ export class App {
   _updateSimulationLeader(elapsed, p) {
     const center = this._getSimulationSpawnCenter();
     if (this.activeBrush === 'boid') {
-      const targets = this._getBoidGuideFollowTargets(p, true, elapsed);
+      const targets = this._getSimulationGuideFollowTargets('boid', p, true, elapsed);
+      if (targets.length) {
+        let sx = 0;
+        let sy = 0;
+        let sw = 0;
+        for (const target of targets) {
+          const weight = Math.max(0.001, target.weight || 0);
+          sx += target.x * weight;
+          sy += target.y * weight;
+          sw += weight;
+        }
+        this.leaderX = sx / Math.max(sw, 1);
+        this.leaderY = sy / Math.max(sw, 1);
+        return;
+      }
+    }
+
+    if (this.activeBrush === 'motionPath') {
+      const mode = p.simMotionPathMode === 'forces' ? 'forces' : 'path';
+      if (mode === 'path') {
+        const targets = this._getSimulationGuideFollowTargets('motionPath', p, true, elapsed);
         if (targets.length) {
           let sx = 0;
           let sy = 0;
@@ -10928,7 +11056,30 @@ export class App {
           this.leaderY = sy / Math.max(sw, 1);
           return;
         }
+      } else {
+        if (!Number.isFinite(this.leaderX) || !Number.isFinite(this.leaderY)) {
+          this.leaderX = center.x;
+          this.leaderY = center.y;
+        }
+        const dt = Math.max(0, Math.min(MOTION_PATH_LEADER_DELTA_MAX, elapsed > 0 ? elapsed - (this._lastLeaderElapsed || elapsed) : MOTION_PATH_LEADER_DELTA_FALLBACK));
+        this._lastLeaderElapsed = elapsed;
+        const force = this._getSimulationForceVectorAt(this.leaderX, this.leaderY, p, {
+          brush: 'motionPath',
+          includePaths: true,
+          advancePaths: true,
+          elapsed: dt * 1000,
+        });
+        const velocity = this.simulation.motionPathVelocity || { x: 0, y: 0 };
+        velocity.x = (velocity.x + force.x * dt) * MOTION_PATH_LEADER_DAMPING;
+        velocity.y = (velocity.y + force.y * dt) * MOTION_PATH_LEADER_DAMPING;
+        this.simulation.motionPathVelocity = velocity;
+        const next = this._clampSimulationPoint(this.leaderX + velocity.x, this.leaderY + velocity.y);
+        this.leaderX = next.x;
+        this.leaderY = next.y;
+        return;
+      }
     }
+
     this.leaderX = center.x;
     this.leaderY = center.y;
   }
@@ -11174,7 +11325,7 @@ export class App {
       ctx.restore();
     }
 
-    if (this.activeBrush === 'boid') {
+    if (this._usesPathGuides()) {
       for (const pathItem of data.paths || []) {
         if (!pathItem.points?.length) continue;
         const config = this._resolveSimulationPathConfig(pathItem, p);

@@ -371,6 +371,10 @@ export function buildSidebar(app) {
         <option value="ribbon" selected>Ribbon</option>
         <option value="stamps">Stamps</option>
       </select></label>
+      <label>Sim Mode <select id="simMotionPathMode">
+        <option value="path" selected>Path Follow</option>
+        <option value="forces">Force Field</option>
+      </select></label>
       ${sliderRow('motionPathAgentCount', 'Agents', 1, MAX_SWARM_COUNT, 12)}
       ${sliderRow('motionPathScale', 'Scale', 10, 1000, 100, v => (v / 100).toFixed(2))}
       ${sliderRow('motionPathSpeed', 'Speed Mult', 0, 5000, 100, v => (v / 100).toFixed(2))}
@@ -1298,7 +1302,7 @@ export function buildSimulationControlsPanel(app) {
     const points = Array.isArray(data?.points) ? data.points : [];
     const attractPoints = points.filter(point => point?.type !== 'repel');
     const repelPoints = points.filter(point => point?.type === 'repel');
-    const paths = brush === 'boid' ? (Array.isArray(data?.paths) ? data.paths : []) : [];
+    const paths = brush !== 'ant' ? (Array.isArray(data?.paths) ? data.paths : []) : [];
     const edges = brush === 'ant' ? (Array.isArray(data?.edges) ? data.edges : []) : [];
     const pheromonePaths = brush === 'ant' ? (Array.isArray(data?.pheromonePaths) ? data.pheromonePaths : []) : [];
     const isActive = isDraft ? activeSessionIndex() < 0 : activeSessionIndex() === sessionIndex;
@@ -1306,7 +1310,7 @@ export function buildSimulationControlsPanel(app) {
     const meta = [
       `${spawns.length} spawn${spawns.length === 1 ? '' : 's'}`,
       `${points.length} point${points.length === 1 ? '' : 's'}`,
-      brush === 'boid' ? `${paths.length} path${paths.length === 1 ? '' : 's'}` : `${edges.length} edge${edges.length === 1 ? '' : 's'}`,
+      brush !== 'ant' ? `${paths.length} path${paths.length === 1 ? '' : 's'}` : `${edges.length} edge${edges.length === 1 ? '' : 's'}`,
     ].join(' · ');
     const vars = isDraft || sessionIndex === liveSessionIndex ? currentVars() : (session?.vars || {});
     const sessionChips = chipRow([
@@ -1366,7 +1370,7 @@ export function buildSimulationControlsPanel(app) {
               chip('Hard', Number.isFinite(item.hardness) ? fmt(item.hardness) : null),
             ]),
           })}
-          ${brush === 'boid' ? renderGroup({
+          ${brush !== 'ant' ? renderGroup({
             title: 'Paths',
             items: paths,
             collection: 'paths',
