@@ -10325,9 +10325,8 @@ export class App {
       this.strokeFrame = 0;
 
       if (this._shouldUseMultiSessionPlayback()) {
-        brush.deactivate?.();
-        this.simulation.runtimeSessions = await this._createMultiSessionRuntimeSessions(simParams);
-        if (!this.simulation.runtimeSessions.length) {
+        const runtimeSessions = await this._createMultiSessionRuntimeSessions(simParams);
+        if (!runtimeSessions.length) {
           this.simulation.running = false;
           this.simulation.paused = false;
           this.isDrawing = false;
@@ -10335,6 +10334,8 @@ export class App {
           this.showToast('Save and arm at least one session route before running multiple sessions');
           return;
         }
+        brush.deactivate?.();
+        this.simulation.runtimeSessions = runtimeSessions;
       } else {
         this.simulation.runtimeSessions = [];
         const allSpawns = this._ensureSimulationSpawns();
