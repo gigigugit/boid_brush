@@ -7351,26 +7351,26 @@ export class App {
     return snapshot;
   }
 
-  _getSimulationVarOverridesFromParamSnapshot(snapshot = {}) {
-    const vars = this.simulation?.vars || {};
+  _getSimulationVarOverridesFromParamSnapshot(snapshot = {}, sessionBaseVars = this.simulation?.vars || {}) {
+    const normalizedBaseVars = _normalizeSimulationVars(sessionBaseVars);
     return _normalizeSimulationVars({
-      ...vars,
+      ...normalizedBaseVars,
       // Simulation seek is owned by the session override slider, not the
       // draw-mode sidebar seek control captured in the param snapshot.
-      seek: Number.isFinite(vars.seek) ? vars.seek : DEFAULT_SIM_SEEK,
-      cohesion: Number.isFinite(vars.cohesion) ? vars.cohesion : snapshot.cohesion,
-      separation: Number.isFinite(vars.separation) ? vars.separation : snapshot.separation,
-      alignment: Number.isFinite(vars.alignment) ? vars.alignment : snapshot.alignment,
-      maxSpeed: Number.isFinite(vars.maxSpeed) ? vars.maxSpeed : snapshot.maxSpeed,
-      damping: Number.isFinite(vars.damping) ? vars.damping : snapshot.damping,
-      sensingEnabled: typeof vars.sensingEnabled === 'boolean' ? vars.sensingEnabled : snapshot.sensingEnabled,
-      sensingMode: typeof vars.sensingMode === 'string' ? vars.sensingMode : snapshot.sensingMode,
-      sensingChannel: typeof vars.sensingChannel === 'string' ? vars.sensingChannel : snapshot.sensingChannel,
-      sensingStrength: Number.isFinite(vars.sensingStrength) ? vars.sensingStrength : snapshot.sensingStrength,
-      sensingRadius: Number.isFinite(vars.sensingRadius) ? vars.sensingRadius : snapshot.sensingRadius,
-      sensingThreshold: Number.isFinite(vars.sensingThreshold) ? vars.sensingThreshold : snapshot.sensingThreshold,
-      sensingSource: typeof vars.sensingSource === 'string' ? vars.sensingSource : snapshot.sensingSource,
-      sensingUpdateFrames: Number.isFinite(vars.sensingUpdateFrames) ? vars.sensingUpdateFrames : snapshot.sensingUpdateFrames,
+      seek: Number.isFinite(normalizedBaseVars.seek) ? normalizedBaseVars.seek : DEFAULT_SIM_SEEK,
+      cohesion: Number.isFinite(normalizedBaseVars.cohesion) ? normalizedBaseVars.cohesion : snapshot.cohesion,
+      separation: Number.isFinite(normalizedBaseVars.separation) ? normalizedBaseVars.separation : snapshot.separation,
+      alignment: Number.isFinite(normalizedBaseVars.alignment) ? normalizedBaseVars.alignment : snapshot.alignment,
+      maxSpeed: Number.isFinite(normalizedBaseVars.maxSpeed) ? normalizedBaseVars.maxSpeed : snapshot.maxSpeed,
+      damping: Number.isFinite(normalizedBaseVars.damping) ? normalizedBaseVars.damping : snapshot.damping,
+      sensingEnabled: typeof normalizedBaseVars.sensingEnabled === 'boolean' ? normalizedBaseVars.sensingEnabled : snapshot.sensingEnabled,
+      sensingMode: typeof normalizedBaseVars.sensingMode === 'string' ? normalizedBaseVars.sensingMode : snapshot.sensingMode,
+      sensingChannel: typeof normalizedBaseVars.sensingChannel === 'string' ? normalizedBaseVars.sensingChannel : snapshot.sensingChannel,
+      sensingStrength: Number.isFinite(normalizedBaseVars.sensingStrength) ? normalizedBaseVars.sensingStrength : snapshot.sensingStrength,
+      sensingRadius: Number.isFinite(normalizedBaseVars.sensingRadius) ? normalizedBaseVars.sensingRadius : snapshot.sensingRadius,
+      sensingThreshold: Number.isFinite(normalizedBaseVars.sensingThreshold) ? normalizedBaseVars.sensingThreshold : snapshot.sensingThreshold,
+      sensingSource: typeof normalizedBaseVars.sensingSource === 'string' ? normalizedBaseVars.sensingSource : snapshot.sensingSource,
+      sensingUpdateFrames: Number.isFinite(normalizedBaseVars.sensingUpdateFrames) ? normalizedBaseVars.sensingUpdateFrames : snapshot.sensingUpdateFrames,
     });
   }
 
@@ -7452,7 +7452,7 @@ export class App {
     if (!session) return false;
     const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
     this.simulation.vars = _normalizeSimulationVars({
-      ...this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot),
+      ...this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, session.vars),
       ...session.vars,
     });
     this._restoreSensingSourceSelection(session.sensingSourceSelection);
