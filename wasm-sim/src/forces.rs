@@ -146,11 +146,11 @@ fn split_agent_params(p: &SimParams) -> (AgentParams, AgentParams) {
 }
 
 #[inline]
-fn agent_params_for_role(
+fn agent_params_for_role<'a>(
     is_leader: bool,
-    follower_params: AgentParams,
-    leader_params: AgentParams,
-) -> AgentParams {
+    follower_params: &'a AgentParams,
+    leader_params: &'a AgentParams,
+) -> &'a AgentParams {
     if is_leader {
         leader_params
     } else {
@@ -330,8 +330,8 @@ fn apply_leader_pull(
 fn compute_quorum_members(
     buf: &[f32],
     agent_count: usize,
-    follower_params: AgentParams,
-    leader_params: AgentParams,
+    follower_params: &AgentParams,
+    leader_params: &AgentParams,
 ) -> Vec<bool> {
     let mut members = vec![false; agent_count];
 
@@ -385,8 +385,8 @@ fn compute_quorum_members(
 fn compute_quorum_members_grid(
     buf: &[f32],
     agent_count: usize,
-    follower_params: AgentParams,
-    leader_params: AgentParams,
+    follower_params: &AgentParams,
+    leader_params: &AgentParams,
     grid: &SpatialGrid,
 ) -> Vec<bool> {
     let mut members = vec![false; agent_count];
@@ -446,7 +446,7 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
     let uses_quorum = quorum_enabled(follower_params.quorum_threshold)
         || quorum_enabled(leader_params.quorum_threshold);
     let quorum_members = uses_quorum
-        .then(|| compute_quorum_members(buf, agent_count, follower_params, leader_params));
+        .then(|| compute_quorum_members(buf, agent_count, &follower_params, &leader_params));
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
@@ -456,7 +456,7 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
         }
 
         let focal_is_leader = flags_i & FLAG_LEADER != 0;
-        let focal_params = agent_params_for_role(focal_is_leader, follower_params, leader_params);
+        let focal_params = agent_params_for_role(focal_is_leader, &follower_params, &leader_params);
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
@@ -554,7 +554,7 @@ pub fn apply_neighbor_forces_grid(
     let uses_quorum = quorum_enabled(follower_params.quorum_threshold)
         || quorum_enabled(leader_params.quorum_threshold);
     let quorum_members = uses_quorum.then(|| {
-        compute_quorum_members_grid(buf, agent_count, follower_params, leader_params, grid)
+        compute_quorum_members_grid(buf, agent_count, &follower_params, &leader_params, grid)
     });
 
     for i in 0..agent_count {
@@ -565,7 +565,7 @@ pub fn apply_neighbor_forces_grid(
         }
 
         let focal_is_leader = flags_i & FLAG_LEADER != 0;
-        let focal_params = agent_params_for_role(focal_is_leader, follower_params, leader_params);
+        let focal_params = agent_params_for_role(focal_is_leader, &follower_params, &leader_params);
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
