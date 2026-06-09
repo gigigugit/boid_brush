@@ -141,24 +141,6 @@ fn quorum_enabled(threshold: u32) -> bool {
 }
 
 #[inline]
-fn split_agent_params(p: &SimParams) -> (AgentParams, AgentParams) {
-    (p.params_for(false), p.params_for(true))
-}
-
-#[inline]
-fn agent_params_for_role<'a>(
-    is_leader: bool,
-    follower_params: &'a AgentParams,
-    leader_params: &'a AgentParams,
-) -> &'a AgentParams {
-    if is_leader {
-        leader_params
-    } else {
-        follower_params
-    }
-}
-
-#[inline]
 fn accumulate_direct_neighbor(
     accum: &mut DirectNeighborAccum,
     dx: f32,
@@ -341,8 +323,11 @@ fn compute_quorum_members(
         if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
-        let focal_params =
-            agent_params_for_role(flags_i & FLAG_LEADER != 0, follower_params, leader_params);
+        let focal_params = if flags_i & FLAG_LEADER != 0 {
+            leader_params
+        } else {
+            follower_params
+        };
         if !quorum_enabled(focal_params.quorum_threshold) {
             continue;
         }
@@ -397,8 +382,11 @@ fn compute_quorum_members_grid(
         if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
-        let focal_params =
-            agent_params_for_role(flags_i & FLAG_LEADER != 0, follower_params, leader_params);
+        let focal_params = if flags_i & FLAG_LEADER != 0 {
+            leader_params
+        } else {
+            follower_params
+        };
         if !quorum_enabled(focal_params.quorum_threshold) {
             continue;
         }
@@ -442,7 +430,8 @@ fn compute_quorum_members_grid(
 
 #[cfg(any(not(feature = "spatial-hash"), test))]
 pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams) {
-    let (follower_params, leader_params) = split_agent_params(p);
+    let follower_params = p.params_for(false);
+    let leader_params = p.params_for(true);
     let uses_quorum = quorum_enabled(follower_params.quorum_threshold)
         || quorum_enabled(leader_params.quorum_threshold);
     let quorum_members = uses_quorum
@@ -456,7 +445,11 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
         }
 
         let focal_is_leader = flags_i & FLAG_LEADER != 0;
-        let focal_params = agent_params_for_role(focal_is_leader, &follower_params, &leader_params);
+        let focal_params = if focal_is_leader {
+            &leader_params
+        } else {
+            &follower_params
+        };
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
@@ -550,7 +543,8 @@ pub fn apply_neighbor_forces_grid(
     p: &SimParams,
     grid: &SpatialGrid,
 ) {
-    let (follower_params, leader_params) = split_agent_params(p);
+    let follower_params = p.params_for(false);
+    let leader_params = p.params_for(true);
     let uses_quorum = quorum_enabled(follower_params.quorum_threshold)
         || quorum_enabled(leader_params.quorum_threshold);
     let quorum_members = uses_quorum.then(|| {
@@ -565,7 +559,11 @@ pub fn apply_neighbor_forces_grid(
         }
 
         let focal_is_leader = flags_i & FLAG_LEADER != 0;
-        let focal_params = agent_params_for_role(focal_is_leader, &follower_params, &leader_params);
+        let focal_params = if focal_is_leader {
+            &leader_params
+        } else {
+            &follower_params
+        };
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
