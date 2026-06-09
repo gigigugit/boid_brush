@@ -354,8 +354,7 @@ impl FluidSimulation {
     }
 
     fn lbm_pigment_retention(&self) -> f32 {
-        (LBM_PIGMENT_RETENTION_BASE
-            + self.params.pigment_retention * LBM_PIGMENT_RETENTION_RANGE)
+        (LBM_PIGMENT_RETENTION_BASE + self.params.pigment_retention * LBM_PIGMENT_RETENTION_RANGE)
             .clamp(0.0, 0.9998)
     }
 
@@ -668,9 +667,9 @@ impl FluidSimulation {
             .clamp(LBM_MOTION_DECAY_MIN, LBM_MOTION_DECAY_MAX);
         let max_speed = 0.14 + self.params.density * 0.22 + self.params.surface_tension * 0.04;
         let surface_tension = 0.012 + self.params.surface_tension * 0.098;
-        let interface_drag =
-            (LBM_INTERFACE_DRAG_BASE + self.params.viscosity * LBM_INTERFACE_DRAG_VISCOSITY_SCALE)
-                * 0.88;
+        let interface_drag = (LBM_INTERFACE_DRAG_BASE
+            + self.params.viscosity * LBM_INTERFACE_DRAG_VISCOSITY_SCALE)
+            * 0.88;
         let stop_threshold = self.params.stop_speed.max(0.0);
 
         for y in 0..height as i32 {
@@ -722,8 +721,8 @@ impl FluidSimulation {
                 let mut stop_mix = 0.0;
                 if stop_threshold > LBM_EPSILON && speed < stop_threshold {
                     let normalized = (1.0 - speed / stop_threshold).clamp(0.0, 1.0);
-                    stop_mix = (normalized * LBM_STOP_SETTLE_BASE_MIX)
-                        .clamp(0.0, LBM_STOP_SETTLE_MAX_MIX);
+                    stop_mix =
+                        (normalized * LBM_STOP_SETTLE_BASE_MIX).clamp(0.0, LBM_STOP_SETTLE_MAX_MIX);
                     let retained = (1.0 - stop_mix).powi(LBM_STOP_RETENTION_EXPONENT);
                     ux *= retained;
                     uy *= retained;
@@ -1139,7 +1138,8 @@ impl FluidSimulation {
         // carry-adjusted visible motion drop below the stop threshold. For settled cells
         // this zeroes velocity and, when mass remains, rewrites the lattice distributions
         // to the equilibrium rest state so the solver stops reporting invisible tail motion.
-        let rest_speed = (self.params.stop_speed * LBM_REST_SPEED_RATIO).max(LBM_ACTIVE_SPEED_FLOOR);
+        let rest_speed =
+            (self.params.stop_speed * LBM_REST_SPEED_RATIO).max(LBM_ACTIVE_SPEED_FLOOR);
         for index in 0..self.lbm.rho.len() {
             let rho = self.lbm.rho[index];
             let alpha = self.lbm.pigment[index][3];
@@ -1172,8 +1172,8 @@ impl FluidSimulation {
     fn refresh_lbm_activity(&mut self) {
         let mut active = 0u32;
         let mut total_motion = 0.0f32;
-        let motion_threshold = (self.params.stop_speed * LBM_ACTIVE_STOP_SPEED_RATIO)
-            .max(LBM_ACTIVE_SPEED_FLOOR);
+        let motion_threshold =
+            (self.params.stop_speed * LBM_ACTIVE_STOP_SPEED_RATIO).max(LBM_ACTIVE_SPEED_FLOOR);
         let carry_threshold = motion_threshold.max(LBM_ACTIVE_SPEED_FLOOR);
         for index in 0..self.lbm.rho.len() {
             let speed = self.lbm.velocity[index][0].hypot(self.lbm.velocity[index][1]);
@@ -1181,7 +1181,8 @@ impl FluidSimulation {
                 || self.lbm.pigment[index][3] > LBM_ACTIVE_PIGMENT_THRESHOLD
                 || self.lbm.phase[index] > LBM_ACTIVE_PHASE_THRESHOLD;
             let visible_speed = self.lbm_visible_speed(speed, carries_visible_fluid);
-            if speed > motion_threshold || (carries_visible_fluid && visible_speed > carry_threshold)
+            if speed > motion_threshold
+                || (carries_visible_fluid && visible_speed > carry_threshold)
             {
                 active += 1;
                 total_motion += visible_speed.max(speed);
@@ -1622,9 +1623,7 @@ impl FluidSimulation {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        FluidRenderMode, FluidSimulation, LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD,
-    };
+    use super::{FluidRenderMode, FluidSimulation, LBM_STOP_SETTLING_IMPROVEMENT_THRESHOLD};
 
     fn full_mask(width: usize, height: usize) -> Vec<u8> {
         let mut mask = vec![0u8; width * height * 4];
@@ -1827,9 +1826,18 @@ mod tests {
 
         let pixels = sim.read_pixels();
         let px = index * 4;
-        assert!(pixels[px] > pixels[px + 2], "expected rendered pigment to stay closer to the injected color");
-        assert!(pixels[px + 1] > pixels[px + 2], "expected rendered pigment to keep the warmer pigment balance");
-        assert!(pixels[px + 3] > 0, "expected rendered pigment to remain visible");
+        assert!(
+            pixels[px] > pixels[px + 2],
+            "expected rendered pigment to stay closer to the injected color"
+        );
+        assert!(
+            pixels[px + 1] > pixels[px + 2],
+            "expected rendered pigment to keep the warmer pigment balance"
+        );
+        assert!(
+            pixels[px + 3] > 0,
+            "expected rendered pigment to remain visible"
+        );
     }
 
     #[test]
@@ -1957,7 +1965,11 @@ mod tests {
                 .sum::<f32>()
         };
         let pigment_mass = |sim: &FluidSimulation| -> f32 {
-            sim.lbm.pigment.iter().map(|pigment| pigment[3]).sum::<f32>()
+            sim.lbm
+                .pigment
+                .iter()
+                .map(|pigment| pigment[3])
+                .sum::<f32>()
         };
         let pigment_center_x = |sim: &FluidSimulation| -> f32 {
             let mass = pigment_mass(sim).max(0.0001);
@@ -2020,9 +2032,8 @@ mod tests {
             high_retention.advect_lbm_pigment(&mask, true, 32, 32);
         }
 
-        let pigment_mass = |sim: &FluidSimulation| -> f32 {
-            sim.lbm.pigment.iter().map(|px| px[3]).sum::<f32>()
-        };
+        let pigment_mass =
+            |sim: &FluidSimulation| -> f32 { sim.lbm.pigment.iter().map(|px| px[3]).sum::<f32>() };
         let phase_mass = |sim: &FluidSimulation| -> f32 { sim.lbm.phase.iter().sum::<f32>() };
 
         let low_mass = pigment_mass(&low_retention);
