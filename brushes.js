@@ -391,6 +391,8 @@ function _getProceduralGpuPreviewRenderer(brush, p) {
 function _getProceduralGpuPreviewCanvas(renderer) {
   if (!renderer) return null;
   if (renderer.kind === 'webgpu') {
+    // Prefer the async-synced preview canvas when available, but fall back to
+    // the live WebGPU canvas so preview rendering remains visible immediately.
     return renderer.previewCanvas || renderer.canvas || null;
   }
   return renderer.previewCanvas || renderer.canvas || null;
@@ -461,6 +463,8 @@ function _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock = false } = 
     allowAlphaLock,
   );
   if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+    // First try committing directly from the current WebGPU canvas; if that
+    // fails, keep the deferred callback path as a fallback.
     const immediateOk = renderer.copyTo2D(
       layer.ctx,
       layer.canvas.width,
@@ -1426,6 +1430,8 @@ export class BoidBrush {
   _getGpuPreviewCanvas(renderer) {
     if (!renderer) return null;
     if (renderer.kind === 'webgpu') {
+      // Keep boid preview visible even before preview-sync completes by using
+      // the renderer canvas as a fallback source.
       return renderer.previewCanvas || renderer.canvas || null;
     }
     return renderer.previewCanvas || renderer.canvas || null;
@@ -1483,6 +1489,8 @@ export class BoidBrush {
       return false;
     }
     if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+      // Attempt immediate commit from the presented WebGPU canvas so pointer-up
+      // can persist paint without waiting for async preview-sync completion.
       const immediateOk = renderer.copyTo2D(
         layer.ctx,
         layer.canvas.width,
