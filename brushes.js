@@ -391,7 +391,7 @@ function _getProceduralGpuPreviewRenderer(brush, p) {
 function _getProceduralGpuPreviewCanvas(renderer) {
   if (!renderer) return null;
   if (renderer.kind === 'webgpu') {
-    return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+    return renderer.previewCanvas || renderer.canvas || null;
   }
   return renderer.previewCanvas || renderer.canvas || null;
 }
@@ -461,6 +461,23 @@ function _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock = false } = 
     allowAlphaLock,
   );
   if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+    const immediateOk = renderer.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      compositeOperation,
+    );
+    if (immediateOk) {
+      renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+      layer.gpuPreviewCanvas = null;
+      brush._gpuPreviewActive = false;
+      brush._gpuPreviewLayer = null;
+      renderer.onPreviewUpdated = null;
+      brush._gpuPreviewRenderer = null;
+      layer.dirty = true;
+      brush.app.compositeAllLayers();
+      return true;
+    }
     renderer.onPreviewUpdated = (canvas) => {
       if (!canvas) return;
       if (!brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer) return;
@@ -1409,7 +1426,7 @@ export class BoidBrush {
   _getGpuPreviewCanvas(renderer) {
     if (!renderer) return null;
     if (renderer.kind === 'webgpu') {
-      return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+      return renderer.previewCanvas || renderer.canvas || null;
     }
     return renderer.previewCanvas || renderer.canvas || null;
   }
@@ -1466,6 +1483,29 @@ export class BoidBrush {
       return false;
     }
     if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+      const immediateOk = renderer.copyTo2D(
+        layer.ctx,
+        layer.canvas.width,
+        layer.canvas.height,
+        layer.alphaLock ? 'source-atop' : 'source-over',
+      );
+      if (immediateOk) {
+        renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+        layer.gpuPreviewCanvas = null;
+        this._gpuPreviewActive = false;
+        this._gpuPreviewLayer = null;
+        renderer.onPreviewUpdated = null;
+        this._gpuPreviewRenderer = null;
+        this._pushRenderDebug('commit-gpu-preview', {
+          ok: true,
+          rendererKind: renderer.kind,
+          copiedFromLivePreview: false,
+          immediate: true,
+        });
+        layer.dirty = true;
+        this.app.compositeAllLayers();
+        return true;
+      }
       this._pushRenderDebug('commit-gpu-preview-deferred', {
         rendererKind: renderer.kind,
         previewSyncPending: !!renderer._previewSyncPending,
