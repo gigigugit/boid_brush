@@ -391,7 +391,9 @@ function _getProceduralGpuPreviewRenderer(brush, p) {
 function _getProceduralGpuPreviewCanvas(renderer) {
   if (!renderer) return null;
   if (renderer.kind === 'webgpu') {
-    return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+    // Prefer the async-synced preview canvas when available, but fall back to
+    // the live WebGPU canvas so preview rendering remains visible immediately.
+    return renderer.previewCanvas || renderer.canvas || null;
   }
   return renderer.previewCanvas || renderer.canvas || null;
 }
@@ -461,6 +463,25 @@ function _commitProceduralGpuPreviewToLayer(brush, { allowAlphaLock = false } = 
     allowAlphaLock,
   );
   if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+    // First try committing directly from the current WebGPU canvas; if that
+    // fails, keep the deferred callback path as a fallback.
+    const immediateOk = renderer.copyTo2D(
+      layer.ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      compositeOperation,
+    );
+    if (immediateOk) {
+      renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+      layer.gpuPreviewCanvas = null;
+      brush._gpuPreviewActive = false;
+      brush._gpuPreviewLayer = null;
+      renderer.onPreviewUpdated = null;
+      brush._gpuPreviewRenderer = null;
+      layer.dirty = true;
+      brush.app.compositeAllLayers();
+      return true;
+    }
     renderer.onPreviewUpdated = (canvas) => {
       if (!canvas) return;
       if (!brush._gpuPreviewActive || brush._gpuPreviewLayer !== layer || brush._gpuPreviewRenderer !== renderer) return;
@@ -1409,7 +1430,9 @@ export class BoidBrush {
   _getGpuPreviewCanvas(renderer) {
     if (!renderer) return null;
     if (renderer.kind === 'webgpu') {
-      return renderer._hasLivePreviewFrame ? (renderer.previewCanvas || null) : null;
+      // Keep boid preview visible even before preview-sync completes by using
+      // the renderer canvas as a fallback source.
+      return renderer.previewCanvas || renderer.canvas || null;
     }
     return renderer.previewCanvas || renderer.canvas || null;
   }
@@ -1417,6 +1440,7 @@ export class BoidBrush {
   _canUseGpuPreview(targetCtx, p) {
     const layer = this.app.getActiveLayer();
     if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
+    if (this.app._hasActiveMultiSessionPlayback?.()) return false;
     if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
     if (this._flatActive) return false;
     if (this.app.simulation?.running && p?.simEphemeralMode) return false;
@@ -1466,6 +1490,31 @@ export class BoidBrush {
       return false;
     }
     if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+      // Attempt immediate commit from the presented WebGPU canvas so pointer-up
+      // can persist paint without waiting for async preview-sync completion.
+      const immediateOk = renderer.copyTo2D(
+        layer.ctx,
+        layer.canvas.width,
+        layer.canvas.height,
+        layer.alphaLock ? 'source-atop' : 'source-over',
+      );
+      if (immediateOk) {
+        renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
+        layer.gpuPreviewCanvas = null;
+        this._gpuPreviewActive = false;
+        this._gpuPreviewLayer = null;
+        renderer.onPreviewUpdated = null;
+        this._gpuPreviewRenderer = null;
+        this._pushRenderDebug('commit-gpu-preview', {
+          ok: true,
+          rendererKind: renderer.kind,
+          copiedFromLivePreview: false,
+          immediate: true,
+        });
+        layer.dirty = true;
+        this.app.compositeAllLayers();
+        return true;
+      }
       this._pushRenderDebug('commit-gpu-preview-deferred', {
         rendererKind: renderer.kind,
         previewSyncPending: !!renderer._previewSyncPending,

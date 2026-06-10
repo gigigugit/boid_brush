@@ -141,11 +141,6 @@ fn quorum_enabled(threshold: u32) -> bool {
 }
 
 #[inline]
-fn agent_params(p: &SimParams, buf: &[f32], base: usize) -> AgentParams {
-    p.params_for(has_flag(buf, base, FLAG_LEADER))
-}
-
-#[inline]
 fn accumulate_direct_neighbor(
     accum: &mut DirectNeighborAccum,
     dx: f32,
@@ -195,7 +190,13 @@ fn accumulate_composite_neighbor(
 }
 
 #[inline]
-fn accumulate_leader_neighbor(accum: &mut LeaderNeighborAccum, xj: f32, yj: f32, d2: f32, nd2: f32) {
+fn accumulate_leader_neighbor(
+    accum: &mut LeaderNeighborAccum,
+    xj: f32,
+    yj: f32,
+    d2: f32,
+    nd2: f32,
+) {
     if d2 < nd2 {
         accum.cx += xj;
         accum.cy += yj;
@@ -308,15 +309,25 @@ fn apply_leader_pull(
 }
 
 #[cfg(any(not(feature = "spatial-hash"), test))]
-fn compute_quorum_members(buf: &[f32], agent_count: usize, p: &SimParams) -> Vec<bool> {
+fn compute_quorum_members(
+    buf: &[f32],
+    agent_count: usize,
+    follower_params: &AgentParams,
+    leader_params: &AgentParams,
+) -> Vec<bool> {
     let mut members = vec![false; agent_count];
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
-        if !has_flag(buf, bi, FLAG_ALIVE) {
+        let flags_i = buf[bi + FLAGS] as u32;
+        if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
-        let focal_params = agent_params(p, buf, bi);
+        let focal_params = if flags_i & FLAG_LEADER != 0 {
+            leader_params
+        } else {
+            follower_params
+        };
         if !quorum_enabled(focal_params.quorum_threshold) {
             continue;
         }
@@ -331,7 +342,7 @@ fn compute_quorum_members(buf: &[f32], agent_count: usize, p: &SimParams) -> Vec
                 continue;
             }
             let bj = j * STRIDE;
-            if !has_flag(buf, bj, FLAG_ALIVE) {
+            if (buf[bj + FLAGS] as u32) & FLAG_ALIVE == 0 {
                 continue;
             }
             let xj = buf[bj + X];
@@ -359,17 +370,23 @@ fn compute_quorum_members(buf: &[f32], agent_count: usize, p: &SimParams) -> Vec
 fn compute_quorum_members_grid(
     buf: &[f32],
     agent_count: usize,
-    p: &SimParams,
+    follower_params: &AgentParams,
+    leader_params: &AgentParams,
     grid: &SpatialGrid,
 ) -> Vec<bool> {
     let mut members = vec![false; agent_count];
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
-        if !has_flag(buf, bi, FLAG_ALIVE) {
+        let flags_i = buf[bi + FLAGS] as u32;
+        if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
-        let focal_params = agent_params(p, buf, bi);
+        let focal_params = if flags_i & FLAG_LEADER != 0 {
+            leader_params
+        } else {
+            follower_params
+        };
         if !quorum_enabled(focal_params.quorum_threshold) {
             continue;
         }
@@ -413,19 +430,26 @@ fn compute_quorum_members_grid(
 
 #[cfg(any(not(feature = "spatial-hash"), test))]
 pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams) {
-    let quorum_members = (0..agent_count).any(|i| {
-        let base = i * STRIDE;
-        has_flag(buf, base, FLAG_ALIVE) && quorum_enabled(agent_params(p, buf, base).quorum_threshold)
-    }).then(|| compute_quorum_members(buf, agent_count, p));
+    let follower_params = p.params_for(false);
+    let leader_params = p.params_for(true);
+    let uses_quorum = quorum_enabled(follower_params.quorum_threshold)
+        || quorum_enabled(leader_params.quorum_threshold);
+    let quorum_members = uses_quorum
+        .then(|| compute_quorum_members(buf, agent_count, &follower_params, &leader_params));
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
-        if !has_flag(buf, bi, FLAG_ALIVE) {
+        let flags_i = buf[bi + FLAGS] as u32;
+        if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
 
-        let focal_is_leader = has_flag(buf, bi, FLAG_LEADER);
-        let focal_params = agent_params(p, buf, bi);
+        let focal_is_leader = flags_i & FLAG_LEADER != 0;
+        let focal_params = if focal_is_leader {
+            &leader_params
+        } else {
+            &follower_params
+        };
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
@@ -441,7 +465,8 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
                 continue;
             }
             let bj = j * STRIDE;
-            if !has_flag(buf, bj, FLAG_ALIVE) {
+            let flags_j = buf[bj + FLAGS] as u32;
+            if flags_j & FLAG_ALIVE == 0 {
                 continue;
             }
 
@@ -454,7 +479,7 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
             let dx = xj - xi;
             let dy = yj - yi;
             let d2 = dx * dx + dy * dy;
-            if !focal_is_leader && has_flag(buf, bj, FLAG_LEADER) {
+            if !focal_is_leader && flags_j & FLAG_LEADER != 0 {
                 accumulate_leader_neighbor(&mut leaders, xj, yj, d2, nd2);
             }
 
@@ -518,19 +543,27 @@ pub fn apply_neighbor_forces_grid(
     p: &SimParams,
     grid: &SpatialGrid,
 ) {
-    let quorum_members = (0..agent_count).any(|i| {
-        let base = i * STRIDE;
-        has_flag(buf, base, FLAG_ALIVE) && quorum_enabled(agent_params(p, buf, base).quorum_threshold)
-    }).then(|| compute_quorum_members_grid(buf, agent_count, p, grid));
+    let follower_params = p.params_for(false);
+    let leader_params = p.params_for(true);
+    let uses_quorum = quorum_enabled(follower_params.quorum_threshold)
+        || quorum_enabled(leader_params.quorum_threshold);
+    let quorum_members = uses_quorum.then(|| {
+        compute_quorum_members_grid(buf, agent_count, &follower_params, &leader_params, grid)
+    });
 
     for i in 0..agent_count {
         let bi = i * STRIDE;
-        if !has_flag(buf, bi, FLAG_ALIVE) {
+        let flags_i = buf[bi + FLAGS] as u32;
+        if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
 
-        let focal_is_leader = has_flag(buf, bi, FLAG_LEADER);
-        let focal_params = agent_params(p, buf, bi);
+        let focal_is_leader = flags_i & FLAG_LEADER != 0;
+        let focal_params = if focal_is_leader {
+            &leader_params
+        } else {
+            &follower_params
+        };
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
@@ -550,6 +583,7 @@ pub fn apply_neighbor_forces_grid(
                         continue;
                     }
                     let bj = j * STRIDE;
+                    let flags_j = buf[bj + FLAGS] as u32;
                     let xj = buf[bj + X];
                     let yj = buf[bj + Y];
                     if !in_fov(buf, bi, xj, yj, focal_params.fov_rad) {
@@ -559,7 +593,7 @@ pub fn apply_neighbor_forces_grid(
                     let dx = xj - xi;
                     let dy = yj - yi;
                     let d2 = dx * dx + dy * dy;
-                    if !focal_is_leader && has_flag(buf, bj, FLAG_LEADER) {
+                    if !focal_is_leader && flags_j & FLAG_LEADER != 0 {
                         accumulate_leader_neighbor(&mut leaders, xj, yj, d2, nd2);
                     }
 

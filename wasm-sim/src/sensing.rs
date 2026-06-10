@@ -70,12 +70,7 @@ impl SensingMap {
 
 /// Apply sensing force to a single agent. 8-point radial sample.
 #[inline]
-pub fn apply_sensing_force(
-    buf: &mut [f32],
-    base: usize,
-    p: &AgentParams,
-    map: &SensingMap,
-) {
+pub fn apply_sensing_force(buf: &mut [f32], base: usize, p: &AgentParams, map: &SensingMap) {
     if !p.sensing_enabled || map.data.is_empty() {
         return;
     }

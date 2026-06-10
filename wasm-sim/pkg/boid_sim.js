@@ -1,6 +1,150 @@
 /* @ts-self-types="./boid_sim.d.ts" */
 
 /**
+ * @param {number} handle
+ */
+export function boid_clear_agents(handle) {
+    wasm.boid_clear_agents(handle);
+}
+
+/**
+ * @param {number} width
+ * @param {number} height
+ * @param {number} max_agents
+ * @returns {number}
+ */
+export function boid_create_simulator(width, height, max_agents) {
+    const ret = wasm.boid_create_simulator(width, height, max_agents);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ */
+export function boid_destroy_simulator(handle) {
+    wasm.boid_destroy_simulator(handle);
+}
+
+/**
+ * @param {number} handle
+ * @returns {number}
+ */
+export function boid_get_agent_buffer_ptr(handle) {
+    const ret = wasm.boid_get_agent_buffer_ptr(handle);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @returns {number}
+ */
+export function boid_get_agent_count(handle) {
+    const ret = wasm.boid_get_agent_count(handle);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @returns {number}
+ */
+export function boid_get_params_buffer_ptr(handle) {
+    const ret = wasm.boid_get_params_buffer_ptr(handle);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @returns {number}
+ */
+export function boid_get_sensing_buffer_ptr(handle) {
+    const ret = wasm.boid_get_sensing_buffer_ptr(handle);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @param {number} w
+ * @param {number} h
+ */
+export function boid_init_sensing(handle, w, h) {
+    wasm.boid_init_sensing(handle, w, h);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} id
+ */
+export function boid_remove_agent(handle, id) {
+    wasm.boid_remove_agent(handle, id);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} start_index
+ * @param {number} end_index
+ * @param {number} leader_count
+ */
+export function boid_set_leader_range(handle, start_index, end_index, leader_count) {
+    wasm.boid_set_leader_range(handle, start_index, end_index, leader_count);
+}
+
+/**
+ * @param {number} handle
+ */
+export function boid_set_params(handle) {
+    wasm.boid_set_params(handle);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} width
+ * @param {number} height
+ */
+export function boid_sim_resize(handle, width, height) {
+    wasm.boid_sim_resize(handle, width, height);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+export function boid_spawn_agent(handle, x, y) {
+    const ret = wasm.boid_spawn_agent(handle, x, y);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} count
+ * @param {number} shape
+ * @param {number} angle
+ * @param {number} jitter
+ * @param {number} radius
+ */
+export function boid_spawn_batch(handle, cx, cy, count, shape, angle, jitter, radius) {
+    wasm.boid_spawn_batch(handle, cx, cy, count, shape, angle, jitter, radius);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} dt
+ */
+export function boid_step(handle, dt) {
+    wasm.boid_step(handle, dt);
+}
+
+/**
+ * @param {number} handle
+ */
+export function boid_update_sensing(handle) {
+    wasm.boid_update_sensing(handle);
+}
+
+/**
  * Clear all agents.
  */
 export function clear_agents() {

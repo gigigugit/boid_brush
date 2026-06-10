@@ -37,6 +37,8 @@ const SHAPE_MAP = {
 };
 
 const RETRYABLE_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+let _boidModulePromise = null;
+let _boidModulePath = '';
 
 function _sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -70,6 +72,18 @@ async function _fetchWithRetry(resource, {
   throw lastError || new Error('Fetch failed');
 }
 
+async function _getOrLoadBoidModule(wasmPath) {
+  if (!_boidModulePromise || _boidModulePath !== wasmPath) {
+    _boidModulePath = wasmPath;
+    _boidModulePromise = (async () => {
+      const mod = await import(wasmPath);
+      const wasm = await mod.default({ module_or_path: _fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)) });
+      return { mod, wasm };
+    })();
+  }
+  return _boidModulePromise;
+}
+
 export class BoidSim {
   /**
    * Load WASM and initialize the simulation.
@@ -80,13 +94,15 @@ export class BoidSim {
    * @returns {Promise<BoidSim>}
    */
   static async create(width, height, maxAgents, wasmPath = './wasm-sim/pkg/boid_sim.js') {
-    const mod = await import(wasmPath);
-    const wasm = await mod.default({ module_or_path: _fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)) }); // init WASM — returns InitOutput with .memory
-    mod.sim_init(width, height, maxAgents);
+    const { mod, wasm } = await _getOrLoadBoidModule(wasmPath);
 
     const instance = new BoidSim();
     instance._mod = mod;
     instance._wasm = wasm; // raw wasm exports including .memory
+    instance._handle = typeof mod.boid_create_simulator === 'function'
+      ? mod.boid_create_simulator(width, height, maxAgents)
+      : null;
+    if (instance._handle === null) mod.sim_init(width, height, maxAgents);
     instance._stride = mod.get_stride();
     instance._paramsLen = mod.get_params_len();
     // Cache buffer refs (invalidated on memory growth)
@@ -102,10 +118,14 @@ export class BoidSim {
     const mem = this._getMemory();
     if (!mem) return;
 
-    const paramsPtr = m.get_params_buffer_ptr();
+    const paramsPtr = this._handle !== null && typeof m.boid_get_params_buffer_ptr === 'function'
+      ? m.boid_get_params_buffer_ptr(this._handle)
+      : m.get_params_buffer_ptr();
     this._paramsView = new Float32Array(mem.buffer, paramsPtr, this._paramsLen);
 
-    const agentPtr = m.get_agent_buffer_ptr();
+    const agentPtr = this._handle !== null && typeof m.boid_get_agent_buffer_ptr === 'function'
+      ? m.boid_get_agent_buffer_ptr(this._handle)
+      : m.get_agent_buffer_ptr();
     // Max view size: we'll slice it to actual count when reading
     this._agentBasePtr = agentPtr;
     this._memBuffer = mem.buffer;
@@ -195,7 +215,8 @@ export class BoidSim {
     v[63] = p.leader?.satVar ?? 0;
     v[64] = p.leader?.litVar ?? 0;
     v[65] = p.leader?.simBoundsMargin ?? -1;
-    this._mod.set_params();
+    if (this._handle !== null && typeof this._mod.boid_set_params === 'function') this._mod.boid_set_params(this._handle);
+    else this._mod.set_params();
   }
 
   /**
@@ -203,7 +224,8 @@ export class BoidSim {
    * @param {number} dt - Time delta in seconds (reserved for variable-rate).
    */
   step(dt) {
-    this._mod.step(dt);
+    if (this._handle !== null && typeof this._mod.boid_step === 'function') this._mod.boid_step(this._handle, dt);
+    else this._mod.step(dt);
   }
 
   /**
@@ -216,7 +238,9 @@ export class BoidSim {
    */
   readAgents() {
     this._ensureViews();
-    const count = this._mod.get_agent_count();
+    const count = this._handle !== null && typeof this._mod.boid_get_agent_count === 'function'
+      ? this._mod.boid_get_agent_count(this._handle)
+      : this._mod.get_agent_count();
     const stride = this._stride;
     const mem = this._getMemory();
     const buf = new Float32Array(mem.buffer, this._agentBasePtr, count * stride);
@@ -230,6 +254,7 @@ export class BoidSim {
    * @returns {number} Agent ID (index)
    */
   spawnAgent(x, y) {
+    if (this._handle !== null && typeof this._mod.boid_spawn_agent === 'function') return this._mod.boid_spawn_agent(this._handle, x, y);
     return this._mod.spawn_agent(x, y);
   }
 
@@ -246,26 +271,46 @@ export class BoidSim {
    */
   spawnBatch(cx, cy, count, shape, angle, jitter, radius) {
     const shapeId = typeof shape === 'string' ? (SHAPE_MAP[shape] ?? 0) : shape;
+    if (this._handle !== null && typeof this._mod.boid_spawn_batch === 'function') {
+      this._mod.boid_spawn_batch(this._handle, cx, cy, count, shapeId, angle, jitter, radius);
+      return;
+    }
     this._mod.spawn_batch(cx, cy, count, shapeId, angle, jitter, radius);
   }
 
   setLeaderRange(startIndex, endIndex, leaderCount) {
+    if (this._handle !== null && typeof this._mod.boid_set_leader_range === 'function') {
+      this._mod.boid_set_leader_range(this._handle, startIndex, endIndex, leaderCount);
+      return;
+    }
     this._mod.set_leader_range(startIndex, endIndex, leaderCount);
   }
 
   /** Remove agent by ID. Uses swap-remove (O(1)). */
   removeAgent(id) {
+    if (this._handle !== null && typeof this._mod.boid_remove_agent === 'function') {
+      this._mod.boid_remove_agent(this._handle, id);
+      return;
+    }
     this._mod.remove_agent(id);
   }
 
   /** Clear all agents. */
   clearAgents() {
+    if (this._handle !== null && typeof this._mod.boid_clear_agents === 'function') {
+      this._mod.boid_clear_agents(this._handle);
+      return;
+    }
     this._mod.clear_agents();
   }
 
   setDisplaySize(displayWidth, displayHeight) {
     const width = Math.max(1, Math.round(displayWidth || 1));
     const height = Math.max(1, Math.round(displayHeight || 1));
+    if (this._handle !== null && typeof this._mod.boid_sim_resize === 'function') {
+      this._mod.boid_sim_resize(this._handle, width, height);
+      return;
+    }
     this._mod.sim_resize(width, height);
   }
 
@@ -282,13 +327,17 @@ export class BoidSim {
    * @param {number} h - Height of the luminance map.
    */
   uploadSensing(luminance, w, h) {
-    this._mod.init_sensing(w, h);
-    const ptr = this._mod.get_sensing_buffer_ptr();
+    if (this._handle !== null && typeof this._mod.boid_init_sensing === 'function') this._mod.boid_init_sensing(this._handle, w, h);
+    else this._mod.init_sensing(w, h);
+    const ptr = this._handle !== null && typeof this._mod.boid_get_sensing_buffer_ptr === 'function'
+      ? this._mod.boid_get_sensing_buffer_ptr(this._handle)
+      : this._mod.get_sensing_buffer_ptr();
     if (!ptr) return;
     const mem = this._getMemory();
     const dst = new Uint8Array(mem.buffer, ptr, w * h);
     dst.set(luminance);
-    this._mod.update_sensing();
+    if (this._handle !== null && typeof this._mod.boid_update_sensing === 'function') this._mod.boid_update_sensing(this._handle);
+    else this._mod.update_sensing();
   }
 
   /** @private Recreate typed views if memory buffer has changed (growth). */
@@ -303,6 +352,16 @@ export class BoidSim {
   /** Access raw WASM module exports for advanced use. */
   get wasm() {
     return this._mod;
+  }
+
+  destroy() {
+    if (this._handle !== null && typeof this._mod?.boid_destroy_simulator === 'function') {
+      this._mod.boid_destroy_simulator(this._handle);
+    }
+    this._handle = null;
+    this._paramsView = null;
+    this._agentBasePtr = 0;
+    this._memBuffer = null;
   }
 
   markStateDirty() {}

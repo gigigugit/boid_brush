@@ -38,20 +38,46 @@ use wasm_bindgen::prelude::*;
 use std::cell::RefCell;
 
 thread_local! {
-    static SIM: RefCell<Option<Simulation>> = RefCell::new(None);
+    static BOID_SIMS: RefCell<Vec<Option<Simulation>>> = RefCell::new(Vec::new());
+    static DEFAULT_BOID_SIM_HANDLE: RefCell<Option<u32>> = RefCell::new(None);
     static FLUID_SIMS: RefCell<Vec<Option<FluidSimulation>>> = RefCell::new(Vec::new());
 }
 
-fn with_sim<F, R>(f: F) -> R
+fn with_boid_sim<F, R>(handle: u32, f: F) -> R
 where
     F: FnOnce(&mut Simulation) -> R,
 {
-    SIM.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let sim = borrow
-            .as_mut()
+    BOID_SIMS.with(|cell| {
+        let mut sims = cell.borrow_mut();
+        let sim = sims
+            .get_mut(handle as usize)
+            .and_then(Option::as_mut)
             .expect("Simulation not initialized — call init() first");
         f(sim)
+    })
+}
+
+fn with_default_boid_sim<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Simulation) -> R,
+{
+    let handle = DEFAULT_BOID_SIM_HANDLE.with(|cell| {
+        (*cell.borrow()).expect("Simulation not initialized — call init() first")
+    });
+    with_boid_sim(handle, f)
+}
+
+fn create_boid_simulator(width: u32, height: u32, max_agents: u32) -> u32 {
+    BOID_SIMS.with(|cell| {
+        let mut sims = cell.borrow_mut();
+        let sim = Simulation::new(width, height, max_agents);
+        if let Some((index, slot)) = sims.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
+            *slot = Some(sim);
+            index as u32
+        } else {
+            sims.push(Some(sim));
+            (sims.len() - 1) as u32
+        }
     })
 }
 
@@ -86,14 +112,31 @@ where
 /// ```
 #[wasm_bindgen]
 pub fn sim_init(width: u32, height: u32, max_agents: u32) {
-    SIM.with(|cell| {
-        *cell.borrow_mut() = Some(Simulation::new(width, height, max_agents));
+    let reset_existing = DEFAULT_BOID_SIM_HANDLE.with(|cell| *cell.borrow());
+    if let Some(handle) = reset_existing {
+        let replaced = BOID_SIMS.with(|cell| {
+            let mut sims = cell.borrow_mut();
+            if let Some(slot) = sims.get_mut(handle as usize) {
+                *slot = Some(Simulation::new(width, height, max_agents));
+                true
+            } else {
+                false
+            }
+        });
+        if replaced {
+            return;
+        }
+    }
+
+    let handle = create_boid_simulator(width, height, max_agents);
+    DEFAULT_BOID_SIM_HANDLE.with(|cell| {
+        *cell.borrow_mut() = Some(handle);
     });
 }
 
 #[wasm_bindgen]
 pub fn sim_resize(width: u32, height: u32) {
-    with_sim(|sim| sim.resize_canvas(width, height));
+    with_default_boid_sim(|sim| sim.resize_canvas(width, height));
 }
 
 /// Advance the simulation by one frame.
@@ -115,7 +158,7 @@ pub fn sim_resize(width: u32, height: u32) {
 /// ```
 #[wasm_bindgen]
 pub fn step(dt: f32) {
-    with_sim(|sim| sim.step(dt));
+    with_default_boid_sim(|sim| sim.step(dt));
 }
 
 /// Spawn a single agent at (x, y). Returns the agent ID (index).
@@ -123,7 +166,7 @@ pub fn step(dt: f32) {
 /// For batch spawning, prefer `spawn_batch()` which is far more efficient.
 #[wasm_bindgen]
 pub fn spawn_agent(x: f32, y: f32) -> u32 {
-    with_sim(|sim| sim.spawn_one(x, y))
+    with_default_boid_sim(|sim| sim.spawn_one(x, y))
 }
 
 /// Batch-spawn agents in a shaped distribution centered at (cx, cy).
@@ -135,24 +178,24 @@ pub fn spawn_agent(x: f32, y: f32) -> u32 {
 /// - `radius`: spawn area radius in pixels.
 #[wasm_bindgen]
 pub fn spawn_batch(cx: f32, cy: f32, count: u32, shape: u32, angle: f32, jitter: f32, radius: f32) {
-    with_sim(|sim| sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius));
+    with_default_boid_sim(|sim| sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius));
 }
 
 #[wasm_bindgen]
 pub fn set_leader_range(start_index: u32, end_index: u32, leader_count: u32) {
-    with_sim(|sim| sim.set_leader_range(start_index, end_index, leader_count));
+    with_default_boid_sim(|sim| sim.set_leader_range(start_index, end_index, leader_count));
 }
 
 /// Remove an agent by ID. Uses swap-remove (O(1), may reorder).
 #[wasm_bindgen]
 pub fn remove_agent(id: u32) {
-    with_sim(|sim| sim.remove_agent(id));
+    with_default_boid_sim(|sim| sim.remove_agent(id));
 }
 
 /// Clear all agents.
 #[wasm_bindgen]
 pub fn clear_agents() {
-    with_sim(|sim| sim.clear_agents());
+    with_default_boid_sim(|sim| sim.clear_agents());
 }
 
 /// Write simulation parameters from JS. Call before `step()`.
@@ -165,14 +208,14 @@ pub fn clear_agents() {
 /// ```
 #[wasm_bindgen]
 pub fn set_params() {
-    with_sim(|sim| sim.update_params());
+    with_default_boid_sim(|sim| sim.update_params());
 }
 
 /// Pointer to the raw f32 params buffer (32 floats = 128 bytes).
 /// JS writes directly here, then calls `set_params()` to parse.
 #[wasm_bindgen]
 pub fn get_params_buffer_ptr() -> *const f32 {
-    with_sim(|sim| sim.params_buf.as_ptr())
+    with_default_boid_sim(|sim| sim.params_buf.as_ptr())
 }
 
 /// Pointer to the raw f32 agent buffer. JS creates a typed view:
@@ -184,13 +227,13 @@ pub fn get_params_buffer_ptr() -> *const f32 {
 /// If you see a detached ArrayBuffer, recreate the view.
 #[wasm_bindgen]
 pub fn get_agent_buffer_ptr() -> *const f32 {
-    with_sim(|sim| sim.buf.as_ptr())
+    with_default_boid_sim(|sim| sim.buf.as_ptr())
 }
 
 /// Number of currently live agents.
 #[wasm_bindgen]
 pub fn get_agent_count() -> u32 {
-    with_sim(|sim| sim.agent_count as u32)
+    with_default_boid_sim(|sim| sim.agent_count as u32)
 }
 
 /// Agent stride in f32 count (16).
@@ -209,7 +252,7 @@ pub fn get_params_len() -> u32 {
 /// JS writes downsampled luminance here, then calls `update_sensing()`.
 #[wasm_bindgen]
 pub fn get_sensing_buffer_ptr() -> *const u8 {
-    with_sim(|sim| {
+    with_default_boid_sim(|sim| {
         if sim.sensing.data.is_empty() {
             std::ptr::null()
         } else {
@@ -224,7 +267,7 @@ pub fn get_sensing_buffer_ptr() -> *const u8 {
 /// - `w`, `h`: sensing map resolution (typically canvas_w/4 × canvas_h/4).
 #[wasm_bindgen]
 pub fn init_sensing(w: u32, h: u32) {
-    with_sim(|sim| {
+    with_default_boid_sim(|sim| {
         sim.sensing.resize(w, h, sim.width, sim.height);
     });
 }
@@ -236,6 +279,103 @@ pub fn update_sensing() {
     // No-op: the data is already in place. This function exists as a
     // synchronization point — if we add threading later, this would
     // include a memory fence.
+}
+
+#[wasm_bindgen]
+pub fn boid_create_simulator(width: u32, height: u32, max_agents: u32) -> u32 {
+    create_boid_simulator(width, height, max_agents)
+}
+
+#[wasm_bindgen]
+pub fn boid_destroy_simulator(handle: u32) {
+    BOID_SIMS.with(|cell| {
+        if let Some(slot) = cell.borrow_mut().get_mut(handle as usize) {
+            *slot = None;
+        }
+    });
+    DEFAULT_BOID_SIM_HANDLE.with(|cell| {
+        if *cell.borrow() == Some(handle) {
+            *cell.borrow_mut() = None;
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn boid_sim_resize(handle: u32, width: u32, height: u32) {
+    with_boid_sim(handle, |sim| sim.resize_canvas(width, height));
+}
+
+#[wasm_bindgen]
+pub fn boid_step(handle: u32, dt: f32) {
+    with_boid_sim(handle, |sim| sim.step(dt));
+}
+
+#[wasm_bindgen]
+pub fn boid_spawn_agent(handle: u32, x: f32, y: f32) -> u32 {
+    with_boid_sim(handle, |sim| sim.spawn_one(x, y))
+}
+
+#[wasm_bindgen]
+pub fn boid_spawn_batch(handle: u32, cx: f32, cy: f32, count: u32, shape: u32, angle: f32, jitter: f32, radius: f32) {
+    with_boid_sim(handle, |sim| sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius));
+}
+
+#[wasm_bindgen]
+pub fn boid_set_leader_range(handle: u32, start_index: u32, end_index: u32, leader_count: u32) {
+    with_boid_sim(handle, |sim| sim.set_leader_range(start_index, end_index, leader_count));
+}
+
+#[wasm_bindgen]
+pub fn boid_remove_agent(handle: u32, id: u32) {
+    with_boid_sim(handle, |sim| sim.remove_agent(id));
+}
+
+#[wasm_bindgen]
+pub fn boid_clear_agents(handle: u32) {
+    with_boid_sim(handle, |sim| sim.clear_agents());
+}
+
+#[wasm_bindgen]
+pub fn boid_set_params(handle: u32) {
+    with_boid_sim(handle, |sim| sim.update_params());
+}
+
+#[wasm_bindgen]
+pub fn boid_get_params_buffer_ptr(handle: u32) -> *const f32 {
+    with_boid_sim(handle, |sim| sim.params_buf.as_ptr())
+}
+
+#[wasm_bindgen]
+pub fn boid_get_agent_buffer_ptr(handle: u32) -> *const f32 {
+    with_boid_sim(handle, |sim| sim.buf.as_ptr())
+}
+
+#[wasm_bindgen]
+pub fn boid_get_agent_count(handle: u32) -> u32 {
+    with_boid_sim(handle, |sim| sim.agent_count as u32)
+}
+
+#[wasm_bindgen]
+pub fn boid_get_sensing_buffer_ptr(handle: u32) -> *const u8 {
+    with_boid_sim(handle, |sim| {
+        if sim.sensing.data.is_empty() {
+            std::ptr::null()
+        } else {
+            sim.sensing.data.as_ptr()
+        }
+    })
+}
+
+#[wasm_bindgen]
+pub fn boid_init_sensing(handle: u32, w: u32, h: u32) {
+    with_boid_sim(handle, |sim| {
+        sim.sensing.resize(w, h, sim.width, sim.height);
+    });
+}
+
+#[wasm_bindgen]
+pub fn boid_update_sensing(handle: u32) {
+    with_boid_sim(handle, |_| {});
 }
 
 #[wasm_bindgen]

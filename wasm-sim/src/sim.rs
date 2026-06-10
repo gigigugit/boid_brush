@@ -84,7 +84,10 @@ impl Simulation {
         }
     }
 
-    fn generate_agent_traits(&mut self, params: &AgentParams) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) {
+    fn generate_agent_traits(
+        &mut self,
+        params: &AgentParams,
+    ) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) {
         let sm_base = 0.7 + self.rng.next_f32() * 0.6;
         let om_base = 0.6 + self.rng.next_f32() * 0.8;
         let sv = params.size_var.max(params.individuality);
@@ -106,7 +109,8 @@ impl Simulation {
     }
 
     fn apply_agent_traits(&mut self, base: usize, params: &AgentParams) {
-        let (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit) = self.generate_agent_traits(params);
+        let (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit) =
+            self.generate_agent_traits(params);
         self.buf[base + SM] = sm;
         self.buf[base + OM] = om;
         self.buf[base + SPD_M] = spd_m;
@@ -134,10 +138,29 @@ impl Simulation {
         let nx = self.rng.next_f32() * 1000.0;
         let ny = self.rng.next_f32() * 1000.0;
 
-        let (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit) = self.generate_agent_traits(&params);
+        let (sm, om, spd_m, seek_m, coh_m, sep_m, hue, sat, lit) =
+            self.generate_agent_traits(&params);
 
-        init_agent(&mut self.buf, base, x, y, vx, vy, sm, om, wa, nx, ny,
-                    spd_m, seek_m, coh_m, sep_m, hue, sat, lit);
+        init_agent(
+            &mut self.buf,
+            base,
+            x,
+            y,
+            vx,
+            vy,
+            sm,
+            om,
+            wa,
+            nx,
+            ny,
+            spd_m,
+            seek_m,
+            coh_m,
+            sep_m,
+            hue,
+            sat,
+            lit,
+        );
         self.agent_count += 1;
         idx as u32
     }
@@ -230,16 +253,22 @@ impl Simulation {
     /// Call set_params() before this to update forces/target.
     pub fn step(&mut self, _dt: f32) {
         let p = &self.params;
+        let follower_params = p.params_for(false);
+        let leader_params = p.params_for(true);
 
         // Phase 1: Zero accelerations and apply per-agent forces
         //          (seek, flee, jitter, wander, flow, sensing)
         for i in 0..self.agent_count {
             let base = i * STRIDE;
-            if !has_flag(&self.buf, base, FLAG_ALIVE) {
+            let flags = self.buf[base + FLAGS] as u32;
+            if flags & FLAG_ALIVE == 0 {
                 continue;
             }
-            let is_leader = has_flag(&self.buf, base, FLAG_LEADER);
-            let agent_params = p.params_for(is_leader);
+            let agent_params = if flags & FLAG_LEADER != 0 {
+                leader_params
+            } else {
+                follower_params
+            };
 
             // Per-agent multipliers
             let agent_ms = agent_params.max_speed * self.buf[base + SPD_M];
@@ -250,15 +279,35 @@ impl Simulation {
             self.buf[base + AY] = 0.0;
 
             // Seek cursor (uses per-agent seek weight and speed)
-            forces::seek(&mut self.buf, base, p.target_x, p.target_y, agent_seek, agent_ms);
+            forces::seek(
+                &mut self.buf,
+                base,
+                p.target_x,
+                p.target_y,
+                agent_seek,
+                agent_ms,
+            );
 
             // Flee cursor
             if agent_params.flee_radius > 0.0 {
-                forces::flee(&mut self.buf, base, p.target_x, p.target_y, agent_params.flee_radius, agent_ms);
+                forces::flee(
+                    &mut self.buf,
+                    base,
+                    p.target_x,
+                    p.target_y,
+                    agent_params.flee_radius,
+                    agent_ms,
+                );
             }
 
             // Jitter
-            forces::jitter(&mut self.buf, base, agent_params.jitter, agent_ms, &mut self.rng);
+            forces::jitter(
+                &mut self.buf,
+                base,
+                agent_params.jitter,
+                agent_ms,
+                &mut self.rng,
+            );
 
             // Wander
             forces::wander(
@@ -314,11 +363,15 @@ impl Simulation {
         // Phase 3: Integrate (uses per-agent speed multiplier)
         for i in 0..self.agent_count {
             let base = i * STRIDE;
-            if !has_flag(&self.buf, base, FLAG_ALIVE) {
+            let flags = self.buf[base + FLAGS] as u32;
+            if flags & FLAG_ALIVE == 0 {
                 continue;
             }
-            let is_leader = has_flag(&self.buf, base, FLAG_LEADER);
-            let agent_params = p.params_for(is_leader);
+            let agent_params = if flags & FLAG_LEADER != 0 {
+                leader_params
+            } else {
+                follower_params
+            };
             let agent_ms = agent_params.max_speed * self.buf[base + SPD_M];
             let bounds_margin = agent_params.boundary_margin;
             let (min_x, min_y, max_x, max_y) = if bounds_margin >= 0.0 {

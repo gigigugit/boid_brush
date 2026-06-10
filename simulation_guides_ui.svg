@@ -1,0 +1,383 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1900" viewBox="0 0 2400 1900" role="img" aria-labelledby="title desc">
+  <title id="title">Simulation Guides UI Components</title>
+  <desc id="desc">Editable SVG component sheet for the simulation guides overlay UI, including the floating HUD, playback bar, session workspace cards, guide list rows, section headers, sliders, and format chips.</desc>
+  <defs>
+    <linearGradient id="bgGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#161c28" />
+      <stop offset="100%" stop-color="#0d1119" />
+    </linearGradient>
+    <linearGradient id="accentFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3a6ae8" />
+      <stop offset="100%" stop-color="#5b8af0" />
+    </linearGradient>
+    <linearGradient id="warnFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8f3d3d" />
+      <stop offset="100%" stop-color="#a44a4a" />
+    </linearGradient>
+    <style>
+      .page-bg { fill: #0b0f16; }
+      .frame { fill: url(#bgGlow); stroke: #263246; stroke-width: 2; rx: 26; ry: 26; }
+      .panel { fill: rgba(17,20,29,0.88); stroke: #2c3749; stroke-width: 1.5; rx: 16; ry: 16; }
+      .panel-soft { fill: rgba(255,255,255,0.04); stroke: rgba(255,255,255,0.08); stroke-width: 1.5; rx: 14; ry: 14; }
+      .panel-active { fill: rgba(58,106,232,0.22); stroke: rgba(117,162,255,0.48); stroke-width: 1.5; rx: 14; ry: 14; }
+      .pill { fill: rgba(255,255,255,0.06); stroke: #2d3849; stroke-width: 1.25; rx: 10; ry: 10; }
+      .pill-active { fill: url(#accentFill); stroke: rgba(117,162,255,0.55); stroke-width: 1.25; rx: 10; ry: 10; }
+      .pill-warn { fill: url(#warnFill); stroke: rgba(225,99,99,0.35); stroke-width: 1.25; rx: 10; ry: 10; }
+      .pill-disabled { fill: rgba(255,255,255,0.04); stroke: rgba(255,255,255,0.06); stroke-width: 1.25; rx: 10; ry: 10; opacity: 0.5; }
+      .chip { fill: rgba(255,255,255,0.06); stroke: rgba(255,255,255,0.10); stroke-width: 1.25; rx: 10; ry: 10; }
+      .select { fill: rgba(20,25,36,0.98); stroke: #334258; stroke-width: 1.25; rx: 8; ry: 8; }
+      .input { fill: rgba(20,25,36,0.98); stroke: #334258; stroke-width: 1.25; rx: 8; ry: 8; }
+      .track { fill: rgba(255,255,255,0.10); rx: 3; ry: 3; }
+      .track-fill { fill: url(#accentFill); rx: 3; ry: 3; }
+      .thumb { fill: #ffffff; stroke: rgba(0,0,0,0.25); stroke-width: 1; }
+      .badge { fill: rgba(255,255,255,0.08); rx: 10; ry: 10; }
+      .badge-active { fill: url(#accentFill); rx: 10; ry: 10; }
+      .badge-muted { fill: rgba(255,255,255,0.05); rx: 10; ry: 10; }
+      .title { fill: #eef3ff; font: 700 26px 'Segoe UI', sans-serif; }
+      .subtitle { fill: #aab7cc; font: 600 15px 'Segoe UI', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }
+      .label { fill: #eef3ff; font: 600 18px 'Segoe UI', sans-serif; }
+      .meta { fill: #9eabc0; font: 500 14px 'Segoe UI', sans-serif; }
+      .tiny { fill: #98a6bd; font: 600 12px 'Segoe UI', sans-serif; letter-spacing: 0.04em; }
+      .button-text { fill: #eef3ff; font: 600 16px 'Segoe UI', sans-serif; }
+      .button-text-dark { fill: #ffffff; font: 700 16px 'Segoe UI', sans-serif; }
+      .warning-text { fill: #ffd6d6; font: 600 16px 'Segoe UI', sans-serif; }
+      .value { fill: #dfe7f8; font: 700 15px 'Segoe UI', sans-serif; }
+      .note { fill: #c8d2e3; font: 500 14px 'Segoe UI', sans-serif; }
+      .divider { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
+      .ghost { opacity: 0.62; }
+    </style>
+  </defs>
+
+  <rect class="page-bg" x="0" y="0" width="2400" height="1900" />
+
+  <g id="sheet-frame">
+    <rect class="frame" x="28" y="28" width="2344" height="1844" />
+    <text class="title" x="70" y="90">Simulation Guides Overlay UI</text>
+    <text class="meta" x="70" y="122">Editable component sheet exported from the current simulation guide HUD, playback, and inspector surfaces.</text>
+  </g>
+
+  <g id="column-headings">
+    <text class="subtitle" x="70" y="176">Floating HUD</text>
+    <text class="subtitle" x="840" y="176">Playback and Inspector</text>
+    <text class="subtitle" x="1610" y="176">Guide Rows and Input Chips</text>
+  </g>
+
+  <g id="sim-hud-card" transform="translate(70 210)">
+    <rect class="panel" x="0" y="0" width="650" height="760" />
+    <text class="label" x="28" y="38">Floating Simulation HUD</text>
+    <rect class="panel-soft" x="24" y="60" width="602" height="72" />
+    <text class="tiny" x="44" y="90">SIMULATION</text>
+    <rect class="pill" x="474" y="78" width="126" height="34" />
+    <text class="button-text" x="507" y="100">Collapse</text>
+
+    <g id="sim-hud-tool-buttons" transform="translate(24 156)">
+      <text class="subtitle" x="0" y="0">Tool Stack</text>
+      <g transform="translate(0 24)">
+        <rect class="pill" x="0" y="0" width="286" height="42" />
+        <text class="button-text" x="20" y="26">Select</text>
+        <rect class="pill-active" x="300" y="0" width="286" height="42" />
+        <text class="button-text-dark" x="320" y="26">Spawn</text>
+
+        <rect class="pill" x="0" y="56" width="286" height="42" />
+        <text class="button-text" x="20" y="82">Spawn Blob</text>
+        <rect class="pill" x="300" y="56" width="286" height="42" />
+        <text class="button-text" x="320" y="82">Attract</text>
+
+        <rect class="pill" x="0" y="112" width="286" height="42" />
+        <text class="button-text" x="20" y="138">Repel</text>
+        <rect class="pill" x="300" y="112" width="286" height="42" />
+        <text class="button-text" x="320" y="138">Path</text>
+
+        <rect class="pill" x="0" y="168" width="286" height="42" />
+        <text class="button-text" x="20" y="194">Edge</text>
+        <rect class="pill" x="300" y="168" width="286" height="42" />
+        <text class="button-text" x="320" y="194">Pheromone</text>
+
+        <rect class="pill-active" x="0" y="224" width="286" height="42" />
+        <text class="button-text-dark" x="20" y="250">Hide Guides</text>
+        <rect class="pill" x="300" y="224" width="286" height="42" />
+        <text class="button-text" x="320" y="250">Heatmap</text>
+
+        <rect class="pill-warn" x="0" y="280" width="286" height="42" />
+        <text class="warning-text" x="20" y="306">Clear Canvas</text>
+        <rect class="pill-warn" x="300" y="280" width="286" height="42" />
+        <text class="warning-text" x="320" y="306">Clear</text>
+      </g>
+    </g>
+
+    <g id="sim-hud-playback-stack" transform="translate(24 538)">
+      <text class="subtitle" x="0" y="0">Quick Actions</text>
+      <g transform="translate(0 24)">
+        <rect class="pill" x="0" y="0" width="286" height="42" />
+        <text class="button-text" x="20" y="26">Run</text>
+        <rect class="pill-warn" x="300" y="0" width="286" height="42" />
+        <text class="warning-text" x="320" y="26">Stop</text>
+
+        <rect class="pill" x="0" y="56" width="286" height="42" />
+        <text class="button-text" x="20" y="82">Step Path -</text>
+        <rect class="pill" x="300" y="56" width="286" height="42" />
+        <text class="button-text" x="320" y="82">Step Path +</text>
+
+        <rect class="pill-active" x="0" y="112" width="586" height="42" />
+        <text class="button-text-dark" x="20" y="138">Settings</text>
+      </g>
+    </g>
+  </g>
+
+  <g id="sim-playback-bar" transform="translate(840 210)">
+    <rect class="panel" x="0" y="0" width="700" height="196" />
+    <text class="label" x="26" y="38">Playback Bar</text>
+
+    <rect class="pill-active" x="24" y="72" width="102" height="42" />
+    <text class="button-text-dark" x="58" y="98">Run</text>
+    <rect class="pill" x="138" y="72" width="112" height="42" />
+    <text class="button-text" x="169" y="98">Pause</text>
+    <rect class="pill-warn" x="262" y="72" width="102" height="42" />
+    <text class="warning-text" x="293" y="98">Stop</text>
+    <rect class="pill" x="376" y="72" width="112" height="42" />
+    <text class="button-text" x="407" y="98">Reset</text>
+    <rect class="pill" x="500" y="72" width="72" height="42" />
+    <text class="button-text" x="525" y="98">Fx</text>
+
+    <line class="divider" x1="24" y1="142" x2="676" y2="142" />
+    <text class="value" x="26" y="171">Frame 0000</text>
+    <rect class="pill" x="350" y="150" width="118" height="34" />
+    <text class="button-text" x="385" y="172">Record</text>
+    <rect class="pill" x="482" y="150" width="118" height="34" />
+    <text class="button-text" x="520" y="172">Export</text>
+    <text class="meta" x="618" y="172">Ready</text>
+  </g>
+
+  <g id="sim-inspector-sessionbar" transform="translate(840 446)">
+    <rect class="panel" x="0" y="0" width="700" height="524" />
+    <text class="label" x="26" y="38">Session Workspace / Inspector Shell</text>
+
+    <rect class="panel-soft" x="24" y="64" width="652" height="132" />
+    <text class="tiny" x="44" y="92">ACTIVE SESSION</text>
+    <text class="label" x="44" y="124">Session A</text>
+    <rect class="badge-active" x="184" y="101" width="104" height="24" />
+    <text class="tiny" x="205" y="118" fill="#ffffff">Saved</text>
+    <rect class="badge-muted" x="300" y="101" width="172" height="24" />
+    <text class="tiny" x="321" y="118">Sidebar Defaults</text>
+    <text class="meta" x="44" y="152">Editing saved session. Guides and runtime overrides update this scene.</text>
+    <text class="meta" x="44" y="174">2 sessions armed across 2 layer routes.</text>
+
+    <rect class="panel-soft" x="24" y="220" width="652" height="64" />
+    <text class="note" x="44" y="258">Current tool: spawn   |   Playback speed 1.0x   |   Select a guide to edit it.</text>
+
+    <g id="inspector-section-open" transform="translate(24 308)">
+      <rect class="pill" x="0" y="0" width="652" height="38" rx="10" ry="10" />
+      <text class="button-text" x="18" y="24">Playback and Bounds</text>
+      <text class="button-text" x="620" y="24">v</text>
+      <rect class="panel-soft" x="0" y="38" width="652" height="144" rx="0" ry="0" />
+      <text class="meta" x="18" y="64">Global simulation controls live here. Guide-specific overrides stay compact.</text>
+
+      <g id="inspector-slider-row" transform="translate(18 82)">
+        <text class="label" x="0" y="0">Playback Speed</text>
+        <text class="value" x="506" y="0">1.0x</text>
+        <rect class="track" x="0" y="18" width="438" height="6" />
+        <rect class="track-fill" x="0" y="18" width="212" height="6" />
+        <circle class="thumb" cx="212" cy="21" r="8" />
+        <rect class="input" x="466" y="2" width="90" height="34" />
+        <text class="button-text" x="498" y="24">1.00</text>
+      </g>
+
+      <g id="inspector-slider-row-2" transform="translate(18 130)">
+        <text class="label" x="0" y="0">Bounds Margin</text>
+        <text class="value" x="474" y="0">180px</text>
+        <rect class="track" x="0" y="18" width="438" height="6" />
+        <rect class="track-fill" x="0" y="18" width="304" height="6" />
+        <circle class="thumb" cx="304" cy="21" r="8" />
+        <rect class="input" x="466" y="2" width="90" height="34" />
+        <text class="button-text" x="499" y="24">180</text>
+      </g>
+    </g>
+
+    <g id="inspector-section-closed" transform="translate(24 502)">
+      <rect class="pill" x="0" y="0" width="652" height="38" rx="10" ry="10" />
+      <text class="button-text" x="18" y="24">No Selection</text>
+      <text class="button-text" x="620" y="24">&gt;</text>
+    </g>
+  </g>
+
+  <g id="stage-card-components" transform="translate(70 1010)">
+    <text class="subtitle" x="0" y="0">Stage Session Cards</text>
+
+    <g id="stage-card-open" transform="translate(0 26)">
+      <rect class="panel-active" x="0" y="0" width="720" height="350" />
+      <text class="label" x="22" y="34">Stage Card / Open</text>
+
+      <rect class="panel-soft" x="18" y="52" width="684" height="70" />
+      <text class="label" x="34" y="84">Session A</text>
+      <rect class="badge-active" x="148" y="62" width="112" height="22" />
+      <text class="tiny" x="173" y="77" fill="#ffffff">Draft Loaded</text>
+      <rect class="badge" x="274" y="62" width="86" height="22" />
+      <text class="tiny" x="299" y="77">Mounted</text>
+      <text class="meta" x="34" y="106">Stage: Layer 1 and Layer 3   |   Sensing: Below active   |   2 routes</text>
+      <text class="button-text" x="670" y="84">v</text>
+
+      <text class="note" x="34" y="148">This saved session is loaded into the current draft on the canvas.</text>
+
+      <rect class="pill" x="34" y="164" width="164" height="34" />
+      <text class="button-text" x="63" y="186">Load Into Draft</text>
+
+      <text class="tiny" x="34" y="228">TARGET LAYERS</text>
+      <rect class="panel-soft" x="34" y="238" width="180" height="40" />
+      <rect class="badge-active" x="44" y="248" width="22" height="20" />
+      <text class="tiny" x="76" y="262">Layer 1</text>
+      <rect class="panel-soft" x="224" y="238" width="180" height="40" />
+      <rect class="badge-active" x="234" y="248" width="22" height="20" />
+      <text class="tiny" x="266" y="262">Layer 3</text>
+      <rect class="panel-soft ghost" x="414" y="238" width="180" height="40" />
+      <rect class="badge-muted" x="424" y="248" width="22" height="20" />
+      <text class="tiny" x="456" y="262">Background</text>
+
+      <text class="tiny" x="34" y="308">SENSING SOURCE</text>
+      <rect class="select" x="34" y="318" width="280" height="38" />
+      <text class="button-text" x="52" y="342">Layers below active</text>
+      <text class="button-text" x="286" y="342">v</text>
+    </g>
+
+    <g id="stage-card-closed" transform="translate(760 26)">
+      <rect class="panel" x="0" y="0" width="720" height="124" />
+      <text class="label" x="22" y="34">Stage Card / Closed</text>
+      <rect class="panel-soft" x="18" y="52" width="684" height="54" />
+      <text class="label" x="34" y="83">Session B</text>
+      <rect class="badge-muted" x="148" y="62" width="66" height="22" />
+      <text class="tiny" x="173" y="77">Off</text>
+      <text class="meta" x="230" y="83">Stage: Layer 2   |   Sensing: Selected layers</text>
+      <text class="button-text" x="670" y="83">&gt;</text>
+    </g>
+  </g>
+
+  <g id="guide-list-components" transform="translate(1610 210)">
+    <rect class="panel" x="0" y="0" width="720" height="760" />
+    <text class="label" x="26" y="38">Guide List Components</text>
+
+    <rect class="panel-soft" x="24" y="66" width="672" height="66" />
+    <text class="note" x="42" y="94">Current tool: spawn   |   Playback speed 1.0x   |   Selected spawn</text>
+    <text class="meta" x="42" y="115">Compact summary card shown above guide layers.</text>
+
+    <g id="guide-row-default" transform="translate(24 166)">
+      <rect class="panel-soft" x="0" y="0" width="672" height="74" />
+      <rect class="chip" x="16" y="16" width="34" height="34" />
+      <text class="button-text" x="25" y="38">SP</text>
+      <text class="label" x="66" y="30">Spawn 1  .  circle</text>
+      <text class="meta" x="66" y="52">circle  .  40px radius</text>
+      <rect class="pill-active" x="530" y="20" width="56" height="28" />
+      <text class="tiny" x="551" y="38" fill="#ffffff">On</text>
+      <rect class="pill-warn" x="600" y="20" width="42" height="28" />
+      <text class="tiny" x="616" y="38">x</text>
+    </g>
+
+    <g id="guide-row-active" transform="translate(24 260)">
+      <rect class="panel-active" x="0" y="0" width="672" height="74" />
+      <rect class="chip" x="16" y="16" width="34" height="34" />
+      <text class="button-text" x="26" y="38">AT</text>
+      <text class="label" x="66" y="30">Attract Point 1</text>
+      <text class="meta" x="66" y="52">Attract  .  96px radius</text>
+      <rect class="pill-active" x="530" y="20" width="56" height="28" />
+      <text class="tiny" x="551" y="38" fill="#ffffff">On</text>
+      <rect class="pill-warn" x="600" y="20" width="42" height="28" />
+      <text class="tiny" x="616" y="38">x</text>
+    </g>
+
+    <g id="guide-row-disabled" transform="translate(24 354)" class="ghost">
+      <rect class="panel-soft" x="0" y="0" width="672" height="74" />
+      <rect class="chip" x="16" y="16" width="34" height="34" />
+      <text class="button-text" x="26" y="38">PH</text>
+      <text class="label" x="66" y="30">Pheromone Trail 1  .  Off</text>
+      <text class="meta" x="66" y="52">12 pts  .  0.45 intensity</text>
+      <rect class="pill" x="530" y="20" width="56" height="28" />
+      <text class="tiny" x="546" y="38">Off</text>
+      <rect class="pill-warn" x="600" y="20" width="42" height="28" />
+      <text class="tiny" x="616" y="38">x</text>
+    </g>
+
+    <g id="section-header-pair" transform="translate(24 470)">
+      <text class="subtitle" x="0" y="0">Section Headers</text>
+      <rect class="pill" x="0" y="22" width="320" height="38" />
+      <text class="button-text" x="18" y="46">Spawns</text>
+      <text class="button-text" x="292" y="46">v</text>
+      <rect class="pill" x="352" y="22" width="320" height="38" />
+      <text class="button-text" x="370" y="46">Repel Points</text>
+      <text class="button-text" x="640" y="46">&gt;</text>
+    </g>
+
+    <g id="slider-and-reset-row" transform="translate(24 586)">
+      <text class="subtitle" x="0" y="0">Guide Override Slider</text>
+      <rect class="panel-soft" x="0" y="20" width="672" height="108" />
+      <text class="label" x="16" y="48">Point Radius</text>
+      <text class="value" x="536" y="48">96px</text>
+      <rect class="pill-warn" x="618" y="28" width="28" height="28" rx="14" ry="14" />
+      <text class="tiny" x="628" y="46">x</text>
+      <rect class="track" x="16" y="70" width="470" height="6" />
+      <rect class="track-fill" x="16" y="70" width="286" height="6" />
+      <circle class="thumb" cx="302" cy="73" r="8" />
+      <rect class="input" x="508" y="56" width="138" height="34" />
+      <text class="button-text" x="560" y="78">96</text>
+    </g>
+  </g>
+
+  <g id="format-chip-components" transform="translate(1610 1032)">
+    <rect class="panel" x="0" y="0" width="720" height="420" />
+    <text class="label" x="26" y="38">Compact Format Chips</text>
+
+    <g id="format-chip-number" transform="translate(24 72)">
+      <rect class="chip" x="0" y="0" width="212" height="56" />
+      <text class="tiny" x="16" y="21">Radius:</text>
+      <rect class="input" x="72" y="12" width="78" height="32" />
+      <text class="button-text" x="100" y="33">96</text>
+      <rect class="pill" x="160" y="12" width="36" height="32" />
+      <text class="button-text" x="173" y="33">v</text>
+    </g>
+
+    <g id="format-chip-number-open" transform="translate(254 72)">
+      <rect class="chip" x="0" y="0" width="212" height="126" />
+      <text class="tiny" x="16" y="21">Strength:</text>
+      <rect class="input" x="82" y="12" width="70" height="32" />
+      <text class="button-text" x="103" y="33">1.20</text>
+      <rect class="pill-active" x="162" y="12" width="36" height="32" />
+      <text class="button-text-dark" x="175" y="33">v</text>
+      <rect class="panel-soft" x="16" y="60" width="180" height="46" />
+      <rect class="track" x="28" y="80" width="152" height="6" />
+      <rect class="track-fill" x="28" y="80" width="94" height="6" />
+      <circle class="thumb" cx="122" cy="83" r="8" />
+    </g>
+
+    <g id="format-chip-color" transform="translate(24 226)">
+      <rect class="chip" x="0" y="0" width="146" height="56" />
+      <text class="tiny" x="16" y="21">Color:</text>
+      <rect class="input" x="84" y="12" width="34" height="32" />
+      <rect x="90" y="18" width="22" height="20" fill="#3a6ae8" rx="6" ry="6" />
+    </g>
+
+    <g id="format-chip-select" transform="translate(190 226)">
+      <rect class="chip" x="0" y="0" width="236" height="56" />
+      <text class="tiny" x="16" y="21">Shape:</text>
+      <rect class="select" x="74" y="12" width="144" height="32" />
+      <text class="button-text" x="92" y="33">Circle</text>
+      <text class="button-text" x="196" y="33">v</text>
+    </g>
+
+    <g id="format-chip-toggle" transform="translate(446 226)">
+      <rect class="chip" x="0" y="0" width="156" height="56" />
+      <text class="tiny" x="16" y="33">Closed Path</text>
+      <rect class="badge-active" x="110" y="16" width="28" height="22" />
+      <circle cx="127" cy="27" r="7" fill="#ffffff" />
+    </g>
+
+    <g id="inspector-actions-row" transform="translate(24 326)">
+      <rect class="pill" x="0" y="0" width="150" height="38" />
+      <text class="button-text" x="35" y="24">New Session</text>
+      <rect class="pill" x="166" y="0" width="150" height="38" />
+      <text class="button-text" x="206" y="24">Save Session</text>
+      <rect class="pill" x="332" y="0" width="158" height="38" />
+      <text class="button-text" x="366" y="24">Clear Selection</text>
+    </g>
+  </g>
+
+  <g id="footer-notes" transform="translate(70 1820)">
+    <text class="meta" x="0" y="0">Groups are named by component so they can be selected and edited independently in Illustrator, Figma, Inkscape, or other SVG-aware tools.</text>
+  </g>
+</svg>
