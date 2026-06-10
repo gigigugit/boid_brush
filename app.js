@@ -6197,7 +6197,22 @@ export class App {
     return starts;
   }
 
-  _setSimulationSelection(selection) {
+  _activateLeftPanelTab(viewName) {
+    const leftPanel = document.getElementById('leftPanel');
+    const leftTabs = document.getElementById('leftPanelTabs');
+    const tab = leftTabs?.querySelector(`.panel-tab[data-panel-view="${viewName}"]`);
+    const view = leftPanel?.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
+    if (!leftPanel || !leftTabs || !tab || !view) return;
+    leftTabs.querySelectorAll('.panel-tab').forEach(button => button.classList.remove('active'));
+    leftPanel.querySelectorAll(':scope > .panel-view').forEach(panelView => panelView.classList.remove('active'));
+    tab.classList.add('active');
+    view.classList.add('active');
+    leftPanel.classList.add('open');
+    document.getElementById('layersToggle')?.classList.add('active');
+    this._updateTabVisibility();
+  }
+
+  _setSimulationSelection(selection, { focusDrawer = false } = {}) {
     this._simFormatMenuUi.activePopover = null;
     this.simulation.selected = selection
       ? {
@@ -6212,6 +6227,9 @@ export class App {
       const pathId = Number(distributeModal.dataset.pathId || 0);
       const selectedId = this.simulation.selected?.kind === 'path' ? this.simulation.selected.id : 0;
       if (!selectedId || selectedId !== pathId) this._closeSimulationDistributeDialog();
+    }
+    if (focusDrawer && selection) {
+      this._activateLeftPanelTab('guides');
     }
     this._renderSimulationInspector();
   }
@@ -9671,21 +9689,6 @@ export class App {
     if (guidesPanel) {
       guidesPanel.innerHTML = guideEditorMarkup;
     }
-    if (selected) {
-      const leftPanel = document.getElementById('leftPanel');
-      const leftTabs = document.getElementById('leftPanelTabs');
-      const guidesTab = leftTabs?.querySelector('.panel-tab[data-panel-view="guides"]');
-      const guidesView = leftPanel?.querySelector('.panel-view[data-panel-view="guides"]');
-      if (leftPanel && leftTabs && guidesTab && guidesView && !guidesTab.classList.contains('active')) {
-        leftTabs.querySelectorAll('.panel-tab').forEach(tab => tab.classList.remove('active'));
-        leftPanel.querySelectorAll(':scope > .panel-view').forEach(view => view.classList.remove('active'));
-        guidesTab.classList.add('active');
-        guidesView.classList.add('active');
-        leftPanel.classList.add('open');
-        document.getElementById('layersToggle')?.classList.add('active');
-        this._updateTabVisibility();
-      }
-    }
     if (formatPanel) {
       if (formatMarkup) {
         formatPanel.innerHTML = formatMarkup;
@@ -10240,7 +10243,7 @@ export class App {
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
     this._syncSimulationUI();
-    if (next && !overlayHudEnabled) this._showSimulationControlsDrawer({ activate: true });
+    if (next && !overlayHudEnabled) this._showSimulationControlsDrawer();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
   }
 

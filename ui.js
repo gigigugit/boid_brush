@@ -1479,7 +1479,7 @@ export function buildSimulationControlsPanel(app) {
           collection: button.dataset.simTreeCollection,
           kind: button.dataset.simTreeKind,
           id: Number(button.dataset.simTreeId),
-        });
+        }, { focusDrawer: true });
       });
     });
 

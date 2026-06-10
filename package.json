@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "electron": "^42.3.2",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.15.2"
   },
   "build": {
     "appId": "com.gigigugit.boidbrush",
@@ -46,5 +46,11 @@
         "dir"
       ]
     }
+  },
+  "overrides": {
+    "@electron/asar": "^4.2.0",
+    "@electron/get": "^5.0.0",
+    "glob": "^13.0.6",
+    "rimraf": "^5.0.10"
   }
 }
