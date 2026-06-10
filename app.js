@@ -5781,6 +5781,55 @@ export class App {
     return routes;
   }
 
+  _getMultiSessionRouteDiagnostics({ autoHeal = false } = {}) {
+    const sessions = Array.isArray(this.simulation.sessions) ? this.simulation.sessions : [];
+    const bindings = this._normalizeSimulationSessionBindings();
+    const armedBindings = bindings.filter(binding => (
+      binding.enabled !== false && sessions[binding.sessionIndex]
+    ));
+    let healedBindings = false;
+
+    if (autoHeal) {
+      for (const binding of bindings) {
+        const nextLayerIds = this._normalizeSimulationLayerIds(binding.layerIds, binding.sessionIndex);
+        const prevLayerIds = Array.isArray(binding.layerIds) ? binding.layerIds : [];
+        const unchanged = prevLayerIds.length === nextLayerIds.length
+          && prevLayerIds.every((layerId, index) => layerId === nextLayerIds[index]);
+        if (!unchanged) {
+          binding.layerIds = nextLayerIds;
+          healedBindings = true;
+        }
+      }
+    }
+
+    const runnableRoutes = [];
+    for (const binding of armedBindings) {
+      for (const layerId of binding.layerIds || []) {
+        if (!this._getLayerById(layerId)) continue;
+        runnableRoutes.push({
+          sessionId: binding.sessionId,
+          sessionIndex: binding.sessionIndex,
+          layerId,
+        });
+      }
+    }
+
+    let blockReason = '';
+    if (!sessions.length) {
+      blockReason = 'Save at least one simulation session before running multiple sessions';
+    } else if (!armedBindings.length) {
+      blockReason = 'Enable (mount) at least one saved session route before running multiple sessions';
+    } else if (!runnableRoutes.length) {
+      blockReason = 'Mounted sessions have no valid target layer routes — reselect target layer(s) in Simulation Setup';
+    }
+
+    return {
+      runnableRoutes,
+      blockReason,
+      healedBindings,
+    };
+  }
+
   _shouldUseMultiSessionPlayback() {
     return this.activeBrush === 'boid' && this.simulation.multiSessionEnabled === true;
   }
@@ -10327,13 +10376,14 @@ export class App {
       this.strokeFrame = 0;
 
       if (this._shouldUseMultiSessionPlayback()) {
-        const runnableRoutes = this._getRunnableSimulationSessionBindings();
-        if (!runnableRoutes.length) {
+        const diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
+        if (diagnostics.healedBindings) this.saveSession();
+        if (!diagnostics.runnableRoutes.length) {
           this.simulation.running = false;
           this.simulation.paused = false;
           this.isDrawing = false;
           this._syncSimulationUI();
-          this.showToast('Save and arm at least one session route before running multiple sessions');
+          this.showToast(diagnostics.blockReason || 'Save and arm at least one session route before running multiple sessions');
           return;
         }
         const runtimeSessions = await this._createMultiSessionRuntimeSessions(simParams);
