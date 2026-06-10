@@ -1440,6 +1440,7 @@ export class BoidBrush {
   _canUseGpuPreview(targetCtx, p) {
     const layer = this.app.getActiveLayer();
     if (!layer || !targetCtx || targetCtx !== layer.ctx) return false;
+    if (this.app._hasActiveMultiSessionPlayback?.()) return false;
     if (DISABLE_BOID_GPU_RENDERING_ON_APPLE_TOUCH_WEBKIT) return false;
     if (this._flatActive) return false;
     if (this.app.simulation?.running && p?.simEphemeralMode) return false;
