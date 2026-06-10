@@ -1,6 +1,38 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export function boid_clear_agents(handle: number): void;
+
+export function boid_create_simulator(width: number, height: number, max_agents: number): number;
+
+export function boid_destroy_simulator(handle: number): void;
+
+export function boid_get_agent_buffer_ptr(handle: number): number;
+
+export function boid_get_agent_count(handle: number): number;
+
+export function boid_get_params_buffer_ptr(handle: number): number;
+
+export function boid_get_sensing_buffer_ptr(handle: number): number;
+
+export function boid_init_sensing(handle: number, w: number, h: number): void;
+
+export function boid_remove_agent(handle: number, id: number): void;
+
+export function boid_set_leader_range(handle: number, start_index: number, end_index: number, leader_count: number): void;
+
+export function boid_set_params(handle: number): void;
+
+export function boid_sim_resize(handle: number, width: number, height: number): void;
+
+export function boid_spawn_agent(handle: number, x: number, y: number): number;
+
+export function boid_spawn_batch(handle: number, cx: number, cy: number, count: number, shape: number, angle: number, jitter: number, radius: number): void;
+
+export function boid_step(handle: number, dt: number): void;
+
+export function boid_update_sensing(handle: number): void;
+
 /**
  * Clear all agents.
  */
@@ -157,6 +189,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly boid_get_agent_buffer_ptr: (a: number) => number;
+    readonly boid_get_params_buffer_ptr: (a: number) => number;
+    readonly boid_get_sensing_buffer_ptr: (a: number) => number;
+    readonly boid_init_sensing: (a: number, b: number, c: number) => void;
+    readonly boid_sim_resize: (a: number, b: number, c: number) => void;
+    readonly boid_spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly fluid_add_particles: (a: number, b: number, c: number, d: number) => void;
     readonly fluid_create_simulator: (a: number, b: number) => number;
     readonly fluid_get_particles: (a: number, b: number) => void;
@@ -169,21 +207,31 @@ export interface InitOutput {
     readonly get_sensing_buffer_ptr: () => number;
     readonly get_stride: () => number;
     readonly init_sensing: (a: number, b: number) => void;
-    readonly remove_agent: (a: number) => void;
     readonly sim_init: (a: number, b: number, c: number) => void;
     readonly sim_resize: (a: number, b: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly update_sensing: () => void;
-    readonly set_leader_range: (a: number, b: number, c: number) => void;
-    readonly fluid_get_particle_count: (a: number) => number;
-    readonly fluid_step: (a: number, b: number) => void;
-    readonly fluid_destroy_simulator: (a: number) => void;
     readonly fluid_clear_particles: (a: number) => void;
-    readonly set_params: () => void;
+    readonly boid_set_params: (a: number) => void;
+    readonly boid_set_leader_range: (a: number, b: number, c: number, d: number) => void;
+    readonly fluid_destroy_simulator: (a: number) => void;
+    readonly boid_update_sensing: (a: number) => void;
+    readonly fluid_get_particle_count: (a: number) => number;
+    readonly boid_get_agent_count: (a: number) => number;
+    readonly boid_create_simulator: (a: number, b: number, c: number) => number;
     readonly spawn_agent: (a: number, b: number) => number;
-    readonly get_agent_count: () => number;
+    readonly boid_destroy_simulator: (a: number) => void;
+    readonly set_leader_range: (a: number, b: number, c: number) => void;
+    readonly set_params: () => void;
+    readonly boid_remove_agent: (a: number, b: number) => void;
+    readonly boid_step: (a: number, b: number) => void;
+    readonly fluid_step: (a: number, b: number) => void;
+    readonly remove_agent: (a: number) => void;
     readonly step: (a: number) => void;
     readonly clear_agents: () => void;
+    readonly get_agent_count: () => number;
+    readonly boid_spawn_agent: (a: number, b: number, c: number) => number;
+    readonly boid_clear_agents: (a: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number) => void;

@@ -1,0 +1,365 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="1800" viewBox="0 0 2600 1800" role="img" aria-labelledby="title desc">
+  <title id="title">Simulation Guide Drag Overlays</title>
+  <desc id="desc">Editable SVG sheet of the draggable simulation guide overlays rendered on the canvas, including spawn, spawn blob, attract and repel points, path guide handles, overlay chips, edge barriers, pheromone trails, and in-progress drawing previews.</desc>
+  <defs>
+    <linearGradient id="sheetBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#131924" />
+      <stop offset="100%" stop-color="#0a0f16" />
+    </linearGradient>
+    <linearGradient id="accentBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8cc4ff" />
+      <stop offset="100%" stop-color="#5c92ff" />
+    </linearGradient>
+    <linearGradient id="accentOrange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffcc93" />
+      <stop offset="100%" stop-color="#d99342" />
+    </linearGradient>
+    <linearGradient id="accentGreen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c2ff96" />
+      <stop offset="100%" stop-color="#78c850" />
+    </linearGradient>
+    <linearGradient id="accentPink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffb2ec" />
+      <stop offset="100%" stop-color="#ff69d6" />
+    </linearGradient>
+    <style>
+      .bg { fill: #090d14; }
+      .sheet { fill: url(#sheetBg); stroke: #243042; stroke-width: 2; rx: 26; ry: 26; }
+      .panel { fill: rgba(255,255,255,0.03); stroke: rgba(255,255,255,0.08); stroke-width: 1.5; rx: 18; ry: 18; }
+      .panel-quiet { fill: rgba(255,255,255,0.02); stroke: rgba(255,255,255,0.06); stroke-width: 1.25; rx: 14; ry: 14; }
+      .guide-fill { fill: rgba(255,255,255,0.12); }
+      .guide-fill-blue { fill: rgba(140,196,255,0.22); }
+      .guide-fill-attract { fill: rgba(54,98,185,0.18); }
+      .guide-fill-repel { fill: rgba(217,147,66,0.18); }
+      .guide-fill-edge { fill: rgba(255,210,120,0.08); }
+      .guide-stroke { stroke: rgba(255,255,255,0.6); stroke-width: 1.5; }
+      .guide-stroke-blue { stroke: rgba(140,196,255,0.96); stroke-width: 2.4; }
+      .guide-stroke-attract { stroke: rgba(150,214,255,0.95); stroke-width: 2.4; }
+      .guide-stroke-repel { stroke: rgba(255,188,118,0.9); stroke-width: 2.4; }
+      .guide-stroke-path { stroke: rgba(168,218,255,0.98); stroke-width: 3; fill: none; stroke-dasharray: 8 6; }
+      .guide-stroke-edge { stroke: rgba(255,238,160,0.98); stroke-width: 3; fill: none; }
+      .guide-stroke-edge-radius { stroke: rgba(255,238,160,0.25); stroke-width: 28; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .guide-stroke-trail { stroke: rgba(194,255,150,0.35); stroke-width: 22; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .guide-stroke-blob { stroke: rgba(140,196,255,0.92); stroke-width: 1.5; fill: none; }
+      .guide-stroke-preview { stroke: rgba(116,166,255,0.85); stroke-width: 2; fill: none; stroke-dasharray: 6 4; stroke-linecap: round; stroke-linejoin: round; }
+      .guide-stroke-preview-green { stroke: rgba(120,200,80,0.85); stroke-width: 16; fill: none; stroke-dasharray: 6 4; stroke-linecap: round; stroke-linejoin: round; }
+      .guide-dashed-bound { stroke: rgba(255,210,120,0.85); stroke-width: 1; fill: none; stroke-dasharray: 6 4; }
+      .center-dot { fill: rgba(255,255,255,0.9); }
+      .line-blue { stroke: rgba(140,196,255,0.98); stroke-width: 1.75; }
+      .line-orange { stroke: rgba(255,188,118,0.9); stroke-width: 1.75; }
+      .line-green { stroke: rgba(120,236,178,0.98); stroke-width: 1.75; }
+      .line-pink { stroke: rgba(255,105,214,0.98); stroke-width: 1.75; }
+      .handle-radius { fill: url(#accentBlue); }
+      .handle-strength { fill: url(#accentBlue); }
+      .handle-path-start-ring { fill: rgba(120,236,178,0.98); stroke: rgba(255,255,255,0.9); stroke-width: 1.25; }
+      .handle-path-direction { fill: rgba(120,236,178,0.98); }
+      .handle-path-scale { fill: rgba(120,236,178,0.98); stroke: rgba(255,255,255,0.9); stroke-width: 1.2; }
+      .handle-path-position { fill: rgba(255,214,120,0.98); stroke: rgba(12,18,30,0.9); stroke-width: 1.4; }
+      .handle-path-closed { fill: rgba(120,236,178,0.98); stroke: rgba(255,255,255,0.9); stroke-width: 1; }
+      .handle-path-speed { fill: rgba(120,236,178,0.98); stroke: rgba(120,236,178,0.98); stroke-width: 1.2; }
+      .handle-path-radius { fill: rgba(255,105,214,0.98); stroke: rgba(255,255,255,0.92); stroke-width: 1.2; }
+      .chip { fill: rgba(12,18,30,0.82); stroke: rgba(126,206,255,0.7); stroke-width: 1.2; rx: 9; ry: 9; }
+      .chip-pink { fill: rgba(12,18,30,0.82); stroke: rgba(255,105,214,0.82); stroke-width: 1.2; rx: 9; ry: 9; }
+      .chip-gold { fill: rgba(12,18,30,0.82); stroke: rgba(255,214,120,0.82); stroke-width: 1.2; rx: 9; ry: 9; }
+      .chip-delete { fill: rgba(18,18,22,0.55); stroke: rgba(255,255,255,0.22); stroke-width: 1; }
+      .heading { fill: #eef3ff; font: 700 28px 'Segoe UI', sans-serif; }
+      .sub { fill: #a7b4c8; font: 600 15px 'Segoe UI', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }
+      .label { fill: #eef3ff; font: 600 18px 'Segoe UI', sans-serif; }
+      .meta { fill: #9eabc0; font: 500 14px 'Segoe UI', sans-serif; }
+      .tiny { fill: #b8c4d8; font: 600 12px 'Segoe UI', sans-serif; }
+      .chip-text { fill: rgba(214,240,255,0.96); font: 600 13px 'Segoe UI', sans-serif; text-anchor: middle; }
+      .chip-text-pink { fill: rgba(255,222,246,0.98); font: 600 13px 'Segoe UI', sans-serif; text-anchor: middle; }
+      .chip-text-gold { fill: rgba(255,240,196,0.98); font: 600 13px 'Segoe UI', sans-serif; text-anchor: middle; }
+      .delete-text { fill: rgba(255,255,255,0.82); font: 700 12px 'Segoe UI', sans-serif; text-anchor: middle; dominant-baseline: middle; }
+      .legend-line { stroke: rgba(255,255,255,0.1); stroke-width: 1; }
+      .pixel { fill: rgba(140,196,255,0.2); stroke: rgba(140,196,255,0.14); stroke-width: 0.5; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="2600" height="1800" />
+  <rect class="sheet" x="24" y="24" width="2552" height="1752" />
+
+  <g id="title-block">
+    <text class="heading" x="68" y="86">Simulation Drag Overlays</text>
+    <text class="meta" x="68" y="116">Canvas-facing guide primitives and handles from drawSimulationOverlay, exported separately from the inspector sheet.</text>
+  </g>
+
+  <g id="spawn-circle-selected" transform="translate(68 170)">
+    <rect class="panel" x="0" y="0" width="560" height="360" />
+    <text class="label" x="22" y="34">Spawn Circle</text>
+    <text class="meta" x="22" y="56">Selected spawn with radius handle and spawn chip.</text>
+
+    <circle class="guide-fill-blue guide-stroke-blue" cx="204" cy="196" r="76" />
+    <circle class="center-dot" cx="204" cy="196" r="5" />
+    <line class="line-blue" x1="204" y1="196" x2="280" y2="196" />
+    <circle class="handle-radius" cx="280" cy="196" r="8" />
+
+    <rect class="chip" x="168" y="90" width="72" height="22" rx="9" ry="9" />
+    <text class="chip-text" x="204" y="105">Spawn</text>
+
+    <circle class="chip-delete" cx="304" cy="148" r="14" />
+    <text class="delete-text" x="304" y="148" style="font-size: 24">x</text>
+
+    <text class="tiny" x="344" y="170">Radius drag handle</text>
+    <text class="tiny" x="344" y="191">field: radius</text>
+    <text class="tiny" x="344" y="233">Spawn chip anchor</text>
+    <text class="tiny" x="344" y="254">centered above spawn</text>
+  </g>
+
+  <g id="spawn-blob-selected" transform="translate(654 170)">
+    <rect class="panel" x="0" y="0" width="640" height="360" />
+    <text class="label" x="22" y="34">Spawn Blob</text>
+    <text class="meta" x="22" y="56">Mask-based spawn preview. No radius handle when mask exists.</text>
+
+    <g id="spawn-blob-mask-pixels" transform="translate(110 108)">
+      <rect class="pixel" x="0" y="36" width="18" height="18" />
+      <rect class="pixel" x="18" y="18" width="18" height="18" />
+      <rect class="pixel" x="36" y="18" width="18" height="18" />
+      <rect class="pixel" x="54" y="0" width="18" height="18" />
+      <rect class="pixel" x="72" y="0" width="18" height="18" />
+      <rect class="pixel" x="90" y="18" width="18" height="18" />
+      <rect class="pixel" x="108" y="18" width="18" height="18" />
+      <rect class="pixel" x="126" y="36" width="18" height="18" />
+      <rect class="pixel" x="18" y="54" width="18" height="18" />
+      <rect class="pixel" x="36" y="72" width="18" height="18" />
+      <rect class="pixel" x="54" y="72" width="18" height="18" />
+      <rect class="pixel" x="72" y="90" width="18" height="18" />
+      <rect class="pixel" x="90" y="90" width="18" height="18" />
+      <rect class="pixel" x="108" y="72" width="18" height="18" />
+      <rect class="pixel" x="126" y="54" width="18" height="18" />
+      <path class="guide-stroke-blob" d="M27 63 L45 45 L63 45 L81 27 L99 27 L117 45 L135 45 L153 63" />
+      <rect class="guide-dashed-bound" x="0" y="0" width="162" height="108" />
+    </g>
+
+    <circle class="center-dot" cx="191" cy="182" r="5" />
+    <rect class="chip" x="156" y="84" width="72" height="22" rx="9" ry="9" />
+    <text class="chip-text" x="192" y="99">Spawn</text>
+    <circle class="chip-delete" cx="281" cy="96" r="9" />
+
+    <text class="tiny" x="334" y="160">Spawn chip anchor</text>
+    <text class="tiny" x="334" y="181">mask bounds center / top edge</text>
+    <text class="tiny" x="334" y="223">Delete badge anchor</text>
+    <text class="tiny" x="334" y="244">mask bounds maxX / minY</text>
+    <text class="tiny" x="334" y="286">Selected blob gets no radius handle</text>
+  </g>
+
+  <g id="point-overlays" transform="translate(1320 170)">
+    <rect class="panel" x="0" y="0" width="600" height="360" />
+    <text class="label" x="22" y="34">Attract and Repel Points</text>
+    <text class="meta" x="22" y="56">Both point guides expose a radius handle and a vertical strength handle.</text>
+
+    <g id="attract-point" transform="translate(120 104)">
+      <circle class="guide-fill-attract guide-stroke-attract" cx="0" cy="88" r="66" />
+      <circle fill="rgba(150,214,255,0.95)" cx="0" cy="88" r="7" />
+      <line class="line-blue" x1="0" y1="88" x2="66" y2="88" />
+      <circle class="handle-radius" cx="66" cy="88" r="8" />
+      <line class="line-blue" x1="0" y1="88" x2="0" y2="12" />
+      <rect class="handle-strength" x="-7" y="5" width="14" height="14" transform="rotate(45 0 12)" />
+      <circle class="chip-delete" cx="16" cy="10" r="9" />
+      <text class="delete-text" x="16" y="10">x</text>
+      <text class="tiny" x="-32" y="174">Attract</text>
+    </g>
+
+    <g id="repel-point" transform="translate(388 104)">
+      <circle class="guide-fill-repel guide-stroke-repel" cx="0" cy="88" r="66" />
+      <circle fill="rgba(255,188,118,0.9)" cx="0" cy="88" r="7" />
+      <line class="line-orange" x1="0" y1="88" x2="66" y2="88" />
+      <circle fill="url(#accentOrange)" cx="66" cy="88" r="8" />
+      <line class="line-orange" x1="0" y1="88" x2="0" y2="20" />
+      <rect fill="url(#accentOrange)" x="-7" y="13" width="14" height="14" transform="rotate(45 0 20)" />
+      <circle class="chip-delete" cx="16" cy="10" r="9" />
+      <text class="delete-text" x="16" y="10">x</text>
+      <text class="tiny" x="-24" y="174">Repel</text>
+    </g>
+  </g>
+
+  <g id="path-guide-selected" transform="translate(68 564)">
+    <rect class="panel" x="0" y="0" width="1240" height="610" />
+    <text class="label" x="22" y="34">Path Guide</text>
+    <text class="meta" x="22" y="56">Selected boid path with pathPosition, start, direction, scale, closed, speed, and radius handles plus stacked action chips.</text>
+
+    <path class="guide-stroke-path" d="M170 338 C260 222 394 248 482 330 C548 392 650 422 760 374" />
+    <path d="M170 338 C260 222 394 248 482 330 C548 392 650 422 760 374" stroke="rgba(168,218,255,0.16)" stroke-width="56" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+    <circle fill="rgba(196,233,255,0.98)" cx="470" cy="324" r="8" />
+
+    <circle class="handle-path-position" cx="464" cy="320" r="12" />
+    <line x1="458" y1="320" x2="470" y2="320" stroke="rgba(12,18,30,0.9)" stroke-width="1.4" />
+    <line x1="464" y1="314" x2="464" y2="326" stroke="rgba(12,18,30,0.9)" stroke-width="1.4" />
+
+    <circle class="handle-path-start-ring" cx="170" cy="338" r="7.5" />
+    <circle fill="rgba(120,236,178,0.98)" cx="170" cy="338" r="4" />
+    <path class="handle-path-direction" d="M208 330 L194 324 L194 336 Z" />
+    <line class="line-green" x1="170" y1="338" x2="208" y2="330" />
+
+    <line class="line-green" x1="464" y1="320" x2="610" y2="320" />
+    <circle class="handle-path-scale" cx="610" cy="320" r="9" />
+    <line x1="605" y1="320" x2="615" y2="320" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" />
+    <line x1="610" y1="315" x2="610" y2="325" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" />
+
+    <line class="line-green" x1="464" y1="320" x2="464" y2="246" />
+    <rect class="handle-path-closed" x="455" y="240" width="18" height="12" />
+
+    <line class="line-green" x1="330" y1="274" x2="302" y2="234" />
+    <circle class="handle-path-speed" cx="302" cy="234" r="8.5" fill="none" />
+    <path class="handle-path-speed" d="M302 228 L306 236 L298 236 Z" />
+    <circle class="chip-delete" cx="316" cy="220" r="9" />
+    <text class="delete-text" x="316" y="220">x</text>
+
+    <line class="line-green" x1="546" y1="370" x2="574" y2="410" />
+    <circle class="handle-path-speed" cx="574" cy="410" r="8.5" fill="none" />
+    <path class="handle-path-speed" d="M574 404 L578 412 L570 412 Z" />
+    <circle class="chip-delete" cx="588" cy="396" r="9" />
+    <text class="delete-text" x="588" y="396">x</text>
+
+    <line class="line-pink" x1="390" y1="288" x2="420" y2="338" />
+    <circle class="handle-path-radius" cx="420" cy="338" r="8.5" />
+    <circle cx="420" cy="338" r="4.2" fill="none" stroke="rgba(255,255,255,0.92)" stroke-width="1.2" />
+    <circle class="chip-delete" cx="434" cy="324" r="9" />
+    <text class="delete-text" x="434" y="324">x</text>
+
+    <line class="line-pink" x1="638" y1="396" x2="672" y2="450" />
+    <circle class="handle-path-radius" cx="672" cy="450" r="8.5" />
+    <circle cx="672" cy="450" r="4.2" fill="none" stroke="rgba(255,255,255,0.92)" stroke-width="1.2" />
+    <circle class="chip-delete" cx="686" cy="436" r="9" />
+    <text class="delete-text" x="686" y="436">x</text>
+
+    <g id="path-overlay-chip-stack" transform="translate(900 176)">
+      <rect class="chip-gold" x="0" y="0" width="72" height="22" rx="9" ry="9" />
+      <text class="chip-text-gold" x="36" y="15">Format</text>
+      <rect class="chip-pink" x="-8" y="34" width="88" height="22" rx="9" ry="9" />
+      <text class="chip-text-pink" x="36" y="49">+ Radius</text>
+      <rect class="chip" x="-8" y="68" width="88" height="22" rx="9" ry="9" />
+      <text class="chip-text" x="36" y="83">+ Speed</text>
+    </g>
+
+    <circle class="chip-delete" cx="772" cy="362" r="9" />
+    <text class="delete-text" x="772" y="362">x</text>
+
+    <text class="tiny" x="884" y="314">Action stack flips above or below path bounds</text>
+    <text class="tiny" x="884" y="336">depending on occupied overlay space.</text>
+    <text class="tiny" x="884" y="386">Pink handles = path radius points</text>
+    <text class="tiny" x="884" y="408">Green handles = start / direction / scale / speed</text>
+    <text class="tiny" x="884" y="430">Gold circle = path position drag handle</text>
+  </g>
+
+  <g id="ant-guide-overlays" transform="translate(1340 564)">
+    <rect class="panel" x="0" y="0" width="1192" height="610" />
+    <text class="label" x="22" y="34">Ant Edge and Pheromone Guides</text>
+    <text class="meta" x="22" y="56">These are draggable by the polyline itself; they do not expose the boid path handle set.</text>
+
+    <g id="edge-barrier" transform="translate(34 100)">
+      <text class="sub" x="0" y="0">Edge Barrier</text>
+      <path class="guide-stroke-edge-radius" d="M34 162 L148 112 L252 156 L382 118" />
+      <path class="guide-stroke-edge" d="M34 162 L148 112 L252 156 L382 118" />
+      <circle class="chip-delete" cx="264" cy="144" r="9" />
+      <text class="delete-text" x="264" y="144">x</text>
+      <text class="tiny" x="0" y="214">Thin line + translucent avoidance radius stroke.</text>
+    </g>
+
+    <g id="pheromone-trail" transform="translate(34 324)">
+      <text class="sub" x="0" y="0">Pheromone Trail</text>
+      <path class="guide-stroke-trail" d="M34 114 C106 64 206 64 280 112 S430 164 506 122" />
+      <circle class="chip-delete" cx="294" cy="104" r="9" />
+      <text class="delete-text" x="294" y="104">x</text>
+      <text class="tiny" x="0" y="164">Rounded thick stroke. Drag the trail path itself.</text>
+    </g>
+
+    <g id="in-progress-path-preview" transform="translate(624 112)">
+      <text class="sub" x="0" y="0">In-Progress Path Preview</text>
+      <path class="guide-stroke-preview" d="M20 160 L116 116 L202 138 L286 92 L372 132" />
+      <text class="tiny" x="0" y="202">Shown while drawing path or edge guides before commit.</text>
+    </g>
+
+    <g id="in-progress-pheromone-preview" transform="translate(624 328)">
+      <text class="sub" x="0" y="0">In-Progress Pheromone Preview</text>
+      <path class="guide-stroke-preview-green" d="M20 118 L118 92 L216 116 L320 88 L418 112" />
+      <text class="tiny" x="0" y="162">Dashed thick preview uses current pheromone radius.</text>
+    </g>
+  </g>
+
+  <g id="blob-preview-panel" transform="translate(68 1210)">
+    <rect class="panel" x="0" y="0" width="860" height="500" />
+    <text class="label" x="22" y="34">Spawn Blob Drawing Preview</text>
+    <text class="meta" x="22" y="56">Direct export of the preview semantics from BlobStroke.renderPreview: filled ribbon, stroke path, and dashed bounds.</text>
+
+    <path d="M120 286 C146 228 206 194 278 192 C342 190 410 220 464 286 C420 334 348 364 272 362 C194 360 140 334 120 286 Z" fill="rgba(140,196,255,0.18)" />
+    <path class="guide-stroke-blob" d="M126 286 C154 230 212 198 278 196 C340 194 402 220 454 286" />
+    <rect class="guide-dashed-bound" x="104" y="164" width="390" height="224" />
+    <circle class="center-dot" cx="278" cy="286" r="4" />
+    <circle class="center-dot" cx="190" cy="234" r="4" />
+    <circle class="center-dot" cx="366" cy="232" r="4" />
+
+    <text class="tiny" x="554" y="216">Preview layers:</text>
+    <text class="tiny" x="554" y="242">1. filled ribbon / discs</text>
+    <text class="tiny" x="554" y="268">2. outline stroke</text>
+    <text class="tiny" x="554" y="294">3. dashed bounds guide</text>
+  </g>
+
+  <g id="handle-legend" transform="translate(970 1210)">
+    <rect class="panel" x="0" y="0" width="1562" height="500" />
+    <text class="label" x="22" y="34">Handle Legend</text>
+    <text class="meta" x="22" y="56">Primitive shapes used by the draggable overlay targets.</text>
+
+    <g transform="translate(34 110)">
+      <circle class="handle-radius" cx="0" cy="0" r="8" />
+      <text class="tiny" x="22" y="5">radius handle</text>
+    </g>
+    <g transform="translate(260 110)">
+      <rect class="handle-strength" x="-7" y="-7" width="14" height="14" transform="rotate(45 0 0)" />
+      <text class="tiny" x="22" y="5">strength handle</text>
+    </g>
+    <g transform="translate(520 110)">
+      <circle class="handle-path-start-ring" cx="0" cy="0" r="7.5" />
+      <circle fill="rgba(120,236,178,0.98)" cx="0" cy="0" r="4" />
+      <text class="tiny" x="22" y="5">path start handle</text>
+    </g>
+    <g transform="translate(820 110)">
+      <path class="handle-path-direction" d="M10 0 L-5 -7 L-5 7 Z" />
+      <text class="tiny" x="22" y="5">direction handle</text>
+    </g>
+    <g transform="translate(1100 110)">
+      <circle class="handle-path-scale" cx="0" cy="0" r="9" />
+      <line x1="-5" y1="0" x2="5" y2="0" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" />
+      <line x1="0" y1="-5" x2="0" y2="5" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" />
+      <text class="tiny" x="22" y="5">scale handle</text>
+    </g>
+    <g transform="translate(1360 110)">
+      <circle class="handle-path-position" cx="0" cy="0" r="12" />
+      <line x1="-5" y1="0" x2="5" y2="0" stroke="rgba(12,18,30,0.9)" stroke-width="1.4" />
+      <line x1="0" y1="-5" x2="0" y2="5" stroke="rgba(12,18,30,0.9)" stroke-width="1.4" />
+      <text class="tiny" x="22" y="5">position handle</text>
+    </g>
+
+    <line class="legend-line" x1="34" y1="160" x2="1528" y2="160" />
+
+    <g transform="translate(34 240)">
+      <rect class="handle-path-closed" x="-9" y="-6" width="18" height="12" />
+      <text class="tiny" x="22" y="5">closed toggle handle</text>
+    </g>
+    <g transform="translate(360 240)">
+      <circle class="handle-path-speed" cx="0" cy="0" r="8.5" fill="none" />
+      <path class="handle-path-speed" d="M0 -6 L4 2 L-4 2 Z" />
+      <text class="tiny" x="22" y="5">speed handle</text>
+    </g>
+    <g transform="translate(636 240)">
+      <circle class="handle-path-radius" cx="0" cy="0" r="8.5" />
+      <circle cx="0" cy="0" r="4.2" fill="none" stroke="rgba(255,255,255,0.92)" stroke-width="1.2" />
+      <text class="tiny" x="22" y="5">radius-point handle</text>
+    </g>
+    <g transform="translate(960 240)">
+      <rect class="chip" x="-36" y="-11" width="72" height="22" rx="9" ry="9" />
+      <text class="chip-text" x="0" y="4">Format</text>
+      <text class="tiny" x="52" y="5">overlay chip</text>
+    </g>
+    <g transform="translate(1276 240)">
+      <circle class="chip-delete" cx="0" cy="0" r="9" />
+      <text class="delete-text" x="0" y="0">x</text>
+      <text class="tiny" x="22" y="5">delete badge</text>
+    </g>
+
+    <line class="legend-line" x1="34" y1="290" x2="1528" y2="290" />
+
+    <text class="meta" x="34" y="346">Source surfaces: [app.js](app.js#L6591) handle generation, [app.js](app.js#L7071) path overlay chip placement, [app.js](app.js#L11156) overlay drawing, and [blob-stroke.js](blob-stroke.js#L377) blob preview rendering.</text>
+    <text class="meta" x="34" y="374">The earlier inspector-oriented [simulation_guides_ui.svg](simulation_guides_ui.svg) file is unchanged; this sheet isolates only the draggable canvas overlay elements.</text>
+  </g>
+</svg>

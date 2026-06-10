@@ -55,7 +55,7 @@ const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
   fillTolerance: 32,
-  spawnRadius: 5,
+  spawnRadius: 25,
   spawnAngle: 0,
   spawnJitter: 0,
   count: 318,
@@ -295,7 +295,7 @@ const MAX_ZOOM = 10;
 const WHEEL_ZOOM_IN = 1.05;
 const WHEEL_ZOOM_OUT = 0.95;
 const WHEEL_ROTATION_DEG = 2;
-const WORKSPACE_MARGIN_PX = 96;
+const WORKSPACE_MARGIN_PX = 200;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
@@ -328,9 +328,12 @@ const SIM_SPAWN_SHAPES = [
 ];
 const DUPLICATE_OFFSET = 14;
 const ANGLE_PRECISION = 10;
-const SIM_POINT_HIT_RADIUS = 24;
+const SIM_POINT_HIT_RADIUS = 40;
 const SIM_LINE_HIT_RADIUS = 12;
-const SIM_DELETE_HIT_RADIUS = 10;
+const SIM_DELETE_HIT_RADIUS = 20;
+const SIM_DELETE_BADGE_OFFSET = 24;
+const SIM_DELETE_BADGE_RADIUS = 20;
+const SIM_DELETE_BADGE_FONT = 24;
 const SIM_PARAM_HANDLE_RADIUS = 8;
 const SIM_PARAM_HIT_RADIUS = 20;
 const SIM_OVERLAY_ACTION_HIT_RADIUS = 12;
@@ -6545,7 +6548,7 @@ export class App {
     };
   }
 
-  _drawSimulationSpawnMaskPreview(ctx, mask, { fillStyle, strokeStyle } = {}) {
+  _drawSimulationSpawnMaskPreview(ctx, mask, { fillStyle, strokeStyle, outlineOnly = false } = {}) {
     if (!mask?.bounds) return;
     ctx.save();
     ctx.fillStyle = fillStyle || 'rgba(255,255,255,0.12)';
@@ -6553,38 +6556,84 @@ export class App {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (Array.isArray(mask.alpha) && mask.alpha.length === mask.width * mask.height) {
+      const alphaAt = (ix, iy) => {
+        if (ix < 0 || iy < 0 || ix >= mask.width || iy >= mask.height) return 0;
+        return mask.alpha[(iy * mask.width) + ix] || 0;
+      };
       for (let index = 0; index < mask.alpha.length; index++) {
         const alpha = mask.alpha[index] || 0;
         if (alpha <= SIM_SPAWN_MASK_ALPHA_THRESHOLD) continue;
         const ix = index % mask.width;
         const iy = Math.floor(index / mask.width);
-        ctx.globalAlpha = Math.max(0.18, alpha / 255);
-        ctx.fillRect(
-          mask.bounds.minX + (ix * mask.cellSize),
-          mask.bounds.minY + (iy * mask.cellSize),
-          mask.cellSize,
-          mask.cellSize,
-        );
+        const cellX = mask.bounds.minX + (ix * mask.cellSize);
+        const cellY = mask.bounds.minY + (iy * mask.cellSize);
+        ctx.globalAlpha = Math.max(outlineOnly ? 0.42 : 0.18, alpha / 255);
+        if (!outlineOnly) {
+          ctx.fillRect(cellX, cellY, mask.cellSize, mask.cellSize);
+          continue;
+        }
+        const boundary =
+          alphaAt(ix - 1, iy) <= SIM_SPAWN_MASK_ALPHA_THRESHOLD ||
+          alphaAt(ix + 1, iy) <= SIM_SPAWN_MASK_ALPHA_THRESHOLD ||
+          alphaAt(ix, iy - 1) <= SIM_SPAWN_MASK_ALPHA_THRESHOLD ||
+          alphaAt(ix, iy + 1) <= SIM_SPAWN_MASK_ALPHA_THRESHOLD;
+        if (!boundary) continue;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cellX + 0.5, cellY + 0.5, Math.max(0, mask.cellSize - 1), Math.max(0, mask.cellSize - 1));
       }
       ctx.globalAlpha = 1;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(mask.bounds.minX, mask.bounds.minY, mask.bounds.width, mask.bounds.height);
     }
-    if (Array.isArray(mask.points) && mask.points.length) {
+    const hasRasterMask = Array.isArray(mask.alpha) && mask.alpha.length === mask.width * mask.height;
+    if (Array.isArray(mask.points) && mask.points.length && (!hasRasterMask || !outlineOnly)) {
       for (let index = 0; index < mask.points.length; index++) {
         const point = mask.points[index];
         ctx.beginPath();
         ctx.arc(point.x, point.y, point.radius, 0, Math.PI * 2);
-        ctx.fill();
+        if (outlineOnly) {
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        } else {
+          ctx.fill();
+        }
         if (index === 0) continue;
         const previous = mask.points[index - 1];
         ctx.beginPath();
-        ctx.lineWidth = Math.max(previous.radius, point.radius) * 2;
+        ctx.lineWidth = outlineOnly ? 1.5 : Math.max(previous.radius, point.radius) * 2;
         ctx.moveTo(previous.x, previous.y);
         ctx.lineTo(point.x, point.y);
         ctx.stroke();
       }
     }
+    ctx.restore();
+  }
+
+  _getSimulationOverlayScratchContext() {
+    if (!this._simulationOverlayScratch) {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      this._simulationOverlayScratch = { canvas, ctx };
+    }
+    const { canvas, ctx } = this._simulationOverlayScratch;
+    if (!ctx) return null;
+    if (canvas.width !== this.W || canvas.height !== this.H) {
+      canvas.width = this.W;
+      canvas.height = this.H;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return { canvas, ctx };
+  }
+
+  _drawSimulationOverlayBand(ctx, alpha, drawBand) {
+    if (!Number.isFinite(alpha) || alpha <= 0 || typeof drawBand !== 'function') return;
+    const scratch = this._getSimulationOverlayScratchContext();
+    if (!scratch?.ctx || !scratch.canvas) return;
+    drawBand(scratch.ctx);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(scratch.canvas, 0, 0);
     ctx.restore();
   }
 
@@ -11038,17 +11087,14 @@ export class App {
     }
     const checkDelete = (target, collection, kind) => {
       const anchor = this._getSimulationDeleteAnchor(target, kind);
-      const dx = x - (anchor.x + 12);
-      const dy = y - (anchor.y - 12);
+      const dx = x - (anchor.x + SIM_DELETE_BADGE_OFFSET);
+      const dy = y - (anchor.y - SIM_DELETE_BADGE_OFFSET);
       return dx * dx + dy * dy <= SIM_DELETE_HIT_RADIUS * SIM_DELETE_HIT_RADIUS ? { kind: 'delete', target, collection, anchorType: kind } : null;
     };
 
     for (const spawn of this._ensureSimulationSpawns()) {
       const del = checkDelete(spawn, 'spawns', 'spawn');
       if (del) return del;
-      if (spawn.mask && this._getSimulationSpawnMaskAlpha(spawn.mask, x, y) > SIM_SPAWN_MASK_ALPHA_THRESHOLD) {
-        return { kind: 'spawn', target: spawn, collection: 'spawns' };
-      }
       if (Math.hypot(x - spawn.x, y - spawn.y) <= SIM_POINT_HIT_RADIUS) return { kind: 'spawn', target: spawn, collection: 'spawns' };
     }
 
@@ -11168,16 +11214,16 @@ export class App {
     const drawDelete = (x, y) => {
       ctx.fillStyle = 'rgba(18,18,22,0.55)';
       ctx.beginPath();
-      ctx.arc(x + 12, y - 12, 9, 0, Math.PI * 2);
+      ctx.arc(x + SIM_DELETE_BADGE_OFFSET, y - SIM_DELETE_BADGE_OFFSET, SIM_DELETE_BADGE_RADIUS, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.22)';
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.fillStyle = 'rgba(255,255,255,0.82)';
-      ctx.font = '10px sans-serif';
+      ctx.font = `${SIM_DELETE_BADGE_FONT}px Segoe UI, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('×', x + 12, y - 12);
+      ctx.fillText('×', x + SIM_DELETE_BADGE_OFFSET, y - SIM_DELETE_BADGE_OFFSET + 0.5);
     };
 
     const drawOverlayChip = (button, label) => {
@@ -11341,8 +11387,9 @@ export class App {
       ctx.lineWidth = isSelected('spawns', spawn) ? 2.4 : 1.5;
       if (spawn.mask) {
         this._drawSimulationSpawnMaskPreview(ctx, spawn.mask, {
-          fillStyle: isSelected('spawns', spawn) ? 'rgba(140,196,255,0.22)' : 'rgba(110,176,255,0.16)',
+          fillStyle: 'rgba(0,0,0,0)',
           strokeStyle: isSelected('spawns', spawn) ? 'rgba(140,196,255,0.96)' : 'rgba(110,176,255,0.78)',
+          outlineOnly: true,
         });
       } else {
         ctx.beginPath();
@@ -11402,9 +11449,10 @@ export class App {
         const renderPoints = this._getSimulationPathRenderPoints(pathItem);
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
         const startSample = this._getSimulationPathSample(pathItem, 0, p);
+        const pathStrokeColor = isSelected('paths', pathItem) ? 'rgba(168,218,255,0.98)' : 'rgba(116,166,255,0.85)';
         ctx.save();
         ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
-        ctx.strokeStyle = isSelected('paths', pathItem) ? 'rgba(168,218,255,0.98)' : 'rgba(116,166,255,0.85)';
+        ctx.strokeStyle = pathStrokeColor;
         ctx.lineWidth = isSelected('paths', pathItem) ? 3 : 2;
         ctx.setLineDash([8, 6]);
         ctx.beginPath();
@@ -11413,36 +11461,45 @@ export class App {
         if (config.closed) ctx.closePath();
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.globalAlpha *= 0.16;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
+        const bandAlpha = (pathItem.enabled !== false ? 1 : 0.3) * 0.16;
         const radiusPointCount = Array.isArray(pathItem.radiusPoints) ? pathItem.radiusPoints.length : 0;
-        if (radiusPointCount && renderPoints.length >= 2) {
-          let traveled = 0;
-          const totalLength = _buildPolylineSegments(renderPoints, config.closed).totalLength;
-          const segmentCount = config.closed ? renderPoints.length : renderPoints.length - 1;
-          for (let index = 0; index < segmentCount; index++) {
-            const start = renderPoints[index];
-            const end = renderPoints[(index + 1) % renderPoints.length];
-            const length = Math.hypot(end.x - start.x, end.y - start.y);
-            if (length <= 1e-6) continue;
-            const startT = totalLength > 1e-6 ? traveled / totalLength : 0;
-            const endT = totalLength > 1e-6 ? (traveled + length) / totalLength : startT;
-            const segmentRadius = Math.max(
-              _getSimulationPathRadiusAt(pathItem, startT, config.radius, config.closed),
-              _getSimulationPathRadiusAt(pathItem, endT, config.radius, config.closed),
-            );
-            ctx.lineWidth = Math.max(2, segmentRadius * 2);
-            ctx.beginPath();
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
-            ctx.stroke();
-            traveled += length;
+        this._drawSimulationOverlayBand(ctx, bandAlpha, bandCtx => {
+          bandCtx.save();
+          bandCtx.strokeStyle = pathStrokeColor;
+          bandCtx.lineCap = 'round';
+          bandCtx.lineJoin = 'round';
+          if (radiusPointCount && renderPoints.length >= 2) {
+            let traveled = 0;
+            const totalLength = _buildPolylineSegments(renderPoints, config.closed).totalLength;
+            const segmentCount = config.closed ? renderPoints.length : renderPoints.length - 1;
+            for (let index = 0; index < segmentCount; index++) {
+              const start = renderPoints[index];
+              const end = renderPoints[(index + 1) % renderPoints.length];
+              const length = Math.hypot(end.x - start.x, end.y - start.y);
+              if (length <= 1e-6) continue;
+              const startT = totalLength > 1e-6 ? traveled / totalLength : 0;
+              const endT = totalLength > 1e-6 ? (traveled + length) / totalLength : startT;
+              const segmentRadius = Math.max(
+                _getSimulationPathRadiusAt(pathItem, startT, config.radius, config.closed),
+                _getSimulationPathRadiusAt(pathItem, endT, config.radius, config.closed),
+              );
+              bandCtx.lineWidth = Math.max(2, segmentRadius * 2);
+              bandCtx.beginPath();
+              bandCtx.moveTo(start.x, start.y);
+              bandCtx.lineTo(end.x, end.y);
+              bandCtx.stroke();
+              traveled += length;
+            }
+          } else {
+            bandCtx.lineWidth = config.radius * 2;
+            bandCtx.beginPath();
+            bandCtx.moveTo(renderPoints[0].x, renderPoints[0].y);
+            for (let i = 1; i < renderPoints.length; i++) bandCtx.lineTo(renderPoints[i].x, renderPoints[i].y);
+            if (config.closed) bandCtx.closePath();
+            bandCtx.stroke();
           }
-        } else {
-          ctx.lineWidth = config.radius * 2;
-          ctx.stroke();
-        }
+          bandCtx.restore();
+        });
         if (target) {
           ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
           ctx.fillStyle = isSelected('paths', pathItem) ? 'rgba(196,233,255,0.98)' : 'rgba(136,190,255,0.95)';
