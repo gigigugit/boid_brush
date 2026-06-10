@@ -8533,19 +8533,20 @@ export class App {
     this._withSimulationRuntimeContext(runtime, () => {
       runtime.brushInstance.resetSimulationPlaybackState?.({ compositePreview: false });
       this._normalizeSimulationData();
-      this._constrainSimulationDataToBounds(runtime.brush, p);
+      const runtimeParams = this.getP();
+      this._constrainSimulationDataToBounds(runtime.brush, runtimeParams);
       const allSpawns = this._ensureSimulationSpawns(runtime.brush);
       const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
       const spawn = spawns[0] || allSpawns[0];
       for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
         pathItem.travelDistance = 0;
       }
-      this._updateSimulationLeader(0, p);
+      this._updateSimulationLeader(0, runtimeParams);
       runtime.leaderX = this.leaderX;
       runtime.leaderY = this.leaderY;
       runtime.brushInstance.onDown?.(spawn.x, spawn.y, 1);
-      runtime.brushInstance.configureSimulation?.(this._getSimulationBrushData(runtime.brush), p);
-      runtime.brushInstance.ensureSimulationSpawnAppearance?.(p);
+      runtime.brushInstance.configureSimulation?.(this._getSimulationBrushData(runtime.brush), runtimeParams);
+      runtime.brushInstance.ensureSimulationSpawnAppearance?.(runtimeParams);
     });
   }
 
@@ -8626,10 +8627,11 @@ export class App {
     for (const runtime of this.simulation.runtimeSessions) {
       if (!runtime?.brushInstance) continue;
       this._withSimulationRuntimeContext(runtime, () => {
-        this._updateSimulationLeader(elapsed, p);
+        const runtimeParams = this.getP();
+        this._updateSimulationLeader(elapsed, runtimeParams);
         runtime.leaderX = this.leaderX;
         runtime.leaderY = this.leaderY;
-        this._applySimulationEphemeralFade(p);
+        this._applySimulationEphemeralFade(runtimeParams);
         runtime.brushInstance.onFrame?.(elapsed);
       });
     }
