@@ -10112,7 +10112,6 @@ export class App {
       const field = el.dataset.simField;
       const type = el.dataset.simType || 'number';
       const scale = parseFloat(el.dataset.simScale || '1');
-      let undoQueued = false;
       const clampToInputBounds = (control, value, fallbackMin = Number.NEGATIVE_INFINITY) => {
         const minVal = control.min !== '' ? +control.min : fallbackMin;
         const maxVal = control.max !== '' ? +control.max : Number.POSITIVE_INFINITY;
@@ -10158,13 +10157,21 @@ export class App {
         }
         return true;
       };
+      const getUndoToken = () => {
+        const entry = this._getSelectedSimulationEntry();
+        return entry ? `${entry.collection}:${entry.id}:${field}` : null;
+      };
       const ensureUndo = () => {
-        if (undoQueued) return;
+        const token = getUndoToken();
+        if (!token || this._activeSimulationFieldUndoToken === token) return;
         this.pushUndo();
-        undoQueued = true;
+        this._activeSimulationFieldUndoToken = token;
       };
       const resetUndo = () => {
-        undoQueued = false;
+        const token = getUndoToken();
+        if (!token || this._activeSimulationFieldUndoToken === token) {
+          this._activeSimulationFieldUndoToken = null;
+        }
       };
       const syncFieldLive = () => {
         if (!writeField()) return false;
@@ -10236,13 +10243,13 @@ export class App {
       // Commit on change + trigger re-render.
       const applyField = () => {
         ensureUndo();
-        if (!syncFieldLive()) {
+        try {
+          if (!syncFieldLive()) return;
+          this._renderSimulationInspector();
+          this._maybeAutoSaveSession();
+        } finally {
           resetUndo();
-          return;
         }
-        this._renderSimulationInspector();
-        this._maybeAutoSaveSession();
-        resetUndo();
       };
       el.addEventListener(el.type === 'checkbox' ? 'input' : 'change', applyField);
       el.addEventListener('blur', resetUndo);
