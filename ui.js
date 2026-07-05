@@ -1012,9 +1012,10 @@ export function buildSidebar(app) {
   document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
     app._showSimulationSetupExplorer?.(event.currentTarget);
   });
-  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
-    el.addEventListener('input', () => app._syncActiveSimulationSessionFromDraft?.());
-    el.addEventListener('change', () => app._syncActiveSimulationSessionFromDraft?.());
+  const syncSimulationDraftFromSidebar = () => app._syncSimulationSessionDraftUi?.();
+  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
+    el.addEventListener('input', syncSimulationDraftFromSidebar);
+    el.addEventListener('change', syncSimulationDraftFromSidebar);
   });
   app._refreshSensingLayerSourceUi?.();
   app._syncSimulationSessionContextUi?.();

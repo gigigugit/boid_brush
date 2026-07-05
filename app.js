@@ -7593,6 +7593,23 @@ export class App {
     if (document.getElementById('autoSaveSession')?.checked) this.saveSession();
   }
 
+  _queueSimulationInspectorRefresh() {
+    if (this._simulationInspectorRefreshQueued) return;
+    this._simulationInspectorRefreshQueued = true;
+    const flush = () => {
+      this._simulationInspectorRefreshQueued = false;
+      this._renderSimulationInspector();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+    else setTimeout(flush, 0);
+  }
+
+  _syncSimulationSessionDraftUi({ rerenderInspector = true } = {}) {
+    this._syncActiveSimulationSessionFromDraft();
+    this._syncSimulationSessionContextUi();
+    if (rerenderInspector) this._queueSimulationInspectorRefresh();
+  }
+
   _captureSimulationSessionControlState() {
     const controls = {};
     const sidebar = document.getElementById('sidebar');
@@ -10095,6 +10112,7 @@ export class App {
       const field = el.dataset.simField;
       const type = el.dataset.simType || 'number';
       const scale = parseFloat(el.dataset.simScale || '1');
+      let undoQueued = false;
       const clampToInputBounds = (control, value, fallbackMin = Number.NEGATIVE_INFINITY) => {
         const minVal = control.min !== '' ? +control.min : fallbackMin;
         const maxVal = control.max !== '' ? +control.max : Number.POSITIVE_INFINITY;
@@ -10140,6 +10158,19 @@ export class App {
         }
         return true;
       };
+      const ensureUndo = () => {
+        if (undoQueued) return;
+        this.pushUndo();
+        undoQueued = true;
+      };
+      const resetUndo = () => {
+        undoQueued = false;
+      };
+      const syncFieldLive = () => {
+        if (!writeField()) return false;
+        this._syncSimulationSessionDraftUi({ rerenderInspector: false });
+        return true;
+      };
 
       // Live label update for range sliders (no re-render while dragging).
       if (el.type === 'range') {
@@ -10161,6 +10192,8 @@ export class App {
           // Restore reset-button opacity once the user moves the slider.
           const resetBtn = controlRoot.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
           if (resetBtn) resetBtn.style.opacity = '1';
+          ensureUndo();
+          syncFieldLive();
         });
       } else if (el.type === 'color') {
         el.addEventListener('input', () => {
@@ -10170,6 +10203,8 @@ export class App {
           const normalized = _normalizeHexColor(el.value, '#000000');
           if (lbl) lbl.textContent = normalized.toUpperCase();
           if (resetBtn) resetBtn.style.opacity = '1';
+          ensureUndo();
+          syncFieldLive();
         });
       } else if (el.type === 'number') {
         el.addEventListener('input', () => {
@@ -10193,17 +10228,24 @@ export class App {
           }
           if (rangeInput) rangeInput.value = type === 'angle' ? String(Math.round(numericValue)) : String(scale ? numericValue / scale : numericValue);
           if (resetBtn) resetBtn.style.opacity = '1';
+          ensureUndo();
+          syncFieldLive();
         });
       }
 
       // Commit on change + trigger re-render.
       const applyField = () => {
-        this.pushUndo();
-        if (!writeField()) return;
+        ensureUndo();
+        if (!syncFieldLive()) {
+          resetUndo();
+          return;
+        }
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
+        resetUndo();
       };
       el.addEventListener(el.type === 'checkbox' ? 'input' : 'change', applyField);
+      el.addEventListener('blur', resetUndo);
     });
 
     // Reset buttons — clear an override field and re-render.
