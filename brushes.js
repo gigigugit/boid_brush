@@ -1490,31 +1490,12 @@ export class BoidBrush {
       return false;
     }
     if (renderer.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
-      // Attempt immediate commit from the presented WebGPU canvas so pointer-up
-      // can persist paint without waiting for async preview-sync completion.
-      const immediateOk = renderer.copyTo2D(
-        layer.ctx,
-        layer.canvas.width,
-        layer.canvas.height,
-        layer.alphaLock ? 'source-atop' : 'source-over',
-      );
-      if (immediateOk) {
-        renderer.clearSurface?.(layer.canvas.width, layer.canvas.height);
-        layer.gpuPreviewCanvas = null;
-        this._gpuPreviewActive = false;
-        this._gpuPreviewLayer = null;
-        renderer.onPreviewUpdated = null;
-        this._gpuPreviewRenderer = null;
-        this._pushRenderDebug('commit-gpu-preview', {
-          ok: true,
-          rendererKind: renderer.kind,
-          copiedFromLivePreview: false,
-          immediate: true,
-        });
-        layer.dirty = true;
-        this.app.compositeAllLayers();
-        return true;
-      }
+      // The preview sync is still in-flight (device.queue.onSubmittedWorkDone has
+      // not resolved yet). Reading directly from the WebGPU swapchain canvas at
+      // this point returns the previous frame's content (or blank on the first
+      // stroke), so the immediate-commit path is omitted. Instead, defer the
+      // commit to onPreviewUpdated, which fires once _syncPreviewCanvas has
+      // confirmed the GPU work is done and captured the frame into previewCanvas.
       this._pushRenderDebug('commit-gpu-preview-deferred', {
         rendererKind: renderer.kind,
         previewSyncPending: !!renderer._previewSyncPending,

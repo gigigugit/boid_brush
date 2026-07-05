@@ -385,6 +385,13 @@ const SIM_PATH_SIZE_HANDLE_OFFSET = 14;
 const SIM_PATH_TOGGLE_HANDLE_OFFSET = 18;
 const SIM_PATH_SPEED_HANDLE_OFFSET = 18;
 const SIM_PATH_SPEED_HANDLE_SCALE = 18;
+const SIM_PATH_STRENGTH_HANDLE_OFFSET = 18;
+const SIM_PATH_STRENGTH_HANDLE_SCALE = 30;
+const SIM_PATH_STRENGTH_HANDLE_COLOR = 'rgba(100,220,255,0.98)';
+const SIM_PATH_STRENGTH_MIN = -2;
+const SIM_PATH_STRENGTH_MAX = 2;
+const SIM_PATH_OVERLAY_TOGGLE_GAP = 6;
+const SIM_PATH_OVERLAY_TOGGLE_SIZE = 22;
 const SIM_PATH_PRIMITIVE_DEFAULT_RADIUS = 84;
 const SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO = 0.65;
 const SIM_PATH_PRIMITIVE_SAMPLE_COUNT = 40;
@@ -1560,6 +1567,57 @@ function _normalizeSimulationPathRadiusPoints(points, nextIdRef, fallbackRadius 
     .sort((left, right) => left.t - right.t);
 }
 
+function _normalizeSimulationPathStrength(value) {
+  return _clamp(Number.isFinite(value) ? value : DEFAULT_PATH_STRENGTH, SIM_PATH_STRENGTH_MIN, SIM_PATH_STRENGTH_MAX);
+}
+
+function _normalizeSimulationPathStrengthPoints(points, nextIdRef, fallbackStrength = DEFAULT_PATH_STRENGTH) {
+  const rawPoints = Array.isArray(points) ? points : [];
+  return rawPoints
+    .filter(point => Number.isFinite(point?.t) || Number.isFinite(point?.strength))
+    .map(point => ({
+      id: Number.isFinite(point?.id) ? point.id : nextIdRef(),
+      t: _clamp01(Number.isFinite(point?.t) ? point.t : 0.5),
+      strength: _normalizeSimulationPathStrength(Number.isFinite(point?.strength) ? point.strength : fallbackStrength),
+    }))
+    .sort((left, right) => left.t - right.t);
+}
+
+function _getSimulationPathStrengthAt(pathItem, pathT, baseStrength = DEFAULT_PATH_STRENGTH, closed = false) {
+  const points = Array.isArray(pathItem?.strengthPoints) ? pathItem.strengthPoints.slice().sort((left, right) => left.t - right.t) : [];
+  const fallbackStrength = _normalizeSimulationPathStrength(baseStrength);
+  if (!points.length) return fallbackStrength;
+  const t = closed ? _wrapIndex(pathT, 1) : _clamp01(pathT);
+  if (closed) {
+    if (points.length === 1) return _normalizeSimulationPathStrength(points[0].strength);
+    for (let index = 0; index < points.length - 1; index++) {
+      const start = points[index];
+      const next = points[index + 1];
+      if (t < start.t || t > next.t) continue;
+      const span = Math.max(1e-6, next.t - start.t);
+      const mix = _smoothstep01((t - start.t) / span);
+      return _lerp(start.strength, next.strength, mix);
+    }
+    const start = points[points.length - 1];
+    const next = points[0];
+    const sampleT = t < next.t ? t + 1 : t;
+    const endT = next.t + 1;
+    const span = Math.max(1e-6, endT - start.t);
+    const mix = _smoothstep01((sampleT - start.t) / span);
+    return _lerp(start.strength, next.strength, mix);
+  }
+  const nodes = [{ t: 0, strength: fallbackStrength }, ...points, { t: 1, strength: fallbackStrength }];
+  for (let index = 1; index < nodes.length; index++) {
+    const start = nodes[index - 1];
+    const end = nodes[index];
+    if (t > end.t && index < nodes.length - 1) continue;
+    const span = Math.max(1e-6, end.t - start.t);
+    const mix = _smoothstep01((t - start.t) / span);
+    return _lerp(start.strength, end.strength, mix);
+  }
+  return nodes[nodes.length - 1].strength;
+}
+
 function _getNextSimulationPathControlPointT(points, closed = false) {
   const values = (Array.isArray(points) ? points : [])
     .map(point => _clamp01(Number.isFinite(point?.t) ? point.t : NaN))
@@ -1934,6 +1992,9 @@ export class App {
     };
     this._simPathOverlayUi = {
       preferredSideByPath: new Map(),
+      showSpeedHandles: true,
+      showRadiusHandles: true,
+      showStrengthHandles: true,
     };
     this._simulationContextOverride = null;
     this._simulationSessionRoutingPanel = null;
@@ -5895,7 +5956,7 @@ export class App {
             id: pathItem?.id || this.simulation.nextId++,
             enabled: pathItem?.enabled !== false,
             points,
-            strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : undefined,
+            strength: Number.isFinite(pathItem?.strength) ? _normalizeSimulationPathStrength(pathItem.strength) : undefined,
             radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
             influenceRadius: Number.isFinite(pathItem?.influenceRadius) ? Math.max(1, pathItem.influenceRadius) : undefined,
             closed: !!pathItem?.closed,
@@ -5914,6 +5975,7 @@ export class App {
             pathType: _normalizeSimulationPathType(pathItem?.pathType),
             speedPoints: _normalizeSimulationPathSpeedPoints(pathItem?.speedPoints, () => this.simulation.nextId++),
             radiusPoints: _normalizeSimulationPathRadiusPoints(pathItem?.radiusPoints, () => this.simulation.nextId++, pathItem?.radius),
+            strengthPoints: _normalizeSimulationPathStrengthPoints(pathItem?.strengthPoints, () => this.simulation.nextId++, pathItem?.strength),
             travelDistance: Number.isFinite(pathItem?.travelDistance) ? pathItem.travelDistance : 0,
           };
           if (primitiveKind) {
@@ -6006,7 +6068,7 @@ export class App {
   _resolveSimulationPathConfig(pathItem, p = this.getP()) {
     const radius = Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : DEFAULT_PATH_RADIUS;
     return {
-      strength: Number.isFinite(pathItem?.strength) ? Math.max(0, pathItem.strength) : DEFAULT_PATH_STRENGTH,
+      strength: _normalizeSimulationPathStrength(Number.isFinite(pathItem?.strength) ? pathItem.strength : DEFAULT_PATH_STRENGTH),
       radius,
       influenceRadius: Number.isFinite(pathItem?.influenceRadius) ? Math.max(radius, pathItem.influenceRadius) : radius,
       closed: !!pathItem?.closed,
@@ -6044,11 +6106,13 @@ export class App {
       : 0;
     const speed = _getSimulationPathSpeedAt(pathItem, pathT, config.speed, config.closed);
     const radius = _getSimulationPathRadiusAt(pathItem, pathT, config.radius, config.closed);
+    const strength = _getSimulationPathStrengthAt(pathItem, pathT, config.strength, config.closed);
     return {
       ...sample,
       config: {
         ...config,
         radius,
+        strength,
         influenceRadius: Math.max(radius, Number.isFinite(config.influenceRadius) ? config.influenceRadius : radius),
       },
       renderPoints,
@@ -6058,6 +6122,7 @@ export class App {
       pathT,
       speed,
       radius,
+      strength,
     };
   }
 
@@ -6810,6 +6875,30 @@ export class App {
           });
         }
       }
+      if (Array.isArray(target.strengthPoints) && sample.totalLength > 1e-6) {
+        for (const strengthPoint of target.strengthPoints) {
+          const pointSample = _samplePolylinePointAtDistance(sample.renderPoints, sample.totalLength * _clamp01(strengthPoint.t), sample.config.closed);
+          if (!pointSample) continue;
+          // Use right normal (opposite side from speed/radius handles)
+          const normalX = pointSample.tangentY;
+          const normalY = -pointSample.tangentX;
+          const s = _normalizeSimulationPathStrength(strengthPoint.strength);
+          const offset = SIM_PATH_STRENGTH_HANDLE_OFFSET + (s * SIM_PATH_STRENGTH_HANDLE_SCALE);
+          handles.push({
+            kind: 'paramHandle',
+            handleType: 'pathStrength',
+            selectionKind: kind,
+            field: 'strengthPoints',
+            collection: entry.collection,
+            target,
+            strengthPointId: strengthPoint.id,
+            anchorX: pointSample.x,
+            anchorY: pointSample.y,
+            x: pointSample.x + (normalX * offset),
+            y: pointSample.y + (normalY * offset),
+          });
+        }
+      }
       return _sanitizeSimulationHandles(handles);
     }
     return [];
@@ -6934,6 +7023,23 @@ export class App {
       radiusPoint.t = _clamp01(closest.distanceAlongPath / closest.totalLength);
       radiusPoint.radius = Math.max(1, (offset - SIM_PATH_RADIUS_HANDLE_OFFSET) / SIM_PATH_RADIUS_HANDLE_SCALE);
       handle.target.radiusPoints.sort((left, right) => left.t - right.t);
+    }
+    if (handle.handleType === 'pathStrength') {
+      const strengthPoint = Array.isArray(handle.target.strengthPoints)
+        ? handle.target.strengthPoints.find(point => point.id === handle.strengthPointId)
+        : null;
+      if (!strengthPoint) return;
+      const config = this._resolveSimulationPathConfig(handle.target);
+      const renderPoints = this._getSimulationPathRenderPoints(handle.target);
+      const closest = _getClosestPolylineDistance(renderPoints, x, y, config.closed);
+      if (!closest || closest.totalLength <= 1e-6) return;
+      const normalX = closest.tangentY;
+      const normalY = -closest.tangentX;
+      const offset = ((x - closest.x) * normalX) + ((y - closest.y) * normalY);
+      strengthPoint.t = _clamp01(closest.distanceAlongPath / closest.totalLength);
+      strengthPoint.strength = _normalizeSimulationPathStrength((offset - SIM_PATH_STRENGTH_HANDLE_OFFSET) / SIM_PATH_STRENGTH_HANDLE_SCALE);
+      handle.target.strengthPoints.sort((left, right) => left.t - right.t);
+      return;
     }
   }
 
@@ -7086,6 +7192,7 @@ export class App {
       pathType: 'standard',
       speedPoints: [],
       radiusPoints: [],
+      strengthPoints: [],
       closed: true,
       startOffset: 0,
       direction: 'forward',
@@ -7135,12 +7242,29 @@ export class App {
     target.radiusPoints.sort((left, right) => left.t - right.t);
   }
 
+  _addSimulationPathStrengthPoint(target) {
+    if (!target) return;
+    if (!Array.isArray(target.strengthPoints)) target.strengthPoints = [];
+    const t = _getNextSimulationPathControlPointT(target.strengthPoints, !!target.closed);
+    target.strengthPoints.push({
+      id: this.simulation.nextId++,
+      t,
+      strength: _normalizeSimulationPathStrength(Number.isFinite(target.strength) ? target.strength : DEFAULT_PATH_STRENGTH),
+    });
+    target.strengthPoints.sort((left, right) => left.t - right.t);
+  }
+
+  _removeSimulationPathStrengthPoint(target, strengthPointId) {
+    if (!target || !Array.isArray(target.strengthPoints)) return;
+    target.strengthPoints = target.strengthPoints.filter(point => point.id !== strengthPointId);
+  }
+
   _getSimulationPathSpeedOverlayControls(target, p = this.getP()) {
-    if (!target?.points?.length) return { addButton: null, radiusAddButton: null, formatButton: null, deleteButtons: [], radiusDeleteButtons: [] };
+    if (!target?.points?.length) return { addButton: null, radiusAddButton: null, strengthAddButton: null, formatButton: null, deleteButtons: [], radiusDeleteButtons: [], strengthDeleteButtons: [], speedToggleButton: null, radiusToggleButton: null, strengthToggleButton: null };
     const bounds = _getSimulationPathBounds(target.points);
     const allHandles = this._getSimulationParameterHandles({ kind: 'path', collection: 'paths', target }, p);
     const handles = allHandles
-      .filter(handle => handle.handleType === 'pathSpeed' || handle.handleType === 'pathRadius');
+      .filter(handle => handle.handleType === 'pathSpeed' || handle.handleType === 'pathRadius' || handle.handleType === 'pathStrength');
     const deleteButtons = handles.filter(handle => handle.handleType === 'pathSpeed').map(handle => ({
       kind: 'overlayAction',
       action: 'deleteSpeedPoint',
@@ -7159,6 +7283,15 @@ export class App {
       x: handle.x + SIM_PATH_SPEED_DELETE_OFFSET,
       y: handle.y - SIM_PATH_SPEED_DELETE_OFFSET,
     }));
+    const strengthDeleteButtons = handles.filter(handle => handle.handleType === 'pathStrength').map(handle => ({
+      kind: 'overlayAction',
+      action: 'deleteStrengthPoint',
+      target,
+      collection: 'paths',
+      strengthPointId: handle.strengthPointId,
+      x: handle.x + SIM_PATH_SPEED_DELETE_OFFSET,
+      y: handle.y - SIM_PATH_SPEED_DELETE_OFFSET,
+    }));
     const makeOverlayButton = (action, x, y, width, height) => ({
       kind: 'overlayAction',
       action,
@@ -7171,7 +7304,11 @@ export class App {
     });
     let addButton = null;
     let radiusAddButton = null;
+    let strengthAddButton = null;
     let formatButton = null;
+    let speedToggleButton = null;
+    let radiusToggleButton = null;
+    let strengthToggleButton = null;
     if (bounds) {
       const maxChipWidth = Math.max(SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_WIDTH);
       const centerX = _clamp(
@@ -7184,14 +7321,16 @@ export class App {
         ...allHandles.map(handle => handle.y - SIM_PARAM_HIT_RADIUS),
         ...deleteButtons.map(button => button.y - SIM_OVERLAY_ACTION_HIT_RADIUS),
         ...radiusDeleteButtons.map(button => button.y - SIM_OVERLAY_ACTION_HIT_RADIUS),
+        ...strengthDeleteButtons.map(button => button.y - SIM_OVERLAY_ACTION_HIT_RADIUS),
       );
       const occupiedBottom = Math.max(
         bounds.maxY,
         ...allHandles.map(handle => handle.y + SIM_PARAM_HIT_RADIUS),
         ...deleteButtons.map(button => button.y + SIM_OVERLAY_ACTION_HIT_RADIUS),
         ...radiusDeleteButtons.map(button => button.y + SIM_OVERLAY_ACTION_HIT_RADIUS),
+        ...strengthDeleteButtons.map(button => button.y + SIM_OVERLAY_ACTION_HIT_RADIUS),
       );
-      const stackHeight = (SIM_PATH_FORMAT_BUTTON_HEIGHT * 3) + (SIM_PATH_OVERLAY_ROW_GAP * 2);
+      const stackHeight = (SIM_PATH_FORMAT_BUTTON_HEIGHT * 4) + (SIM_PATH_OVERLAY_ROW_GAP * 3);
       const minTop = SIM_PATH_OVERLAY_SAFE_MARGIN;
       const maxTop = Math.max(minTop, this.H - SIM_PATH_OVERLAY_SAFE_MARGIN - stackHeight);
       const aboveTop = occupiedTop - SIM_PATH_OVERLAY_STACK_GAP - stackHeight;
@@ -7216,25 +7355,30 @@ export class App {
       const stackTop = _clamp(placeBelow ? belowTop : aboveTop, minTop, maxTop);
       const rowCenters = [];
       let nextTop = stackTop;
-      for (let rowIndex = 0; rowIndex < 3; rowIndex++) {
+      for (let rowIndex = 0; rowIndex < 4; rowIndex++) {
         rowCenters.push(nextTop + (SIM_PATH_FORMAT_BUTTON_HEIGHT * 0.5));
         nextTop += SIM_PATH_FORMAT_BUTTON_HEIGHT + SIM_PATH_OVERLAY_ROW_GAP;
       }
+      const toggleX = centerX + (SIM_PATH_SPEED_ADD_BUTTON_WIDTH * 0.5) + SIM_PATH_OVERLAY_TOGGLE_GAP + (SIM_PATH_OVERLAY_TOGGLE_SIZE * 0.5);
       if (placeBelow) {
-        [addButton, radiusAddButton, formatButton] = [
-          makeOverlayButton('addSpeedPoint', centerX, rowCenters[0], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
-          makeOverlayButton('addRadiusPoint', centerX, rowCenters[1], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
-          makeOverlayButton('showFormat', centerX, rowCenters[2], SIM_PATH_FORMAT_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_HEIGHT),
-        ];
+        addButton = makeOverlayButton('addSpeedPoint', centerX, rowCenters[0], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT);
+        radiusAddButton = makeOverlayButton('addRadiusPoint', centerX, rowCenters[1], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT);
+        strengthAddButton = makeOverlayButton('addStrengthPoint', centerX, rowCenters[2], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT);
+        formatButton = makeOverlayButton('showFormat', centerX, rowCenters[3], SIM_PATH_FORMAT_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_HEIGHT);
+        speedToggleButton = makeOverlayButton('toggleSpeedHandles', toggleX, rowCenters[0], SIM_PATH_OVERLAY_TOGGLE_SIZE, SIM_PATH_OVERLAY_TOGGLE_SIZE);
+        radiusToggleButton = makeOverlayButton('toggleRadiusHandles', toggleX, rowCenters[1], SIM_PATH_OVERLAY_TOGGLE_SIZE, SIM_PATH_OVERLAY_TOGGLE_SIZE);
+        strengthToggleButton = makeOverlayButton('toggleStrengthHandles', toggleX, rowCenters[2], SIM_PATH_OVERLAY_TOGGLE_SIZE, SIM_PATH_OVERLAY_TOGGLE_SIZE);
       } else {
-        [formatButton, radiusAddButton, addButton] = [
-          makeOverlayButton('showFormat', centerX, rowCenters[0], SIM_PATH_FORMAT_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_HEIGHT),
-          makeOverlayButton('addRadiusPoint', centerX, rowCenters[1], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
-          makeOverlayButton('addSpeedPoint', centerX, rowCenters[2], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT),
-        ];
+        formatButton = makeOverlayButton('showFormat', centerX, rowCenters[0], SIM_PATH_FORMAT_BUTTON_WIDTH, SIM_PATH_FORMAT_BUTTON_HEIGHT);
+        strengthAddButton = makeOverlayButton('addStrengthPoint', centerX, rowCenters[1], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT);
+        radiusAddButton = makeOverlayButton('addRadiusPoint', centerX, rowCenters[2], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT);
+        addButton = makeOverlayButton('addSpeedPoint', centerX, rowCenters[3], SIM_PATH_SPEED_ADD_BUTTON_WIDTH, SIM_PATH_SPEED_ADD_BUTTON_HEIGHT);
+        strengthToggleButton = makeOverlayButton('toggleStrengthHandles', toggleX, rowCenters[1], SIM_PATH_OVERLAY_TOGGLE_SIZE, SIM_PATH_OVERLAY_TOGGLE_SIZE);
+        radiusToggleButton = makeOverlayButton('toggleRadiusHandles', toggleX, rowCenters[2], SIM_PATH_OVERLAY_TOGGLE_SIZE, SIM_PATH_OVERLAY_TOGGLE_SIZE);
+        speedToggleButton = makeOverlayButton('toggleSpeedHandles', toggleX, rowCenters[3], SIM_PATH_OVERLAY_TOGGLE_SIZE, SIM_PATH_OVERLAY_TOGGLE_SIZE);
       }
     }
-    return { addButton, radiusAddButton, formatButton, deleteButtons, radiusDeleteButtons };
+    return { addButton, radiusAddButton, strengthAddButton, formatButton, deleteButtons, radiusDeleteButtons, strengthDeleteButtons, speedToggleButton, radiusToggleButton, strengthToggleButton };
   }
 
   _removeSimulationPathSpeedPoint(target, speedPointId) {
@@ -7264,6 +7408,9 @@ export class App {
       }
       if (Array.isArray(clone.radiusPoints)) {
         clone.radiusPoints = clone.radiusPoints.map(point => ({ ...point, id: this.simulation.nextId++ }));
+      }
+      if (Array.isArray(clone.strengthPoints)) {
+        clone.strengthPoints = clone.strengthPoints.map(point => ({ ...point, id: this.simulation.nextId++ }));
       }
     } else if (clone.mask?.bounds) {
       clone.x += DUPLICATE_OFFSET;
@@ -8867,7 +9014,14 @@ export class App {
       if (group.kind === 'path') {
         const pointCount = Array.isArray(item.points) ? item.points.length : 0;
         const speedPoints = Array.isArray(item.speedPoints) ? item.speedPoints.length : 0;
-        return `${item.closed ? 'Closed' : 'Open'} · ${pointCount} pts · ${speedPoints} speed pts`;
+        const radiusPoints = Array.isArray(item.radiusPoints) ? item.radiusPoints.length : 0;
+        const strengthPoints = Array.isArray(item.strengthPoints) ? item.strengthPoints.length : 0;
+        const extras = [
+          speedPoints ? `${speedPoints} spd` : '',
+          radiusPoints ? `${radiusPoints} rad` : '',
+          strengthPoints ? `${strengthPoints} str` : '',
+        ].filter(Boolean).join(' · ');
+        return `${item.closed ? 'Closed' : 'Open'} · ${pointCount} pts${extras ? ` · ${extras}` : ''}`;
       }
       if (group.kind === 'edge') {
         return `${Array.isArray(item.points) ? item.points.length : 0} pts · ${Math.round(item.radius || 0)}px radius`;
@@ -10624,6 +10778,7 @@ export class App {
     if (hit?.kind === 'overlayAction') {
       const selectionKind = hit.collection === 'spawns' ? 'spawn' : 'path';
       this._setSimulationSelection({ collection: hit.collection, kind: selectionKind, target: hit.target });
+      const isToggle = hit.action === 'toggleSpeedHandles' || hit.action === 'toggleRadiusHandles' || hit.action === 'toggleStrengthHandles';
       if (hit.action === 'addSpeedPoint') {
         this.pushUndo();
         this._addSimulationPathSpeedPoint(hit.target);
@@ -10636,9 +10791,21 @@ export class App {
       } else if (hit.action === 'deleteRadiusPoint') {
         this.pushUndo();
         this._removeSimulationPathRadiusPoint(hit.target, hit.radiusPointId);
+      } else if (hit.action === 'addStrengthPoint') {
+        this.pushUndo();
+        this._addSimulationPathStrengthPoint(hit.target);
+      } else if (hit.action === 'deleteStrengthPoint') {
+        this.pushUndo();
+        this._removeSimulationPathStrengthPoint(hit.target, hit.strengthPointId);
+      } else if (hit.action === 'toggleSpeedHandles') {
+        this._simPathOverlayUi.showSpeedHandles = !this._simPathOverlayUi.showSpeedHandles;
+      } else if (hit.action === 'toggleRadiusHandles') {
+        this._simPathOverlayUi.showRadiusHandles = !this._simPathOverlayUi.showRadiusHandles;
+      } else if (hit.action === 'toggleStrengthHandles') {
+        this._simPathOverlayUi.showStrengthHandles = !this._simPathOverlayUi.showStrengthHandles;
       }
       this._renderSimulationInspector();
-      this._maybeAutoSaveSession();
+      if (!isToggle) this._maybeAutoSaveSession();
       return true;
     }
     if (hit?.kind === 'paramHandle' && hit.handleType === 'pathClosed') {
@@ -10957,7 +11124,7 @@ export class App {
         if (pathItem?.enabled === false || !pathItem?.points?.length) continue;
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
         if (!target?.config) continue;
-        const peak = target.config.strength * Math.max(0, p.simSpeed || 0) * guideSpeedScale;
+        const peak = Math.abs(target.config.strength) * Math.max(0, p.simSpeed || 0) * guideSpeedScale;
         if (peak <= 1e-4) continue;
         pathHotspots.push({
           x: target.x,
@@ -10965,6 +11132,7 @@ export class App {
           radius: Math.max(target.config.radius || 0, target.config.influenceRadius || 0, 1),
           coreRadius: Math.max(1, target.config.radius || 0),
           peak,
+          repel: target.config.strength < 0,
         });
         if (peak > maxAbs) maxAbs = peak;
       }
@@ -10988,8 +11156,10 @@ export class App {
     for (const hotspot of pathHotspots) {
       const alpha = Math.min(1, hotspot.peak / maxAbs);
       const gradient = ctx.createRadialGradient(hotspot.x, hotspot.y, 0, hotspot.x, hotspot.y, hotspot.radius);
-      gradient.addColorStop(0, `rgba(255, 72, 72, ${(alpha * 0.95).toFixed(4)})`);
-      gradient.addColorStop(Math.min(1, Math.max(0.2, hotspot.coreRadius / hotspot.radius)), `rgba(255, 72, 72, ${(alpha * 0.55).toFixed(4)})`);
+      const startColor = hotspot.repel ? `rgba(72, 132, 255, ${(alpha * 0.95).toFixed(4)})` : `rgba(255, 72, 72, ${(alpha * 0.95).toFixed(4)})`;
+      const midColor = hotspot.repel ? `rgba(72, 132, 255, ${(alpha * 0.55).toFixed(4)})` : `rgba(255, 72, 72, ${(alpha * 0.55).toFixed(4)})`;
+      gradient.addColorStop(0, startColor);
+      gradient.addColorStop(Math.min(1, Math.max(0.2, hotspot.coreRadius / hotspot.radius)), midColor);
       gradient.addColorStop(1, 'rgba(255, 72, 72, 0)');
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -11042,8 +11212,38 @@ export class App {
             return speedControls.radiusAddButton;
           }
         }
+        if (speedControls.strengthAddButton) {
+          const halfWidth = speedControls.strengthAddButton.width * 0.5;
+          const halfHeight = speedControls.strengthAddButton.height * 0.5;
+          if (
+            x >= speedControls.strengthAddButton.x - halfWidth &&
+            x <= speedControls.strengthAddButton.x + halfWidth &&
+            y >= speedControls.strengthAddButton.y - halfHeight &&
+            y <= speedControls.strengthAddButton.y + halfHeight
+          ) {
+            return speedControls.strengthAddButton;
+          }
+        }
+        for (const toggleButton of [speedControls.speedToggleButton, speedControls.radiusToggleButton, speedControls.strengthToggleButton]) {
+          if (!toggleButton) continue;
+          const halfWidth = toggleButton.width * 0.5;
+          const halfHeight = toggleButton.height * 0.5;
+          if (
+            x >= toggleButton.x - halfWidth &&
+            x <= toggleButton.x + halfWidth &&
+            y >= toggleButton.y - halfHeight &&
+            y <= toggleButton.y + halfHeight
+          ) {
+            return toggleButton;
+          }
+        }
       }
-      const handles = this._getSimulationParameterHandles(selected);
+      const handles = this._getSimulationParameterHandles(selected).filter(h => {
+        if (h.handleType === 'pathSpeed') return this._simPathOverlayUi.showSpeedHandles;
+        if (h.handleType === 'pathRadius') return this._simPathOverlayUi.showRadiusHandles;
+        if (h.handleType === 'pathStrength') return this._simPathOverlayUi.showStrengthHandles;
+        return true;
+      });
       for (const handle of handles) {
         if (Math.hypot(x - handle.x, y - handle.y) <= SIM_PARAM_HIT_RADIUS) {
           return handle;
@@ -11082,6 +11282,11 @@ export class App {
           }
         }
         for (const button of speedControls.radiusDeleteButtons) {
+          if (Math.hypot(x - button.x, y - button.y) <= SIM_OVERLAY_ACTION_HIT_RADIUS) {
+            return button;
+          }
+        }
+        for (const button of speedControls.strengthDeleteButtons) {
           if (Math.hypot(x - button.x, y - button.y) <= SIM_OVERLAY_ACTION_HIT_RADIUS) {
             return button;
           }
@@ -11212,7 +11417,13 @@ export class App {
     if (this.simulation.guidesVisible === false) return;
     const selected = this._getSelectedSimulationEntry();
     const isSelected = (collection, item) => selected?.collection === collection && selected?.id === item.id;
-    const selectedHandles = selected ? this._getSimulationParameterHandles(selected, p) : [];
+    const allParamHandles = selected ? this._getSimulationParameterHandles(selected, p) : [];
+    const selectedHandles = allParamHandles.filter(h => {
+      if (h.handleType === 'pathSpeed') return this._simPathOverlayUi.showSpeedHandles;
+      if (h.handleType === 'pathRadius') return this._simPathOverlayUi.showRadiusHandles;
+      if (h.handleType === 'pathStrength') return this._simPathOverlayUi.showStrengthHandles;
+      return true;
+    });
 
     const drawDelete = (x, y) => {
       ctx.fillStyle = 'rgba(18,18,22,0.55)';
@@ -11268,9 +11479,11 @@ export class App {
       const anchorY = Number.isFinite(handle.anchorY) ? handle.anchorY : handle.target.y;
       const handleColor = handle.handleType === 'pathRadius'
         ? SIM_PATH_RADIUS_HANDLE_COLOR
-        : handle.handleType === 'pathPosition'
-          ? SIM_PATH_POSITION_HANDLE_COLOR
-          : color;
+        : handle.handleType === 'pathStrength'
+          ? SIM_PATH_STRENGTH_HANDLE_COLOR
+          : handle.handleType === 'pathPosition'
+            ? SIM_PATH_POSITION_HANDLE_COLOR
+            : color;
       ctx.save();
       ctx.strokeStyle = handleColor;
       ctx.fillStyle = handleColor;
@@ -11350,6 +11563,18 @@ export class App {
         ctx.beginPath();
         ctx.arc(handle.x, handle.y, 4.2, 0, Math.PI * 2);
         ctx.stroke();
+      } else if (handle.handleType === 'pathStrength') {
+        ctx.strokeStyle = SIM_PATH_STRENGTH_HANDLE_COLOR;
+        ctx.fillStyle = SIM_PATH_STRENGTH_HANDLE_COLOR;
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS + 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        // Diamond fill to distinguish from radius
+        ctx.save();
+        ctx.translate(handle.x, handle.y);
+        ctx.rotate(Math.PI * 0.25);
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.restore();
       } else {
         ctx.beginPath();
         ctx.arc(handle.x, handle.y, SIM_PARAM_HANDLE_RADIUS, 0, Math.PI * 2);
@@ -11534,6 +11759,13 @@ export class App {
               textStyle: 'rgba(255,222,246,0.98)',
             }, '+ Radius');
           }
+          if (speedControls.strengthAddButton) {
+            drawOverlayChip({
+              ...speedControls.strengthAddButton,
+              strokeStyle: 'rgba(100,220,255,0.82)',
+              textStyle: 'rgba(196,244,255,0.98)',
+            }, '+ Strength');
+          }
           if (speedControls.formatButton) {
             drawOverlayChip({
               ...speedControls.formatButton,
@@ -11553,6 +11785,26 @@ export class App {
               textStyle: 'rgba(255,222,246,0.98)',
             }, '×');
           }
+          for (const button of speedControls.strengthDeleteButtons) {
+            drawOverlayChip({
+              ...button,
+              width: 20,
+              height: 20,
+              strokeStyle: 'rgba(100,220,255,0.82)',
+              textStyle: 'rgba(196,244,255,0.98)',
+            }, '×');
+          }
+          const drawToggleChip = (button, active) => {
+            if (!button) return;
+            drawOverlayChip({
+              ...button,
+              strokeStyle: active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)',
+              textStyle: active ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.4)',
+            }, active ? '✓' : '○');
+          };
+          if (speedControls.speedToggleButton) drawToggleChip(speedControls.speedToggleButton, this._simPathOverlayUi.showSpeedHandles);
+          if (speedControls.radiusToggleButton) drawToggleChip(speedControls.radiusToggleButton, this._simPathOverlayUi.showRadiusHandles);
+          if (speedControls.strengthToggleButton) drawToggleChip(speedControls.strengthToggleButton, this._simPathOverlayUi.showStrengthHandles);
         }
         const anchor = this._getSimulationAnchor(pathItem);
         drawDelete(anchor.x, anchor.y);
