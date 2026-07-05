@@ -52,6 +52,27 @@ const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'showSimulationSelectionOverlay',
   'simSidebarSessionSelect',
 ]);
+const SIM_SPAWN_RUNTIME_REFRESH_FIELDS = new Set([
+  'color',
+  'count',
+  'opacity',
+  'distribution',
+  'noiseScale',
+  'shape',
+  'radius',
+  'angle',
+  'jitter',
+  'stampSize',
+  'stampSeparation',
+  'trailFlow',
+  'smudge',
+  'hueVar',
+  'satVar',
+  'litVar',
+  'sizeVar',
+  'opacityVar',
+  'speedVar',
+]);
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
   fillTolerance: 32,
@@ -7610,6 +7631,41 @@ export class App {
     if (rerenderInspector) this._queueSimulationInspectorRefresh();
   }
 
+  _shouldRefreshSimulationPlaybackForSpawnFields(entry, fields = []) {
+    if (!entry || entry.kind !== 'spawn' || !Array.isArray(fields) || !fields.length) return false;
+    return fields.some(field => SIM_SPAWN_RUNTIME_REFRESH_FIELDS.has(field));
+  }
+
+  _queueSimulationPlaybackRefresh({ preservePaused = true } = {}) {
+    if ((!this.simulation.running && !this.simulation.paused) || this.simulation.starting) return;
+    this._simulationPlaybackRefreshPreservePaused =
+      !!this._simulationPlaybackRefreshPreservePaused || (!!preservePaused && !!this.simulation.paused);
+    if (this._simulationPlaybackRefreshQueued) return;
+    this._simulationPlaybackRefreshQueued = true;
+    const flush = async () => {
+      this._simulationPlaybackRefreshQueued = false;
+      const shouldRestorePause = !!this._simulationPlaybackRefreshPreservePaused;
+      this._simulationPlaybackRefreshPreservePaused = false;
+      const wasRunning = this.simulation.running;
+      const wasPaused = this.simulation.paused;
+      if ((!wasRunning && !wasPaused) || this.simulation.starting || !this.simulation.enabled || !this._isMotionBrush()) return;
+      this.stopSimulation(false);
+      await this.startSimulation({ announce: false });
+      if (!shouldRestorePause || !this.simulation.running) return;
+      const pauseAfterRefresh = () => {
+        if (!this.simulation.running) return;
+        this.simulation.running = false;
+        this.simulation.paused = true;
+        this.isDrawing = false;
+        this._syncSimulationUI();
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pauseAfterRefresh);
+      else setTimeout(pauseAfterRefresh, 0);
+    };
+    if (typeof queueMicrotask === 'function') queueMicrotask(() => { void flush(); });
+    else setTimeout(() => { void flush(); }, 0);
+  }
+
   _captureSimulationSessionControlState() {
     const controls = {};
     const sidebar = document.getElementById('sidebar');
@@ -9912,6 +9968,7 @@ export class App {
         if (!item) return;
         this.pushUndo();
         item.enabled = item.enabled === false;
+        if (collection === 'spawns') this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
@@ -9960,12 +10017,17 @@ export class App {
         if (!fields.length) return;
         this.pushUndo();
         fields.forEach(field => delete entry.target[field]);
+        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, fields)) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
     });
     queryAllInRoots('[data-sim-duplicate]').forEach(button => {
-      button.addEventListener('click', () => this._duplicateSelectedSimulationItem());
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        this._duplicateSelectedSimulationItem();
+        if (entry?.kind === 'spawn') this._queueSimulationPlaybackRefresh();
+      });
     });
     panel.querySelectorAll('[data-sim-add-path-primitive]').forEach(btn => {
       btn.addEventListener('click', () => this._addSimulationPathPrimitive(btn.dataset.simAddPathPrimitive));
@@ -10020,7 +10082,10 @@ export class App {
     queryAllInRoots('[data-sim-delete]').forEach(button => {
       button.addEventListener('click', () => {
         const entry = this._getSelectedSimulationEntry();
-        if (entry) this._deleteSimulationItem(entry);
+        if (entry) {
+          this._deleteSimulationItem(entry);
+          if (entry.kind === 'spawn') this._queueSimulationPlaybackRefresh();
+        }
       });
     });
     panel.querySelectorAll('[data-sim-param]').forEach(el => {
@@ -10245,6 +10310,8 @@ export class App {
         ensureUndo();
         try {
           if (!syncFieldLive()) return;
+          const entry = this._getSelectedSimulationEntry();
+          if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, [field])) this._queueSimulationPlaybackRefresh();
           this._renderSimulationInspector();
           this._maybeAutoSaveSession();
         } finally {
@@ -10262,6 +10329,7 @@ export class App {
         if (!entry) return;
         this.pushUndo();
         delete entry.target[btn.dataset.simReset];
+        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, [btn.dataset.simReset])) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
@@ -10612,7 +10680,7 @@ export class App {
     this._maybeAutoSaveSession();
   }
 
-  async startSimulation() {
+  async startSimulation({ announce = true } = {}) {
     if (!this.simulation.enabled || !this._isMotionBrush()) return;
     const brush = this.getCurrentBrush();
     if (!brush) return;
@@ -10671,9 +10739,11 @@ export class App {
 
       if (this._simulationExport.armedOnStart) void this._startSimulationRecording();
       this._syncSimulationUI();
-      this.showToast(this.simulation.runtimeSessions.length
-        ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
-        : 'Simulation running');
+      if (announce) {
+        this.showToast(this.simulation.runtimeSessions.length
+          ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
+          : 'Simulation running');
+      }
     } catch (error) {
       console.error('Simulation start failed:', error);
       this._teardownMultiSessionRuntimeSessions({ commitPreview: false });
