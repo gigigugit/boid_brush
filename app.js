@@ -7662,8 +7662,8 @@ export class App {
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pauseAfterRefresh);
       else setTimeout(pauseAfterRefresh, 0);
     };
-    if (typeof queueMicrotask === 'function') queueMicrotask(() => { void flush(); });
-    else setTimeout(() => { void flush(); }, 0);
+    if (typeof queueMicrotask === 'function') queueMicrotask(flush);
+    else setTimeout(flush, 0);
   }
 
   _captureSimulationSessionControlState() {
