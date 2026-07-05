@@ -73,6 +73,10 @@ const SIM_SPAWN_RUNTIME_REFRESH_FIELDS = new Set([
   'opacityVar',
   'speedVar',
 ]);
+const SIM_SPAWN_APPEARANCE_FIELDS = new Set([
+  'color',
+  'opacity',
+]);
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
   fillTolerance: 32,
@@ -3962,6 +3966,7 @@ export class App {
         input.value = normalized;
         delete input.dataset.simUnset;
         this._syncSimulationFormatColorTrigger(trigger, normalized);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
       },
       onCommit: () => input.dispatchEvent(new Event('change', { bubbles: true })),
     };
@@ -7633,7 +7638,23 @@ export class App {
 
   _shouldRefreshSimulationPlaybackForSpawnFields(entry, fields = []) {
     if (!entry || entry.kind !== 'spawn' || !Array.isArray(fields) || !fields.length) return false;
+    if (this._canLiveRefreshSimulationSpawnAppearance(entry, fields)) return false;
     return fields.some(field => SIM_SPAWN_RUNTIME_REFRESH_FIELDS.has(field));
+  }
+
+  _canLiveRefreshSimulationSpawnAppearance(entry, fields = []) {
+    if (!entry || entry.kind !== 'spawn' || !Array.isArray(fields) || !fields.length) return false;
+    if (!fields.every(field => SIM_SPAWN_APPEARANCE_FIELDS.has(field))) return false;
+    if (!this.simulation.enabled || (!this.simulation.running && !this.simulation.paused)) return false;
+    if (this._hasActiveMultiSessionPlayback()) return false;
+    return typeof this.getCurrentBrush?.()?.refreshSimulationSpawnAppearance === 'function';
+  }
+
+  _syncLiveSimulationSpawnAppearance(entry, fields = []) {
+    if (!this._canLiveRefreshSimulationSpawnAppearance(entry, fields)) return;
+    const brush = this.getCurrentBrush();
+    const p = this.getP();
+    brush?.refreshSimulationSpawnAppearance?.(p);
   }
 
   _queueSimulationPlaybackRefresh({ preservePaused = true } = {}) {
@@ -10017,6 +10038,7 @@ export class App {
         if (!fields.length) return;
         this.pushUndo();
         fields.forEach(field => delete entry.target[field]);
+        this._syncLiveSimulationSpawnAppearance(entry, fields);
         if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, fields)) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
@@ -10241,6 +10263,7 @@ export class App {
       const syncFieldLive = () => {
         if (!writeField()) return false;
         this._syncSimulationSessionDraftUi({ rerenderInspector: false });
+        this._syncLiveSimulationSpawnAppearance(this._getSelectedSimulationEntry(), [field]);
         return true;
       };
 
@@ -10329,6 +10352,7 @@ export class App {
         if (!entry) return;
         this.pushUndo();
         delete entry.target[btn.dataset.simReset];
+        this._syncLiveSimulationSpawnAppearance(entry, [btn.dataset.simReset]);
         if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, [btn.dataset.simReset])) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
