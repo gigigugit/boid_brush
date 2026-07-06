@@ -5669,7 +5669,13 @@ export class App {
     if (!data) return [];
     if (!Array.isArray(data.spawns)) data.spawns = [];
     if (!data.spawns.length) {
-      data.spawns.push({ id: this.simulation.nextId++, x: this.W * 0.5, y: this.H * 0.5, enabled: true });
+      data.spawns.push({
+        id: this.simulation.nextId++,
+        x: this.W * 0.5,
+        y: this.H * 0.5,
+        enabled: true,
+        ...this._getSimulationItemDefaultFields('spawn'),
+      });
     }
     return data.spawns;
   }
@@ -5951,6 +5957,16 @@ export class App {
         opacity: Number.isFinite(spawn?.opacity) ? Math.max(0, Math.min(1, spawn.opacity)) : undefined,
         distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : undefined,
         noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : undefined,
+        stampSize: Number.isFinite(spawn?.stampSize) ? Math.max(1, spawn.stampSize) : undefined,
+        stampSeparation: Number.isFinite(spawn?.stampSeparation) ? Math.max(0, Math.min(1, spawn.stampSeparation)) : undefined,
+        trailFlow: Number.isFinite(spawn?.trailFlow) ? Math.max(0, Math.min(1, spawn.trailFlow)) : undefined,
+        smudge: Number.isFinite(spawn?.smudge) ? Math.max(0, Math.min(1, spawn.smudge)) : undefined,
+        hueVar: Number.isFinite(spawn?.hueVar) ? Math.max(0, Math.min(1, spawn.hueVar)) : undefined,
+        satVar: Number.isFinite(spawn?.satVar) ? Math.max(0, Math.min(1, spawn.satVar)) : undefined,
+        litVar: Number.isFinite(spawn?.litVar) ? Math.max(0, Math.min(1, spawn.litVar)) : undefined,
+        sizeVar: Number.isFinite(spawn?.sizeVar) ? Math.max(0, Math.min(1, spawn.sizeVar)) : undefined,
+        opacityVar: Number.isFinite(spawn?.opacityVar) ? Math.max(0, Math.min(1, spawn.opacityVar)) : undefined,
+        speedVar: Number.isFinite(spawn?.speedVar) ? Math.max(0, Math.min(1, spawn.speedVar)) : undefined,
         mask: this._normalizeSimulationSpawnMask(spawn?.mask),
       }));
 
@@ -5961,6 +5977,7 @@ export class App {
         y: Number.isFinite(point?.y) ? point.y : this.H * 0.5,
         type: point?.type === 'repel' ? 'repel' : 'attract',
         enabled: point?.enabled !== false,
+        color: _normalizeHexColor(point?.color),
         strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : undefined,
         radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : undefined,
         hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : undefined,
@@ -5982,6 +5999,7 @@ export class App {
             id: pathItem?.id || this.simulation.nextId++,
             enabled: pathItem?.enabled !== false,
             points,
+            color: _normalizeHexColor(pathItem?.color),
             strength: Number.isFinite(pathItem?.strength) ? _normalizeSimulationPathStrength(pathItem.strength) : undefined,
             radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
             influenceRadius: Number.isFinite(pathItem?.influenceRadius) ? Math.max(1, pathItem.influenceRadius) : undefined,
@@ -6170,6 +6188,83 @@ export class App {
       radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : p.simPheroPaintRadius,
       intensity: Number.isFinite(pathItem?.intensity) ? Math.max(0, Math.min(1, pathItem.intensity)) : p.simPheroPaintStrength,
     };
+  }
+
+  _getSimulationItemDefaultFields(kind, target = null, p = this.getP()) {
+    const color = _normalizeHexColor(p?.color, '#1a1a1a');
+    if (kind === 'spawn') {
+      const defaults = {
+        count: Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(p.count))),
+        color,
+        opacity: Math.max(0, Math.min(1, p.stampOpacity)),
+        stampSize: Math.max(1, p.stampSize),
+        stampSeparation: Math.max(0, Math.min(1, p.stampSeparation)),
+        trailFlow: Math.max(0, Math.min(1, p.trailFlow)),
+        smudge: Math.max(0, Math.min(1, p.smudge)),
+        hueVar: Math.max(0, Math.min(1, p.hueVar)),
+        satVar: Math.max(0, Math.min(1, p.satVar)),
+        litVar: Math.max(0, Math.min(1, p.litVar)),
+        sizeVar: Math.max(0, Math.min(1, p.sizeVar)),
+        opacityVar: Math.max(0, Math.min(1, p.opacityVar)),
+        speedVar: Math.max(0, Math.min(1, p.speedVar)),
+      };
+      if (target?.mask) {
+        defaults.distribution = 'uniform';
+        defaults.noiseScale = 1;
+      } else {
+        defaults.shape = SIM_SPAWN_SHAPES.includes(p.spawnShape) ? p.spawnShape : 'circle';
+        defaults.radius = Math.max(1, p.spawnRadius);
+        defaults.angle = Number.isFinite(p.spawnAngle) ? p.spawnAngle : 0;
+        defaults.jitter = Math.max(0, Math.min(1, p.spawnJitter));
+      }
+      return defaults;
+    }
+    if (kind === 'point') {
+      const defaults = {
+        color,
+        strength: Math.max(0, p.simPointStrength),
+        radius: Math.max(1, p.simPointRadius),
+      };
+      if (target?.type === 'repel') defaults.hardness = 1;
+      return defaults;
+    }
+    if (kind === 'path') {
+      return {
+        color,
+        strength: _normalizeSimulationPathStrength(DEFAULT_PATH_STRENGTH),
+        radius: Math.max(1, DEFAULT_PATH_RADIUS),
+        influenceRadius: Math.max(1, DEFAULT_PATH_RADIUS),
+        speed: _normalizeSimulationPathSpeed(DEFAULT_SIM_PATH_SPEED),
+        pathType: 'standard',
+        direction: 'forward',
+        closed: false,
+      };
+    }
+    if (kind === 'edge') {
+      return {
+        strength: Math.max(0, p.simEdgeForce),
+        radius: Math.max(0, p.simEdgeRadius),
+      };
+    }
+    if (kind === 'pheromonePath') {
+      return {
+        radius: Math.max(1, p.simPheroPaintRadius),
+        intensity: Math.max(0, Math.min(1, p.simPheroPaintStrength)),
+      };
+    }
+    return {};
+  }
+
+  _applySimulationItemCurrentDefaults(entry, fields = null, p = this.getP()) {
+    if (!entry?.target) return [];
+    const defaults = this._getSimulationItemDefaultFields(entry.kind, entry.target, p);
+    const nextFields = Array.isArray(fields) && fields.length
+      ? fields.filter(field => Object.prototype.hasOwnProperty.call(defaults, field))
+      : Object.keys(defaults);
+    nextFields.forEach(field => {
+      entry.target[field] = defaults[field];
+    });
+    return nextFields;
   }
 
   _getSimulationSpawnCenter(brush = this.activeBrush) {
@@ -7202,6 +7297,7 @@ export class App {
     const primitiveKind = _normalizeSimulationPathPrimitiveKind(kind);
     if (!primitiveKind) return null;
     const primitiveRadius = primitiveKind === 'ellipse' ? SIM_PATH_PRIMITIVE_DEFAULT_RADIUS * 1.1 : SIM_PATH_PRIMITIVE_DEFAULT_RADIUS;
+    const defaults = this._getSimulationItemDefaultFields('path');
     const entry = {
       id: this.simulation.nextId++,
       enabled: true,
@@ -7212,16 +7308,18 @@ export class App {
       primitiveRadiusY: primitiveKind === 'ellipse'
         ? primitiveRadius * SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO
         : primitiveRadius,
-      radius: DEFAULT_PATH_RADIUS,
-      strength: DEFAULT_PATH_STRENGTH,
-      speed: DEFAULT_SIM_PATH_SPEED,
-      pathType: 'standard',
+      color: defaults.color,
+      radius: defaults.radius,
+      strength: defaults.strength,
+      influenceRadius: defaults.influenceRadius,
+      speed: defaults.speed,
+      pathType: defaults.pathType,
       speedPoints: [],
       radiusPoints: [],
       strengthPoints: [],
       closed: true,
       startOffset: 0,
-      direction: 'forward',
+      direction: defaults.direction,
       travelDistance: 0,
       points: [],
     };
@@ -9678,7 +9776,7 @@ export class App {
             <span class="sim-slider-label">${label}</span>
             <div class="sim-slider-meta">
               <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
-              <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
+              <button class="sim-fld-reset" data-sim-reset="${field}" title="Match current default"${resetOpacity}>×</button>
             </div>
           </div>
           <div class="sim-slider-controls">
@@ -9852,7 +9950,7 @@ export class App {
             <div class="sim-format-row" data-sim-format-drag-root="1">
               <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
               ${compactControls.join('')}
-              <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
+              <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Match Current</button>
               <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
             </div>
           </div>`;
@@ -9927,7 +10025,7 @@ export class App {
       guideEditorMarkup = `
         <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong> · Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>${selected.kind === 'spawn' || selected.kind === 'point' || selected.kind === 'path' || selected.kind === 'edge' || selected.kind === 'pheromonePath' ? ` · ${_escapeHtml(getGuideMeta({ kind: selected.kind, collection: selected.collection }, target))}` : ''}</div>
         ${renderInspectorSubgroup(guideKindTitle, guideRows.length ? guideRows.join('') : '<div class="sim-inspector-note">No per-item overrides available for this guide.</div>')}
-        ${guideResetFields.length ? `<div class="sim-inspector-actions" style="margin-top:6px"><button type="button" data-sim-reset-all="${guideResetFields.join(',')}">Reset Selected</button><button type="button" data-sim-clear-selection="1">Clear Selection</button></div>` : ''}
+        ${guideResetFields.length ? `<div class="sim-inspector-actions" style="margin-top:6px"><button type="button" data-sim-reset-all="${guideResetFields.join(',')}">Match Current Defaults</button><button type="button" data-sim-clear-selection="1">Clear Selection</button></div>` : ''}
       `;
     }
 
@@ -10037,9 +10135,9 @@ export class App {
         const fields = (button.dataset.simResetAll || '').split(',').map(field => field.trim()).filter(Boolean);
         if (!fields.length) return;
         this.pushUndo();
-        fields.forEach(field => delete entry.target[field]);
-        this._syncLiveSimulationSpawnAppearance(entry, fields);
-        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, fields)) this._queueSimulationPlaybackRefresh();
+        const appliedFields = this._applySimulationItemCurrentDefaults(entry, fields);
+        this._syncLiveSimulationSpawnAppearance(entry, appliedFields);
+        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, appliedFields)) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
@@ -10351,9 +10449,9 @@ export class App {
         const entry = this._getSelectedSimulationEntry();
         if (!entry) return;
         this.pushUndo();
-        delete entry.target[btn.dataset.simReset];
-        this._syncLiveSimulationSpawnAppearance(entry, [btn.dataset.simReset]);
-        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, [btn.dataset.simReset])) this._queueSimulationPlaybackRefresh();
+        const appliedFields = this._applySimulationItemCurrentDefaults(entry, [btn.dataset.simReset]);
+        this._syncLiveSimulationSpawnAppearance(entry, appliedFields);
+        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, appliedFields)) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
@@ -10974,7 +11072,13 @@ export class App {
 
     if (tool === 'spawn') {
       this.pushUndo();
-      const spawn = { id: this.simulation.nextId++, x, y, enabled: true };
+      const spawn = {
+        id: this.simulation.nextId++,
+        x,
+        y,
+        enabled: true,
+        ...this._getSimulationItemDefaultFields('spawn', null, p),
+      };
       data.spawns.push(spawn);
       this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
       this._maybeAutoSaveSession();
@@ -10984,7 +11088,14 @@ export class App {
       this.simulation.drawingBlob = { stroke };
     } else if (tool === 'attract' || tool === 'repel') {
       this.pushUndo();
-      const point = { id: this.simulation.nextId++, x, y, type: tool, enabled: true };
+      const point = {
+        id: this.simulation.nextId++,
+        x,
+        y,
+        type: tool,
+        enabled: true,
+        ...this._getSimulationItemDefaultFields('point', { type: tool }, p),
+      };
       data.points.push(point);
       this._setSimulationSelection({ collection: 'points', kind: 'point', target: point });
       this._maybeAutoSaveSession();
@@ -11056,10 +11167,8 @@ export class App {
           x: mask.bounds.minX + (mask.bounds.width * 0.5),
           y: mask.bounds.minY + (mask.bounds.height * 0.5),
           enabled: true,
-          count: this.getP().count,
-          distribution: 'uniform',
-          noiseScale: 1,
           mask,
+          ...this._getSimulationItemDefaultFields('spawn', { mask }, this.getP()),
         };
         data.spawns.push(spawn);
         this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
@@ -11075,32 +11184,45 @@ export class App {
       if (data && path.length >= 2) {
         this.pushUndo();
         if (this.simulation.drawingPath.kind === 'path' && (this._usesPathGuides())) {
+          const defaults = this._getSimulationItemDefaultFields('path', null, this.getP());
           const entry = {
             id: this.simulation.nextId++,
             points: path,
             enabled: true,
-            radius: DEFAULT_PATH_RADIUS,
-            strength: DEFAULT_PATH_STRENGTH,
-            influenceRadius: DEFAULT_PATH_RADIUS,
+            color: defaults.color,
+            radius: defaults.radius,
+            strength: defaults.strength,
+            influenceRadius: defaults.influenceRadius,
             closed: false,
-            direction: 'forward',
+            direction: defaults.direction,
             startOffset: 0,
-            speed: DEFAULT_SIM_PATH_SPEED,
-            pathType: 'standard',
+            speed: defaults.speed,
+            pathType: defaults.pathType,
             speedPoints: [],
             radiusPoints: [],
+            strengthPoints: [],
             travelDistance: 0,
           };
           data.paths.push(entry);
           this._setSimulationSelection({ collection: 'paths', kind: 'path', target: entry });
           this._maybeAutoSaveSession();
         } else if (this.simulation.drawingPath.kind === 'edge' && this.activeBrush === 'ant') {
-          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          const entry = {
+            id: this.simulation.nextId++,
+            points: path,
+            enabled: true,
+            ...this._getSimulationItemDefaultFields('edge', null, this.getP()),
+          };
           data.edges.push(entry);
           this._setSimulationSelection({ collection: 'edges', kind: 'edge', target: entry });
           this._maybeAutoSaveSession();
         } else if (this.simulation.drawingPath.kind === 'pheromone' && this.activeBrush === 'ant') {
-          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          const entry = {
+            id: this.simulation.nextId++,
+            points: path,
+            enabled: true,
+            ...this._getSimulationItemDefaultFields('pheromonePath', null, this.getP()),
+          };
           data.pheromonePaths.push(entry);
           this._setSimulationSelection({ collection: 'pheromonePaths', kind: 'pheromonePath', target: entry });
           this._maybeAutoSaveSession();
