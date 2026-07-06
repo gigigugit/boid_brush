@@ -2641,6 +2641,7 @@ export class App {
     return {
       panel: document.getElementById('jsonPanel'),
       editor: document.getElementById('workspaceJsonEditor'),
+      highlight: document.getElementById('workspaceJsonHighlight'),
       status: document.getElementById('workspaceJsonStatus'),
       meta: document.getElementById('workspaceJsonMeta'),
       documentName: document.getElementById('workspaceJsonDocumentName'),
@@ -2649,6 +2650,29 @@ export class App {
       sessionSelectWrap: document.getElementById('workspaceJsonSessionSelectWrap'),
       docHint: document.getElementById('workspaceJsonDocHint'),
     };
+  }
+
+  _escapeWorkspaceJsonHtml(text = '') {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  _syncWorkspaceJsonHighlight() {
+    const { editor, highlight } = this._getWorkspaceJsonModalElements();
+    if (!editor || !highlight) return;
+    const raw = editor.value || '';
+    highlight.innerHTML = this._escapeWorkspaceJsonHtml(raw)
+      .replace(/"a"(?=\s*:)/g, '<span class="workspace-json-highlightKey">"a"</span>');
+    this._syncWorkspaceJsonHighlightScroll();
+  }
+
+  _syncWorkspaceJsonHighlightScroll() {
+    const { editor, highlight } = this._getWorkspaceJsonModalElements();
+    if (!editor || !highlight) return;
+    highlight.scrollTop = editor.scrollTop;
+    highlight.scrollLeft = editor.scrollLeft;
   }
 
   _getWorkspaceJsonDocumentSpecs() {
@@ -2908,6 +2932,7 @@ export class App {
     }
     const documentPayload = this._buildWorkspaceJsonDocument(bundle, docKey, { sessionIndex: this._workspaceJsonEditorSessionIndex });
     if (editor) editor.value = JSON.stringify(documentPayload, null, 2);
+    this._syncWorkspaceJsonHighlight();
     this._setWorkspaceJsonModalStatus();
   }
 
@@ -2994,7 +3019,9 @@ export class App {
     if (!editor) return false;
     const { parsed } = this._readWorkspaceJsonEditorBundle({ requireSession: false });
     editor.value = JSON.stringify(parsed, null, 2);
+    this._syncWorkspaceJsonHighlight();
     this._setWorkspaceJsonModalStatus('Workspace JSON formatted.', 'success');
+    this.showToast('✨ JSON formatted');
     return true;
   }
 
@@ -3008,9 +3035,11 @@ export class App {
         `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
         'success',
       );
+      this.showToast('✓ JSON valid');
       return true;
     }
     this._setWorkspaceJsonModalStatus('Document JSON is valid. Ready to apply.', 'success');
+    this.showToast('✓ JSON valid');
     return true;
   }
 
@@ -3727,6 +3756,8 @@ export class App {
     const rightTabs = document.getElementById('rightPanelTabs');
     const leftOpen = leftPanel?.classList.contains('open');
     const rightOpen = rightPanel?.classList.contains('open');
+    const rightView = rightPanel?.querySelector(':scope > .panel-view.active')?.dataset.panelView || '';
+    document.body.classList.toggle('json-panel-expanded', rightOpen && rightView === 'json');
     const simDrawerTab = leftTabs?.querySelector('.panel-tab[data-panel-view="simulationControls"]');
     const simDrawerAvailable = !!simDrawerTab && !simDrawerTab.classList.contains('panel-tab-hidden');
     if (leftTabs) {
@@ -14722,11 +14753,14 @@ export class App {
       if (!Number.isFinite(this._workspaceJsonEditorSessionIndex)) this._workspaceJsonEditorSessionIndex = -1;
       this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
     });
+    document.getElementById('workspaceJsonEditor')?.addEventListener('input', () => this._syncWorkspaceJsonHighlight());
+    document.getElementById('workspaceJsonEditor')?.addEventListener('scroll', () => this._syncWorkspaceJsonHighlightScroll());
     document.getElementById('workspaceJsonFormat')?.addEventListener('click', () => {
       try {
         this._formatWorkspaceJsonEditor();
       } catch (error) {
         this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
+        this.showToast('⚠ JSON format failed');
       }
     });
     document.getElementById('workspaceJsonValidate')?.addEventListener('click', () => {
@@ -14734,6 +14768,7 @@ export class App {
         this._validateWorkspaceJsonEditor();
       } catch (error) {
         this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+        this.showToast('⚠ JSON validation failed');
       }
     });
     document.getElementById('workspaceJsonCopy')?.addEventListener('click', () => {
@@ -14811,6 +14846,35 @@ export class App {
       if (event.key === 'Escape') {
         event.preventDefault();
         this._hideWorkspaceJsonModal();
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void this._applyWorkspaceJsonEditor();
+        return;
+      }
+      if (!event.shiftKey) return;
+      const lowered = event.key.toLowerCase();
+      if (lowered === 'f') {
+        event.preventDefault();
+        try {
+          this._formatWorkspaceJsonEditor();
+        } catch (error) {
+          this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
+          this.showToast('⚠ JSON format failed');
+        }
+      } else if (lowered === 'v') {
+        event.preventDefault();
+        try {
+          this._validateWorkspaceJsonEditor();
+        } catch (error) {
+          this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+          this.showToast('⚠ JSON validation failed');
+        }
+      } else if (lowered === 'c') {
+        event.preventDefault();
+        void this._copyWorkspaceJsonEditorText();
       }
     });
     document.addEventListener('pointerdown', event => {
