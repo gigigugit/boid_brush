@@ -35,6 +35,7 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
+const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -2663,8 +2664,9 @@ export class App {
     const { editor, highlight } = this._getWorkspaceJsonModalElements();
     if (!editor || !highlight) return;
     const raw = editor.value || '';
+    const highlightPattern = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
     highlight.innerHTML = this._escapeWorkspaceJsonHtml(raw)
-      .replace(/"a"(?=\s*:)/g, '<span class="workspace-json-highlightKey">"a"</span>');
+      .replace(highlightPattern, `<span class="workspace-json-highlightKey">"${WORKSPACE_JSON_HIGHLIGHT_KEY}"</span>`);
     this._syncWorkspaceJsonHighlightScroll();
   }
 
@@ -2946,6 +2948,12 @@ export class App {
     this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
     this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
     return true;
+  }
+
+  _isWorkspaceJsonPanelActive() {
+    const panel = document.getElementById('jsonPanel');
+    const drawer = document.getElementById('rightPanel');
+    return !!panel?.classList.contains('active') && !!drawer?.classList.contains('open');
   }
 
   _activateRightPanelTab(viewName) {
@@ -14840,9 +14848,7 @@ export class App {
       }
     });
     document.addEventListener('keydown', event => {
-      const panel = document.getElementById('jsonPanel');
-      const drawer = document.getElementById('rightPanel');
-      if (!panel?.classList.contains('active') || !drawer?.classList.contains('open')) return;
+      if (!this._isWorkspaceJsonPanelActive()) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         this._hideWorkspaceJsonModal();
