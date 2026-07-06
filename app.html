@@ -664,7 +664,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
   #simSetupModal .sim-setup-footer button{flex:1;}
 }
 #jsonPanel .workspace-json-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;padding:0;background:transparent;border:none;border-radius:0;}
-#jsonPanel .workspace-json-chrome,#jsonPanel .workspace-json-status,#jsonPanel .workspace-json-footer{display:none;}
+#jsonPanel .workspace-json-chrome{display:none;}
 #jsonPanel .workspace-json-toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:start;margin:0;padding:0;background:transparent;}
 #jsonPanel .workspace-json-toolbarField{display:grid;min-width:0;}
 #jsonPanel .workspace-json-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;pointer-events:none;opacity:0;}
@@ -673,16 +673,26 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #jsonPanel .workspace-json-toolbarHint{display:none;}
 #jsonPanel .workspace-json-editorWrap{position:relative;min-height:0;flex:1;margin-top:12px;border-radius:14px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);overflow:hidden;}
 #jsonPanel #workspaceJsonHighlight,#jsonPanel #workspaceJsonEditor{width:100%;height:100%;min-height:340px;box-sizing:border-box;padding:18px 20px;font:600 16px/1.6 "Arial Narrow","Aptos Narrow","Roboto Condensed","Helvetica Neue",Arial,sans-serif;letter-spacing:.01em;tab-size:2;white-space:pre-wrap;word-break:break-word;}
-#jsonPanel #workspaceJsonHighlight{position:absolute;inset:0;overflow:auto;color:#f5f8ff;pointer-events:none;-webkit-user-select:none;user-select:none;}
+#jsonPanel #workspaceJsonHighlight{position:absolute;inset:0;z-index:2;margin:0;overflow:auto;color:#f5f8ff;pointer-events:none;-webkit-user-select:none;user-select:none;}
 #jsonPanel .workspace-json-highlightKey{color:#62FFD2;font-weight:800;}
-#jsonPanel #workspaceJsonEditor{position:relative;display:block;resize:none;border:none;background:transparent;color:transparent;caret-color:#f5f8ff;color-scheme:dark;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:auto;-webkit-user-select:text;user-select:text;cursor:text;overscroll-behavior:contain;}
+#jsonPanel #workspaceJsonEditor{position:relative;z-index:1;display:block;resize:none;border:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;caret-color:#f5f8ff;color-scheme:dark;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:auto;-webkit-user-select:text;user-select:text;cursor:text;overscroll-behavior:contain;}
 #jsonPanel #workspaceJsonEditor:focus{outline:none;box-shadow:inset 0 0 0 1px rgba(117,162,255,0.24);}
 #jsonPanel #workspaceJsonEditor::selection{background:rgba(98,255,210,0.22);}
 #jsonPanel #workspaceJsonEditor::-webkit-scrollbar,#jsonPanel #workspaceJsonHighlight::-webkit-scrollbar{width:5px;height:5px;}
 #jsonPanel #workspaceJsonEditor::-webkit-scrollbar-thumb,#jsonPanel #workspaceJsonHighlight::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:999px;}
+#jsonPanel .workspace-json-status{display:block;min-height:18px;margin-top:10px;color:#adc0e2;font-size:11px;line-height:1.45;}
+#jsonPanel .workspace-json-status.success{color:#9ef0c9;}
+#jsonPanel .workspace-json-status.warn{color:#ffd08a;}
+#jsonPanel .workspace-json-status.error{color:#ff9e9e;}
+#jsonPanel .workspace-json-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;padding:0;}
+#jsonPanel .workspace-json-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#jsonPanel .workspace-json-footer button{min-height:34px;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#eef3ff;font-size:11px;font-weight:650;cursor:pointer;}
+#jsonPanel .workspace-json-footer button:hover{background:rgba(255,255,255,0.12);}
+#jsonPanel #workspaceJsonResetCurrent{border-color:rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);}
 @media (max-width: 760px){
   #jsonPanel .workspace-json-toolbar{grid-template-columns:1fr;gap:8px;}
   #jsonPanel #workspaceJsonHighlight,#jsonPanel #workspaceJsonEditor{min-height:280px;padding:14px 14px;font-size:15px;}
+  #jsonPanel .workspace-json-footer button{flex:1;}
 }
 #motionPathEditor{display:none;position:fixed;inset:0;z-index:205;}
 #motionPathEditor.open{display:block;}
@@ -1061,6 +1071,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         </div>
         <div class="workspace-json-actions">
           <button id="workspaceJsonCloseAction" type="button">Close</button>
+          <button id="workspaceJsonResetCurrent" type="button">Reset to Current</button>
           <button id="workspaceJsonApply" class="ai-save-btn" type="button">Apply</button>
         </div>
       </div>

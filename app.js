@@ -2950,6 +2950,33 @@ export class App {
     return true;
   }
 
+  _resetWorkspaceJsonEditorToCurrent() {
+    const { editor, docSelect } = this._getWorkspaceJsonModalElements();
+    if (!editor) return false;
+    const docKey = docSelect?.value || this._workspaceJsonEditorDocKey || 'workspace';
+    const sessionIndex = docKey === 'simulation-session' ? this._getWorkspaceJsonSessionSelectValue() : 'draft';
+    const bundle = this.createWorkspaceSettingsBundle({ includeDocument: true });
+    const nextText = JSON.stringify(
+      this._buildWorkspaceJsonDocument(bundle, docKey, { sessionIndex: sessionIndex === 'draft' ? -1 : sessionIndex }),
+      null,
+      2,
+    );
+    if ((editor.value || '') === nextText) {
+      this._setWorkspaceJsonModalStatus('JSON editor already matches the current workspace snapshot.', 'success');
+      return true;
+    }
+    if (!confirm('Discard JSON edits and reload the current workspace snapshot?')) {
+      this._setWorkspaceJsonModalStatus('Reset cancelled.', 'warn');
+      return false;
+    }
+    this._workspaceJsonEditorDocKey = docKey;
+    this._workspaceJsonEditorSessionIndex = sessionIndex === 'draft' ? -1 : sessionIndex;
+    this._populateWorkspaceJsonEditor(bundle);
+    this._setWorkspaceJsonModalStatus(`${this._getWorkspaceJsonDocumentSpec(docKey).label} reloaded from the current workspace snapshot.`, 'success');
+    this.showToast('↺ JSON reset to current');
+    return true;
+  }
+
   _isWorkspaceJsonPanelActive() {
     const panel = document.getElementById('jsonPanel');
     const drawer = document.getElementById('rightPanel');
@@ -14781,6 +14808,9 @@ export class App {
     });
     document.getElementById('workspaceJsonCopy')?.addEventListener('click', () => {
       void this._copyWorkspaceJsonEditorText();
+    });
+    document.getElementById('workspaceJsonResetCurrent')?.addEventListener('click', () => {
+      this._resetWorkspaceJsonEditorToCurrent();
     });
     document.getElementById('workspaceJsonApply')?.addEventListener('click', () => {
       void this._applyWorkspaceJsonEditor();
