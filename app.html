@@ -160,8 +160,10 @@ html,body{overflow:hidden;width:100%;height:100%;
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
 #rightPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-#sidebar,#favoritesPanel,#settingsPanel{-webkit-overflow-scrolling:touch;padding:10px;}
+#sidebar,#favoritesPanel,#settingsPanel,#jsonPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
+#jsonPanel{overflow:hidden;}
+#jsonPanel.panel-view.active{display:flex;flex-direction:column;}
 
 /* ---- Panel Tabs (drawer handles) ---- */
 .panel-tabs{position:fixed;top:var(--panel-tabs-top);z-index:21;display:flex;flex-direction:column;gap:4px;opacity:0;pointer-events:none;transform:translateX(0);transition:opacity 220ms ease,transform 220ms ease;}
@@ -659,38 +661,36 @@ html,body{overflow:hidden;width:100%;height:100%;
   #simSetupModal .sim-setup-footerGroup{width:100%;}
   #simSetupModal .sim-setup-footer button{flex:1;}
 }
-#workspaceJsonModal{display:none;position:fixed;inset:0;z-index:203;align-items:center;justify-content:center;}
-#workspaceJsonModal.open{display:flex;}
-#workspaceJsonModal .workspace-json-panel{display:flex;flex-direction:column;width:min(880px,94vw);max-height:88vh;overflow:hidden;padding:20px 20px 18px;background:linear-gradient(180deg,rgba(22,27,39,0.99),rgba(11,15,24,0.99));border-color:rgba(126,156,220,0.18);}
-#workspaceJsonModal .workspace-json-meta{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(7,11,20,0.48);}
-#workspaceJsonModal .workspace-json-doc{display:grid;gap:3px;min-width:0;}
-#workspaceJsonModal .workspace-json-label{display:block;color:#8fa3c6;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;}
-#workspaceJsonModal .workspace-json-doc strong{color:#edf3ff;font-size:12px;}
-#workspaceJsonModal .workspace-json-metaText{color:#9ba9c4;font-size:11px;line-height:1.45;max-width:460px;}
-#workspaceJsonModal .workspace-json-toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:end;margin-bottom:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(7,11,20,0.42);}
-#workspaceJsonModal .workspace-json-toolbarField{display:grid;gap:5px;min-width:0;}
-#workspaceJsonModal .workspace-json-toolbarField select{width:100%;box-sizing:border-box;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);color:#f5f8ff;padding:8px 10px;font:12px/1.35 Consolas,"Courier New",monospace;font-weight:600;cursor:pointer;}
-#workspaceJsonModal .workspace-json-toolbarField select:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
-#workspaceJsonModal .workspace-json-toolbarHint{grid-column:1 / -1;color:#9ba9c4;font-size:11px;line-height:1.45;}
-#workspaceJsonModal .workspace-json-editorWrap{display:grid;gap:6px;min-height:0;flex:1;}
-#workspaceJsonModal #workspaceJsonEditor{width:100%;min-height:340px;flex:1;resize:vertical;box-sizing:border-box;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);color:#f5f8ff;padding:14px 16px;font:13px/1.5 Consolas,"Courier New",monospace;font-weight:600;tab-size:2;color-scheme:dark;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:auto;-webkit-user-select:text;user-select:text;cursor:text;overscroll-behavior:contain;}
-#workspaceJsonModal #workspaceJsonEditor:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
-#workspaceJsonModal .workspace-json-status{margin-top:12px;min-height:18px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#adc0e2;font-size:11px;line-height:1.45;white-space:pre-wrap;}
-#workspaceJsonModal .workspace-json-status.success{border-color:rgba(106,213,127,0.24);background:rgba(36,96,51,0.18);color:#c6efcf;}
-#workspaceJsonModal .workspace-json-status.warn{border-color:rgba(255,194,102,0.22);background:rgba(145,91,17,0.14);color:#ffd08a;}
-#workspaceJsonModal .workspace-json-status.error{border-color:rgba(255,115,115,0.24);background:rgba(118,34,34,0.16);color:#ffb0b0;}
-#workspaceJsonModal .workspace-json-footer{margin-top:14px;justify-content:space-between;align-items:center;flex-wrap:wrap;}
-#workspaceJsonModal .workspace-json-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-#workspaceJsonModal .workspace-json-footer button{padding:8px 14px;border-radius:8px;font-size:11px;cursor:pointer;}
-#workspaceJsonModal .workspace-json-footer button:not(.ai-save-btn){border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#e8eefb;}
-#workspaceJsonModal .workspace-json-footer button:not(.ai-save-btn):hover{background:rgba(255,255,255,0.12);}
+#jsonPanel .workspace-json-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;padding:20px 20px 18px;background:linear-gradient(180deg,rgba(22,27,39,0.99),rgba(11,15,24,0.99));border:1px solid rgba(126,156,220,0.18);border-radius:14px;}
+#jsonPanel .workspace-json-meta{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(7,11,20,0.48);}
+#jsonPanel .workspace-json-doc{display:grid;gap:3px;min-width:0;}
+#jsonPanel .workspace-json-label{display:block;color:#8fa3c6;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;min-width:0;text-align:left;}
+#jsonPanel .workspace-json-doc strong{color:#edf3ff;font-size:12px;}
+#jsonPanel .workspace-json-metaText{color:#9ba9c4;font-size:11px;line-height:1.45;max-width:460px;}
+#jsonPanel .workspace-json-toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:end;margin-bottom:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(7,11,20,0.42);}
+#jsonPanel .workspace-json-toolbarField{display:grid;gap:5px;min-width:0;}
+#jsonPanel .workspace-json-toolbarField select{width:100%;box-sizing:border-box;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);color:#f5f8ff;padding:8px 10px;font:12px/1.35 Consolas,"Courier New",monospace;font-weight:600;cursor:pointer;}
+#jsonPanel .workspace-json-toolbarField select:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
+#jsonPanel .workspace-json-toolbarHint{grid-column:1 / -1;color:#9ba9c4;font-size:11px;line-height:1.45;}
+#jsonPanel .workspace-json-editorWrap{display:grid;gap:6px;min-height:0;flex:1;}
+#jsonPanel #workspaceJsonEditor{width:100%;min-height:340px;flex:1;resize:vertical;box-sizing:border-box;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(2,5,12,0.96);color:#f5f8ff;padding:14px 16px;font:13px/1.5 Consolas,"Courier New",monospace;font-weight:600;tab-size:2;color-scheme:dark;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:auto;-webkit-user-select:text;user-select:text;cursor:text;overscroll-behavior:contain;}
+#jsonPanel #workspaceJsonEditor:focus{outline:none;border-color:rgba(117,162,255,0.52);box-shadow:0 0 0 1px rgba(117,162,255,0.24);}
+#jsonPanel .workspace-json-status{margin-top:12px;min-height:18px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#adc0e2;font-size:11px;line-height:1.45;white-space:pre-wrap;}
+#jsonPanel .workspace-json-status.success{border-color:rgba(106,213,127,0.24);background:rgba(36,96,51,0.18);color:#c6efcf;}
+#jsonPanel .workspace-json-status.warn{border-color:rgba(255,194,102,0.22);background:rgba(145,91,17,0.14);color:#ffd08a;}
+#jsonPanel .workspace-json-status.error{border-color:rgba(255,115,115,0.24);background:rgba(118,34,34,0.16);color:#ffb0b0;}
+#jsonPanel .workspace-json-footer{margin-top:14px;justify-content:space-between;align-items:center;flex-wrap:wrap;}
+#jsonPanel .workspace-json-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#jsonPanel .workspace-json-footer button{padding:8px 14px;border-radius:8px;font-size:11px;cursor:pointer;}
+#jsonPanel .workspace-json-footer button:not(.ai-save-btn){border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#e8eefb;}
+#jsonPanel .workspace-json-footer button:not(.ai-save-btn):hover{background:rgba(255,255,255,0.12);}
 @media (max-width: 760px){
-  #workspaceJsonModal .workspace-json-panel{width:calc(100vw - 18px);padding:18px 14px 14px;}
-  #workspaceJsonModal .workspace-json-toolbar{grid-template-columns:1fr;gap:8px;}
-  #workspaceJsonModal #workspaceJsonEditor{min-height:280px;padding:12px 12px;font-size:13px;}
-  #workspaceJsonModal .workspace-json-footer{align-items:stretch;}
-  #workspaceJsonModal .workspace-json-actions{width:100%;}
-  #workspaceJsonModal .workspace-json-footer button{flex:1 1 120px;}
+  #jsonPanel .workspace-json-panel{padding:18px 14px 14px;}
+  #jsonPanel .workspace-json-toolbar{grid-template-columns:1fr;gap:8px;}
+  #jsonPanel #workspaceJsonEditor{min-height:280px;padding:12px 12px;font-size:13px;}
+  #jsonPanel .workspace-json-footer{align-items:stretch;}
+  #jsonPanel .workspace-json-actions{width:100%;}
+  #jsonPanel .workspace-json-footer button{flex:1 1 120px;}
 }
 #motionPathEditor{display:none;position:fixed;inset:0;z-index:205;}
 #motionPathEditor.open{display:block;}
@@ -1025,12 +1025,53 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button class="panel-tab active" data-panel-view="brush" data-panel-target="rightPanel">Brush</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="simulation" data-panel-target="rightPanel">Simulation</button>
   <button class="panel-tab" data-panel-view="settings" data-panel-target="rightPanel">Settings</button>
+  <button class="panel-tab" data-panel-view="json" data-panel-target="rightPanel">JSON</button>
 </div>
 <aside id="rightPanel">
   <div id="favoritesPanel" class="panel-view" data-panel-view="favorites"></div>
   <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
   <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
   <div id="settingsPanel" class="panel-view" data-panel-view="settings"></div>
+  <div id="jsonPanel" class="panel-view" data-panel-view="json">
+    <div class="workspace-json-panel" role="region" aria-labelledby="workspaceJsonTitle" aria-describedby="workspaceJsonIntro">
+      <h2 id="workspaceJsonTitle">📝 Workspace JSON</h2>
+      <div class="ai-subtitle" id="workspaceJsonIntro">Inspect, validate, and apply workspace JSON. Use Save/Open Workspace File for the full layer-and-settings snapshot.</div>
+      <div class="workspace-json-meta">
+        <div class="workspace-json-doc">
+          <span class="workspace-json-label">Document</span>
+          <strong id="workspaceJsonDocumentName">Workspace Settings JSON</strong>
+        </div>
+        <div class="workspace-json-metaText" id="workspaceJsonMeta">Loaded from the current live workspace state. Use Validate before Apply if you hand-edit the JSON.</div>
+      </div>
+      <div class="workspace-json-toolbar">
+        <label class="workspace-json-toolbarField" for="workspaceJsonDocumentSelect">
+          <span class="workspace-json-label">Area</span>
+          <select id="workspaceJsonDocumentSelect"></select>
+        </label>
+        <label class="workspace-json-toolbarField" for="workspaceJsonSessionSelect" id="workspaceJsonSessionSelectWrap" hidden>
+          <span class="workspace-json-label">Session</span>
+          <select id="workspaceJsonSessionSelect"></select>
+        </label>
+        <div class="workspace-json-toolbarHint" id="workspaceJsonDocHint">Select a document area to inspect or edit a focused slice of the workspace state.</div>
+      </div>
+      <label class="workspace-json-editorWrap" for="workspaceJsonEditor">
+        <span class="workspace-json-label">JSON</span>
+        <textarea id="workspaceJsonEditor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="workspaceJsonStatus"></textarea>
+      </label>
+      <div class="workspace-json-status" id="workspaceJsonStatus" aria-live="polite">Ready to edit the current workspace bundle.</div>
+      <div class="ai-modal-footer workspace-json-footer">
+        <div class="workspace-json-actions">
+          <button id="workspaceJsonFormat" type="button">✨ Format</button>
+          <button id="workspaceJsonValidate" type="button">✓ Validate</button>
+          <button id="workspaceJsonCopy" type="button">📋 Copy</button>
+        </div>
+        <div class="workspace-json-actions">
+          <button id="workspaceJsonCloseAction" type="button">Close</button>
+          <button id="workspaceJsonApply" class="ai-save-btn" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </aside>
 <div id="simFormatMenu"></div>
 
@@ -1225,48 +1266,6 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   </div>
 </div>
 
-<div id="workspaceJsonModal">
-  <div class="ai-modal-backdrop" id="workspaceJsonBackdrop"></div>
-  <div class="ai-modal-panel workspace-json-panel" role="dialog" aria-modal="true" aria-labelledby="workspaceJsonTitle" aria-describedby="workspaceJsonIntro">
-    <button class="ai-modal-close" id="workspaceJsonClose" aria-label="Close workspace JSON editor">✕</button>
-    <h2 id="workspaceJsonTitle">📝 Workspace JSON</h2>
-    <div class="ai-subtitle" id="workspaceJsonIntro">Inspect, validate, and apply workspace JSON. Use Save/Open Workspace File for the full layer-and-settings snapshot.</div>
-    <div class="workspace-json-meta">
-      <div class="workspace-json-doc">
-        <span class="workspace-json-label">Document</span>
-        <strong id="workspaceJsonDocumentName">Workspace Settings JSON</strong>
-      </div>
-      <div class="workspace-json-metaText" id="workspaceJsonMeta">Loaded from the current live workspace state. Use Validate before Apply if you hand-edit the JSON.</div>
-    </div>
-    <div class="workspace-json-toolbar">
-      <label class="workspace-json-toolbarField" for="workspaceJsonDocumentSelect">
-        <span class="workspace-json-label">Area</span>
-        <select id="workspaceJsonDocumentSelect"></select>
-      </label>
-      <label class="workspace-json-toolbarField" for="workspaceJsonSessionSelect" id="workspaceJsonSessionSelectWrap" hidden>
-        <span class="workspace-json-label">Session</span>
-        <select id="workspaceJsonSessionSelect"></select>
-      </label>
-      <div class="workspace-json-toolbarHint" id="workspaceJsonDocHint">Select a document area to inspect or edit a focused slice of the workspace state.</div>
-    </div>
-    <label class="workspace-json-editorWrap" for="workspaceJsonEditor">
-      <span class="workspace-json-label">JSON</span>
-      <textarea id="workspaceJsonEditor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="workspaceJsonStatus"></textarea>
-    </label>
-    <div class="workspace-json-status" id="workspaceJsonStatus" aria-live="polite">Ready to edit the current workspace bundle.</div>
-    <div class="ai-modal-footer workspace-json-footer">
-      <div class="workspace-json-actions">
-        <button id="workspaceJsonFormat" type="button">✨ Format</button>
-        <button id="workspaceJsonValidate" type="button">✓ Validate</button>
-        <button id="workspaceJsonCopy" type="button">📋 Copy</button>
-      </div>
-      <div class="workspace-json-actions">
-        <button id="workspaceJsonCloseAction" type="button">Close</button>
-        <button id="workspaceJsonApply" class="ai-save-btn" type="button">Apply</button>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- ══════════ Status Bar ══════════ -->
 <div id="status">Ready</div>

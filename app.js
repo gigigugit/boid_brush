@@ -2639,7 +2639,7 @@ export class App {
 
   _getWorkspaceJsonModalElements() {
     return {
-      modal: document.getElementById('workspaceJsonModal'),
+      modal: document.getElementById('jsonPanel'),
       editor: document.getElementById('workspaceJsonEditor'),
       status: document.getElementById('workspaceJsonStatus'),
       meta: document.getElementById('workspaceJsonMeta'),
@@ -2911,16 +2911,45 @@ export class App {
     this._setWorkspaceJsonModalStatus();
   }
 
-  _showWorkspaceJsonModal() {
-    const { modal, editor } = this._getWorkspaceJsonModalElements();
-    if (!modal || !editor) return;
+  _refreshWorkspaceJsonPanel() {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    if (!editor) return false;
     this._workspaceJsonEditorDocKey = this._workspaceJsonEditorDocKey || 'workspace';
     this._workspaceJsonEditorSessionIndex = Number.isFinite(this._workspaceJsonEditorSessionIndex)
       ? this._workspaceJsonEditorSessionIndex
       : -1;
     this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
-    this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle());
-    modal.classList.add('open');
+    this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    return true;
+  }
+
+  _activateRightPanelTab(viewName) {
+    const rightPanel = document.getElementById('rightPanel');
+    const rightTabs = document.getElementById('rightPanelTabs');
+    const tab = rightTabs?.querySelector(`.panel-tab[data-panel-view="${viewName}"]`);
+    const view = rightPanel?.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
+    if (!rightPanel || !rightTabs || !tab || !view) return false;
+    rightTabs.querySelectorAll('.panel-tab').forEach(button => button.classList.remove('active'));
+    rightPanel.querySelectorAll(':scope > .panel-view').forEach(panelView => panelView.classList.remove('active'));
+    tab.classList.add('active');
+    view.classList.add('active');
+    rightPanel.classList.add('open');
+    document.getElementById('sidebarToggle')?.classList.add('active');
+    this._updateTabVisibility();
+    return true;
+  }
+
+  _closeRightPanel() {
+    document.getElementById('rightPanel')?.classList.remove('open');
+    document.getElementById('sidebarToggle')?.classList.remove('active');
+    this._updateTabVisibility();
+  }
+
+  _showWorkspaceJsonModal() {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    if (!editor) return;
+    this._activateRightPanelTab('json');
+    this._refreshWorkspaceJsonPanel();
     requestAnimationFrame(() => {
       editor.focus();
       editor.setSelectionRange(0, 0);
@@ -2931,7 +2960,7 @@ export class App {
     if (this._colorPicker?.open) {
       this._closeColorPicker({ recordHistory: false });
     }
-    document.getElementById('workspaceJsonModal')?.classList.remove('open');
+    this._closeRightPanel();
   }
 
   _readWorkspaceJsonEditorBundle({ requireSession = true } = {}) {
@@ -14510,6 +14539,7 @@ export class App {
           // Update topbar toggle
           if (panelId === 'rightPanel') document.getElementById('sidebarToggle')?.classList.add('active');
           if (panelId === 'leftPanel') document.getElementById('layersToggle')?.classList.add('active');
+          if (panelId === 'rightPanel' && viewName === 'json') this._refreshWorkspaceJsonPanel();
         }
         this._updateTabVisibility();
       });
@@ -14681,8 +14711,6 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
-    document.getElementById('workspaceJsonClose')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
-    document.getElementById('workspaceJsonBackdrop')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
@@ -14777,8 +14805,9 @@ export class App {
       }
     });
     document.addEventListener('keydown', event => {
-      const modal = document.getElementById('workspaceJsonModal');
-      if (!modal?.classList.contains('open')) return;
+      const panel = document.getElementById('jsonPanel');
+      const drawer = document.getElementById('rightPanel');
+      if (!panel?.classList.contains('active') || !drawer?.classList.contains('open')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         this._hideWorkspaceJsonModal();
