@@ -2639,7 +2639,7 @@ export class App {
 
   _getWorkspaceJsonModalElements() {
     return {
-      modal: document.getElementById('jsonPanel'),
+      panel: document.getElementById('jsonPanel'),
       editor: document.getElementById('workspaceJsonEditor'),
       status: document.getElementById('workspaceJsonStatus'),
       meta: document.getElementById('workspaceJsonMeta'),
