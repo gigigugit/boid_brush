@@ -8026,7 +8026,10 @@ export class App {
     }
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
-    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    // New sessions snapshot the currently active settings fresh — pass an empty
+    // base so leftover vars overrides from the previous draft (just captured
+    // above by _syncActiveSimulationSessionFromDraft) don't stick around.
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, {});
     // New simulation sessions always start from the sim seek default instead of
     // inheriting the current draw-mode seek slider value.
     this.simulation.vars.seek = DEFAULT_SIM_SEEK;
