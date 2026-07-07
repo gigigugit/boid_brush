@@ -35,7 +35,9 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
+// Keep the inline JSON editor's single-key accent lightweight and deterministic.
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
+const WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
 const WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS = 250000;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
@@ -2673,9 +2675,8 @@ export class App {
       this._syncWorkspaceJsonHighlightScroll();
       return;
     }
-    const highlightPattern = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
     highlight.innerHTML = this._escapeWorkspaceJsonHtml(raw)
-      .replace(highlightPattern, `<span class="workspace-json-highlightKey">"${WORKSPACE_JSON_HIGHLIGHT_KEY}"</span>`);
+      .replace(WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX, `<span class="workspace-json-highlightKey">"${WORKSPACE_JSON_HIGHLIGHT_KEY}"</span>`);
     this._syncWorkspaceJsonHighlightScroll();
   }
 
@@ -2881,6 +2882,7 @@ export class App {
   }
 
   _createWorkspaceJsonEditorBundle() {
+    // The inline JSON tab edits workspace settings only; full layer pixel snapshots stay in Save/Open Workspace File flows.
     return this.createWorkspaceSettingsBundle();
   }
 
