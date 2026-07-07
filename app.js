@@ -7983,7 +7983,7 @@ export class App {
     if (!session) return null;
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     const controlState = this._captureSimulationSessionControlState();
-    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, {});
     const nextSession = {
       ...session,
       vars: _normalizeSimulationVars(this.simulation.vars),
