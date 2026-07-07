@@ -36,6 +36,7 @@ const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
+const WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS = 250000;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -2664,6 +2665,14 @@ export class App {
     const { editor, highlight } = this._getWorkspaceJsonModalElements();
     if (!editor || !highlight) return;
     const raw = editor.value || '';
+    const editorWrap = editor.parentElement;
+    const useHighlight = raw.length <= WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS;
+    editorWrap?.classList.toggle('workspace-json-editorWrap--plain', !useHighlight);
+    if (!useHighlight) {
+      highlight.textContent = '';
+      this._syncWorkspaceJsonHighlightScroll();
+      return;
+    }
     const highlightPattern = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
     highlight.innerHTML = this._escapeWorkspaceJsonHtml(raw)
       .replace(highlightPattern, `<span class="workspace-json-highlightKey">"${WORKSPACE_JSON_HIGHLIGHT_KEY}"</span>`);
@@ -2683,7 +2692,7 @@ export class App {
         key: 'workspace',
         group: 'Workspace',
         label: 'Workspace Bundle',
-        description: 'Full workspace snapshot with session controls, presets, autosave, and document state.',
+        description: 'Workspace settings snapshot with session controls, presets, and autosave state. Use Save/Open Workspace File for full layer pixels.',
         kind: 'bundle',
       },
       { key: 'brush-boid', group: 'Brush Settings', label: 'Brush: Boid', description: 'Boid brush controls, including shared boid-specific stamp and motion settings.', kind: 'brush', brush: 'boid' },
@@ -2871,6 +2880,10 @@ export class App {
     return {};
   }
 
+  _createWorkspaceJsonEditorBundle() {
+    return this.createWorkspaceSettingsBundle();
+  }
+
   _populateWorkspaceJsonDocumentSelect(docKey = 'workspace') {
     const { docSelect, sessionSelect, sessionSelectWrap, docHint } = this._getWorkspaceJsonModalElements();
     const specs = this._getWorkspaceJsonDocumentSpecs();
@@ -2946,7 +2959,7 @@ export class App {
       ? this._workspaceJsonEditorSessionIndex
       : -1;
     this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
-    this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
     return true;
   }
 
@@ -2955,7 +2968,7 @@ export class App {
     if (!editor) return false;
     const docKey = docSelect?.value || this._workspaceJsonEditorDocKey || 'workspace';
     const sessionIndex = docKey === 'simulation-session' ? this._getWorkspaceJsonSessionSelectValue() : 'draft';
-    const bundle = this.createWorkspaceSettingsBundle({ includeDocument: true });
+    const bundle = this._createWorkspaceJsonEditorBundle();
     const nextText = JSON.stringify(
       this._buildWorkspaceJsonDocument(bundle, docKey, { sessionIndex: sessionIndex === 'draft' ? -1 : sessionIndex }),
       null,
@@ -3119,13 +3132,13 @@ export class App {
       if (docKey === 'workspace') {
         await this.applyWorkspaceSettingsBundle(parsed);
       } else {
-        const bundle = this.createWorkspaceSettingsBundle({ includeDocument: true });
+        const bundle = this._createWorkspaceJsonEditorBundle();
         const merged = this._mergeWorkspaceJsonDocumentIntoBundle(bundle, docKey, parsed, { sessionIndex: this._workspaceJsonEditorSessionIndex });
         await this.applyWorkspaceSettingsBundle(merged);
       }
       refreshWorkspaceSettingsUi(this);
       this._populateWorkspaceJsonDocumentSelect(docKey);
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
       if (docKey === 'workspace') {
         const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
           ? Object.keys(normalized.presets).length
@@ -3148,7 +3161,7 @@ export class App {
 
   _mergeWorkspaceJsonDocumentIntoBundle(bundle, docKey, parsed, state = {}) {
     if (docKey === 'workspace') return parsed;
-    const nextBundle = _deepClone(bundle || this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    const nextBundle = _deepClone(bundle || this._createWorkspaceJsonEditorBundle());
     nextBundle.session = _deepClone(nextBundle.session || {});
     nextBundle.session._simulation = _deepClone(nextBundle.session._simulation || {});
     const canvasKeys = this._workspaceJsonCanvasKeys();
@@ -14783,12 +14796,12 @@ export class App {
     document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
       this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
     });
     document.getElementById('workspaceJsonSessionSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorSessionIndex = event.target.value === 'draft' ? -1 : Number(event.target.value);
       if (!Number.isFinite(this._workspaceJsonEditorSessionIndex)) this._workspaceJsonEditorSessionIndex = -1;
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
     });
     document.getElementById('workspaceJsonEditor')?.addEventListener('input', () => this._syncWorkspaceJsonHighlight());
     document.getElementById('workspaceJsonEditor')?.addEventListener('scroll', () => this._syncWorkspaceJsonHighlightScroll());
