@@ -5769,7 +5769,6 @@ export class App {
         x: this.W * 0.5,
         y: this.H * 0.5,
         enabled: true,
-        ...this._getSimulationItemDefaultFields('spawn'),
       });
     }
     return data.spawns;
