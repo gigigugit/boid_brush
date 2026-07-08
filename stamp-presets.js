@@ -8,9 +8,17 @@ function svgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.replace(/\s+/g, ' ').trim())}`;
 }
 
-export const DEFAULT_STAMP_PRESET_ID = 'builtin-circle';
+export const DEFAULT_STAMP_PRESET_ID = 'soft-round';
 
 export const BUILTIN_STAMP_IMAGE_PRESETS = Object.freeze([
+  {
+    id: 'soft-round',
+    name: 'Soft Round',
+    sourceType: 'asset',
+    licenseLabel: 'Local asset',
+    sourceUrl: './visual-assets/stamps/soft-round.png',
+    dataUrl: './visual-assets/stamps/soft-round.png',
+  },
   {
     id: 'builtin-circle',
     name: 'Circle',
