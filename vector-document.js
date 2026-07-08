@@ -1,6 +1,13 @@
 const DOC_VERSION = 1;
 
 let shapeSeq = 1;
+function fallbackEntropy() {
+  const perf = typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? Math.floor(performance.now() * 1000).toString(36)
+    : '';
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${perf}${rand}`;
+}
 
 function deepClone(value) {
   if (typeof structuredClone === 'function') return structuredClone(value);
@@ -11,7 +18,7 @@ export function createShapeId(prefix = 'shape') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`;
   }
-  return `${prefix}-${Date.now().toString(36)}-${shapeSeq++}`;
+  return `${prefix}-${Date.now().toString(36)}-${fallbackEntropy()}-${shapeSeq++}`;
 }
 
 function normalizeStyle(kind, style = {}) {

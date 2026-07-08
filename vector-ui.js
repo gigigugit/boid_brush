@@ -152,8 +152,11 @@ export function syncVectorSidebar(app) {
   const selectionDisabled = !selected;
 
   if (selectionSummary) {
+    const selectionLabel = selected
+      ? `${selected.kind} · ${selected.id.slice(0, 14)} · ${selected.meta.guideRole || 'none'}`
+      : 'No shape selected';
     selectionSummary.textContent = selected
-      ? `${selected.kind} · ${selected.id.slice(0, 8)} · ${selected.meta.guideRole || 'none'}`
+      ? selectionLabel
       : 'No shape selected';
   }
   if (selectedGuideRole) {

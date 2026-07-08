@@ -12,6 +12,8 @@ import {
 import { buildVectorSidebar, syncVectorSidebar } from './vector-ui.js';
 
 const LOCAL_STORAGE_KEY = 'boid-brush-vector-draft';
+const MAX_HISTORY_LENGTH = 80;
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 250;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -211,10 +213,10 @@ class VectorEditorApp {
   }
 
   copySelection() {
-    const selected = this.getSelectedShape();
-    if (!selected) return;
-    this.state.clipboard = [cloneDocument({ items: [selected] }).items[0]];
-    this._setStatus('Copied shape');
+    const selection = this.doc.items.filter(item => this.state.selection.includes(item.id));
+    if (!selection.length) return;
+    this.state.clipboard = selection.map(item => cloneDocument(item));
+    this._setStatus(`Copied ${selection.length} shape${selection.length === 1 ? '' : 's'}`);
     this.render();
   }
 
@@ -255,10 +257,16 @@ class VectorEditorApp {
       this._setStatus('No local draft saved yet');
       return;
     }
-    this.doc = normalizeDocument(JSON.parse(payload));
-    this.state.selection = [];
-    this.state.view = { x: 0, y: 0, width: this.doc.width, height: this.doc.height };
-    this._snapshot('Loaded local draft');
+    try {
+      this.doc = normalizeDocument(JSON.parse(payload));
+      this.state.selection = [];
+      this.state.view = { x: 0, y: 0, width: this.doc.width, height: this.doc.height };
+      this._snapshot('Loaded local draft');
+      this._setStatus('Loaded local draft');
+    } catch (error) {
+      console.error(error);
+      this._setStatus('Failed to load local draft');
+    }
     this.render();
   }
 
@@ -269,11 +277,17 @@ class VectorEditorApp {
   }
 
   async openJson(file) {
-    const text = await file.text();
-    this.doc = normalizeDocument(JSON.parse(text));
-    this.state.selection = [];
-    this.state.view = { x: 0, y: 0, width: this.doc.width, height: this.doc.height };
-    this._snapshot('Opened JSON');
+    try {
+      const text = await file.text();
+      this.doc = normalizeDocument(JSON.parse(text));
+      this.state.selection = [];
+      this.state.view = { x: 0, y: 0, width: this.doc.width, height: this.doc.height };
+      this._snapshot('Opened JSON');
+      this._setStatus(`Opened ${file.name}`);
+    } catch (error) {
+      console.error(error);
+      this._setStatus(`Failed to open ${file.name}`);
+    }
     this.render();
   }
 
@@ -579,7 +593,7 @@ class VectorEditorApp {
       view: cloneDocument(this.state.view),
     };
     this.state.history.push(snapshot);
-    if (this.state.history.length > 80) this.state.history.shift();
+    if (this.state.history.length > MAX_HISTORY_LENGTH) this.state.history.shift();
     this.state.future = [];
   }
 
@@ -593,7 +607,7 @@ class VectorEditorApp {
     link.href = url;
     link.download = filename;
     link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 250);
+    setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_REVOKE_DELAY_MS);
   }
 
   _serializeSvg() {
