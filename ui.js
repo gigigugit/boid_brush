@@ -1178,6 +1178,11 @@ export function buildSimulationControlsPanel(app) {
       <div class="sim-hud-body">
         <div class="sim-row sim-stack" id="simDrawerToolRow">
           <button class="sim-pill" data-sim-tool="select">Select</button>
+          <button class="sim-pill" id="simDrawerDuplicateBtn" type="button" disabled>Duplicate</button>
+          <button class="sim-pill" id="simDrawerCopyBtn" type="button" disabled>Copy</button>
+          <button class="sim-pill" id="simDrawerCutBtn" type="button" disabled>Cut</button>
+          <button class="sim-pill" id="simDrawerPasteBtn" type="button" disabled>Paste</button>
+          <div class="sim-inspector-divider" aria-hidden="true"></div>
           <button class="sim-pill active" data-sim-tool="spawn">Spawn</button>
           <button class="sim-pill" data-sim-tool="spawnBlob">Spawn Blob</button>
           <button class="sim-pill" data-sim-tool="attract">Attract</button>

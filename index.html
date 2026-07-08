@@ -167,9 +167,13 @@ a:hover{text-decoration:underline;}
 
   function populate(branches) {
     sel.innerHTML = '';
+    // Most recently committed branch first; fall back to name order if no date is known.
     branches.sort(function(a, b) {
-      if (a.name === DEFAULT_BRANCH) return -1;
-      if (b.name === DEFAULT_BRANCH) return 1;
+      var da = a.commitDate ? Date.parse(a.commitDate) : NaN;
+      var db = b.commitDate ? Date.parse(b.commitDate) : NaN;
+      if (!isNaN(da) && !isNaN(db)) return db - da;
+      if (!isNaN(da)) return -1;
+      if (!isNaN(db)) return 1;
       return a.name.localeCompare(b.name);
     });
     branches.forEach(function(br) {
@@ -180,6 +184,24 @@ a:hover{text-decoration:underline;}
     });
     st.textContent = branches.length + ' branch' + (branches.length !== 1 ? 'es' : '') + ' available';
     updateLink();
+  }
+
+  // Fetch each branch's latest commit date so branches can be ordered by recency.
+  function withCommitDates(branches) {
+    return Promise.all(branches.map(function(br) {
+      var url = br.commit && br.commit.url;
+      if (!url) return br;
+      return fetch(url)
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(commit) {
+          var date = commit && commit.commit &&
+            (commit.commit.committer && commit.commit.committer.date ||
+             commit.commit.author && commit.commit.author.date);
+          if (date) br.commitDate = date;
+          return br;
+        })
+        .catch(function() { return br; });
+    }));
   }
 
   // Use sessionStorage cache to avoid GitHub API rate limits (60/hr unauthenticated)
@@ -193,6 +215,7 @@ a:hover{text-decoration:underline;}
         if (!r.ok) throw new Error('GitHub API ' + r.status);
         return r.json();
       })
+      .then(withCommitDates)
       .then(function(branches) {
         try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ts: Date.now(), data: branches})); } catch(_) {}
         populate(branches);
