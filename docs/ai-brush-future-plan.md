@@ -16,7 +16,7 @@ Design a future **AI-assisted stamp brush** for Boid Brush without implementing 
 
 ## Product goal
 
-Add a future brush mode that can:
+Add a brush mode that can:
 
 1. capture a region around the cursor
 2. prepare a masked stamp input
@@ -91,7 +91,7 @@ Validation for this phase:
 Only after the core flow is stable, evaluate additional backends or model families, such as:
 
 - local diffusion server
-- A1111-compatible endpoints
+- AUTOMATIC1111-compatible endpoints
 - Draw Things-compatible endpoints
 - future category-specific fast generators
 
