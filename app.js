@@ -364,7 +364,7 @@ const SIM_DELETE_BADGE_OFFSET = 24;
 const SIM_DELETE_BADGE_RADIUS = 20;
 const SIM_DELETE_BADGE_FONT = 24;
 const SIM_PARAM_HANDLE_RADIUS = 8;
-const SIM_PARAM_HIT_RADIUS = 20;
+const SIM_PARAM_HIT_RADIUS = 32;
 const SIM_OVERLAY_ACTION_HIT_RADIUS = 12;
 const SIM_POINT_STRENGTH_HANDLE_OFFSET = 22;
 const SIM_POINT_STRENGTH_HANDLE_SCALE = 60;
@@ -5352,6 +5352,7 @@ export class App {
     this.undoStack.push({ s: capturedState || this._captureState(), i: this.activeLayerIdx });
     if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
     this.redoStack = [];
+    this._updateSimUndoRedoBtns();
   }
 
   doUndo() {
@@ -5361,6 +5362,7 @@ export class App {
     this.activeLayerIdx = u.i;
     this._restoreState(u.s);
     this.showToast('↩ Undo');
+    this._updateSimUndoRedoBtns();
   }
 
   doRedo() {
@@ -5370,6 +5372,14 @@ export class App {
     this.activeLayerIdx = r.i;
     this._restoreState(r.s);
     this.showToast('↪ Redo');
+    this._updateSimUndoRedoBtns();
+  }
+
+  _updateSimUndoRedoBtns() {
+    const undoBtn = document.getElementById('simUndoBtn');
+    const redoBtn = document.getElementById('simRedoBtn');
+    if (undoBtn) undoBtn.disabled = this.undoStack.length === 0;
+    if (redoBtn) redoBtn.disabled = this.redoStack.length === 0;
   }
 
   // ========================================================
@@ -6699,6 +6709,15 @@ export class App {
       };
     }
     return this._getSimulationAnchor(item);
+  }
+
+  _getSimDeleteBadgePos(anchorX, anchorY) {
+    const bx = anchorX + SIM_DELETE_BADGE_OFFSET;
+    const by = anchorY - SIM_DELETE_BADGE_OFFSET;
+    return {
+      x: Math.max(SIM_DELETE_BADGE_RADIUS, Math.min(this.W - SIM_DELETE_BADGE_RADIUS, bx)),
+      y: Math.max(SIM_DELETE_BADGE_RADIUS, Math.min(this.H - SIM_DELETE_BADGE_RADIUS, by)),
+    };
   }
 
   _normalizeSimulationSpawnMask(mask) {
@@ -10881,6 +10900,7 @@ export class App {
     this._refreshSimulationExportUi();
     syncEdgeSliders(this);
     this._renderSimulationInspector();
+    this._updateSimUndoRedoBtns();
   }
 
   _toggleSimulationGuidesVisibility(force) {
@@ -11672,8 +11692,9 @@ export class App {
     }
     const checkDelete = (target, collection, kind) => {
       const anchor = this._getSimulationDeleteAnchor(target, kind);
-      const dx = x - (anchor.x + SIM_DELETE_BADGE_OFFSET);
-      const dy = y - (anchor.y - SIM_DELETE_BADGE_OFFSET);
+      const badge = this._getSimDeleteBadgePos(anchor.x, anchor.y);
+      const dx = x - badge.x;
+      const dy = y - badge.y;
       return dx * dx + dy * dy <= SIM_DELETE_HIT_RADIUS * SIM_DELETE_HIT_RADIUS ? { kind: 'delete', target, collection, anchorType: kind } : null;
     };
 
@@ -11802,10 +11823,11 @@ export class App {
       return true;
     });
 
-    const drawDelete = (x, y) => {
+    const drawDelete = (anchorX, anchorY) => {
+      const badge = this._getSimDeleteBadgePos(anchorX, anchorY);
       ctx.fillStyle = 'rgba(18,18,22,0.55)';
       ctx.beginPath();
-      ctx.arc(x + SIM_DELETE_BADGE_OFFSET, y - SIM_DELETE_BADGE_OFFSET, SIM_DELETE_BADGE_RADIUS, 0, Math.PI * 2);
+      ctx.arc(badge.x, badge.y, SIM_DELETE_BADGE_RADIUS, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.22)';
       ctx.lineWidth = 1;
@@ -11814,7 +11836,7 @@ export class App {
       ctx.font = `${SIM_DELETE_BADGE_FONT}px Segoe UI, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('×', x + SIM_DELETE_BADGE_OFFSET, y - SIM_DELETE_BADGE_OFFSET + 0.5);
+      ctx.fillText('×', badge.x, badge.y + 0.5);
     };
 
     const drawOverlayChip = (button, label) => {
@@ -11985,28 +12007,34 @@ export class App {
     for (const spawn of this._ensureSimulationSpawns()) {
       const config = this._resolveSimulationSpawnConfig(spawn, p);
       const active = spawn.enabled !== false;
+      const sel = isSelected('spawns', spawn);
       ctx.save();
       ctx.globalAlpha = active ? 1 : 0.35;
-      ctx.strokeStyle = isSelected('spawns', spawn) ? 'rgba(140,196,255,0.98)' : 'rgba(255,255,255,0.6)';
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.lineWidth = isSelected('spawns', spawn) ? 2.4 : 1.5;
+      ctx.strokeStyle = sel ? 'rgba(140,196,255,0.98)' : 'rgba(255,255,255,0.6)';
+      ctx.fillStyle = sel ? 'rgba(100,180,255,0.14)' : 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = sel ? 3 : 1.5;
+      if (sel) {
+        ctx.shadowColor = 'rgba(100,180,255,0.7)';
+        ctx.shadowBlur = 12;
+      }
       if (spawn.mask) {
         this._drawSimulationSpawnMaskPreview(ctx, spawn.mask, {
           fillStyle: 'rgba(0,0,0,0)',
-          strokeStyle: isSelected('spawns', spawn) ? 'rgba(140,196,255,0.96)' : 'rgba(110,176,255,0.78)',
+          strokeStyle: sel ? 'rgba(140,196,255,0.96)' : 'rgba(110,176,255,0.78)',
           outlineOnly: true,
         });
       } else {
         ctx.beginPath();
-        ctx.arc(spawn.x, spawn.y, Math.max(8, config.radius), 0, Math.PI * 2);
+        ctx.arc(spawn.x, spawn.y, Math.max(8, config.radius + (sel ? 4 : 0)), 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       }
+      ctx.shadowBlur = 0;
       ctx.beginPath();
       ctx.arc(spawn.x, spawn.y, 5, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.fill();
-      if (isSelected('spawns', spawn)) {
+      if (sel) {
         drawSelectedHandles(spawn, 'rgba(140,196,255,0.98)');
         const spawnControls = this._getSimulationSpawnOverlayControls(spawn, p);
         if (spawnControls.formatButton) {
@@ -12025,7 +12053,8 @@ export class App {
     for (const point of data.points) {
       const config = this._resolveSimulationPointConfig(point, p);
       const attract = point.type === 'attract';
-      const color = isSelected('points', point)
+      const sel = isSelected('points', point);
+      const color = sel
         ? 'rgba(150,214,255,0.95)'
         : attract ? 'rgba(94,149,255,0.88)' : 'rgba(255,188,118,0.9)';
       const fill = attract ? 'rgba(54,98,185,0.18)' : 'rgba(217,147,66,0.18)';
@@ -12033,16 +12062,21 @@ export class App {
       ctx.globalAlpha = point.enabled !== false ? 1 : 0.35;
       ctx.strokeStyle = color;
       ctx.fillStyle = fill;
-      ctx.lineWidth = isSelected('points', point) ? 2.4 : 1.5;
+      ctx.lineWidth = sel ? 3 : 1.5;
+      if (sel) {
+        ctx.shadowColor = attract ? 'rgba(94,149,255,0.65)' : 'rgba(255,188,118,0.65)';
+        ctx.shadowBlur = 10;
+      }
       ctx.beginPath();
       ctx.arc(point.x, point.y, config.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      ctx.shadowBlur = 0;
       ctx.beginPath();
       ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
-      if (isSelected('points', point)) drawSelectedHandles(point, color);
+      if (sel) drawSelectedHandles(point, color);
       drawDelete(point.x, point.y);
       ctx.restore();
     }
@@ -12055,16 +12089,22 @@ export class App {
         const target = this._getAnimatedSimulationPathTarget(pathItem, p);
         const startSample = this._getSimulationPathSample(pathItem, 0, p);
         const pathStrokeColor = isSelected('paths', pathItem) ? 'rgba(168,218,255,0.98)' : 'rgba(116,166,255,0.85)';
+        const pathSel = isSelected('paths', pathItem);
         ctx.save();
         ctx.globalAlpha = pathItem.enabled !== false ? 1 : 0.3;
         ctx.strokeStyle = pathStrokeColor;
-        ctx.lineWidth = isSelected('paths', pathItem) ? 3 : 2;
+        ctx.lineWidth = pathSel ? 4 : 2;
+        if (pathSel) {
+          ctx.shadowColor = 'rgba(120,200,255,0.7)';
+          ctx.shadowBlur = 10;
+        }
         ctx.setLineDash([8, 6]);
         ctx.beginPath();
         ctx.moveTo(renderPoints[0].x, renderPoints[0].y);
         for (let i = 1; i < renderPoints.length; i++) ctx.lineTo(renderPoints[i].x, renderPoints[i].y);
         if (config.closed) ctx.closePath();
         ctx.stroke();
+        ctx.shadowBlur = 0;
         ctx.setLineDash([]);
         const bandAlpha = (pathItem.enabled !== false ? 1 : 0.3) * 0.16;
         const radiusPointCount = Array.isArray(pathItem.radiusPoints) ? pathItem.radiusPoints.length : 0;
@@ -12193,12 +12233,17 @@ export class App {
       for (const trail of data.pheromonePaths || []) {
         if (!trail.points?.length) continue;
         const config = this._resolveSimulationPheromoneConfig(trail, p);
+        const trailSel = isSelected('pheromonePaths', trail);
         ctx.save();
         ctx.globalAlpha = trail.enabled !== false ? 1 : 0.35;
-        ctx.strokeStyle = isSelected('pheromonePaths', trail) ? 'rgba(194,255,150,0.95)' : 'rgba(120,200,80,0.8)';
+        ctx.strokeStyle = trailSel ? 'rgba(194,255,150,0.95)' : 'rgba(120,200,80,0.8)';
         ctx.lineWidth = Math.max(2, config.radius * 2);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
+        if (trailSel) {
+          ctx.shadowColor = 'rgba(150,255,100,0.6)';
+          ctx.shadowBlur = 8;
+        }
         ctx.globalAlpha *= Math.max(0.12, config.intensity * 0.4);
         ctx.beginPath();
         ctx.moveTo(trail.points[0].x, trail.points[0].y);
@@ -12211,15 +12256,21 @@ export class App {
       for (const edge of data.edges) {
         if (!edge.points?.length) continue;
         const config = this._resolveSimulationEdgeConfig(edge, p);
+        const edgeSel = isSelected('edges', edge);
         ctx.save();
         ctx.globalAlpha = edge.enabled !== false ? 1 : 0.35;
-        ctx.strokeStyle = isSelected('edges', edge) ? 'rgba(255,238,160,0.98)' : 'rgba(255,210,120,0.92)';
+        ctx.strokeStyle = edgeSel ? 'rgba(255,238,160,0.98)' : 'rgba(255,210,120,0.92)';
         ctx.fillStyle = 'rgba(255,210,120,0.08)';
-        ctx.lineWidth = isSelected('edges', edge) ? 3 : 2;
+        ctx.lineWidth = edgeSel ? 4 : 2;
+        if (edgeSel) {
+          ctx.shadowColor = 'rgba(255,220,80,0.6)';
+          ctx.shadowBlur = 10;
+        }
         ctx.beginPath();
         ctx.moveTo(edge.points[0].x, edge.points[0].y);
         for (let i = 1; i < edge.points.length; i++) ctx.lineTo(edge.points[i].x, edge.points[i].y);
         ctx.stroke();
+        ctx.shadowBlur = 0;
         if (config.radius > 0) {
           ctx.save();
           ctx.globalAlpha = 0.25;
@@ -14569,6 +14620,8 @@ export class App {
     this._initColorPickerBindings();
     document.getElementById('undoBtn')?.addEventListener('click', () => this.doUndo());
     document.getElementById('redoBtn')?.addEventListener('click', () => this.doRedo());
+    document.getElementById('simUndoBtn')?.addEventListener('click', () => this.doUndo());
+    document.getElementById('simRedoBtn')?.addEventListener('click', () => this.doRedo());
     document.getElementById('clearBtn')?.addEventListener('click', () => this.clearActiveLayer());
     document.getElementById('saveWorkspaceBtn')?.addEventListener('click', () => document.getElementById('btnExportWorkspace')?.click());
     document.getElementById('openWorkspaceBtn')?.addEventListener('click', () => document.getElementById('btnImportWorkspace')?.click());
