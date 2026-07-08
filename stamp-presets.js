@@ -14,7 +14,7 @@ export const BUILTIN_STAMP_IMAGE_PRESETS = Object.freeze([
   {
     id: 'soft-round',
     name: 'Soft Round',
-    sourceType: 'asset',
+    sourceType: 'builtin',
     licenseLabel: 'Local asset',
     sourceUrl: './visual-assets/stamps/soft-round.png',
     dataUrl: './visual-assets/stamps/soft-round.png',

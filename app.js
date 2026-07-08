@@ -4869,7 +4869,7 @@ export class App {
     }
   }
 
-  async _loadDefaultStampImage({ enable = false } = {}) {
+  async _loadDefaultStampImage({ enable = true } = {}) {
     await this.loadBuiltinStampPreset(DEFAULT_STAMP_PRESET_ID, { enable, silent: true });
   }
 
@@ -18687,7 +18687,7 @@ export class App {
   }
 
   async _applyFactoryDefaults() {
-    await this._loadDefaultStampImage();
+    await this._loadDefaultStampImage({ enable: true });
     this.viewBookmarks = [];
     this.lastChangeMarker = null;
     this.symmetry = this._createDefaultSymmetryState();
@@ -18724,7 +18724,7 @@ export class App {
       if (hasSavedStampImageState) {
         await this._restoreCustomStampImageState(controls._stampImageState);
       } else {
-        await this._loadDefaultStampImage();
+        await this._loadDefaultStampImage({ enable: true });
       }
       this.viewBookmarks = [];
       this.lastChangeMarker = null;
