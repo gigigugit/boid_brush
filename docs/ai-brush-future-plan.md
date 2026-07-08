@@ -97,12 +97,12 @@ Only after the core flow is stable, evaluate additional backends or model famili
 
 ## Key design questions to answer before implementation
 
-1. Should continuous AI stamping create one undo step per stroke or per stamp? Per-stamp undo gives finer control, while per-stroke undo keeps history simpler and closer to existing brush behavior.
-2. Should prompts be global, brush-specific, or saved in presets?
-3. Should the brush sample the visible composite, the active layer, or both?
-4. How should generated output respect opacity, blend mode, and symmetry?
-5. What is the maximum acceptable latency for single-stamp and continuous workflows?
-6. What should happen when the backend is unavailable mid-stroke?
+- **1. Undo model:** Should continuous AI stamping create one undo step per stroke or per stamp? Per-stamp undo gives finer control, while per-stroke undo keeps history simpler and closer to existing brush behavior.
+- **2. Prompt scope:** Should prompts be global, brush-specific, or saved in presets?
+- **3. Input sampling:** Should the brush sample the visible composite, the active layer, or both?
+- **4. Output compositing:** How should generated output respect opacity, blend mode, and symmetry?
+- **5. Latency target:** What is the maximum acceptable latency for single-stamp and continuous workflows?
+- **6. Failure behavior:** What should happen when the backend is unavailable mid-stroke?
 
 ## Acceptance criteria for a future implementation
 
