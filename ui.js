@@ -1012,9 +1012,10 @@ export function buildSidebar(app) {
   document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
     app._showSimulationSetupExplorer?.(event.currentTarget);
   });
-  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
-    el.addEventListener('input', () => app._syncActiveSimulationSessionFromDraft?.());
-    el.addEventListener('change', () => app._syncActiveSimulationSessionFromDraft?.());
+  const syncSimulationDraftFromSidebar = () => app._syncSimulationSessionDraftUi?.();
+  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
+    el.addEventListener('input', syncSimulationDraftFromSidebar);
+    el.addEventListener('change', syncSimulationDraftFromSidebar);
   });
   app._refreshSensingLayerSourceUi?.();
   app._syncSimulationSessionContextUi?.();
@@ -1046,7 +1047,7 @@ function _workspaceSettingsMarkup() {
         <button id="btnExportWorkspace">💾 Save Workspace File</button>
       </div>
       <div style="display:flex;gap:3px;margin:2px 0 4px;">
-        <button id="btnEditWorkspaceJson">📝 Edit Workspace Settings JSON</button>
+        <button id="btnEditWorkspaceJson">📝 Open Workspace JSON Tab</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:3px;margin:4px 0;">
         <button id="btnSaveSession" class="save-btn">💾 Save Session</button>

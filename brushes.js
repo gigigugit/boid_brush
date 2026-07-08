@@ -186,6 +186,48 @@ function _getSimulationSpawnAppearance(brush, index, p) {
   return { color, opacity };
 }
 
+function _syncSimulationSpawnAppearance(brush, spawns, resolveConfig, p) {
+  if (!brush?.app?.simulation?.enabled || !brush?.sim || !Array.isArray(spawns) || typeof resolveConfig !== 'function') return;
+  const activeSpawns = spawns.filter(spawn => spawn?.enabled !== false);
+  if (!activeSpawns.length) {
+    _resetSimulationSpawnAppearance(brush);
+    return;
+  }
+  const nextColors = [];
+  const nextOpacity = [];
+  const liveCount = Math.max(0, brush.sim.readAgents?.().count || 0);
+  let cursor = 0;
+  for (const spawn of activeSpawns) {
+    const config = resolveConfig(spawn);
+    const color = _normalizeBrushHexColor(config?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+    const opacity = Number.isFinite(config?.opacity)
+      ? Math.max(0, Math.min(1, config.opacity))
+      : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+    const expectedCount = Math.max(0, Math.round(config?.count || 0));
+    for (let offset = 0; offset < expectedCount; offset++) {
+      const index = cursor + offset;
+      if (liveCount && index >= liveCount) break;
+      nextColors[index] = color;
+      nextOpacity[index] = opacity;
+    }
+    cursor += expectedCount;
+    if (liveCount && cursor >= liveCount) break;
+  }
+  if (liveCount > cursor) {
+    const fallback = resolveConfig(activeSpawns[0]);
+    const color = _normalizeBrushHexColor(fallback?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+    const opacity = Number.isFinite(fallback?.opacity)
+      ? Math.max(0, Math.min(1, fallback.opacity))
+      : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+    for (let index = cursor; index < liveCount; index++) {
+      nextColors[index] = color;
+      nextOpacity[index] = opacity;
+    }
+  }
+  brush._agentSpawnColors = nextColors;
+  brush._agentSpawnOpacity = nextOpacity;
+}
+
 function _resolveLeaderParams(p) {
   const leaderConfig = p?.leaderConfig;
   const leader = {
@@ -2100,40 +2142,11 @@ export class BoidBrush {
 
   ensureSimulationSpawnAppearance(p = this.app.getP()) {
     if (!this._ready || !this.sim || !this.app.simulation?.enabled) return;
-    if (!this._agentSpawnColors || !this._agentSpawnOpacity) {
-      _resetSimulationSpawnAppearance(this);
-    }
-    const spawns = this.app._ensureSimulationSpawns('boid').filter(spawn => spawn.enabled !== false);
-    if (!spawns.length) return;
-    let cursor = 0;
-    for (const spawn of spawns) {
-      const config = this.app._resolveSimulationSpawnConfig(spawn, p);
-      const color = _normalizeBrushHexColor(config?.color, _normalizeBrushHexColor(p?.color, '#000000'));
-      const opacity = Number.isFinite(config?.opacity)
-        ? Math.max(0, Math.min(1, config.opacity))
-        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
-      const expectedCount = Math.max(0, Math.round(config?.count || 0));
-      for (let offset = 0; offset < expectedCount; offset++) {
-        const index = cursor + offset;
-        if (this._agentSpawnColors[index]) continue;
-        this._agentSpawnColors[index] = color;
-        this._agentSpawnOpacity[index] = opacity;
-      }
-      cursor += expectedCount;
-    }
-    const liveCount = this.sim.readAgents?.().count || 0;
-    if (liveCount > cursor) {
-      const fallback = this.app._resolveSimulationSpawnConfig(spawns[0], p);
-      const color = _normalizeBrushHexColor(fallback?.color, _normalizeBrushHexColor(p?.color, '#000000'));
-      const opacity = Number.isFinite(fallback?.opacity)
-        ? Math.max(0, Math.min(1, fallback.opacity))
-        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
-      for (let index = cursor; index < liveCount; index++) {
-        if (this._agentSpawnColors[index]) continue;
-        this._agentSpawnColors[index] = color;
-        this._agentSpawnOpacity[index] = opacity;
-      }
-    }
+    _syncSimulationSpawnAppearance(this, this.app._ensureSimulationSpawns('boid'), spawn => this.app._resolveSimulationSpawnConfig(spawn, p), p);
+  }
+
+  refreshSimulationSpawnAppearance(p = this.app.getP()) {
+    this.ensureSimulationSpawnAppearance(p);
   }
 
   onFrame(elapsed) {
@@ -2889,6 +2902,11 @@ export class AntBrush {
       this.paintSimulationPheromone(trail.points, config.radius, config.intensity);
     }
     if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing();
+  }
+
+  refreshSimulationSpawnAppearance(p = this.app.getP()) {
+    if (!this._ready || !this.sim || !this.app.simulation?.enabled) return;
+    _syncSimulationSpawnAppearance(this, this.app._ensureSimulationSpawns('ant'), spawn => this.app._resolveSimulationSpawnConfig(spawn, p), p);
   }
 
   // ---- Brush lifecycle ----

@@ -35,6 +35,10 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
+// Keep the inline JSON editor's single-key accent lightweight and deterministic.
+const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
+const WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
+const WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS = 250000;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -51,6 +55,31 @@ const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'showSimulationOverlayControls',
   'showSimulationSelectionOverlay',
   'simSidebarSessionSelect',
+]);
+const SIM_SPAWN_RUNTIME_REFRESH_FIELDS = new Set([
+  'color',
+  'count',
+  'opacity',
+  'distribution',
+  'noiseScale',
+  'shape',
+  'radius',
+  'angle',
+  'jitter',
+  'stampSize',
+  'stampSeparation',
+  'trailFlow',
+  'smudge',
+  'hueVar',
+  'satVar',
+  'litVar',
+  'sizeVar',
+  'opacityVar',
+  'speedVar',
+]);
+const SIM_SPAWN_APPEARANCE_FIELDS = new Set([
+  'color',
+  'opacity',
 ]);
 const FACTORY_DEFAULTS = Object.freeze({
   brushScale: 100,
@@ -2614,8 +2643,9 @@ export class App {
 
   _getWorkspaceJsonModalElements() {
     return {
-      modal: document.getElementById('workspaceJsonModal'),
+      panel: document.getElementById('jsonPanel'),
       editor: document.getElementById('workspaceJsonEditor'),
+      highlight: document.getElementById('workspaceJsonHighlight'),
       status: document.getElementById('workspaceJsonStatus'),
       meta: document.getElementById('workspaceJsonMeta'),
       documentName: document.getElementById('workspaceJsonDocumentName'),
@@ -2626,13 +2656,44 @@ export class App {
     };
   }
 
+  _escapeWorkspaceJsonHtml(text = '') {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  _syncWorkspaceJsonHighlight() {
+    const { editor, highlight } = this._getWorkspaceJsonModalElements();
+    if (!editor || !highlight) return;
+    const raw = editor.value || '';
+    const editorWrap = editor.parentElement;
+    const useHighlight = raw.length <= WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS;
+    editorWrap?.classList.toggle('workspace-json-editorWrap--plain', !useHighlight);
+    if (!useHighlight) {
+      highlight.textContent = '';
+      this._syncWorkspaceJsonHighlightScroll();
+      return;
+    }
+    highlight.innerHTML = this._escapeWorkspaceJsonHtml(raw)
+      .replace(WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX, `<span class="workspace-json-highlightKey">"${WORKSPACE_JSON_HIGHLIGHT_KEY}"</span>`);
+    this._syncWorkspaceJsonHighlightScroll();
+  }
+
+  _syncWorkspaceJsonHighlightScroll() {
+    const { editor, highlight } = this._getWorkspaceJsonModalElements();
+    if (!editor || !highlight) return;
+    highlight.scrollTop = editor.scrollTop;
+    highlight.scrollLeft = editor.scrollLeft;
+  }
+
   _getWorkspaceJsonDocumentSpecs() {
     return [
       {
         key: 'workspace',
         group: 'Workspace',
         label: 'Workspace Bundle',
-        description: 'Full workspace snapshot with session controls, presets, autosave, and document state.',
+        description: 'Workspace settings snapshot with session controls, presets, and autosave state. Use Save/Open Workspace File for full layer pixels.',
         kind: 'bundle',
       },
       { key: 'brush-boid', group: 'Brush Settings', label: 'Brush: Boid', description: 'Boid brush controls, including shared boid-specific stamp and motion settings.', kind: 'brush', brush: 'boid' },
@@ -2820,6 +2881,11 @@ export class App {
     return {};
   }
 
+  _createWorkspaceJsonEditorBundle() {
+    // The inline JSON tab edits workspace settings only; full layer pixel snapshots stay in Save/Open Workspace File flows.
+    return this.createWorkspaceSettingsBundle();
+  }
+
   _populateWorkspaceJsonDocumentSelect(docKey = 'workspace') {
     const { docSelect, sessionSelect, sessionSelectWrap, docHint } = this._getWorkspaceJsonModalElements();
     const specs = this._getWorkspaceJsonDocumentSpecs();
@@ -2883,19 +2949,82 @@ export class App {
     }
     const documentPayload = this._buildWorkspaceJsonDocument(bundle, docKey, { sessionIndex: this._workspaceJsonEditorSessionIndex });
     if (editor) editor.value = JSON.stringify(documentPayload, null, 2);
+    this._syncWorkspaceJsonHighlight();
     this._setWorkspaceJsonModalStatus();
   }
 
-  _showWorkspaceJsonModal() {
-    const { modal, editor } = this._getWorkspaceJsonModalElements();
-    if (!modal || !editor) return;
+  _refreshWorkspaceJsonPanel() {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    if (!editor) return false;
     this._workspaceJsonEditorDocKey = this._workspaceJsonEditorDocKey || 'workspace';
     this._workspaceJsonEditorSessionIndex = Number.isFinite(this._workspaceJsonEditorSessionIndex)
       ? this._workspaceJsonEditorSessionIndex
       : -1;
     this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
-    this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle());
-    modal.classList.add('open');
+    this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
+    return true;
+  }
+
+  _resetWorkspaceJsonEditorToCurrent() {
+    const { editor, docSelect } = this._getWorkspaceJsonModalElements();
+    if (!editor) return false;
+    const docKey = docSelect?.value || this._workspaceJsonEditorDocKey || 'workspace';
+    const sessionIndex = docKey === 'simulation-session' ? this._getWorkspaceJsonSessionSelectValue() : 'draft';
+    const bundle = this._createWorkspaceJsonEditorBundle();
+    const nextText = JSON.stringify(
+      this._buildWorkspaceJsonDocument(bundle, docKey, { sessionIndex: sessionIndex === 'draft' ? -1 : sessionIndex }),
+      null,
+      2,
+    );
+    if ((editor.value || '') === nextText) {
+      this._setWorkspaceJsonModalStatus('JSON editor already matches the current workspace snapshot.', 'success');
+      return true;
+    }
+    if (!confirm('Discard JSON edits and reload the current workspace snapshot?')) {
+      this._setWorkspaceJsonModalStatus('Reset cancelled.', 'warn');
+      return false;
+    }
+    this._workspaceJsonEditorDocKey = docKey;
+    this._workspaceJsonEditorSessionIndex = sessionIndex === 'draft' ? -1 : sessionIndex;
+    this._populateWorkspaceJsonEditor(bundle);
+    this._setWorkspaceJsonModalStatus(`${this._getWorkspaceJsonDocumentSpec(docKey).label} reloaded from the current workspace snapshot.`, 'success');
+    this.showToast('↺ JSON reset to current');
+    return true;
+  }
+
+  _isWorkspaceJsonPanelActive() {
+    const panel = document.getElementById('jsonPanel');
+    const drawer = document.getElementById('rightPanel');
+    return !!panel?.classList.contains('active') && !!drawer?.classList.contains('open');
+  }
+
+  _activateRightPanelTab(viewName) {
+    const rightPanel = document.getElementById('rightPanel');
+    const rightTabs = document.getElementById('rightPanelTabs');
+    const tab = rightTabs?.querySelector(`.panel-tab[data-panel-view="${viewName}"]`);
+    const view = rightPanel?.querySelector(`.panel-view[data-panel-view="${viewName}"]`);
+    if (!rightPanel || !rightTabs || !tab || !view) return false;
+    rightTabs.querySelectorAll('.panel-tab').forEach(button => button.classList.remove('active'));
+    rightPanel.querySelectorAll(':scope > .panel-view').forEach(panelView => panelView.classList.remove('active'));
+    tab.classList.add('active');
+    view.classList.add('active');
+    rightPanel.classList.add('open');
+    document.getElementById('sidebarToggle')?.classList.add('active');
+    this._updateTabVisibility();
+    return true;
+  }
+
+  _closeRightPanel() {
+    document.getElementById('rightPanel')?.classList.remove('open');
+    document.getElementById('sidebarToggle')?.classList.remove('active');
+    this._updateTabVisibility();
+  }
+
+  _showWorkspaceJsonModal() {
+    const { editor } = this._getWorkspaceJsonModalElements();
+    if (!editor) return;
+    this._activateRightPanelTab('json');
+    this._refreshWorkspaceJsonPanel();
     requestAnimationFrame(() => {
       editor.focus();
       editor.setSelectionRange(0, 0);
@@ -2906,7 +3035,7 @@ export class App {
     if (this._colorPicker?.open) {
       this._closeColorPicker({ recordHistory: false });
     }
-    document.getElementById('workspaceJsonModal')?.classList.remove('open');
+    this._closeRightPanel();
   }
 
   _readWorkspaceJsonEditorBundle({ requireSession = true } = {}) {
@@ -2940,7 +3069,9 @@ export class App {
     if (!editor) return false;
     const { parsed } = this._readWorkspaceJsonEditorBundle({ requireSession: false });
     editor.value = JSON.stringify(parsed, null, 2);
+    this._syncWorkspaceJsonHighlight();
     this._setWorkspaceJsonModalStatus('Workspace JSON formatted.', 'success');
+    this.showToast('✨ JSON formatted');
     return true;
   }
 
@@ -2954,9 +3085,11 @@ export class App {
         `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
         'success',
       );
+      this.showToast('✓ JSON valid');
       return true;
     }
     this._setWorkspaceJsonModalStatus('Document JSON is valid. Ready to apply.', 'success');
+    this.showToast('✓ JSON valid');
     return true;
   }
 
@@ -3001,13 +3134,13 @@ export class App {
       if (docKey === 'workspace') {
         await this.applyWorkspaceSettingsBundle(parsed);
       } else {
-        const bundle = this.createWorkspaceSettingsBundle({ includeDocument: true });
+        const bundle = this._createWorkspaceJsonEditorBundle();
         const merged = this._mergeWorkspaceJsonDocumentIntoBundle(bundle, docKey, parsed, { sessionIndex: this._workspaceJsonEditorSessionIndex });
         await this.applyWorkspaceSettingsBundle(merged);
       }
       refreshWorkspaceSettingsUi(this);
       this._populateWorkspaceJsonDocumentSelect(docKey);
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
       if (docKey === 'workspace') {
         const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
           ? Object.keys(normalized.presets).length
@@ -3030,7 +3163,7 @@ export class App {
 
   _mergeWorkspaceJsonDocumentIntoBundle(bundle, docKey, parsed, state = {}) {
     if (docKey === 'workspace') return parsed;
-    const nextBundle = _deepClone(bundle || this.createWorkspaceSettingsBundle({ includeDocument: true }));
+    const nextBundle = _deepClone(bundle || this._createWorkspaceJsonEditorBundle());
     nextBundle.session = _deepClone(nextBundle.session || {});
     nextBundle.session._simulation = _deepClone(nextBundle.session._simulation || {});
     const canvasKeys = this._workspaceJsonCanvasKeys();
@@ -3673,6 +3806,8 @@ export class App {
     const rightTabs = document.getElementById('rightPanelTabs');
     const leftOpen = leftPanel?.classList.contains('open');
     const rightOpen = rightPanel?.classList.contains('open');
+    const rightView = rightPanel?.querySelector(':scope > .panel-view.active')?.dataset.panelView || '';
+    document.body.classList.toggle('json-panel-expanded', rightOpen && rightView === 'json');
     const simDrawerTab = leftTabs?.querySelector('.panel-tab[data-panel-view="simulationControls"]');
     const simDrawerAvailable = !!simDrawerTab && !simDrawerTab.classList.contains('panel-tab-hidden');
     if (leftTabs) {
@@ -3941,6 +4076,7 @@ export class App {
         input.value = normalized;
         delete input.dataset.simUnset;
         this._syncSimulationFormatColorTrigger(trigger, normalized);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
       },
       onCommit: () => input.dispatchEvent(new Event('change', { bubbles: true })),
     };
@@ -5643,7 +5779,12 @@ export class App {
     if (!data) return [];
     if (!Array.isArray(data.spawns)) data.spawns = [];
     if (!data.spawns.length) {
-      data.spawns.push({ id: this.simulation.nextId++, x: this.W * 0.5, y: this.H * 0.5, enabled: true });
+      data.spawns.push({
+        id: this.simulation.nextId++,
+        x: this.W * 0.5,
+        y: this.H * 0.5,
+        enabled: true,
+      });
     }
     return data.spawns;
   }
@@ -5925,6 +6066,16 @@ export class App {
         opacity: Number.isFinite(spawn?.opacity) ? Math.max(0, Math.min(1, spawn.opacity)) : undefined,
         distribution: SIM_SPAWN_DISTRIBUTION_MODES.includes(spawn?.distribution) ? spawn.distribution : undefined,
         noiseScale: Number.isFinite(spawn?.noiseScale) ? _clampSimulationSpawnNoiseScale(spawn.noiseScale) : undefined,
+        stampSize: Number.isFinite(spawn?.stampSize) ? Math.max(1, spawn.stampSize) : undefined,
+        stampSeparation: Number.isFinite(spawn?.stampSeparation) ? Math.max(0, Math.min(1, spawn.stampSeparation)) : undefined,
+        trailFlow: Number.isFinite(spawn?.trailFlow) ? Math.max(0, Math.min(1, spawn.trailFlow)) : undefined,
+        smudge: Number.isFinite(spawn?.smudge) ? Math.max(0, Math.min(1, spawn.smudge)) : undefined,
+        hueVar: Number.isFinite(spawn?.hueVar) ? Math.max(0, Math.min(1, spawn.hueVar)) : undefined,
+        satVar: Number.isFinite(spawn?.satVar) ? Math.max(0, Math.min(1, spawn.satVar)) : undefined,
+        litVar: Number.isFinite(spawn?.litVar) ? Math.max(0, Math.min(1, spawn.litVar)) : undefined,
+        sizeVar: Number.isFinite(spawn?.sizeVar) ? Math.max(0, Math.min(1, spawn.sizeVar)) : undefined,
+        opacityVar: Number.isFinite(spawn?.opacityVar) ? Math.max(0, Math.min(1, spawn.opacityVar)) : undefined,
+        speedVar: Number.isFinite(spawn?.speedVar) ? Math.max(0, Math.min(1, spawn.speedVar)) : undefined,
         mask: this._normalizeSimulationSpawnMask(spawn?.mask),
       }));
 
@@ -5935,6 +6086,7 @@ export class App {
         y: Number.isFinite(point?.y) ? point.y : this.H * 0.5,
         type: point?.type === 'repel' ? 'repel' : 'attract',
         enabled: point?.enabled !== false,
+        color: _normalizeHexColor(point?.color),
         strength: Number.isFinite(point?.strength) ? Math.max(0, point.strength) : undefined,
         radius: Number.isFinite(point?.radius) ? Math.max(1, point.radius) : undefined,
         hardness: Number.isFinite(point?.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, point.hardness)) : undefined,
@@ -5956,6 +6108,7 @@ export class App {
             id: pathItem?.id || this.simulation.nextId++,
             enabled: pathItem?.enabled !== false,
             points,
+            color: _normalizeHexColor(pathItem?.color),
             strength: Number.isFinite(pathItem?.strength) ? _normalizeSimulationPathStrength(pathItem.strength) : undefined,
             radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : undefined,
             influenceRadius: Number.isFinite(pathItem?.influenceRadius) ? Math.max(1, pathItem.influenceRadius) : undefined,
@@ -6144,6 +6297,83 @@ export class App {
       radius: Number.isFinite(pathItem?.radius) ? Math.max(1, pathItem.radius) : p.simPheroPaintRadius,
       intensity: Number.isFinite(pathItem?.intensity) ? Math.max(0, Math.min(1, pathItem.intensity)) : p.simPheroPaintStrength,
     };
+  }
+
+  _getSimulationItemDefaultFields(kind, target = null, p = this.getP()) {
+    const color = _normalizeHexColor(p?.color, '#1a1a1a');
+    if (kind === 'spawn') {
+      const defaults = {
+        count: Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(p.count))),
+        color,
+        opacity: Math.max(0, Math.min(1, p.stampOpacity)),
+        stampSize: Math.max(1, p.stampSize),
+        stampSeparation: Math.max(0, Math.min(1, p.stampSeparation)),
+        trailFlow: Math.max(0, Math.min(1, p.trailFlow)),
+        smudge: Math.max(0, Math.min(1, p.smudge)),
+        hueVar: Math.max(0, Math.min(1, p.hueVar)),
+        satVar: Math.max(0, Math.min(1, p.satVar)),
+        litVar: Math.max(0, Math.min(1, p.litVar)),
+        sizeVar: Math.max(0, Math.min(1, p.sizeVar)),
+        opacityVar: Math.max(0, Math.min(1, p.opacityVar)),
+        speedVar: Math.max(0, Math.min(1, p.speedVar)),
+      };
+      if (target?.mask) {
+        defaults.distribution = 'uniform';
+        defaults.noiseScale = 1;
+      } else {
+        defaults.shape = SIM_SPAWN_SHAPES.includes(p.spawnShape) ? p.spawnShape : 'circle';
+        defaults.radius = Math.max(1, p.spawnRadius);
+        defaults.angle = Number.isFinite(p.spawnAngle) ? p.spawnAngle : 0;
+        defaults.jitter = Math.max(0, Math.min(1, p.spawnJitter));
+      }
+      return defaults;
+    }
+    if (kind === 'point') {
+      const defaults = {
+        color,
+        strength: Math.max(0, p.simPointStrength),
+        radius: Math.max(1, p.simPointRadius),
+      };
+      if (target?.type === 'repel') defaults.hardness = 1;
+      return defaults;
+    }
+    if (kind === 'path') {
+      return {
+        color,
+        strength: _normalizeSimulationPathStrength(DEFAULT_PATH_STRENGTH),
+        radius: Math.max(1, DEFAULT_PATH_RADIUS),
+        influenceRadius: Math.max(1, DEFAULT_PATH_RADIUS),
+        speed: _normalizeSimulationPathSpeed(DEFAULT_SIM_PATH_SPEED),
+        pathType: 'standard',
+        direction: 'forward',
+        closed: false,
+      };
+    }
+    if (kind === 'edge') {
+      return {
+        strength: Math.max(0, p.simEdgeForce),
+        radius: Math.max(0, p.simEdgeRadius),
+      };
+    }
+    if (kind === 'pheromonePath') {
+      return {
+        radius: Math.max(1, p.simPheroPaintRadius),
+        intensity: Math.max(0, Math.min(1, p.simPheroPaintStrength)),
+      };
+    }
+    return {};
+  }
+
+  _applySimulationItemCurrentDefaults(entry, fields = null, p = this.getP()) {
+    if (!entry?.target) return [];
+    const defaults = this._getSimulationItemDefaultFields(entry.kind, entry.target, p);
+    const nextFields = Array.isArray(fields) && fields.length
+      ? fields.filter(field => Object.prototype.hasOwnProperty.call(defaults, field))
+      : Object.keys(defaults);
+    nextFields.forEach(field => {
+      entry.target[field] = defaults[field];
+    });
+    return nextFields;
   }
 
   _getSimulationSpawnCenter(brush = this.activeBrush) {
@@ -7176,6 +7406,7 @@ export class App {
     const primitiveKind = _normalizeSimulationPathPrimitiveKind(kind);
     if (!primitiveKind) return null;
     const primitiveRadius = primitiveKind === 'ellipse' ? SIM_PATH_PRIMITIVE_DEFAULT_RADIUS * 1.1 : SIM_PATH_PRIMITIVE_DEFAULT_RADIUS;
+    const defaults = this._getSimulationItemDefaultFields('path');
     const entry = {
       id: this.simulation.nextId++,
       enabled: true,
@@ -7186,16 +7417,18 @@ export class App {
       primitiveRadiusY: primitiveKind === 'ellipse'
         ? primitiveRadius * SIM_PATH_PRIMITIVE_DEFAULT_ELLIPSE_RATIO
         : primitiveRadius,
-      radius: DEFAULT_PATH_RADIUS,
-      strength: DEFAULT_PATH_STRENGTH,
-      speed: DEFAULT_SIM_PATH_SPEED,
-      pathType: 'standard',
+      color: defaults.color,
+      radius: defaults.radius,
+      strength: defaults.strength,
+      influenceRadius: defaults.influenceRadius,
+      speed: defaults.speed,
+      pathType: defaults.pathType,
       speedPoints: [],
       radiusPoints: [],
       strengthPoints: [],
       closed: true,
       startOffset: 0,
-      direction: 'forward',
+      direction: defaults.direction,
       travelDistance: 0,
       points: [],
     };
@@ -7593,6 +7826,74 @@ export class App {
     if (document.getElementById('autoSaveSession')?.checked) this.saveSession();
   }
 
+  _queueSimulationInspectorRefresh() {
+    if (this._simulationInspectorRefreshQueued) return;
+    this._simulationInspectorRefreshQueued = true;
+    const flush = () => {
+      this._simulationInspectorRefreshQueued = false;
+      this._renderSimulationInspector();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+    else setTimeout(flush, 0);
+  }
+
+  _syncSimulationSessionDraftUi({ rerenderInspector = true } = {}) {
+    this._syncActiveSimulationSessionFromDraft();
+    this._syncSimulationSessionContextUi();
+    if (rerenderInspector) this._queueSimulationInspectorRefresh();
+  }
+
+  _shouldRefreshSimulationPlaybackForSpawnFields(entry, fields = []) {
+    if (!entry || entry.kind !== 'spawn' || !Array.isArray(fields) || !fields.length) return false;
+    if (this._canLiveRefreshSimulationSpawnAppearance(entry, fields)) return false;
+    return fields.some(field => SIM_SPAWN_RUNTIME_REFRESH_FIELDS.has(field));
+  }
+
+  _canLiveRefreshSimulationSpawnAppearance(entry, fields = []) {
+    if (!entry || entry.kind !== 'spawn' || !Array.isArray(fields) || !fields.length) return false;
+    if (!fields.every(field => SIM_SPAWN_APPEARANCE_FIELDS.has(field))) return false;
+    if (!this.simulation.enabled || (!this.simulation.running && !this.simulation.paused)) return false;
+    if (this._hasActiveMultiSessionPlayback()) return false;
+    return typeof this.getCurrentBrush?.()?.refreshSimulationSpawnAppearance === 'function';
+  }
+
+  _syncLiveSimulationSpawnAppearance(entry, fields = []) {
+    if (!this._canLiveRefreshSimulationSpawnAppearance(entry, fields)) return;
+    const brush = this.getCurrentBrush();
+    const p = this.getP();
+    brush?.refreshSimulationSpawnAppearance?.(p);
+  }
+
+  _queueSimulationPlaybackRefresh({ preservePaused = true } = {}) {
+    if ((!this.simulation.running && !this.simulation.paused) || this.simulation.starting) return;
+    this._simulationPlaybackRefreshPreservePaused =
+      !!this._simulationPlaybackRefreshPreservePaused || (!!preservePaused && !!this.simulation.paused);
+    if (this._simulationPlaybackRefreshQueued) return;
+    this._simulationPlaybackRefreshQueued = true;
+    const flush = async () => {
+      this._simulationPlaybackRefreshQueued = false;
+      const shouldRestorePause = !!this._simulationPlaybackRefreshPreservePaused;
+      this._simulationPlaybackRefreshPreservePaused = false;
+      const wasRunning = this.simulation.running;
+      const wasPaused = this.simulation.paused;
+      if ((!wasRunning && !wasPaused) || this.simulation.starting || !this.simulation.enabled || !this._isMotionBrush()) return;
+      this.stopSimulation(false);
+      await this.startSimulation({ announce: false });
+      if (!shouldRestorePause || !this.simulation.running) return;
+      const pauseAfterRefresh = () => {
+        if (!this.simulation.running) return;
+        this.simulation.running = false;
+        this.simulation.paused = true;
+        this.isDrawing = false;
+        this._syncSimulationUI();
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pauseAfterRefresh);
+      else setTimeout(pauseAfterRefresh, 0);
+    };
+    if (typeof queueMicrotask === 'function') queueMicrotask(flush);
+    else setTimeout(flush, 0);
+  }
+
   _captureSimulationSessionControlState() {
     const controls = {};
     const sidebar = document.getElementById('sidebar');
@@ -7697,7 +7998,7 @@ export class App {
     if (!session) return null;
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     const controlState = this._captureSimulationSessionControlState();
-    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, {});
     const nextSession = {
       ...session,
       vars: _normalizeSimulationVars(this.simulation.vars),
@@ -7740,7 +8041,10 @@ export class App {
     }
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
-    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
+    // New sessions snapshot the currently active settings fresh — pass an empty
+    // base so leftover vars overrides from the previous draft (just captured
+    // above by _syncActiveSimulationSessionFromDraft) don't stick around.
+    this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, {});
     // New simulation sessions always start from the sim seek default instead of
     // inheriting the current draw-mode seek slider value.
     this.simulation.vars.seek = DEFAULT_SIM_SEEK;
@@ -9584,7 +9888,7 @@ export class App {
             <span class="sim-slider-label">${label}</span>
             <div class="sim-slider-meta">
               <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
-              <button class="sim-fld-reset" data-sim-reset="${field}" title="Clear override"${resetOpacity}>×</button>
+              <button class="sim-fld-reset" data-sim-reset="${field}" title="Match current default"${resetOpacity}>×</button>
             </div>
           </div>
           <div class="sim-slider-controls">
@@ -9758,7 +10062,7 @@ export class App {
             <div class="sim-format-row" data-sim-format-drag-root="1">
               <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
               ${compactControls.join('')}
-              <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Reset</button>
+              <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Match Current</button>
               <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
             </div>
           </div>`;
@@ -9833,7 +10137,7 @@ export class App {
       guideEditorMarkup = `
         <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong> · Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>${selected.kind === 'spawn' || selected.kind === 'point' || selected.kind === 'path' || selected.kind === 'edge' || selected.kind === 'pheromonePath' ? ` · ${_escapeHtml(getGuideMeta({ kind: selected.kind, collection: selected.collection }, target))}` : ''}</div>
         ${renderInspectorSubgroup(guideKindTitle, guideRows.length ? guideRows.join('') : '<div class="sim-inspector-note">No per-item overrides available for this guide.</div>')}
-        ${guideResetFields.length ? `<div class="sim-inspector-actions" style="margin-top:6px"><button type="button" data-sim-reset-all="${guideResetFields.join(',')}">Reset Selected</button><button type="button" data-sim-clear-selection="1">Clear Selection</button></div>` : ''}
+        ${guideResetFields.length ? `<div class="sim-inspector-actions" style="margin-top:6px"><button type="button" data-sim-reset-all="${guideResetFields.join(',')}">Match Current Defaults</button><button type="button" data-sim-clear-selection="1">Clear Selection</button></div>` : ''}
       `;
     }
 
@@ -9895,6 +10199,7 @@ export class App {
         if (!item) return;
         this.pushUndo();
         item.enabled = item.enabled === false;
+        if (collection === 'spawns') this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
@@ -9942,13 +10247,19 @@ export class App {
         const fields = (button.dataset.simResetAll || '').split(',').map(field => field.trim()).filter(Boolean);
         if (!fields.length) return;
         this.pushUndo();
-        fields.forEach(field => delete entry.target[field]);
+        const appliedFields = this._applySimulationItemCurrentDefaults(entry, fields);
+        this._syncLiveSimulationSpawnAppearance(entry, appliedFields);
+        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, appliedFields)) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
     });
     queryAllInRoots('[data-sim-duplicate]').forEach(button => {
-      button.addEventListener('click', () => this._duplicateSelectedSimulationItem());
+      button.addEventListener('click', () => {
+        const entry = this._getSelectedSimulationEntry();
+        this._duplicateSelectedSimulationItem();
+        if (entry?.kind === 'spawn') this._queueSimulationPlaybackRefresh();
+      });
     });
     panel.querySelectorAll('[data-sim-add-path-primitive]').forEach(btn => {
       btn.addEventListener('click', () => this._addSimulationPathPrimitive(btn.dataset.simAddPathPrimitive));
@@ -10003,7 +10314,10 @@ export class App {
     queryAllInRoots('[data-sim-delete]').forEach(button => {
       button.addEventListener('click', () => {
         const entry = this._getSelectedSimulationEntry();
-        if (entry) this._deleteSimulationItem(entry);
+        if (entry) {
+          this._deleteSimulationItem(entry);
+          if (entry.kind === 'spawn') this._queueSimulationPlaybackRefresh();
+        }
       });
     });
     panel.querySelectorAll('[data-sim-param]').forEach(el => {
@@ -10140,6 +10454,28 @@ export class App {
         }
         return true;
       };
+      const getUndoToken = () => {
+        const entry = this._getSelectedSimulationEntry();
+        return entry ? `${entry.collection}:${entry.id}:${field}` : null;
+      };
+      const ensureUndo = () => {
+        const token = getUndoToken();
+        if (!token || this._activeSimulationFieldUndoToken === token) return;
+        this.pushUndo();
+        this._activeSimulationFieldUndoToken = token;
+      };
+      const resetUndo = () => {
+        const token = getUndoToken();
+        if (!token || this._activeSimulationFieldUndoToken === token) {
+          this._activeSimulationFieldUndoToken = null;
+        }
+      };
+      const syncFieldLive = () => {
+        if (!writeField()) return false;
+        this._syncSimulationSessionDraftUi({ rerenderInspector: false });
+        this._syncLiveSimulationSpawnAppearance(this._getSelectedSimulationEntry(), [field]);
+        return true;
+      };
 
       // Live label update for range sliders (no re-render while dragging).
       if (el.type === 'range') {
@@ -10161,6 +10497,8 @@ export class App {
           // Restore reset-button opacity once the user moves the slider.
           const resetBtn = controlRoot.querySelector(`.sim-fld-reset[data-sim-reset="${field}"]`);
           if (resetBtn) resetBtn.style.opacity = '1';
+          ensureUndo();
+          syncFieldLive();
         });
       } else if (el.type === 'color') {
         el.addEventListener('input', () => {
@@ -10170,6 +10508,8 @@ export class App {
           const normalized = _normalizeHexColor(el.value, '#000000');
           if (lbl) lbl.textContent = normalized.toUpperCase();
           if (resetBtn) resetBtn.style.opacity = '1';
+          ensureUndo();
+          syncFieldLive();
         });
       } else if (el.type === 'number') {
         el.addEventListener('input', () => {
@@ -10193,17 +10533,26 @@ export class App {
           }
           if (rangeInput) rangeInput.value = type === 'angle' ? String(Math.round(numericValue)) : String(scale ? numericValue / scale : numericValue);
           if (resetBtn) resetBtn.style.opacity = '1';
+          ensureUndo();
+          syncFieldLive();
         });
       }
 
       // Commit on change + trigger re-render.
       const applyField = () => {
-        this.pushUndo();
-        if (!writeField()) return;
-        this._renderSimulationInspector();
-        this._maybeAutoSaveSession();
+        ensureUndo();
+        try {
+          if (!syncFieldLive()) return;
+          const entry = this._getSelectedSimulationEntry();
+          if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, [field])) this._queueSimulationPlaybackRefresh();
+          this._renderSimulationInspector();
+          this._maybeAutoSaveSession();
+        } finally {
+          resetUndo();
+        }
       };
       el.addEventListener(el.type === 'checkbox' ? 'input' : 'change', applyField);
+      el.addEventListener('blur', resetUndo);
     });
 
     // Reset buttons — clear an override field and re-render.
@@ -10212,7 +10561,9 @@ export class App {
         const entry = this._getSelectedSimulationEntry();
         if (!entry) return;
         this.pushUndo();
-        delete entry.target[btn.dataset.simReset];
+        const appliedFields = this._applySimulationItemCurrentDefaults(entry, [btn.dataset.simReset]);
+        this._syncLiveSimulationSpawnAppearance(entry, appliedFields);
+        if (this._shouldRefreshSimulationPlaybackForSpawnFields(entry, appliedFields)) this._queueSimulationPlaybackRefresh();
         this._renderSimulationInspector();
         this._maybeAutoSaveSession();
       });
@@ -10563,7 +10914,7 @@ export class App {
     this._maybeAutoSaveSession();
   }
 
-  async startSimulation() {
+  async startSimulation({ announce = true } = {}) {
     if (!this.simulation.enabled || !this._isMotionBrush()) return;
     const brush = this.getCurrentBrush();
     if (!brush) return;
@@ -10622,9 +10973,11 @@ export class App {
 
       if (this._simulationExport.armedOnStart) void this._startSimulationRecording();
       this._syncSimulationUI();
-      this.showToast(this.simulation.runtimeSessions.length
-        ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
-        : 'Simulation running');
+      if (announce) {
+        this.showToast(this.simulation.runtimeSessions.length
+          ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
+          : 'Simulation running');
+      }
     } catch (error) {
       console.error('Simulation start failed:', error);
       this._teardownMultiSessionRuntimeSessions({ commitPreview: false });
@@ -10831,7 +11184,13 @@ export class App {
 
     if (tool === 'spawn') {
       this.pushUndo();
-      const spawn = { id: this.simulation.nextId++, x, y, enabled: true };
+      const spawn = {
+        id: this.simulation.nextId++,
+        x,
+        y,
+        enabled: true,
+        ...this._getSimulationItemDefaultFields('spawn', null, p),
+      };
       data.spawns.push(spawn);
       this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
       this._maybeAutoSaveSession();
@@ -10841,7 +11200,14 @@ export class App {
       this.simulation.drawingBlob = { stroke };
     } else if (tool === 'attract' || tool === 'repel') {
       this.pushUndo();
-      const point = { id: this.simulation.nextId++, x, y, type: tool, enabled: true };
+      const point = {
+        id: this.simulation.nextId++,
+        x,
+        y,
+        type: tool,
+        enabled: true,
+        ...this._getSimulationItemDefaultFields('point', { type: tool }, p),
+      };
       data.points.push(point);
       this._setSimulationSelection({ collection: 'points', kind: 'point', target: point });
       this._maybeAutoSaveSession();
@@ -10913,10 +11279,8 @@ export class App {
           x: mask.bounds.minX + (mask.bounds.width * 0.5),
           y: mask.bounds.minY + (mask.bounds.height * 0.5),
           enabled: true,
-          count: this.getP().count,
-          distribution: 'uniform',
-          noiseScale: 1,
           mask,
+          ...this._getSimulationItemDefaultFields('spawn', { mask }, this.getP()),
         };
         data.spawns.push(spawn);
         this._setSimulationSelection({ collection: 'spawns', kind: 'spawn', target: spawn });
@@ -10932,32 +11296,45 @@ export class App {
       if (data && path.length >= 2) {
         this.pushUndo();
         if (this.simulation.drawingPath.kind === 'path' && (this._usesPathGuides())) {
+          const defaults = this._getSimulationItemDefaultFields('path', null, this.getP());
           const entry = {
             id: this.simulation.nextId++,
             points: path,
             enabled: true,
-            radius: DEFAULT_PATH_RADIUS,
-            strength: DEFAULT_PATH_STRENGTH,
-            influenceRadius: DEFAULT_PATH_RADIUS,
+            color: defaults.color,
+            radius: defaults.radius,
+            strength: defaults.strength,
+            influenceRadius: defaults.influenceRadius,
             closed: false,
-            direction: 'forward',
+            direction: defaults.direction,
             startOffset: 0,
-            speed: DEFAULT_SIM_PATH_SPEED,
-            pathType: 'standard',
+            speed: defaults.speed,
+            pathType: defaults.pathType,
             speedPoints: [],
             radiusPoints: [],
+            strengthPoints: [],
             travelDistance: 0,
           };
           data.paths.push(entry);
           this._setSimulationSelection({ collection: 'paths', kind: 'path', target: entry });
           this._maybeAutoSaveSession();
         } else if (this.simulation.drawingPath.kind === 'edge' && this.activeBrush === 'ant') {
-          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          const entry = {
+            id: this.simulation.nextId++,
+            points: path,
+            enabled: true,
+            ...this._getSimulationItemDefaultFields('edge', null, this.getP()),
+          };
           data.edges.push(entry);
           this._setSimulationSelection({ collection: 'edges', kind: 'edge', target: entry });
           this._maybeAutoSaveSession();
         } else if (this.simulation.drawingPath.kind === 'pheromone' && this.activeBrush === 'ant') {
-          const entry = { id: this.simulation.nextId++, points: path, enabled: true };
+          const entry = {
+            id: this.simulation.nextId++,
+            points: path,
+            enabled: true,
+            ...this._getSimulationItemDefaultFields('pheromonePath', null, this.getP()),
+          };
           data.pheromonePaths.push(entry);
           this._setSimulationSelection({ collection: 'pheromonePaths', kind: 'pheromonePath', target: entry });
           this._maybeAutoSaveSession();
@@ -14245,6 +14622,7 @@ export class App {
           // Update topbar toggle
           if (panelId === 'rightPanel') document.getElementById('sidebarToggle')?.classList.add('active');
           if (panelId === 'leftPanel') document.getElementById('layersToggle')?.classList.add('active');
+          if (panelId === 'rightPanel' && viewName === 'json') this._refreshWorkspaceJsonPanel();
         }
         this._updateTabVisibility();
       });
@@ -14416,24 +14794,25 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
-    document.getElementById('workspaceJsonClose')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
-    document.getElementById('workspaceJsonBackdrop')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
       this._populateWorkspaceJsonDocumentSelect(this._workspaceJsonEditorDocKey);
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
     });
     document.getElementById('workspaceJsonSessionSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorSessionIndex = event.target.value === 'draft' ? -1 : Number(event.target.value);
       if (!Number.isFinite(this._workspaceJsonEditorSessionIndex)) this._workspaceJsonEditorSessionIndex = -1;
-      this._populateWorkspaceJsonEditor(this.createWorkspaceSettingsBundle({ includeDocument: true }));
+      this._populateWorkspaceJsonEditor(this._createWorkspaceJsonEditorBundle());
     });
+    document.getElementById('workspaceJsonEditor')?.addEventListener('input', () => this._syncWorkspaceJsonHighlight());
+    document.getElementById('workspaceJsonEditor')?.addEventListener('scroll', () => this._syncWorkspaceJsonHighlightScroll());
     document.getElementById('workspaceJsonFormat')?.addEventListener('click', () => {
       try {
         this._formatWorkspaceJsonEditor();
       } catch (error) {
         this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
+        this.showToast('⚠ JSON format failed');
       }
     });
     document.getElementById('workspaceJsonValidate')?.addEventListener('click', () => {
@@ -14441,10 +14820,14 @@ export class App {
         this._validateWorkspaceJsonEditor();
       } catch (error) {
         this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+        this.showToast('⚠ JSON validation failed');
       }
     });
     document.getElementById('workspaceJsonCopy')?.addEventListener('click', () => {
       void this._copyWorkspaceJsonEditorText();
+    });
+    document.getElementById('workspaceJsonResetCurrent')?.addEventListener('click', () => {
+      this._resetWorkspaceJsonEditorToCurrent();
     });
     document.getElementById('workspaceJsonApply')?.addEventListener('click', () => {
       void this._applyWorkspaceJsonEditor();
@@ -14512,11 +14895,39 @@ export class App {
       }
     });
     document.addEventListener('keydown', event => {
-      const modal = document.getElementById('workspaceJsonModal');
-      if (!modal?.classList.contains('open')) return;
+      if (!this._isWorkspaceJsonPanelActive()) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         this._hideWorkspaceJsonModal();
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void this._applyWorkspaceJsonEditor();
+        return;
+      }
+      if (!event.shiftKey) return;
+      const lowered = event.key.toLowerCase();
+      if (lowered === 'f') {
+        event.preventDefault();
+        try {
+          this._formatWorkspaceJsonEditor();
+        } catch (error) {
+          this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
+          this.showToast('⚠ JSON format failed');
+        }
+      } else if (lowered === 'v') {
+        event.preventDefault();
+        try {
+          this._validateWorkspaceJsonEditor();
+        } catch (error) {
+          this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+          this.showToast('⚠ JSON validation failed');
+        }
+      } else if (lowered === 'c') {
+        event.preventDefault();
+        void this._copyWorkspaceJsonEditorText();
       }
     });
     document.addEventListener('pointerdown', event => {
