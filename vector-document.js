@@ -1,6 +1,8 @@
 const DOC_VERSION = 1;
 
 let shapeSeq = 1;
+const issuedShapeIds = new Set();
+
 function fallbackEntropy() {
   const perf = typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? Math.floor(performance.now() * 1000).toString(36)
@@ -15,10 +17,15 @@ function deepClone(value) {
 }
 
 export function createShapeId(prefix = 'shape') {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `${prefix}-${crypto.randomUUID()}`;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? `${prefix}-${crypto.randomUUID()}`
+      : `${prefix}-${Date.now().toString(36)}-${fallbackEntropy()}-${shapeSeq++}`;
+    if (issuedShapeIds.has(id)) continue;
+    issuedShapeIds.add(id);
+    return id;
   }
-  return `${prefix}-${Date.now().toString(36)}-${fallbackEntropy()}-${shapeSeq++}`;
+  throw new Error('Unable to allocate unique shape id');
 }
 
 function normalizeStyle(kind, style = {}) {

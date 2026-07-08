@@ -14,6 +14,8 @@ import { buildVectorSidebar, syncVectorSidebar } from './vector-ui.js';
 const LOCAL_STORAGE_KEY = 'boid-brush-vector-draft';
 const MAX_HISTORY_LENGTH = 80;
 const DOWNLOAD_URL_REVOKE_DELAY_MS = 250;
+const PASTE_OFFSET_PX = 24;
+const MIN_SHAPE_DIMENSION_PX = 2;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -56,6 +58,7 @@ class VectorEditorApp {
       status: 'Ready',
     };
     this._suspendHistory = false;
+    this._downloadCleanupTimers = new Set();
     this._wireShell();
     this._snapshot('Initial state');
     this.render();
@@ -132,6 +135,10 @@ class VectorEditorApp {
       const itemButton = event.target.closest('[data-item-id]');
       if (!itemButton) return;
       this.selectOnly(itemButton.dataset.itemId);
+    });
+    window.addEventListener('beforeunload', () => {
+      for (const timerId of this._downloadCleanupTimers) clearTimeout(timerId);
+      this._downloadCleanupTimers.clear();
     });
   }
 
@@ -225,7 +232,7 @@ class VectorEditorApp {
     const pasted = this.state.clipboard.map(item => {
       const clone = cloneDocument(item);
       clone.id = createShapeId();
-      return translateShape(clone, 24, 24);
+      return translateShape(clone, PASTE_OFFSET_PX, PASTE_OFFSET_PX);
     });
     this.doc.items.push(...pasted);
     this.state.selection = pasted.map(item => item.id);
@@ -545,7 +552,7 @@ class VectorEditorApp {
     const dx = current.x - start.x;
     const dy = current.y - start.y;
     if (kind === 'rect') {
-      if (Math.abs(dx) < 2 || Math.abs(dy) < 2) return null;
+      if (Math.abs(dx) < MIN_SHAPE_DIMENSION_PX || Math.abs(dy) < MIN_SHAPE_DIMENSION_PX) return null;
       return createShape('rect', {
         x: Math.min(start.x, current.x),
         y: Math.min(start.y, current.y),
@@ -554,7 +561,7 @@ class VectorEditorApp {
       }, this._currentShapeStyle('rect'));
     }
     if (kind === 'ellipse') {
-      if (Math.abs(dx) < 2 || Math.abs(dy) < 2) return null;
+      if (Math.abs(dx) < MIN_SHAPE_DIMENSION_PX || Math.abs(dy) < MIN_SHAPE_DIMENSION_PX) return null;
       return createShape('ellipse', {
         cx: (start.x + current.x) / 2,
         cy: (start.y + current.y) / 2,
@@ -563,7 +570,7 @@ class VectorEditorApp {
       }, this._currentShapeStyle('ellipse'));
     }
     if (kind === 'line') {
-      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return null;
+      if (Math.abs(dx) < MIN_SHAPE_DIMENSION_PX && Math.abs(dy) < MIN_SHAPE_DIMENSION_PX) return null;
       return createShape('line', {
         x1: start.x,
         y1: start.y,
@@ -607,7 +614,11 @@ class VectorEditorApp {
     link.href = url;
     link.download = filename;
     link.click();
-    setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_REVOKE_DELAY_MS);
+    const timerId = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      this._downloadCleanupTimers.delete(timerId);
+    }, DOWNLOAD_URL_REVOKE_DELAY_MS);
+    this._downloadCleanupTimers.add(timerId);
   }
 
   _serializeSvg() {
