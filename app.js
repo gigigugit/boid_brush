@@ -5375,6 +5375,8 @@ export class App {
     this._updateSimUndoRedoBtns();
   }
 
+  // Sync the enabled/disabled state of the simulation playback bar undo/redo
+  // buttons to match the current undo and redo stack lengths.
   _updateSimUndoRedoBtns() {
     const undoBtn = document.getElementById('simUndoBtn');
     const redoBtn = document.getElementById('simRedoBtn');
@@ -6711,6 +6713,9 @@ export class App {
     return this._getSimulationAnchor(item);
   }
 
+  // Compute the clamped canvas position of a delete badge so it is always
+  // fully visible within canvas bounds. Applies SIM_DELETE_BADGE_OFFSET from
+  // the guide anchor and clamps to [SIM_DELETE_BADGE_RADIUS, W/H - SIM_DELETE_BADGE_RADIUS].
   _getSimDeleteBadgePos(anchorX, anchorY) {
     const bx = anchorX + SIM_DELETE_BADGE_OFFSET;
     const by = anchorY - SIM_DELETE_BADGE_OFFSET;
