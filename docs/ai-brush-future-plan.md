@@ -93,7 +93,7 @@ Only after the core flow is stable, evaluate additional backends or model famili
 - local diffusion server
 - AUTOMATIC1111-compatible endpoints
 - Draw Things-compatible endpoints
-- future category-specific fast generators, such as foliage, clouds, stone, or other texture-oriented tools
+- future category-specific fast generators, such as foliage, clouds, stone textures, and other texture-oriented tools
 
 ## Key design questions to answer before implementation
 
