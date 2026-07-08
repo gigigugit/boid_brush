@@ -93,11 +93,11 @@ Only after the core flow is stable, evaluate additional backends or model famili
 - local diffusion server
 - AUTOMATIC1111-compatible endpoints
 - Draw Things-compatible endpoints
-- future category-specific fast generators, such as foliage, clouds, stone textures, and other texture-oriented tools
+- future category-specific fast generators, such as foliage generators, cloud generators, stone texture generators, and other texture-oriented tools
 
 ## Key design questions to answer before implementation
 
-- **1. Undo model:** Should continuous AI stamping create one undo step per stroke or per stamp? Per-stamp undo gives finer control, while per-stroke undo keeps history simpler and closer to existing brush behavior.
+- **1. Undo granularity:** Should continuous AI stamping create one undo step per stroke or per stamp? Per-stamp undo gives finer control, while per-stroke undo keeps history simpler and closer to existing brush behavior.
 - **2. Prompt scope:** Should prompts be global, brush-specific, or saved in presets?
 - **3. Input sampling:** Should the brush sample the visible composite, the active layer, or both?
 - **4. Output compositing:** How should generated output respect opacity, blend mode, and symmetry?
