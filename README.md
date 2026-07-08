@@ -11,6 +11,7 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 - **Boid Brush** – A swarm of boids follows the cursor, each stamping paint as it moves. Flocking forces (cohesion, separation, alignment, wander, flow fields, etc.) shape the resulting stroke.
 - **Fluid Brush** – Wet paint droplets are deposited onto the canvas and keep flowing, letting the brush drag and reshape the fluid after it lands.
 - **Simple Brush** – A single-stamp brush for direct painting without boid simulation.
+- **Vector Studio Preview** – A separate SVG-focused page for iterating on lines, shapes, path guides, local copy/paste, document saves, and SVG export without changing the main painting workflow.
 - **Brush Scale** – A proportional scale slider that adjusts stamp size, spawn radius, and spread together, keeping the overall look consistent at different sizes.
 - **Spawn Shapes** – Circle, ring, gaussian, line, ellipse, diamond, grid, sunburst, spiral, poisson, and cluster distributions for boid placement.
 - **Pixel Sensing** – Boids can react to existing canvas content (avoid or attract based on darkness, lightness, color channels, etc.).
@@ -39,6 +40,7 @@ Boid Brush is a personal project for learning about brush behavior, experimentin
 - Open `app.html` directly in a modern browser for the original browser-first workflow.
 - Or run `npm run start:web` after `npm install` to serve the same files over `http://127.0.0.1:4173/app.html`.
 - `index.html` remains the landing page with links to forks and experiments.
+- `vector.html` is a standalone vector editor preview page linked from `index.html` for simulation-compatible SVG guide authoring experiments.
 
 ### Desktop
 
