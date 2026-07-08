@@ -91,9 +91,9 @@ Validation for this phase:
 Only after the core flow is stable, evaluate additional backends or model families, such as:
 
 - local diffusion server
-- AUTOMATIC1111 (A1111)-compatible endpoints
+- AUTOMATIC1111 (A1111)-compatible endpoints for popular local Stable Diffusion web UIs
 - Draw Things-compatible endpoints for local image-generation apps
-- future category-specific fast generators, such as foliage generators, cloud generators, stone texture generators, and other texture-oriented tools
+- future category-specific fast generators for common painting needs, such as textures, organic elements, and other reusable visual motifs
 
 ## Key design questions to answer before implementation
 
