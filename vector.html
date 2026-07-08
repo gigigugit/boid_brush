@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boid Brush Vector Studio</title>
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;min-height:100%;background:#0d1118;color:#d9e1ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+body{display:flex;flex-direction:column;height:100vh;overflow:hidden;background:
+  radial-gradient(1200px 700px at 10% 10%, #1a2234 0%, transparent 55%),
+  radial-gradient(900px 600px at 90% 90%, #131b2d 0%, transparent 50%),
+  linear-gradient(180deg, #0d1118 0%, #090c12 100%);}
+button,input,select{font:inherit;}
+button{cursor:pointer;}
+a{color:#8bb3ff;text-decoration:none;}
+a:hover{text-decoration:underline;}
+#topbar{height:56px;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);background:rgba(15,19,28,0.92);backdrop-filter:blur(16px);}
+#topbar .spacer{flex:1;}
+.tb-group{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.tb-btn,.tb-link{padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#d9e1ee;text-decoration:none;min-height:38px;}
+.tb-btn:hover,.tb-link:hover{background:rgba(255,255,255,0.1);text-decoration:none;}
+.tb-btn.active{background:linear-gradient(135deg,#3a6ae8,#5b8af0);border-color:rgba(117,162,255,0.55);color:#fff;}
+.tb-btn:disabled{opacity:.45;cursor:not-allowed;}
+#main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 320px;}
+#workspace{position:relative;min-width:0;min-height:0;padding:16px;background:
+  linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%, rgba(255,255,255,0.03)),
+  linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%, rgba(255,255,255,0.03));
+background-size:32px 32px;background-position:0 0,16px 16px;}
+#vectorStage{position:relative;width:100%;height:100%;border:1px solid rgba(255,255,255,0.08);border-radius:18px;overflow:hidden;background:rgba(8,10,16,0.45);box-shadow:0 18px 48px rgba(0,0,0,0.4);}
+#vectorScene,#vectorPreview,#vectorOverlay{position:absolute;inset:0;width:100%;height:100%;}
+#vectorPreview{pointer-events:none;}
+#vectorOverlay{pointer-events:none;}
+#vectorOverlay .vector-handle{pointer-events:auto;fill:#5b8af0;stroke:#fff;stroke-width:2;cursor:pointer;}
+.vector-shape{cursor:pointer;stroke-linecap:round;stroke-linejoin:round;}
+.vector-shape-selected{filter:drop-shadow(0 0 10px rgba(91,138,240,0.4));}
+.vector-selection-box{fill:none;stroke:#8bb3ff;stroke-width:2;stroke-dasharray:12 8;}
+#sidebarWrap{border-left:1px solid rgba(255,255,255,0.08);background:rgba(10,13,20,0.94);backdrop-filter:blur(20px);padding:12px;overflow:auto;}
+.panel-section{margin-bottom:12px;border:1px solid rgba(255,255,255,0.08);border-radius:14px;background:rgba(255,255,255,0.03);}
+.panel-section-title{padding:12px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#eef3ff;border-bottom:1px solid rgba(255,255,255,0.07);}
+.panel-stack{padding:12px;display:grid;gap:10px;}
+.field{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;font-size:12px;color:#cfd7e6;}
+.field input[type="number"],.field select,.field input[type="color"]{width:120px;max-width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#131926;color:#eef3ff;}
+.field input[type="range"]{width:120px;}
+.field-hint{font-size:11px;line-height:1.45;color:#8e9bb1;}
+.button-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.button-row button{padding:9px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#dbe3f1;}
+.button-row button:hover{background:rgba(255,255,255,0.1);}
+.button-row button:disabled{opacity:.45;cursor:not-allowed;}
+.summary-box{padding:10px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);font-size:12px;color:#eef3ff;}
+.item-list{display:grid;gap:8px;}
+.item-card{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#dbe3f1;}
+.item-card:hover{background:rgba(255,255,255,0.08);}
+.item-card-active{background:rgba(91,138,240,0.2);border-color:rgba(117,162,255,0.45);color:#fff;}
+#statusbar{height:30px;display:flex;align-items:center;padding:0 12px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(8,11,17,0.96);font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;color:#b9c4d8;}
+@media (max-width: 1100px){
+  #main{grid-template-columns:minmax(0,1fr) 280px;}
+}
+@media (max-width: 880px){
+  #main{grid-template-columns:1fr;}
+  #sidebarWrap{max-height:42vh;border-left:none;border-top:1px solid rgba(255,255,255,0.08);}
+  #workspace{min-height:58vh;}
+}
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <div class="tb-group">
+      <button class="tb-btn active" data-tool="select" type="button">Select (V)</button>
+      <button class="tb-btn" data-tool="pan" type="button">Pan (H)</button>
+      <button class="tb-btn" data-tool="line" type="button">Line (L)</button>
+      <button class="tb-btn" data-tool="rect" type="button">Rect (R)</button>
+      <button class="tb-btn" data-tool="ellipse" type="button">Ellipse (E)</button>
+      <button class="tb-btn" data-tool="polyline" type="button">Polyline (P)</button>
+      <button class="tb-btn" id="finishPathBtn" type="button" disabled>Finish Path</button>
+    </div>
+    <div class="tb-group">
+      <button class="tb-btn" id="undoVectorBtn" type="button">Undo</button>
+      <button class="tb-btn" id="redoVectorBtn" type="button">Redo</button>
+      <button class="tb-btn" id="copyVectorBtn" type="button">Copy</button>
+      <button class="tb-btn" id="pasteVectorBtn" type="button">Paste</button>
+      <button class="tb-btn" id="exportSvgBtn" type="button">Export SVG</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="tb-group">
+      <a class="tb-link" href="app.html">Main App</a>
+      <a class="tb-link" href="index.html">Landing</a>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="workspace">
+      <div id="vectorStage">
+        <svg id="vectorScene" xmlns="http://www.w3.org/2000/svg"></svg>
+        <svg id="vectorPreview" xmlns="http://www.w3.org/2000/svg"></svg>
+        <svg id="vectorOverlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+    <aside id="sidebarWrap">
+      <div id="vectorSidebar"></div>
+    </aside>
+  </div>
+
+  <div id="statusbar"><span id="vectorStatus">Ready</span></div>
+  <input id="vectorJsonInput" type="file" accept=".json,application/json" hidden>
+
+  <script type="module" src="./vector-app.js"></script>
+</body>
+</html>
