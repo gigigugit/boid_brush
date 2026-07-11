@@ -16065,7 +16065,9 @@ export class App {
     // #topbar itself changes size (e.g. after show/hide of conditional buttons).
     window.addEventListener('resize', layout);
     window.addEventListener('orientationchange', layout);
-    new ResizeObserver(layout).observe(topbar);
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(layout).observe(topbar);
+    }
 
     layout();
   }
