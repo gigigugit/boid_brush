@@ -67,8 +67,9 @@ impl SensingMap {
         self.data[idx] as f32 / 255.0
     }
 
-    /// Sample luminance at canvas coordinates, requiring a fit radius around the
-    /// sample point to also satisfy the sensed characteristic.
+    /// Sample luminance at canvas coordinates and return the minimum value across
+    /// the center point plus 8 ring samples at `fit_radius`.
+    /// This verifies the full local circular area before sensing force applies.
     #[inline]
     pub fn sample_fit(&self, canvas_x: f32, canvas_y: f32, fit_radius: f32) -> f32 {
         let mut min_sample = self.sample(canvas_x, canvas_y);

@@ -190,6 +190,8 @@ impl Default for SimParams {
 }
 
 impl SimParams {
+    /// Safely read a float parameter, reject non-finite values, clamp to
+    /// non-negative, and fall back to `default` when missing/invalid.
     #[inline]
     fn read_nonnegative(raw: &[f32], index: usize, default: f32) -> f32 {
         raw.get(index)
