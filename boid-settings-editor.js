@@ -496,7 +496,7 @@ function _injectStyles() {
       backdrop-filter: blur(14px) saturate(0.7);
       -webkit-backdrop-filter: blur(14px) saturate(0.7);
       opacity: 0;
-      transition: opacity .18s ease;
+      transition: opacity 0.18s ease;
     }
     #${MODAL_ID}.bse-open { opacity: 1; }
 
@@ -799,7 +799,9 @@ function _bindEvents(modal) {
 
 function _pushUndo() {
   // Don't push duplicate states. JSON.stringify is acceptable here because
-  // states are small flat objects with consistent key ordering from _cloneState.
+  // states are small flat objects. Keys are always in the same insertion order
+  // since both sides come from _cloneState (JSON.parse/stringify), so key-order
+  // differences from external sources are not a concern in this code path.
   if (_undoStack.length > 0) {
     const top = _undoStack[_undoStack.length - 1];
     if (JSON.stringify(top) === JSON.stringify(_editorState)) return;
