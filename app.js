@@ -12,6 +12,7 @@ import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
+import { openBoidSettingsEditor } from './boid-settings-editor.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
@@ -19478,6 +19479,10 @@ export class App {
     this.toastEl.classList.add('show');
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 1800);
+  }
+
+  openBoidSettingsEditor() {
+    openBoidSettingsEditor(this);
   }
 
   _handleInitError(error) {
