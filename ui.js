@@ -172,6 +172,7 @@ export const LEADER_OVERRIDE_FIELDS = Object.freeze([
   { key: 'sensingMode', sourceId: 'sensingMode', id: 'leaderSensingMode', overrideId: 'leaderOverrideSensingMode', type: 'select', label: 'Sensing Mode', defaultValue: 'avoid', options: [{ value: 'avoid', label: 'Avoid' }, { value: 'attract', label: 'Attract' }], readControl: ({ sel }) => sel('leaderSensingMode') || 'avoid' },
   { key: 'sensingStrength', sourceId: 'sensingStrength', id: 'leaderSensingStrength', overrideId: 'leaderOverrideSensingStrength', type: 'range', label: 'Sensing Strength', min: 0, max: 100, defaultValue: 50, readControl: ({ val }) => val('leaderSensingStrength') / 100 },
   { key: 'sensingRadius', sourceId: 'sensingRadius', id: 'leaderSensingRadius', overrideId: 'leaderOverrideSensingRadius', type: 'range', label: 'Sensing Radius', min: 0, max: 200, defaultValue: 20, readControl: ({ val }) => val('leaderSensingRadius') },
+  { key: 'sensingFitRadius', sourceId: 'sensingFitRadius', id: 'leaderSensingFitRadius', overrideId: 'leaderOverrideSensingFitRadius', type: 'range', label: 'Sensing Fit Radius', min: 0, max: 200, defaultValue: 0, readControl: ({ val }) => val('leaderSensingFitRadius') },
   { key: 'sensingThreshold', sourceId: 'sensingThreshold', id: 'leaderSensingThreshold', overrideId: 'leaderOverrideSensingThreshold', type: 'range', label: 'Sensing Threshold', min: 0, max: 100, defaultValue: 10, readControl: ({ val }) => val('leaderSensingThreshold') / 100 },
   { key: 'neighborRadius', sourceId: 'am_neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
   { key: 'separationRadius', sourceId: 'am_separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
@@ -714,6 +715,7 @@ export function buildSidebar(app) {
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
       ${sliderRow('sensingStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2))}
       ${sliderRow('sensingRadius', 'Radius', 5, 80, 20)}
+      ${sliderRow('sensingFitRadius', 'Fit Radius', 0, 80, 0)}
       ${sliderRow('sensingThreshold', 'Threshold', 0, 100, 10, v => (v/100).toFixed(2))}
       ${sliderRow('sensingUpdateFrames', 'Update Every', 1, 50, 30, v => `${Math.round(v)}f`, 'Frames between sensing refreshes for Active and All sources')}
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option><option value="selected">Selected Layers</option></select></label>

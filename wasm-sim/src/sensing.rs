@@ -66,6 +66,24 @@ impl SensingMap {
         let idx = (sy as u32 * self.width + sx as u32) as usize;
         self.data[idx] as f32 / 255.0
     }
+
+    /// Sample luminance at canvas coordinates, requiring a fit radius around the
+    /// sample point to also satisfy the sensed characteristic.
+    #[inline]
+    pub fn sample_fit(&self, canvas_x: f32, canvas_y: f32, fit_radius: f32) -> f32 {
+        let mut min_sample = self.sample(canvas_x, canvas_y);
+        if fit_radius <= 0.0 {
+            return min_sample;
+        }
+        const FIT_SAMPLES: usize = 8;
+        for i in 0..FIT_SAMPLES {
+            let a = (i as f32 / FIT_SAMPLES as f32) * PI * 2.0;
+            let sx = canvas_x + a.cos() * fit_radius;
+            let sy = canvas_y + a.sin() * fit_radius;
+            min_sample = min_sample.min(self.sample(sx, sy));
+        }
+        min_sample
+    }
 }
 
 /// Apply sensing force to a single agent. 8-point radial sample.
@@ -76,6 +94,7 @@ pub fn apply_sensing_force(buf: &mut [f32], base: usize, p: &AgentParams, map: &
     }
 
     let sr = p.sensing_radius;
+    let fit_r = p.sensing_fit_radius.max(0.0);
     let bx = buf[base + X];
     let by = buf[base + Y];
     let mut fx = 0.0f32;
@@ -86,7 +105,7 @@ pub fn apply_sensing_force(buf: &mut [f32], base: usize, p: &AgentParams, map: &
         let a = (i as f32 / SAMPLES as f32) * PI * 2.0;
         let sx = bx + a.cos() * sr;
         let sy = by + a.sin() * sr;
-        let v = map.sample(sx, sy);
+        let v = map.sample_fit(sx, sy, fit_r);
         if v > p.sensing_threshold {
             let dx = a.cos();
             let dy = a.sin();

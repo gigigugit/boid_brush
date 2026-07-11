@@ -4,7 +4,7 @@
 
 use core::f32::consts::PI;
 
-pub const PARAMS_LEN: usize = 66;
+pub const PARAMS_LEN: usize = 68;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AgentParams {
@@ -28,6 +28,7 @@ pub struct AgentParams {
     pub sensing_attract: bool,
     pub sensing_strength: f32,
     pub sensing_radius: f32,
+    pub sensing_fit_radius: f32,
     pub sensing_threshold: f32,
     pub neighbor_radius: f32,
     pub separation_radius: f32,
@@ -63,6 +64,7 @@ pub struct SimParams {
     pub sensing_attract: bool,
     pub sensing_strength: f32,
     pub sensing_radius: f32,
+    pub sensing_fit_radius: f32,
     pub sensing_threshold: f32,
     pub target_x: f32,
     pub target_y: f32,
@@ -98,6 +100,7 @@ pub struct SimParams {
     pub leader_sensing_attract: bool,
     pub leader_sensing_strength: f32,
     pub leader_sensing_radius: f32,
+    pub leader_sensing_fit_radius: f32,
     pub leader_sensing_threshold: f32,
     pub leader_neighbor_radius: f32,
     pub leader_separation_radius: f32,
@@ -134,6 +137,7 @@ impl Default for SimParams {
             sensing_attract: false,
             sensing_strength: 0.5,
             sensing_radius: 20.0,
+            sensing_fit_radius: 0.0,
             sensing_threshold: 0.1,
             target_x: 0.0,
             target_y: 0.0,
@@ -169,6 +173,7 @@ impl Default for SimParams {
             leader_sensing_attract: false,
             leader_sensing_strength: 0.5,
             leader_sensing_radius: 20.0,
+            leader_sensing_fit_radius: 0.0,
             leader_sensing_threshold: 0.1,
             leader_neighbor_radius: 80.0,
             leader_separation_radius: 25.0,
@@ -207,6 +212,7 @@ impl SimParams {
             sensing_attract: self.leader_sensing_attract,
             sensing_strength: self.leader_sensing_strength,
             sensing_radius: self.leader_sensing_radius,
+            sensing_fit_radius: self.leader_sensing_fit_radius,
             sensing_threshold: self.leader_sensing_threshold,
             neighbor_radius: self.leader_neighbor_radius,
             separation_radius: self.leader_separation_radius,
@@ -243,6 +249,7 @@ impl SimParams {
             sensing_attract: self.sensing_attract,
             sensing_strength: self.sensing_strength,
             sensing_radius: self.sensing_radius,
+            sensing_fit_radius: self.sensing_fit_radius,
             sensing_threshold: self.sensing_threshold,
             neighbor_radius: self.neighbor_radius,
             separation_radius: self.separation_radius,
@@ -342,6 +349,16 @@ impl SimParams {
             leader_sat_var: raw[63],
             leader_lit_var: raw[64],
             leader_boundary_margin: raw[65],
+            sensing_fit_radius: if raw.len() > 66 && raw[66].is_finite() {
+                raw[66].max(0.0)
+            } else {
+                0.0
+            },
+            leader_sensing_fit_radius: if raw.len() > 67 && raw[67].is_finite() {
+                raw[67].max(0.0)
+            } else {
+                0.0
+            },
         }
     }
 }
