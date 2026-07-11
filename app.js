@@ -4269,7 +4269,10 @@ export class App {
     const primaryTrigger = document.getElementById('canvasSizePrimaryTrigger');
     if (primaryChip) primaryChip.style.background = primaryHex;
     if (primaryHexEl) primaryHexEl.textContent = primaryHex.toUpperCase();
-    if (primaryTrigger) this._setColorTriggerActive(primaryTrigger, activeKey === 'primary');
+    if (primaryTrigger) {
+      this._setColorTriggerActive(primaryTrigger, activeKey === 'primary');
+      primaryTrigger.setAttribute('aria-expanded', String(activeKey === 'primary'));
+    }
     // Secondary chip
     const secondaryHex = this.getColorValue('secondary', '#ffffff');
     const secondaryChip = document.getElementById('canvasSizeSecondaryChip');
@@ -4277,10 +4280,16 @@ export class App {
     const secondaryTrigger = document.getElementById('canvasSizeSecondaryTrigger');
     if (secondaryChip) secondaryChip.style.background = secondaryHex;
     if (secondaryHexEl) secondaryHexEl.textContent = secondaryHex.toUpperCase();
-    if (secondaryTrigger) this._setColorTriggerActive(secondaryTrigger, activeKey === 'secondary');
-    // Also update the bg trigger active state
+    if (secondaryTrigger) {
+      this._setColorTriggerActive(secondaryTrigger, activeKey === 'secondary');
+      secondaryTrigger.setAttribute('aria-expanded', String(activeKey === 'secondary'));
+    }
+    // Bg trigger active state and aria-expanded
     const bgTrigger = document.getElementById('canvasSizeBgTrigger');
-    if (bgTrigger) this._setColorTriggerActive(bgTrigger, activeKey === 'canvasSizeBg');
+    if (bgTrigger) {
+      this._setColorTriggerActive(bgTrigger, activeKey === 'canvasSizeBg');
+      bgTrigger.setAttribute('aria-expanded', String(activeKey === 'canvasSizeBg'));
+    }
     // Update preview stamp primary color
     const stamp = document.getElementById('canvasSizePreviewStamp');
     if (stamp) stamp.style.background = primaryHex;
