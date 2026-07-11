@@ -190,6 +190,15 @@ impl Default for SimParams {
 }
 
 impl SimParams {
+    #[inline]
+    fn read_nonnegative(raw: &[f32], index: usize, default: f32) -> f32 {
+        raw.get(index)
+            .copied()
+            .filter(|value| value.is_finite())
+            .map(|value| value.max(0.0))
+            .unwrap_or(default)
+    }
+
     fn leader_params(&self) -> AgentParams {
         AgentParams {
             seek: self.leader_seek,
@@ -349,16 +358,8 @@ impl SimParams {
             leader_sat_var: raw[63],
             leader_lit_var: raw[64],
             leader_boundary_margin: raw[65],
-            sensing_fit_radius: if raw.len() > 66 && raw[66].is_finite() {
-                raw[66].max(0.0)
-            } else {
-                0.0
-            },
-            leader_sensing_fit_radius: if raw.len() > 67 && raw[67].is_finite() {
-                raw[67].max(0.0)
-            } else {
-                0.0
-            },
+            sensing_fit_radius: Self::read_nonnegative(raw, 66, 0.0),
+            leader_sensing_fit_radius: Self::read_nonnegative(raw, 67, 0.0),
         }
     }
 }

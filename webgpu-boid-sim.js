@@ -397,13 +397,16 @@ fn sampleSensing(canvasPos : vec2f) -> f32 {
   return textureLoad(sensingTex, vec2i(sensingX, sensingY), 0).r;
 }
 
+// Return the lowest sensed value across the sample center plus a ring at
+// `fitRadius`, so a stamp can require the full local area to match threshold.
 fn sampleSensingFit(canvasPos : vec2f, fitRadius : f32) -> f32 {
+  let fitSampleCount = 8u;
   var minSample = sampleSensing(canvasPos);
   if (fitRadius <= 0.0) {
     return minSample;
   }
-  for (var fitIndex = 0u; fitIndex < 8u; fitIndex = fitIndex + 1u) {
-    let angle = (f32(fitIndex) / 8.0) * TAU;
+  for (var fitIndex = 0u; fitIndex < fitSampleCount; fitIndex = fitIndex + 1u) {
+    let angle = (f32(fitIndex) / f32(fitSampleCount)) * TAU;
     let fitDir = vec2f(cos(angle), sin(angle));
     let ringSample = sampleSensing(canvasPos + fitDir * fitRadius);
     minSample = min(minSample, ringSample);
