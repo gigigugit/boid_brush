@@ -149,9 +149,10 @@ function _readState() {
     for (const p of group.params) {
       const el = document.getElementById(p.id);
       if (!el) {
-        // Store default so we have a value
+        // Fallback to local defaults when the sidebar element doesn't exist.
+        // Select params have p.options as Array<[value: string, label: string]>.
         if (p.type === 'check') state[p.id] = false;
-        else if (p.type === 'select') state[p.id] = p.options?.[0]?.[0] ?? '';
+        else if (p.type === 'select') state[p.id] = (Array.isArray(p.options) ? p.options[0]?.[0] : undefined) ?? '';
         else state[p.id] = p.def ?? 0;
         continue;
       }
@@ -206,12 +207,12 @@ function _renderPreview(canvas, state, color) {
   ctx.fillStyle = '#0d0f16';
   ctx.fillRect(0, 0, W, H);
 
-  // Parse color
-  let r = 120, g = 160, b = 240;
+  // Parse primary color into RGB components
+  let cr = 120, cg = 160, cb = 240;
   if (color && color.startsWith('#') && color.length >= 7) {
-    r = parseInt(color.slice(1, 3), 16);
-    g = parseInt(color.slice(3, 5), 16);
-    b = parseInt(color.slice(5, 7), 16);
+    cr = parseInt(color.slice(1, 3), 16);
+    cg = parseInt(color.slice(3, 5), 16);
+    cb = parseInt(color.slice(5, 7), 16);
   }
 
   const scale = (state.brushScale ?? 100) / 100;
@@ -232,9 +233,10 @@ function _renderPreview(canvas, state, color) {
   const arcR = W * 0.32;
   const spread = Math.min(W * 0.22, arcR * 0.7);
 
-  // Seed a deterministic "random" for stable preview
+  // Deterministic Park-Miller LCG PRNG for a stable, frame-independent preview.
+  // Constants: multiplier 16807 (a), modulus 2^31-1 = 2147483647 (m).
   let seed = 12345;
-  const rng = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
+  const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 
   // Build positions: arc from left to right, with scatter
   const n = Math.min(count, 48);
@@ -254,28 +256,28 @@ function _renderPreview(canvas, state, color) {
     const py = cy + Math.sin(noiseA) * (arcR * 0.38 + (rng() - 0.5) * scatterR);
     const szMulti = 1 - sizeVar * 0.5 + rng() * sizeVar;
     const opMulti = 1 - (state.opacityVar ?? 0) / 100 * 0.5 + rng() * (state.opacityVar ?? 0) / 100;
-    stamps.push({ x: px, y: py, r: baseRadius * szMulti, op: stampOpacity * opMulti });
+    stamps.push({ x: px, y: py, stampRadius: baseRadius * szMulti, op: stampOpacity * opMulti });
   }
 
   // Draw taper (fades stamps at start/end if taperOpacity is on)
-  const taperOpacity = !!(state.taperOpacity);
+  const taperOpacityEnabled = !!(state.taperOpacity);
   const taperLength = (state.taperLength ?? 0) / 100;
 
   for (let i = 0; i < stamps.length; i++) {
-    const { x, y, r, op } = stamps[i];
+    const { x, y, stampRadius, op } = stamps[i];
     const t = i / Math.max(stamps.length - 1, 1);
     let opFinal = Math.min(1, op);
-    if (taperOpacity && taperLength > 0) {
+    if (taperOpacityEnabled && taperLength > 0) {
       const tapT = Math.min(t, 1 - t) / (taperLength * 0.5 + 0.01);
       opFinal *= Math.min(1, tapT);
     }
     if (opFinal <= 0.002) continue;
 
-    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, `rgba(${r_c(r)},${g_c(g)},${b_c(b)},${opFinal.toFixed(3)})`);
-    grad.addColorStop(1, `rgba(${r_c(r)},${g_c(g)},${b_c(b)},0)`);
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, stampRadius);
+    grad.addColorStop(0, `rgba(${clampByte(cr)},${clampByte(cg)},${clampByte(cb)},${opFinal.toFixed(3)})`);
+    grad.addColorStop(1, `rgba(${clampByte(cr)},${clampByte(cg)},${clampByte(cb)},0)`);
     ctx.beginPath();
-    ctx.arc(x, y, Math.max(0.5, r), 0, Math.PI * 2);
+    ctx.arc(x, y, Math.max(0.5, stampRadius), 0, Math.PI * 2);
     ctx.fillStyle = grad;
     ctx.fill();
   }
@@ -302,10 +304,8 @@ function _renderPreview(canvas, state, color) {
   ctx.fillText(String(state.count ?? 60), W * 0.08, H * 0.08);
 }
 
-/** Helper clampers so rgba doesn't get component names confused with vars. */
-function r_c(v) { return Math.round(Math.max(0, Math.min(255, v))); }
-function g_c(v) { return r_c(v); }
-function b_c(v) { return r_c(v); }
+/** Clamp a number to a valid 0–255 byte value for use in rgba() strings. */
+function clampByte(v) { return Math.round(Math.max(0, Math.min(255, v))); }
 
 // ─── Control builder ─────────────────────────────────────────────────────────
 
@@ -798,7 +798,8 @@ function _bindEvents(modal) {
 // ─── Undo / redo ─────────────────────────────────────────────────────────────
 
 function _pushUndo() {
-  // Don't push duplicate states
+  // Don't push duplicate states. JSON.stringify is acceptable here because
+  // states are small flat objects with consistent key ordering from _cloneState.
   if (_undoStack.length > 0) {
     const top = _undoStack[_undoStack.length - 1];
     if (JSON.stringify(top) === JSON.stringify(_editorState)) return;
@@ -856,11 +857,14 @@ function _doReset() {
   _markDirty();
 }
 
+// Transition duration must match the CSS opacity transition (0.18s) on the modal.
+const BSE_CLOSE_TRANSITION_MS = 180;
+
 function _closeEditor() {
   const modal = document.getElementById(MODAL_ID);
   if (!modal) return;
   modal.classList.remove('bse-open');
-  setTimeout(() => { modal.style.display = 'none'; }, 200);
+  setTimeout(() => { modal.style.display = 'none'; }, BSE_CLOSE_TRANSITION_MS);
   if (_previewRaf) { cancelAnimationFrame(_previewRaf); _previewRaf = null; }
 }
 
