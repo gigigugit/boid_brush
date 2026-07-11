@@ -398,7 +398,7 @@ fn sampleSensing(canvasPos : vec2f) -> f32 {
 }
 
 // Return the minimum sensing value across the center sample plus an 8-point
-// ring at `fitRadius`; this enforces that a whole local stamp-fit area passes
+// ring at fitRadius; this enforces that a whole local stamp-fit area passes
 // threshold instead of only a single sensing pixel.
 fn sampleSensingFit(canvasPos : vec2f, fitRadius : f32) -> f32 {
   let fitSampleCount = 8u;
