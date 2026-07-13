@@ -2151,46 +2151,102 @@ export class BoidBrush {
     this.ensureSimulationSpawnAppearance(p);
   }
 
-  onFrame(elapsed) {
-    if (!this._ready) return;
-    const p = this._spawnOverrides ? { ...this.app.getP(), ...this._spawnOverrides } : this.app.getP();
-    const simP = this._applySimVars(p);
-    const app = this.app;
-
-    if (simP.sensingEnabled) {
-      const sensingSourceIsBelow = simP.sensingSource === 'below';
-      const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(simP.sensingUpdateFrames || 30)));
-      const sensingSignature = this._buildSensingSignature(simP);
-      if (!this._sensingUploaded || this._sensingSignature !== sensingSignature) {
-        this._uploadSensing(simP);
-        this._sensingFrame = 0;
-      } else if (!sensingSourceIsBelow) {
-        // "Below" excludes the active stroke layer, so it stays unchanged during
-        // the stroke and doesn't need the periodic refresh used by active/all.
-        this._sensingFrame++;
-        if (this._sensingFrame >= sensingUpdateFrames) {
-          this._uploadSensing(simP);
-          this._sensingFrame = 0;
-        }
-      }
-    } else {
-      this._sensingUploaded = false;
-      this._sensingSignature = '';
+  _seedSavedPlaybackSpawnAppearance(agentCount, p = this.app.getP()) {
+    const spawns = this.app._ensureSimulationSpawns('boid').filter(spawn => spawn?.enabled !== false);
+    if (!spawns.length || agentCount <= 0) {
+      _resetSimulationSpawnAppearance(this);
+      return;
     }
+    const nextColors = [];
+    const nextOpacity = [];
+    let cursor = 0;
+    for (const spawn of spawns) {
+      const config = this.app._resolveSimulationSpawnConfig(spawn, p);
+      const color = _normalizeBrushHexColor(config?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+      const opacity = Number.isFinite(config?.opacity)
+        ? Math.max(0, Math.min(1, config.opacity))
+        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+      const expectedCount = Math.max(0, Math.round(config?.count || 0));
+      for (let offset = 0; offset < expectedCount && cursor < agentCount; offset++, cursor++) {
+        nextColors[cursor] = color;
+        nextOpacity[cursor] = opacity;
+      }
+      if (cursor >= agentCount) break;
+    }
+    if (cursor < agentCount) {
+      const fallback = this.app._resolveSimulationSpawnConfig(spawns[0], p);
+      const color = _normalizeBrushHexColor(fallback?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+      const opacity = Number.isFinite(fallback?.opacity)
+        ? Math.max(0, Math.min(1, fallback.opacity))
+        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+      for (; cursor < agentCount; cursor++) {
+        nextColors[cursor] = color;
+        nextOpacity[cursor] = opacity;
+      }
+    }
+    this._agentSpawnColors = nextColors;
+    this._agentSpawnOpacity = nextOpacity;
+  }
 
-    // Write sim params and step
-    const guideState = _collectSimulationGuides(this, p);
-    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
-    this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
-    this.sim.step(1 / 60);
+  prepareSavedPlayback(savedPlayback, p = this.app.getP()) {
+    this.resetSimulationPlaybackState({ compositePreview: false });
+    this._flatActive = false;
+    this._spawnOverrides = null;
+    this._seedSavedPlaybackSpawnAppearance(savedPlayback?.agentCount || 0, p);
+  }
 
-    // Read agents
-    const read = this.sim.readAgents();
-    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
+  captureSavedPlaybackFrame() {
+    if (!this._ready || !this.sim) return null;
+    const { buffer, count, stride } = this.sim.readAgents();
+    if (!count) return null;
+    const positions = new Array(count * 2);
+    const appearance = new Array(count * 5);
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const posBase = i * 2;
+      const appearanceBase = i * 5;
+      positions[posBase] = buffer[base + 0];
+      positions[posBase + 1] = buffer[base + 1];
+      appearance[appearanceBase] = buffer[base + 8];
+      appearance[appearanceBase + 1] = buffer[base + 9];
+      appearance[appearanceBase + 2] = buffer[base + 20];
+      appearance[appearanceBase + 3] = buffer[base + 21];
+      appearance[appearanceBase + 4] = buffer[base + 22];
+    }
+    return { count, positions, appearance };
+  }
+
+  _buildSavedPlaybackRead(savedPlayback, frameIndex) {
+    const frame = savedPlayback?.frames?.[frameIndex];
+    const agentCount = Math.max(0, Math.round(savedPlayback?.agentCount || 0));
+    if (!frame?.positions?.length || !savedPlayback?.appearance?.length || agentCount <= 0) return null;
+    const stride = 23;
+    const size = agentCount * stride;
+    if (!this._savedPlaybackReadBuffer || this._savedPlaybackReadBuffer.length !== size) {
+      this._savedPlaybackReadBuffer = new Float32Array(size);
+    } else {
+      this._savedPlaybackReadBuffer.fill(0);
+    }
+    const buffer = this._savedPlaybackReadBuffer;
+    for (let i = 0; i < agentCount; i++) {
+      const base = i * stride;
+      const posBase = i * 2;
+      const appearanceBase = i * 5;
+      buffer[base + 0] = frame.positions[posBase];
+      buffer[base + 1] = frame.positions[posBase + 1];
+      buffer[base + 8] = savedPlayback.appearance[appearanceBase];
+      buffer[base + 9] = savedPlayback.appearance[appearanceBase + 1];
+      buffer[base + 20] = savedPlayback.appearance[appearanceBase + 2];
+      buffer[base + 21] = savedPlayback.appearance[appearanceBase + 3];
+      buffer[base + 22] = savedPlayback.appearance[appearanceBase + 4];
+    }
+    return { buffer, count: agentCount, stride };
+  }
+
+  _renderAgentRead(read, p, { forceStamp = false } = {}) {
     const { buffer, count, stride } = read;
     if (count === 0) return;
-
-    // Stamp each agent
+    const app = this.app;
     const layer = app.getActiveLayer();
     const flat = this._flatActive;
     const stampCtx = flat ? this._strokeCtx : layer.ctx;
@@ -2203,9 +2259,7 @@ export class BoidBrush {
         pressure: app.pressure,
         interpolate: true,
         applySkip: skipN > 0,
-        // Ensure active draw mode never drops to "no visible stamps" when
-        // per-frame boid movement stays below spacing thresholds.
-        forceStamp: !!app.isDrawing || !!app.simulation?.running,
+        forceStamp,
       });
       if (batch.count === 0) {
         this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
@@ -2245,17 +2299,16 @@ export class BoidBrush {
 
     for (let i = 0; i < count; i++) {
       const base = i * stride;
-      const ax = buffer[base + 0]; // x
-      const ay = buffer[base + 1]; // y
-      const sm = buffer[base + 8]; // size multiplier
-      const om = buffer[base + 9]; // opacity multiplier
-      const agentHue = buffer[base + 20]; // hue offset (degrees)
-      const agentSat = buffer[base + 21]; // saturation offset
-      const agentLit = buffer[base + 22]; // lightness offset
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
       const appearanceColor = getAppearanceColor(appearance.color);
 
-      // Skip first N stamps (lead-in) — track position but don't stamp
       if (app.strokeFrame <= skipN) {
         this._lastStampX[i] = ax;
         this._lastStampY[i] = ay;
@@ -2264,22 +2317,18 @@ export class BoidBrush {
         continue;
       }
 
-      // Compute size and opacity (needed for spacing calculation)
       let sz = p.stampSize * sm;
-      // In flat mode, stamps go at full agent opacity; master opacity applied on composite
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
       if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
       op = Math.min(op, 1);
 
-      // Per-agent color modification
       let color = appearanceColor.color;
       if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
         const [bh, bs, bl] = appearanceColor.hsl;
         color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
       }
 
-      // Interpolation: fill gaps between previous and current position
       const step = p.stampSeparation > 0
         ? p.stampSeparation
         : Math.max(1, sz * 0.25);
@@ -2293,18 +2342,13 @@ export class BoidBrush {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < step) {
-          // Keep draw mode responsive: when movement is below spacing, still
-          // emit one stamp per frame (matching batch forceStamp behavior).
-          if (!app.isDrawing && !app.simulation?.running) continue;
+          if (!forceStamp && !app.isDrawing && !app.simulation?.running) continue;
           app.symStamp(stampCtx, ax, ay, sz, color, op);
           if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
             _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
           }
           this._lastStampX[i] = ax;
           this._lastStampY[i] = ay;
-          // Keep the spacing anchor at the last spacing-qualified stamp so
-          // slow motion can accumulate into future gap-fill stamps instead of
-          // resetting to one stamp per agent on every frame.
           advanceAnchor = false;
           continue;
         }
@@ -2318,7 +2362,6 @@ export class BoidBrush {
           }
         }
       } else {
-        // First stamp for this agent
         app.symStamp(stampCtx, ax, ay, sz, color, op);
         if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
           _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
@@ -2335,7 +2378,6 @@ export class BoidBrush {
       }
     }
 
-    // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
     if (flat) {
       const w = layer.canvas.width, h = layer.canvas.height;
       const ctx = layer.ctx;
@@ -2351,12 +2393,8 @@ export class BoidBrush {
       ctx.restore();
     }
 
-    // Trail blur: diffuse freshly stamped paint outward like wet ink.
-    // Source: _blurStrokeCanvas (current stroke only), not the full layer —
-    // this prevents the blur from re-processing paint from previous strokes.
     if (p.trailBlur > 0 && !flat) {
       const lw = layer.canvas.width, lh = layer.canvas.height;
-      // Create/resize offscreen blur canvases and the per-stroke accumulation canvas
       if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
         this._blurCanvas = document.createElement('canvas');
         this._blurCanvas.width = lw;
@@ -2372,24 +2410,19 @@ export class BoidBrush {
         this._blurStrokeCanvas.width = lw;
         this._blurStrokeCanvas.height = lh;
         this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
-        // Apply DPR transform so plain arc() calls use CSS coordinates
         this._blurStrokeCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
       }
-      // Copy current stroke accumulation into blur canvas
       this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurCtx.clearRect(0, 0, lw, lh);
       this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
-      // Texture flow: shift blur paint toward lower-height texture areas
       if (p.trailFlow > 0 && p.canvasTextureEnabled) {
         _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
       }
-      // Apply CSS blur via tmp canvas
       this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
       this._blurTmpCtx.clearRect(0, 0, lw, lh);
       this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
       this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
       this._blurTmpCtx.filter = 'none';
-      // Composite blurred result back onto layer with low opacity for soft diffusion halo
       layer.ctx.save();
       layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
       layer.ctx.globalAlpha = 0.18;
@@ -2402,6 +2435,53 @@ export class BoidBrush {
 
     layer.dirty = true;
     app.compositeAllLayers();
+  }
+
+  renderSavedPlaybackFrame(savedPlayback, frameIndex, p = this.app.getP()) {
+    const read = this._buildSavedPlaybackRead(savedPlayback, frameIndex);
+    if (!read) return;
+    this._renderAgentRead(read, p, { forceStamp: true });
+  }
+
+  onFrame(elapsed) {
+    if (!this._ready) return;
+    const p = this._spawnOverrides ? { ...this.app.getP(), ...this._spawnOverrides } : this.app.getP();
+    const simP = this._applySimVars(p);
+    const app = this.app;
+
+    if (simP.sensingEnabled) {
+      const sensingSourceIsBelow = simP.sensingSource === 'below';
+      const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(simP.sensingUpdateFrames || 30)));
+      const sensingSignature = this._buildSensingSignature(simP);
+      if (!this._sensingUploaded || this._sensingSignature !== sensingSignature) {
+        this._uploadSensing(simP);
+        this._sensingFrame = 0;
+      } else if (!sensingSourceIsBelow) {
+        // "Below" excludes the active stroke layer, so it stays unchanged during
+        // the stroke and doesn't need the periodic refresh used by active/all.
+        this._sensingFrame++;
+        if (this._sensingFrame >= sensingUpdateFrames) {
+          this._uploadSensing(simP);
+          this._sensingFrame = 0;
+        }
+      }
+    } else {
+      this._sensingUploaded = false;
+      this._sensingSignature = '';
+    }
+
+    // Write sim params and step
+    const guideState = _collectSimulationGuides(this, p);
+    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
+    this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
+    this.sim.step(1 / 60);
+
+    // Read agents
+    const read = this.sim.readAgents();
+    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
+    this._renderAgentRead(read, p, {
+      forceStamp: !!app.isDrawing || !!app.simulation?.running,
+    });
   }
 
   taperFrame(t, p) {
