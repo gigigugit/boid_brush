@@ -241,6 +241,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   taperCurve: 100,
   sensingStrength: 50,
   sensingRadius: 20,
+  sensingFitRadius: 0,
   sensingThreshold: 10,
   sensingUpdateFrames: 30,
   antFollow: 40,
@@ -602,6 +603,7 @@ function _normalizeSimulationVars(value) {
     sensingChannel: SIM_SENSING_CHANNELS.includes(value?.sensingChannel) ? value.sensingChannel : undefined,
     sensingStrength: Number.isFinite(value?.sensingStrength) ? _clamp(value.sensingStrength, 0, 1) : undefined,
     sensingRadius: Number.isFinite(value?.sensingRadius) ? Math.max(0, value.sensingRadius) : undefined,
+    sensingFitRadius: Number.isFinite(value?.sensingFitRadius) ? Math.max(0, value.sensingFitRadius) : undefined,
     sensingThreshold: Number.isFinite(value?.sensingThreshold) ? _clamp(value.sensingThreshold, 0, 1) : undefined,
     sensingSource: SIM_SENSING_SOURCES.includes(value?.sensingSource) ? value.sensingSource : undefined,
     sensingUpdateFrames: Number.isFinite(value?.sensingUpdateFrames)
@@ -2418,12 +2420,6 @@ export class App {
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
-    // Init WASM-backed brushes
-    await this.brushes.boid.init();
-    await this.brushes.ant.init();
-    await this.brushes.fluid.init();
-    await this.brushes.fluid3d.init();
-
     // Sidebar UI
     buildSidebar(this);
     buildFavoritesPanel(this);
@@ -2438,7 +2434,28 @@ export class App {
     this._bindEvents();
     this._initTopbarOverflow();
 
-    // Restore session
+    // Make the canvas and controls interactive before optional brush engines
+    // finish probing GPU/WASM backends.
+    this._fillBackgroundLayer();
+    this.compositeAllLayers();
+    this._frameLoop();
+
+    // Init WASM/GPU-backed brushes without blocking the first interactive frame.
+    const brushInitEntries = [
+      ['boid', this.brushes.boid.init()],
+      ['ant', this.brushes.ant.init()],
+      ['fluid', this.brushes.fluid.init()],
+      ['fluid3d', this.brushes.fluid3d.init()],
+    ];
+    const brushInitResults = await Promise.allSettled(brushInitEntries.map(([, promise]) => promise));
+    for (let index = 0; index < brushInitResults.length; index += 1) {
+      const result = brushInitResults[index];
+      if (result.status !== 'rejected') continue;
+      console.error(`Brush engine init failed during startup (${brushInitEntries[index][0]}):`, result.reason);
+    }
+
+    // Re-composite after session restore because restoring layers/view state may
+    // replace the document we drew above for the first interactive frame.
     await this._ensureBuiltinCanvasTexture();
     await this._restoreSession();
     this._syncColorPickerUi();
@@ -2450,11 +2467,6 @@ export class App {
 
     // Composite & start loop
     this.compositeAllLayers();
-    this._frameLoop();
-    requestAnimationFrame(() => {
-      this._fillBackgroundLayer();
-      this.compositeAllLayers();
-    });
 
     this._announceBuildLoad();
     this.setStatus('Ready');
@@ -5766,6 +5778,7 @@ export class App {
       sensingChannel: sel('sensingChannel') || 'darkness',
       sensingStrength: val('sensingStrength') / 100,
       sensingRadius: val('sensingRadius'),
+      sensingFitRadius: val('sensingFitRadius'),
       sensingThreshold: val('sensingThreshold') / 100,
       sensingUpdateFrames: Math.max(1, Math.min(50, Math.round(val('sensingUpdateFrames') || 30))),
       sensingSource: sel('sensingSource') || 'below',
@@ -5958,6 +5971,7 @@ export class App {
     if (typeof vars.sensingChannel === 'string') next.sensingChannel = vars.sensingChannel;
     if (Number.isFinite(vars.sensingStrength)) next.sensingStrength = vars.sensingStrength;
     if (Number.isFinite(vars.sensingRadius)) next.sensingRadius = vars.sensingRadius;
+    if (Number.isFinite(vars.sensingFitRadius)) next.sensingFitRadius = vars.sensingFitRadius;
     if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
     if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
     if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
@@ -8559,6 +8573,7 @@ export class App {
       sensingChannel: typeof normalizedBaseVars.sensingChannel === 'string' ? normalizedBaseVars.sensingChannel : snapshot.sensingChannel,
       sensingStrength: Number.isFinite(normalizedBaseVars.sensingStrength) ? normalizedBaseVars.sensingStrength : snapshot.sensingStrength,
       sensingRadius: Number.isFinite(normalizedBaseVars.sensingRadius) ? normalizedBaseVars.sensingRadius : snapshot.sensingRadius,
+      sensingFitRadius: Number.isFinite(normalizedBaseVars.sensingFitRadius) ? normalizedBaseVars.sensingFitRadius : snapshot.sensingFitRadius,
       sensingThreshold: Number.isFinite(normalizedBaseVars.sensingThreshold) ? normalizedBaseVars.sensingThreshold : snapshot.sensingThreshold,
       sensingSource: typeof normalizedBaseVars.sensingSource === 'string' ? normalizedBaseVars.sensingSource : snapshot.sensingSource,
       sensingUpdateFrames: Number.isFinite(normalizedBaseVars.sensingUpdateFrames) ? normalizedBaseVars.sensingUpdateFrames : snapshot.sensingUpdateFrames,
@@ -8601,6 +8616,7 @@ export class App {
     if (typeof vars.sensingChannel === 'string') assign('sensingChannel', vars.sensingChannel);
     if (Number.isFinite(vars.sensingStrength)) assign('sensingStrength', Math.round(vars.sensingStrength * 100));
     if (Number.isFinite(vars.sensingRadius)) assign('sensingRadius', Math.round(vars.sensingRadius));
+    if (Number.isFinite(vars.sensingFitRadius)) assign('sensingFitRadius', Math.round(vars.sensingFitRadius));
     if (Number.isFinite(vars.sensingThreshold)) assign('sensingThreshold', Math.round(vars.sensingThreshold * 100));
     if (typeof vars.sensingSource === 'string') {
       assign('sensingSource', vars.sensingSource);
@@ -8820,6 +8836,7 @@ export class App {
         sensingChannel: SIM_SENSING_CHANNELS.includes(sessionVars.sensingChannel) ? sessionVars.sensingChannel : 'darkness',
         sensingStrength: Number.isFinite(sessionVars.sensingStrength) ? _clamp(sessionVars.sensingStrength, 0, 1) : 0.5,
         sensingRadius: Number.isFinite(sessionVars.sensingRadius) ? Math.max(0, sessionVars.sensingRadius) : 20,
+        sensingFitRadius: Number.isFinite(sessionVars.sensingFitRadius) ? Math.max(0, sessionVars.sensingFitRadius) : 0,
         sensingThreshold: Number.isFinite(sessionVars.sensingThreshold) ? _clamp(sessionVars.sensingThreshold, 0, 1) : 0.1,
         sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
         sensingSource,
@@ -8914,6 +8931,9 @@ export class App {
     }
     if (Object.prototype.hasOwnProperty.call(updates, 'sensingRadius')) {
       row.sensingRadius = Number.isFinite(nextVars.sensingRadius) ? nextVars.sensingRadius : 20;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingFitRadius')) {
+      row.sensingFitRadius = Number.isFinite(nextVars.sensingFitRadius) ? nextVars.sensingFitRadius : 0;
     }
     if (Object.prototype.hasOwnProperty.call(updates, 'sensingThreshold')) {
       row.sensingThreshold = Number.isFinite(nextVars.sensingThreshold) ? nextVars.sensingThreshold : 0.1;
@@ -9046,6 +9066,10 @@ export class App {
         <label class="sim-setup-futureField">
           <span>Radius</span>
           <input type="number" min="0" max="200" step="1" data-sim-setup-future-field="sensingRadius" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingRadius) ? Math.round(row.sensingRadius) : 20}">
+        </label>
+        <label class="sim-setup-futureField">
+          <span>Fit Radius</span>
+          <input type="number" min="0" max="200" step="1" data-sim-setup-future-field="sensingFitRadius" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingFitRadius) ? Math.round(row.sensingFitRadius) : 0}">
         </label>
         <label class="sim-setup-futureField">
           <span>Threshold</span>
@@ -9229,7 +9253,7 @@ export class App {
           const rawValue = Number(input.value);
           if (field === 'sensingStrength' || field === 'sensingThreshold') {
             value = Number.isFinite(rawValue) ? _clamp(rawValue, 0, 1) : undefined;
-          } else if (field === 'sensingRadius') {
+          } else if (field === 'sensingRadius' || field === 'sensingFitRadius') {
             value = Number.isFinite(rawValue) ? Math.max(0, rawValue) : undefined;
           } else if (field === 'sensingUpdateFrames') {
             value = Number.isFinite(rawValue) ? Math.max(1, Math.min(50, Math.round(rawValue))) : undefined;
@@ -9289,6 +9313,7 @@ export class App {
         sensingChannel: row.sensingChannel,
         sensingStrength: row.sensingStrength,
         sensingRadius: row.sensingRadius,
+        sensingFitRadius: row.sensingFitRadius,
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
@@ -9363,6 +9388,7 @@ export class App {
         sensingChannel: row.sensingChannel,
         sensingStrength: row.sensingStrength,
         sensingRadius: row.sensingRadius,
+        sensingFitRadius: row.sensingFitRadius,
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
@@ -9393,6 +9419,7 @@ export class App {
       row.sensingChannel = 'darkness';
       row.sensingStrength = 0.5;
       row.sensingRadius = 20;
+      row.sensingFitRadius = 0;
       row.sensingThreshold = 0.1;
       row.sensingUpdateFrames = 30;
       row.sensingSource = 'below';
@@ -9534,6 +9561,7 @@ export class App {
           sensingChannel: SIM_SENSING_CHANNELS.includes(sessionVars.sensingChannel) ? sessionVars.sensingChannel : 'darkness',
           sensingStrength: Number.isFinite(sessionVars.sensingStrength) ? _clamp(sessionVars.sensingStrength, 0, 1) : 0.5,
           sensingRadius: Number.isFinite(sessionVars.sensingRadius) ? Math.max(0, sessionVars.sensingRadius) : 20,
+          sensingFitRadius: Number.isFinite(sessionVars.sensingFitRadius) ? Math.max(0, sessionVars.sensingFitRadius) : 0,
           sensingThreshold: Number.isFinite(sessionVars.sensingThreshold) ? _clamp(sessionVars.sensingThreshold, 0, 1) : 0.1,
           sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
           sensingSource: SIM_SENSING_SOURCES.includes(sessionVars.sensingSource) ? sessionVars.sensingSource : 'below',
@@ -10004,6 +10032,7 @@ export class App {
         case 'damping':
           return value.toFixed(2);
         case 'sensingRadius':
+        case 'sensingFitRadius':
           return `${Math.round(value)}px`;
         case 'sensingUpdateFrames':
           return `${Math.round(value)}f`;
@@ -16046,7 +16075,9 @@ export class App {
     // #topbar itself changes size (e.g. after show/hide of conditional buttons).
     window.addEventListener('resize', layout);
     window.addEventListener('orientationchange', layout);
-    new ResizeObserver(layout).observe(topbar);
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(layout).observe(topbar);
+    }
 
     layout();
   }

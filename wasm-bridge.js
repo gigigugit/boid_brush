@@ -215,6 +215,8 @@ export class BoidSim {
     v[63] = p.leader?.satVar ?? 0;
     v[64] = p.leader?.litVar ?? 0;
     v[65] = p.leader?.simBoundsMargin ?? -1;
+    v[66] = p.sensingFitRadius ?? 0;
+    v[67] = p.leader?.sensingFitRadius ?? (p.sensingFitRadius ?? 0);
     if (this._handle !== null && typeof this._mod.boid_set_params === 'function') this._mod.boid_set_params(this._handle);
     else this._mod.set_params();
   }

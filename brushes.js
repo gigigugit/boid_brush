@@ -1289,6 +1289,7 @@ export class BoidBrush {
       mode: p.sensingMode || 'avoid',
       strength: Number(p.sensingStrength || 0).toFixed(4),
       radius: Number(p.sensingRadius || 0).toFixed(2),
+      fitRadius: Number(p.sensingFitRadius || 0).toFixed(2),
       threshold: Number(p.sensingThreshold || 0).toFixed(4),
       updateFrames: Math.max(1, Math.min(50, Math.round(p.sensingUpdateFrames || 30))),
     });
@@ -1333,6 +1334,7 @@ export class BoidBrush {
       if (typeof vars.sensingChannel === 'string') next.sensingChannel = vars.sensingChannel;
       if (Number.isFinite(vars.sensingStrength)) next.sensingStrength = vars.sensingStrength;
       if (Number.isFinite(vars.sensingRadius)) next.sensingRadius = vars.sensingRadius;
+      if (Number.isFinite(vars.sensingFitRadius)) next.sensingFitRadius = vars.sensingFitRadius;
       if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
       if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
       if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
@@ -3138,6 +3140,7 @@ export class AntBrush {
       sensingMode: 'attract',
       sensingStrength: p.sensingStrength,
       sensingRadius: p.sensingRadius || 20,
+      sensingFitRadius: p.sensingFitRadius || 0,
       sensingThreshold: p.sensingThreshold || 0.1,
       // Ants wander more by default
       wander: p.wander,

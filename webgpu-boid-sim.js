@@ -1,7 +1,7 @@
 import { BoidSim } from './wasm-bridge.js';
 
 const AGENT_STRIDE = 23;
-const PARAMS_LEN = 67;
+const PARAMS_LEN = 69;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
 const STAGING_BUFFER_COUNT = 2;
@@ -76,6 +76,8 @@ function fillParamsArray(target, p, targetX, targetY, time) {
   target[64] = p.leader?.satVar ?? 0;
   target[65] = p.leader?.litVar ?? 0;
   target[66] = p.leader?.simBoundsMargin ?? -1;
+  target[67] = p.sensingFitRadius ?? 0;
+  target[68] = p.leader?.sensingFitRadius ?? (p.sensingFitRadius ?? 0);
 }
 
 function packMeta(agentCount, width, height) {
@@ -395,6 +397,24 @@ fn sampleSensing(canvasPos : vec2f) -> f32 {
   return textureLoad(sensingTex, vec2i(sensingX, sensingY), 0).r;
 }
 
+// Return the minimum sensing value across the center sample plus an 8-point
+// ring at fitRadius; this enforces that a whole local stamp-fit area passes
+// threshold instead of only a single sensing pixel.
+fn sampleSensingFit(canvasPos : vec2f, fitRadius : f32) -> f32 {
+  let fitSampleCount = 8u;
+  var minSample = sampleSensing(canvasPos);
+  if (fitRadius <= 0.0) {
+    return minSample;
+  }
+  for (var fitIndex = 0u; fitIndex < fitSampleCount; fitIndex = fitIndex + 1u) {
+    let angle = (f32(fitIndex) / f32(fitSampleCount)) * TAU;
+    let fitDir = vec2f(cos(angle), sin(angle));
+    let ringSample = sampleSensing(canvasPos + fitDir * fitRadius);
+    minSample = min(minSample, ringSample);
+  }
+  return minSample;
+}
+
 fn valueNoise(p : vec2f) -> f32 {
   let i = floor(p);
   let f = fract(p);
@@ -463,6 +483,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let sensingStrength = select(params.values[18], params.values[54], isLeader);
   let sensingRadius = select(params.values[19], params.values[55], isLeader);
   let sensingThreshold = select(params.values[20], params.values[56], isLeader);
+  let sensingFitRadius = max(select(params.values[67], params.values[68], isLeader), 0.0);
   let goalPos = vec2f(params.values[21], params.values[22]);
   let time = params.values[23];
   let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
@@ -530,7 +551,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     for (var senseIndex = 0u; senseIndex < 8u; senseIndex = senseIndex + 1u) {
       let angle = (f32(senseIndex) / 8.0) * TAU;
       let senseDir = vec2f(cos(angle), sin(angle));
-      let senseSample = sampleSensing(vec2f(xi, yi) + senseDir * sensingRadius);
+      let senseSample = sampleSensingFit(vec2f(xi, yi) + senseDir * sensingRadius, sensingFitRadius);
       if (senseSample > sensingThreshold) {
         let signedSample = select(-senseSample, senseSample, sensingAttract);
         sensingFx = sensingFx + senseDir.x * signedSample;
