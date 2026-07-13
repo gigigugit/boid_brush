@@ -2439,24 +2439,23 @@ export class App {
     this._fillBackgroundLayer();
     this.compositeAllLayers();
     this._frameLoop();
-    requestAnimationFrame(() => {
-      this._fillBackgroundLayer();
-      this.compositeAllLayers();
-    });
 
     // Init WASM/GPU-backed brushes without blocking the first interactive frame.
-    const brushInitResults = await Promise.allSettled([
-      this.brushes.boid.init(),
-      this.brushes.ant.init(),
-      this.brushes.fluid.init(),
-      this.brushes.fluid3d.init(),
-    ]);
-    for (const result of brushInitResults) {
+    const brushInitEntries = [
+      ['boid', this.brushes.boid.init()],
+      ['ant', this.brushes.ant.init()],
+      ['fluid', this.brushes.fluid.init()],
+      ['fluid3d', this.brushes.fluid3d.init()],
+    ];
+    const brushInitResults = await Promise.allSettled(brushInitEntries.map(([, promise]) => promise));
+    for (let index = 0; index < brushInitResults.length; index += 1) {
+      const result = brushInitResults[index];
       if (result.status !== 'rejected') continue;
-      console.error('Brush engine init failed during startup:', result.reason);
+      console.error(`Brush engine init failed during startup (${brushInitEntries[index][0]}):`, result.reason);
     }
 
-    // Restore session
+    // Re-composite after session restore because restoring layers/view state may
+    // replace the document we drew above for the first interactive frame.
     await this._ensureBuiltinCanvasTexture();
     await this._restoreSession();
     this._syncColorPickerUi();
