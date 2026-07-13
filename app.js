@@ -6268,6 +6268,9 @@ export class App {
   }
 
   _buildSimulationSavedPlaybackSignature(session = {}) {
+    // Saved playback is only reusable when the authored session state still
+    // matches the run that produced the cached frames, so hash the guide data,
+    // runtime overrides, and sensing selection into a stable signature.
     const brushData = _sanitizeSimulationSessionData(session.brushData);
     const controlState = _sanitizeSimulationSessionData(session.controlState);
     const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot);
@@ -6385,6 +6388,14 @@ export class App {
       if (runtime.playbackComplete) completed++;
     }
     return { total, completed };
+  }
+
+  _pauseSimulationAtSavedPlaybackEnd() {
+    this.simulation.running = false;
+    this.simulation.paused = true;
+    this.isDrawing = false;
+    this._syncSimulationUI();
+    this.showToast('Saved playback complete');
   }
 
   _syncSimulationSessionContextUi() {
@@ -10089,11 +10100,7 @@ export class App {
       && liveRuntimeCount === 0
       && savedRuntimeCompleteCount === savedRuntimeCount;
     if (allSavedPlaybackComplete && this.simulation.running) {
-      this.simulation.running = false;
-      this.simulation.paused = true;
-      this.isDrawing = false;
-      this._syncSimulationUI();
-      this.showToast('Saved playback complete');
+      this._pauseSimulationAtSavedPlaybackEnd();
     }
   }
 

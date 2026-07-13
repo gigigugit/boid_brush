@@ -2151,7 +2151,7 @@ export class BoidBrush {
     this.ensureSimulationSpawnAppearance(p);
   }
 
-  _seedSavedPlaybackSpawnAppearance(agentCount, p = this.app.getP()) {
+  _seedSpawnAppearanceForSavedPlayback(agentCount, p = this.app.getP()) {
     const spawns = this.app._ensureSimulationSpawns('boid').filter(spawn => spawn?.enabled !== false);
     if (!spawns.length || agentCount <= 0) {
       this._agentSpawnColors = [];
@@ -2193,7 +2193,7 @@ export class BoidBrush {
     this.resetSimulationPlaybackState({ compositePreview: false });
     this._flatActive = false;
     this._spawnOverrides = null;
-    this._seedSavedPlaybackSpawnAppearance(savedPlayback?.agentCount || 0, p);
+    this._seedSpawnAppearanceForSavedPlayback(savedPlayback?.agentCount || 0, p);
   }
 
   captureSavedPlaybackFrame() {
@@ -2217,7 +2217,7 @@ export class BoidBrush {
     return { count, positions, appearance };
   }
 
-  _buildSavedPlaybackRead(savedPlayback, frameIndex) {
+  _buildAgentBufferFromSavedFrame(savedPlayback, frameIndex) {
     const frame = savedPlayback?.frames?.[frameIndex];
     const agentCount = Math.max(0, Math.round(savedPlayback?.agentCount || 0));
     if (!frame?.positions?.length || !savedPlayback?.appearance?.length || agentCount <= 0) return null;
@@ -2439,7 +2439,7 @@ export class BoidBrush {
   }
 
   renderSavedPlaybackFrame(savedPlayback, frameIndex, p = this.app.getP()) {
-    const read = this._buildSavedPlaybackRead(savedPlayback, frameIndex);
+    const read = this._buildAgentBufferFromSavedFrame(savedPlayback, frameIndex);
     if (!read) return;
     this._renderAgentRead(read, p, { forceStamp: true });
   }
