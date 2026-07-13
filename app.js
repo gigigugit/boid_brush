@@ -584,64 +584,6 @@ function _sanitizeSimulationSessionData(value) {
     }
     return next;
   }
-
-  function _normalizeSimulationSavedPlaybackNumericArray(values, {
-    minLength = 0,
-    maxLength = Infinity,
-    evenLength = false,
-  } = {}) {
-    if (!Array.isArray(values)) return null;
-    const next = [];
-    for (const value of values) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return null;
-      next.push(n);
-      if (next.length > maxLength) break;
-    }
-    if (next.length < minLength) return null;
-    if (evenLength && (next.length % 2) !== 0) return null;
-    return next;
-  }
-
-  function _normalizeSimulationSavedPlayback(value) {
-    if (!_isPlainObject(value)) return null;
-    if (value.format !== SIM_SAVED_PLAYBACK_FORMAT) return null;
-    const frameRate = Number(value.frameRate);
-    const capturedAt = Number(value.capturedAt);
-    const agentCount = Math.max(0, Math.round(Number(value.agentCount) || 0));
-    const captureInterval = Math.max(1, Math.round(Number(value.captureInterval) || 1));
-    const appearance = _normalizeSimulationSavedPlaybackNumericArray(value.appearance, {
-      minLength: agentCount * 5,
-      maxLength: agentCount * 5,
-    });
-    if (agentCount > 0 && !appearance) return null;
-    const rawFrames = Array.isArray(value.frames) ? value.frames.slice(0, SIM_SAVED_PLAYBACK_MAX_FRAMES) : [];
-    const frames = [];
-    for (const entry of rawFrames) {
-      const positions = _normalizeSimulationSavedPlaybackNumericArray(entry?.positions, {
-        minLength: agentCount * 2,
-        maxLength: agentCount * 2,
-        evenLength: true,
-      });
-      if (!positions) continue;
-      frames.push({ positions });
-    }
-    if (!frames.length) return null;
-    return {
-      format: SIM_SAVED_PLAYBACK_FORMAT,
-      version: SIM_SAVED_PLAYBACK_VERSION,
-      signature: typeof value.signature === 'string' ? value.signature : '',
-      frameRate: Number.isFinite(frameRate) ? Math.max(1, Math.round(frameRate)) : 60,
-      captureInterval,
-      capturedAt: Number.isFinite(capturedAt) ? capturedAt : 0,
-      width: Math.max(1, Math.round(Number(value.width) || 1)),
-      height: Math.max(1, Math.round(Number(value.height) || 1)),
-      agentCount,
-      appearance: appearance || [],
-      frames,
-      truncated: value.truncated === true,
-    };
-  }
   if (!_isPlainObject(value)) return undefined;
   const next = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -649,6 +591,64 @@ function _sanitizeSimulationSessionData(value) {
     if (normalized !== undefined) next[key] = normalized;
   }
   return next;
+}
+
+function _normalizeSimulationSavedPlaybackNumericArray(values, {
+  minLength = 0,
+  maxLength = Infinity,
+  evenLength = false,
+} = {}) {
+  if (!Array.isArray(values)) return null;
+  const next = [];
+  for (const value of values) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    next.push(n);
+    if (next.length > maxLength) break;
+  }
+  if (next.length < minLength) return null;
+  if (evenLength && (next.length % 2) !== 0) return null;
+  return next;
+}
+
+function _normalizeSimulationSavedPlayback(value) {
+  if (!_isPlainObject(value)) return null;
+  if (value.format !== SIM_SAVED_PLAYBACK_FORMAT) return null;
+  const frameRate = Number(value.frameRate);
+  const capturedAt = Number(value.capturedAt);
+  const agentCount = Math.max(0, Math.round(Number(value.agentCount) || 0));
+  const captureInterval = Math.max(1, Math.round(Number(value.captureInterval) || 1));
+  const appearance = _normalizeSimulationSavedPlaybackNumericArray(value.appearance, {
+    minLength: agentCount * 5,
+    maxLength: agentCount * 5,
+  });
+  if (agentCount > 0 && !appearance) return null;
+  const rawFrames = Array.isArray(value.frames) ? value.frames.slice(0, SIM_SAVED_PLAYBACK_MAX_FRAMES) : [];
+  const frames = [];
+  for (const entry of rawFrames) {
+    const positions = _normalizeSimulationSavedPlaybackNumericArray(entry?.positions, {
+      minLength: agentCount * 2,
+      maxLength: agentCount * 2,
+      evenLength: true,
+    });
+    if (!positions) continue;
+    frames.push({ positions });
+  }
+  if (!frames.length) return null;
+  return {
+    format: SIM_SAVED_PLAYBACK_FORMAT,
+    version: SIM_SAVED_PLAYBACK_VERSION,
+    signature: typeof value.signature === 'string' ? value.signature : '',
+    frameRate: Number.isFinite(frameRate) ? Math.max(1, Math.round(frameRate)) : 60,
+    captureInterval,
+    capturedAt: Number.isFinite(capturedAt) ? capturedAt : 0,
+    width: Math.max(1, Math.round(Number(value.width) || 1)),
+    height: Math.max(1, Math.round(Number(value.height) || 1)),
+    agentCount,
+    appearance: appearance || [],
+    frames,
+    truncated: value.truncated === true,
+  };
 }
 
 function _normalizeSimulationVars(value) {
