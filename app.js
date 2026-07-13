@@ -2420,12 +2420,6 @@ export class App {
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
-    // Init WASM-backed brushes
-    await this.brushes.boid.init();
-    await this.brushes.ant.init();
-    await this.brushes.fluid.init();
-    await this.brushes.fluid3d.init();
-
     // Sidebar UI
     buildSidebar(this);
     buildFavoritesPanel(this);
@@ -2440,6 +2434,28 @@ export class App {
     this._bindEvents();
     this._initTopbarOverflow();
 
+    // Make the canvas and controls interactive before optional brush engines
+    // finish probing GPU/WASM backends.
+    this._fillBackgroundLayer();
+    this.compositeAllLayers();
+    this._frameLoop();
+    requestAnimationFrame(() => {
+      this._fillBackgroundLayer();
+      this.compositeAllLayers();
+    });
+
+    // Init WASM/GPU-backed brushes without blocking the first interactive frame.
+    const brushInitResults = await Promise.allSettled([
+      this.brushes.boid.init(),
+      this.brushes.ant.init(),
+      this.brushes.fluid.init(),
+      this.brushes.fluid3d.init(),
+    ]);
+    for (const result of brushInitResults) {
+      if (result.status !== 'rejected') continue;
+      console.error('Brush engine init failed during startup:', result.reason);
+    }
+
     // Restore session
     await this._ensureBuiltinCanvasTexture();
     await this._restoreSession();
@@ -2452,11 +2468,6 @@ export class App {
 
     // Composite & start loop
     this.compositeAllLayers();
-    this._frameLoop();
-    requestAnimationFrame(() => {
-      this._fillBackgroundLayer();
-      this.compositeAllLayers();
-    });
 
     this._announceBuildLoad();
     this.setStatus('Ready');
