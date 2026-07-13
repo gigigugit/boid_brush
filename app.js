@@ -6268,11 +6268,14 @@ export class App {
   }
 
   _buildSimulationSavedPlaybackSignature(session = {}) {
+    const brushData = _sanitizeSimulationSessionData(session.brushData);
+    const controlState = _sanitizeSimulationSessionData(session.controlState);
+    const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot);
     return JSON.stringify({
-      brushData: _sanitizeSimulationSessionData(session.brushData) || {},
+      brushData: _isPlainObject(brushData) ? brushData : {},
       vars: _normalizeSimulationVars(session.vars),
-      controlState: _sanitizeSimulationSessionData(session.controlState) || {},
-      paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
+      controlState: _isPlainObject(controlState) ? controlState : {},
+      paramSnapshot: _isPlainObject(paramSnapshot) ? paramSnapshot : {},
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
     });
   }
@@ -10082,7 +10085,10 @@ export class App {
       });
     }
     this._updateSimulationLeader(elapsed, p);
-    if (savedRuntimeCount > 0 && liveRuntimeCount === 0 && savedRuntimeCompleteCount === savedRuntimeCount && this.simulation.running) {
+    const allSavedPlaybackComplete = savedRuntimeCount > 0
+      && liveRuntimeCount === 0
+      && savedRuntimeCompleteCount === savedRuntimeCount;
+    if (allSavedPlaybackComplete && this.simulation.running) {
       this.simulation.running = false;
       this.simulation.paused = true;
       this.isDrawing = false;

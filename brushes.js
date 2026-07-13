@@ -2154,7 +2154,8 @@ export class BoidBrush {
   _seedSavedPlaybackSpawnAppearance(agentCount, p = this.app.getP()) {
     const spawns = this.app._ensureSimulationSpawns('boid').filter(spawn => spawn?.enabled !== false);
     if (!spawns.length || agentCount <= 0) {
-      _resetSimulationSpawnAppearance(this);
+      this._agentSpawnColors = [];
+      this._agentSpawnOpacity = [];
       return;
     }
     const nextColors = [];
