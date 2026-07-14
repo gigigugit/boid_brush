@@ -6319,6 +6319,38 @@ export class App {
         };
   }
 
+  _getSimulationSavedPlaybackBadgeTone(status) {
+    if (status?.ready) return 'active';
+    return status?.playback ? 'warn' : 'muted';
+  }
+
+  _getSimulationPlaybackBarSummary(context) {
+    if (this._shouldUseMultiSessionPlayback()) {
+      const diagnostics = this._getMultiSessionRouteDiagnostics();
+      if (diagnostics.blockReason) return diagnostics.blockReason;
+      return `Run ready · ${context.routingSummary}`;
+    }
+    return context.playbackSummary;
+  }
+
+  _buildSimulationRunToastMessage(runtimes = [], routeCount = 0) {
+    const total = runtimes.length;
+    if (!total) return 'Simulation running';
+    const savedCount = runtimes.filter(runtime => !!runtime?.savedPlayback).length;
+    const liveCount = Math.max(0, total - savedCount);
+    const parts = [`${total} session${total === 1 ? '' : 's'}`];
+    if (routeCount > 0) parts.push(`${routeCount} route${routeCount === 1 ? '' : 's'}`);
+    if (savedCount && liveCount) {
+      parts.push(`${savedCount} saved`);
+      parts.push(`${liveCount} live`);
+    } else if (savedCount) {
+      parts.push(`${savedCount} saved playback`);
+    } else if (liveCount) {
+      parts.push(`${liveCount} live`);
+    }
+    return `Simulation running (${parts.join(', ')})`;
+  }
+
   _getSimulationSavedPlaybackForRuntime(session) {
     const status = this._getSimulationSavedPlaybackStatus(session);
     return status.ready ? status.playback : null;
@@ -6393,11 +6425,14 @@ export class App {
   }
 
   _pauseSimulationAtSavedPlaybackEnd() {
+    const savedStats = this._getSavedPlaybackRuntimeStats();
     this.simulation.running = false;
     this.simulation.paused = true;
     this.isDrawing = false;
     this._syncSimulationUI();
-    this.showToast('Saved playback complete');
+    this.showToast(savedStats.total > 0
+      ? `Saved playback complete — paused at end (${savedStats.completed}/${savedStats.total} sessions)`
+      : 'Saved playback complete — paused at end');
   }
 
   _syncSimulationSessionContextUi() {
@@ -9181,10 +9216,12 @@ export class App {
     return session;
   }
 
-  _setSimulationSetupStatus(message = '', level = '') {
+  _setSimulationSetupStatus(message = '', level = '', { persist = true } = {}) {
     if (!this._simulationSetupDraft) return;
-    this._simulationSetupDraft.status = message;
-    this._simulationSetupDraft.statusLevel = level;
+    if (persist) {
+      this._simulationSetupDraft.status = message;
+      this._simulationSetupDraft.statusLevel = level;
+    }
     const node = document.getElementById('simSetupStatus');
     if (!node) return;
     node.textContent = message;
@@ -9224,12 +9261,40 @@ export class App {
     summary.textContent = `${this._simulationSetupDraft.rows.length} saved session${this._simulationSetupDraft.rows.length === 1 ? '' : 's'} in draft, ${enabledRows.length} enabled, ${routeCount} target route${routeCount === 1 ? '' : 's'}.`;
   }
 
+  _getSimulationSetupReadinessStatus() {
+    if (!this._simulationSetupDraft) return { message: '', level: '' };
+    if (this._simulationSetupDraft.multiSessionEnabled !== true) {
+      return {
+        message: 'Enable Multi-Session Playback to route saved sessions across layers.',
+        level: '',
+      };
+    }
+    const diagnostics = this._getMultiSessionRouteDiagnostics();
+    if (diagnostics.blockReason) {
+      return {
+        message: diagnostics.blockReason,
+        level: 'warn',
+      };
+    }
+    const routeCount = diagnostics.runnableRoutes.length;
+    const sessionCount = new Set(diagnostics.runnableRoutes.map(route => route.sessionIndex)).size;
+    return {
+      message: `Ready to run ${sessionCount} session${sessionCount === 1 ? '' : 's'} across ${routeCount} route${routeCount === 1 ? '' : 's'}.`,
+      level: 'success',
+    };
+  }
+
   _renderSimulationSetupExplorer() {
     const root = document.getElementById('simSetupRows');
     if (!root || !this._simulationSetupDraft) return;
     const rows = this._simulationSetupDraft.rows || [];
     this._updateSimulationSetupSummary();
-    this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '');
+    if (this._simulationSetupDraft.status) {
+      this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '', { persist: false });
+    } else {
+      const readiness = this._getSimulationSetupReadinessStatus();
+      this._setSimulationSetupStatus(readiness.message, readiness.level, { persist: false });
+    }
     if (!rows.length) {
       root.innerHTML = '<div class="sim-setup-empty">Save at least one simulation session before assigning setup rows.</div>';
       return;
@@ -10527,6 +10592,7 @@ export class App {
             if (!session) return '';
             const isEditing = row.sessionIndex === this.simulation.activeSessionIndex;
             const playbackStatus = this._getSimulationSavedPlaybackStatus(session);
+            const playbackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
             const normalizedLayerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
             const selectedLayerIdSet = new Set(normalizedLayerIds);
             const selectedSensingLayerSet = new Set(row.sensingLayerIds);
@@ -10542,8 +10608,9 @@ export class App {
                       <span class="sim-stage-card-title">${_escapeHtml(session.name || `Session ${row.sessionIndex + 1}`)}</span>
                       ${isEditing ? '<span class="sim-stage-badge active">Draft loaded</span>' : ''}
                       <span class="sim-stage-badge${row.enabled ? '' : ' muted'}">${row.enabled ? 'Mounted' : 'Off'}</span>
+                      <span class="sim-stage-badge ${playbackBadgeTone}">${_escapeHtml(playbackStatus.badge)}</span>
                     </div>
-                    <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} · Sensing: ${_escapeHtml(sensingSummary)} · ${routeCount} route${routeCount === 1 ? '' : 's'} · ${_escapeHtml(playbackStatus.badge)}</div>
+                    <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} · Sensing: ${_escapeHtml(sensingSummary)} · ${routeCount} route${routeCount === 1 ? '' : 's'}</div>
                   </div>
                   <span class="sim-stage-card-caret" aria-hidden="true">▾</span>
                 </summary>
@@ -10610,12 +10677,16 @@ export class App {
         })()
       : '';
     const activePlaybackStatus = this._getSimulationSavedPlaybackStatus(activeSavedSession);
+    const activePlaybackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(activePlaybackStatus);
     const savedSessionControls = isBoid
       ? `
         <div class="sim-inspector-note">Use the brush sidebar or this editor to keep session-specific boid settings, guide edits, and stage routing together.</div>
         ${renderInspectorSubgroup('Active Session Draft', `
           <div class="sim-stage-draft">
             <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px;">
+              <span class="sim-stage-badge ${activePlaybackBadgeTone}">${_escapeHtml(activePlaybackStatus.badge)}</span>
+            </div>
             <div class="sim-inspector-note">${_escapeHtml(sessionContext.editorSummary)}</div>
             <div class="sim-inspector-note">${_escapeHtml(activePlaybackStatus.summary)}</div>
             <label class="sim-inspector-row">
@@ -11772,6 +11843,8 @@ export class App {
       button.disabled = !canStepPaths;
     });
     const status = document.getElementById('simStatus');
+    const playbackBadge = document.getElementById('simPlaybackReadyBadge');
+    const routingSummary = document.getElementById('simRoutingSummary');
     if (status) {
       const context = this._getSimulationSessionContextSummary();
       const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
@@ -11788,6 +11861,15 @@ export class App {
       if (this._simulationExport.recording) extras.push('REC');
       const stateLabel = extras.length ? `${base} · ${extras.join(' · ')}` : base;
       status.textContent = `${sessionLabel} · ${stateLabel}`;
+      if (playbackBadge) {
+        const playbackStatus = this._getSimulationSavedPlaybackStatus(context.session);
+        const badgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
+        playbackBadge.textContent = context.playbackBadge;
+        playbackBadge.className = `sim-playback-readout ${badgeTone}`;
+      }
+      if (routingSummary) {
+        routingSummary.textContent = this._getSimulationPlaybackBarSummary(context);
+      }
     }
     this._syncSimulationSessionContextUi();
     this._refreshSimulationExportUi();
@@ -11836,6 +11918,7 @@ export class App {
     this._constrainSimulationDataToBounds(this.activeBrush);
     this.stopSimulation(false);
     this.simulation.starting = true;
+    let diagnostics = null;
     try {
       this.simulation.running = true;
       this.simulation.paused = false;
@@ -11848,7 +11931,7 @@ export class App {
 
       if (this._shouldUseMultiSessionPlayback()) {
         this._simulationSavedPlaybackCapture = null;
-        const diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
+        diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
         if (diagnostics.healedBindings) this.saveSession();
         if (!diagnostics.runnableRoutes.length) {
           this.simulation.running = false;
@@ -11891,7 +11974,7 @@ export class App {
       this._syncSimulationUI();
       if (announce) {
         this.showToast(this.simulation.runtimeSessions.length
-          ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
+          ? this._buildSimulationRunToastMessage(this.simulation.runtimeSessions, diagnostics?.runnableRoutes?.length || 0)
           : 'Simulation running');
       }
     } catch (error) {
@@ -11916,7 +11999,9 @@ export class App {
     this.simulation.paused = true;
     this.isDrawing = false;
     this._syncSimulationUI();
-    this.showToast('Simulation paused');
+    this.showToast(this.simulation.runtimeSessions.length
+      ? `Simulation paused (${this.simulation.runtimeSessions.length} sessions)`
+      : 'Simulation paused');
   }
 
   resumeSimulation() {
@@ -11925,7 +12010,9 @@ export class App {
     this.simulation.running = true;
     this.isDrawing = true;
     this._syncSimulationUI();
-    this.showToast('Simulation resumed');
+    this.showToast(this.simulation.runtimeSessions.length
+      ? `Simulation resumed (${this.simulation.runtimeSessions.length} sessions)`
+      : 'Simulation resumed');
   }
 
   stopSimulation(showToast = true) {
