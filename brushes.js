@@ -1106,7 +1106,7 @@ async function _createMotionSim(app, maxAgents = SHARED_MOTION_SIM_MAX_AGENTS, o
   const height = app.H || 600;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      return WebGPUBoidSim.create(width, height, maxAgents, undefined, options);
+      return await WebGPUBoidSim.create(width, height, maxAgents, undefined, options);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
