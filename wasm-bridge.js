@@ -382,9 +382,6 @@ const FLUID_RENDER_MODE_MAP = {
 };
 const MIN_FLUID_SCALE = 0.35;
 
-let _fluidModulePromise = null;
-let _fluidModulePath = '';
-
 function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, sourceCtx, targetCanvas, targetCtx) {
   if (sourceCanvas.width !== imageData.width || sourceCanvas.height !== imageData.height) {
     sourceCanvas.width = imageData.width;
@@ -402,18 +399,11 @@ function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, source
 }
 
 async function _getOrLoadFluidModule(wasmPath) {
-  if (!_fluidModulePromise || _fluidModulePath !== wasmPath) {
-    _fluidModulePath = wasmPath;
-    _fluidModulePromise = (async () => {
-      const mod = await import(wasmPath);
-      if (typeof mod.default === 'function') await mod.default({ module_or_path: _fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)) });
-      if (typeof mod.fluid_create_simulator !== 'function') {
-        throw new Error('Fluid exports are unavailable in the WASM module.');
-      }
-      return mod;
-    })();
+  const { mod } = await _getOrLoadBoidModule(wasmPath);
+  if (typeof mod.fluid_create_simulator !== 'function') {
+    throw new Error('Fluid exports are unavailable in the WASM module.');
   }
-  return _fluidModulePromise;
+  return mod;
 }
 
 export class FluidSim {

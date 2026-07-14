@@ -1118,6 +1118,25 @@ async function _createSharedMotionSim(app) {
   return _createMotionSim(app, SHARED_MOTION_SIM_MAX_AGENTS);
 }
 
+async function _acquireSharedMotionSim(app) {
+  if (app.sharedMotionSim) return app.sharedMotionSim;
+  if (!app.sharedMotionSimPromise) {
+    app.sharedMotionSimPromise = (async () => {
+      try {
+        const sim = await _createSharedMotionSim(app);
+        app.sharedMotionSim = sim;
+        return sim;
+      } catch (error) {
+        app.sharedMotionSim = null;
+        throw error;
+      } finally {
+        app.sharedMotionSimPromise = null;
+      }
+    })();
+  }
+  return app.sharedMotionSimPromise;
+}
+
 export class BoidBrush {
   constructor(app) {
     this.app = app;
@@ -1190,6 +1209,7 @@ export class BoidBrush {
       this.sim = null;
       this._usingSharedSim = false;
       this.app.sharedMotionSim = null;
+      this.app.sharedMotionSimPromise = null;
       this._resetInterpolationState();
       this._boidsSpawned = false;
       this._hoverSpawned = false;
@@ -1215,7 +1235,7 @@ export class BoidBrush {
     this._patchRendererChain();
     try {
       this.sim = useShared
-        ? await _createSharedMotionSim(this.app)
+        ? await _acquireSharedMotionSim(this.app)
         : await _createMotionSim(this.app, undefined, gpuOptions);
       this._usingSharedSim = !!useShared;
       if (useShared) this.app.sharedMotionSim = this.sim;
@@ -2793,7 +2813,7 @@ export class AntBrush {
       return this.sim;
     }
     try {
-      this.sim = await _createSharedMotionSim(this.app);
+      this.sim = await _acquireSharedMotionSim(this.app);
       this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {

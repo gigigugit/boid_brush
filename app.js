@@ -1926,6 +1926,7 @@ export class App {
     // Brush engines
     this.brushes = {};
     this.sharedMotionSim = null;
+    this.sharedMotionSimPromise = null;
     this.activeBrush = 'boid';
 
     // Drawing state
