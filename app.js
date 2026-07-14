@@ -1927,6 +1927,7 @@ export class App {
     this.brushes = {};
     this.sharedMotionSim = null;
     this.sharedMotionSimPromise = null;
+    this.sharedMotionSimEpoch = 0;
     this.activeBrush = 'boid';
 
     // Drawing state

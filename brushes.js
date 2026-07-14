@@ -1121,18 +1121,29 @@ async function _createSharedMotionSim(app) {
 async function _acquireSharedMotionSim(app) {
   if (app.sharedMotionSim) return app.sharedMotionSim;
   if (!app.sharedMotionSimPromise) {
-    app.sharedMotionSimPromise = (async () => {
+    const epoch = app.sharedMotionSimEpoch ?? 0;
+    const request = (async () => {
       try {
         const sim = await _createSharedMotionSim(app);
+        if ((app.sharedMotionSimEpoch ?? 0) !== epoch) {
+          sim?.destroy?.();
+          return _acquireSharedMotionSim(app);
+        }
         app.sharedMotionSim = sim;
         return sim;
       } catch (error) {
+        if ((app.sharedMotionSimEpoch ?? 0) !== epoch) {
+          return _acquireSharedMotionSim(app);
+        }
         app.sharedMotionSim = null;
         throw error;
       } finally {
-        app.sharedMotionSimPromise = null;
+        if (app.sharedMotionSimPromise === request) {
+          app.sharedMotionSimPromise = null;
+        }
       }
     })();
+    app.sharedMotionSimPromise = request;
   }
   return app.sharedMotionSimPromise;
 }
@@ -1208,6 +1219,7 @@ export class BoidBrush {
       this._ready = false;
       this.sim = null;
       this._usingSharedSim = false;
+      this.app.sharedMotionSimEpoch = (this.app.sharedMotionSimEpoch ?? 0) + 1;
       this.app.sharedMotionSim = null;
       this.app.sharedMotionSimPromise = null;
       this._resetInterpolationState();
