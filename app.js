@@ -27,6 +27,10 @@ const VIEW_BOOKMARK_ACTIVE_PAN_EPSILON = 48;
 const VIEW_BOOKMARK_ACTIVE_ROTATION_EPSILON = Math.PI / 90;
 const SIM_SETUP_FORMAT = 'boid-brush-simulation-setup';
 const SIM_SETUP_VERSION = 1;
+const SIM_SAVED_PLAYBACK_FORMAT = 'boid-brush-saved-playback';
+const SIM_SAVED_PLAYBACK_VERSION = 1;
+const SIM_SAVED_PLAYBACK_CAPTURE_INTERVAL = 2;
+const SIM_SAVED_PLAYBACK_MAX_FRAMES = 240;
 const SIM_EXPORT_TIMESLICE_MS = 250;
 const SIM_EXPORT_FFMPEG_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_UTIL_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
@@ -587,6 +591,64 @@ function _sanitizeSimulationSessionData(value) {
     if (normalized !== undefined) next[key] = normalized;
   }
   return next;
+}
+
+function _normalizeSimulationSavedPlaybackNumericArray(values, {
+  minLength = 0,
+  maxLength = Infinity,
+  evenLength = false,
+} = {}) {
+  if (!Array.isArray(values)) return null;
+  const next = [];
+  for (const value of values) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    next.push(n);
+    if (next.length > maxLength) break;
+  }
+  if (next.length < minLength) return null;
+  if (evenLength && (next.length % 2) !== 0) return null;
+  return next;
+}
+
+function _normalizeSimulationSavedPlayback(value) {
+  if (!_isPlainObject(value)) return null;
+  if (value.format !== SIM_SAVED_PLAYBACK_FORMAT) return null;
+  const frameRate = Number(value.frameRate);
+  const capturedAt = Number(value.capturedAt);
+  const agentCount = Math.max(0, Math.round(Number(value.agentCount) || 0));
+  const captureInterval = Math.max(1, Math.round(Number(value.captureInterval) || 1));
+  const appearance = _normalizeSimulationSavedPlaybackNumericArray(value.appearance, {
+    minLength: agentCount * 5,
+    maxLength: agentCount * 5,
+  });
+  if (agentCount > 0 && !appearance) return null;
+  const rawFrames = Array.isArray(value.frames) ? value.frames.slice(0, SIM_SAVED_PLAYBACK_MAX_FRAMES) : [];
+  const frames = [];
+  for (const entry of rawFrames) {
+    const positions = _normalizeSimulationSavedPlaybackNumericArray(entry?.positions, {
+      minLength: agentCount * 2,
+      maxLength: agentCount * 2,
+      evenLength: true,
+    });
+    if (!positions) continue;
+    frames.push({ positions });
+  }
+  if (!frames.length) return null;
+  return {
+    format: SIM_SAVED_PLAYBACK_FORMAT,
+    version: SIM_SAVED_PLAYBACK_VERSION,
+    signature: typeof value.signature === 'string' ? value.signature : '',
+    frameRate: Number.isFinite(frameRate) ? Math.max(1, Math.round(frameRate)) : 60,
+    captureInterval,
+    capturedAt: Number.isFinite(capturedAt) ? capturedAt : 0,
+    width: Math.max(1, Math.round(Number(value.width) || 1)),
+    height: Math.max(1, Math.round(Number(value.height) || 1)),
+    agentCount,
+    appearance: appearance || [],
+    frames,
+    truncated: value.truncated === true,
+  };
 }
 
 function _normalizeSimulationVars(value) {
@@ -1864,6 +1926,8 @@ export class App {
     // Brush engines
     this.brushes = {};
     this.sharedMotionSim = null;
+    this.sharedMotionSimPromise = null;
+    this.sharedMotionSimEpoch = 0;
     this.activeBrush = 'boid';
 
     // Drawing state
@@ -1998,6 +2062,7 @@ export class App {
       // Named saved simulation sessions.
       sessions: [],
       activeSessionIndex: -1,
+      savedPlayback: null,
       multiSessionEnabled: false,
       multiSessionBindings: [],
       runtimeSessions: [],
@@ -2014,6 +2079,7 @@ export class App {
       clipboard: null,
       nextId: 1,
     };
+    this._simulationSavedPlaybackCapture = null;
     this.motionPath = this._createDefaultMotionPathState();
     this.motionPathEditor = this._createMotionPathEditorState();
     this._simFormatMenuUi = {
@@ -3796,6 +3862,7 @@ export class App {
   resetSimulationPlayback() {
     void this._stopSimulationRecording({ announce: false });
     this.stopSimulation(false);
+    this._simulationSavedPlaybackCapture = null;
     this.simulation.frameCount = 0;
     this.simulation.pathDistance = 0;
     for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
@@ -6178,6 +6245,7 @@ export class App {
       : null;
     const name = session?.name?.trim() || 'Unsaved Draft';
     const isSaved = !!session;
+    const savedPlaybackStatus = this._getSimulationSavedPlaybackStatus(session);
     return {
       activeIndex,
       session,
@@ -6192,10 +6260,179 @@ export class App {
         ? `Editing saved session "${name}". Guide edits and simulation-mode defaults update this session until you load another one or start a new draft.`
         : 'Editing an unsaved draft session. Save it to reuse the current simulation defaults, guides, and sensing routes later.',
       playbackLabel: `Session ${name}`,
+      playbackSummary: savedPlaybackStatus.summary,
+      playbackBadge: savedPlaybackStatus.badge,
+      playbackReady: savedPlaybackStatus.ready,
       setupLabel: isSaved ? `Editing saved session: ${name}` : 'Editing unsaved draft session.',
       modeSummary: 'The brush sidebar stays wired to the selected simulation draft or saved session.',
       routingSummary: this._buildSimulationSessionRoutingSummary(),
     };
+  }
+
+  _buildSimulationSavedPlaybackSignature(session = {}) {
+    // Saved playback is only reusable when the authored session state still
+    // matches the run that produced the cached frames, so hash the guide data,
+    // runtime overrides, and sensing selection into a stable signature.
+    const brushData = _sanitizeSimulationSessionData(session.brushData);
+    const controlState = _sanitizeSimulationSessionData(session.controlState);
+    const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot);
+    return JSON.stringify({
+      brushData: _isPlainObject(brushData) ? brushData : {},
+      vars: _normalizeSimulationVars(session.vars),
+      controlState: _isPlainObject(controlState) ? controlState : {},
+      paramSnapshot: _isPlainObject(paramSnapshot) ? paramSnapshot : {},
+      sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+    });
+  }
+
+  _getSimulationSavedPlaybackStatus(session = null) {
+    const playback = _normalizeSimulationSavedPlayback(session ? session.savedPlayback : this.simulation.savedPlayback);
+    if (!playback) {
+      return {
+        ready: false,
+        badge: 'No saved playback',
+        summary: 'No saved playback captured yet. Run a boid simulation to cache frames for stacked multi-session playback.',
+        playback: null,
+      };
+    }
+    const signature = this._buildSimulationSavedPlaybackSignature(session || {
+      brushData: this.simulation.brushData,
+      vars: this.simulation.vars,
+      controlState: this._captureSimulationSessionControlState(),
+      paramSnapshot: this._captureSimulationSessionParamSnapshot(),
+      sensingSourceSelection: this._serializeSensingSourceSelection(),
+    });
+    const ready = !!playback.signature && playback.signature === signature;
+    const frameCount = playback.frames?.length || 0;
+    return ready
+      ? {
+          ready: true,
+          badge: `Saved playback · ${frameCount} frames`,
+          summary: `Saved playback is ready (${frameCount} frames). Multi-session playback will reuse it instead of recomputing this boid session live.`,
+          playback,
+        }
+      : {
+          ready: false,
+          badge: 'Saved playback outdated',
+          summary: 'Saved playback exists but no longer matches the current session settings. Re-run the session to refresh it.',
+          playback,
+        };
+  }
+
+  _getSimulationSavedPlaybackBadgeTone(status) {
+    if (status?.ready) return 'active';
+    return status?.playback ? 'warn' : 'muted';
+  }
+
+  _getSimulationPlaybackBarSummary(context) {
+    if (this._shouldUseMultiSessionPlayback()) {
+      const diagnostics = this._getMultiSessionRouteDiagnostics();
+      if (diagnostics.blockReason) return diagnostics.blockReason;
+      return `Run ready · ${context.routingSummary}`;
+    }
+    return context.playbackSummary;
+  }
+
+  _buildSimulationRunToastMessage(runtimes = [], routeCount = 0) {
+    const total = runtimes.length;
+    if (!total) return 'Simulation running';
+    const savedCount = runtimes.filter(runtime => !!runtime?.savedPlayback).length;
+    const liveCount = Math.max(0, total - savedCount);
+    const parts = [`${total} session${total === 1 ? '' : 's'}`];
+    if (routeCount > 0) parts.push(`${routeCount} route${routeCount === 1 ? '' : 's'}`);
+    if (savedCount && liveCount) {
+      parts.push(`${savedCount} saved`);
+      parts.push(`${liveCount} live`);
+    } else if (savedCount) {
+      parts.push(`${savedCount} saved playback`);
+    } else if (liveCount) {
+      parts.push(`${liveCount} live`);
+    }
+    return `Simulation running (${parts.join(', ')})`;
+  }
+
+  _getSimulationSavedPlaybackForRuntime(session) {
+    const status = this._getSimulationSavedPlaybackStatus(session);
+    return status.ready ? status.playback : null;
+  }
+
+  _beginSimulationSavedPlaybackCapture() {
+    this._simulationSavedPlaybackCapture = {
+      signature: this._buildSimulationSavedPlaybackSignature({
+        brushData: this.simulation.brushData,
+        vars: this.simulation.vars,
+        controlState: this._captureSimulationSessionControlState(),
+        paramSnapshot: this._captureSimulationSessionParamSnapshot(),
+        sensingSourceSelection: this._serializeSensingSourceSelection(),
+      }),
+      format: SIM_SAVED_PLAYBACK_FORMAT,
+      version: SIM_SAVED_PLAYBACK_VERSION,
+      frameRate: 60,
+      captureInterval: SIM_SAVED_PLAYBACK_CAPTURE_INTERVAL,
+      capturedAt: Date.now(),
+      width: this.W,
+      height: this.H,
+      agentCount: 0,
+      appearance: null,
+      frames: [],
+      truncated: false,
+    };
+  }
+
+  _syncSimulationSavedPlaybackCapture(brush) {
+    if (!brush?.captureSavedPlaybackFrame) return;
+    if (!this._simulationSavedPlaybackCapture) this._beginSimulationSavedPlaybackCapture();
+    const capture = this._simulationSavedPlaybackCapture;
+    if (!capture || (this.simulation.frameCount % capture.captureInterval) !== 0) return;
+    if (capture.frames.length >= SIM_SAVED_PLAYBACK_MAX_FRAMES) {
+      capture.truncated = true;
+      if (!this.simulation.savedPlayback && capture.appearance && capture.frames.length) {
+        this.simulation.savedPlayback = _deepClone({
+          ...capture,
+          appearance: capture.appearance,
+          frames: capture.frames,
+        });
+      }
+      return;
+    }
+    const frame = brush.captureSavedPlaybackFrame();
+    if (!frame || frame.count <= 0 || !frame.positions?.length) return;
+    if (!capture.agentCount) {
+      capture.agentCount = frame.count;
+      capture.appearance = frame.appearance;
+    }
+    if (frame.count !== capture.agentCount || !capture.appearance) {
+      capture.truncated = true;
+      return;
+    }
+    capture.frames.push({ positions: frame.positions });
+    this.simulation.savedPlayback = _normalizeSimulationSavedPlayback({
+      ...capture,
+      appearance: capture.appearance,
+      frames: capture.frames,
+    });
+  }
+
+  _getSavedPlaybackRuntimeStats() {
+    let total = 0;
+    let completed = 0;
+    for (const runtime of this.simulation.runtimeSessions || []) {
+      if (!runtime?.savedPlayback) continue;
+      total++;
+      if (runtime.playbackComplete) completed++;
+    }
+    return { total, completed };
+  }
+
+  _pauseSimulationAtSavedPlaybackEnd() {
+    const savedStats = this._getSavedPlaybackRuntimeStats();
+    this.simulation.running = false;
+    this.simulation.paused = true;
+    this.isDrawing = false;
+    this._syncSimulationUI();
+    this.showToast(savedStats.total > 0
+      ? `Saved playback complete — paused at end (${savedStats.completed}/${savedStats.total} sessions)`
+      : 'Saved playback complete — paused at end');
   }
 
   _syncSimulationSessionContextUi() {
@@ -8649,6 +8886,7 @@ export class App {
       paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
+      savedPlayback: _normalizeSimulationSavedPlayback(this.simulation.savedPlayback),
       nextId: this.simulation.nextId,
     };
     this.simulation.sessions[activeIndex] = nextSession;
@@ -8666,6 +8904,8 @@ export class App {
     this._applySimulationSessionControlState(session.controlState, { sync: false });
     this._syncSimulationSessionSensingControls({ sync: false });
     this.simulation.brushData = _deepClone(session.brushData);
+    this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(session.savedPlayback);
+    this._simulationSavedPlaybackCapture = null;
     if (Number.isFinite(session.nextId)) this.simulation.nextId = Math.max(1, Math.round(session.nextId));
     this.simulation.selected = null;
     this._normalizeSimulationData();
@@ -8695,6 +8935,8 @@ export class App {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
     };
+    this.simulation.savedPlayback = null;
+    this._simulationSavedPlaybackCapture = null;
     this.simulation.activeSessionIndex = -1;
     this.simulation.nextId = 1;
     this.simulation.selected = null;
@@ -8728,6 +8970,7 @@ export class App {
       paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
+      savedPlayback: _normalizeSimulationSavedPlayback(this.simulation.savedPlayback),
       nextId: this.simulation.nextId,
     };
     if (existingSession) {
@@ -8973,10 +9216,12 @@ export class App {
     return session;
   }
 
-  _setSimulationSetupStatus(message = '', level = '') {
+  _setSimulationSetupStatus(message = '', level = '', { persist = true } = {}) {
     if (!this._simulationSetupDraft) return;
-    this._simulationSetupDraft.status = message;
-    this._simulationSetupDraft.statusLevel = level;
+    if (persist) {
+      this._simulationSetupDraft.status = message;
+      this._simulationSetupDraft.statusLevel = level;
+    }
     const node = document.getElementById('simSetupStatus');
     if (!node) return;
     node.textContent = message;
@@ -9016,12 +9261,40 @@ export class App {
     summary.textContent = `${this._simulationSetupDraft.rows.length} saved session${this._simulationSetupDraft.rows.length === 1 ? '' : 's'} in draft, ${enabledRows.length} enabled, ${routeCount} target route${routeCount === 1 ? '' : 's'}.`;
   }
 
+  _getSimulationSetupReadinessStatus() {
+    if (!this._simulationSetupDraft) return { message: '', level: '' };
+    if (this._simulationSetupDraft.multiSessionEnabled !== true) {
+      return {
+        message: 'Enable Multi-Session Playback to route saved sessions across layers.',
+        level: '',
+      };
+    }
+    const diagnostics = this._getMultiSessionRouteDiagnostics();
+    if (diagnostics.blockReason) {
+      return {
+        message: diagnostics.blockReason,
+        level: 'warn',
+      };
+    }
+    const routeCount = diagnostics.runnableRoutes.length;
+    const sessionCount = new Set(diagnostics.runnableRoutes.map(route => route.sessionIndex)).size;
+    return {
+      message: `Ready to run ${sessionCount} session${sessionCount === 1 ? '' : 's'} across ${routeCount} route${routeCount === 1 ? '' : 's'}.`,
+      level: 'success',
+    };
+  }
+
   _renderSimulationSetupExplorer() {
     const root = document.getElementById('simSetupRows');
     if (!root || !this._simulationSetupDraft) return;
     const rows = this._simulationSetupDraft.rows || [];
     this._updateSimulationSetupSummary();
-    this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '');
+    if (this._simulationSetupDraft.status) {
+      this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '', { persist: false });
+    } else {
+      const readiness = this._getSimulationSetupReadinessStatus();
+      this._setSimulationSetupStatus(readiness.message, readiness.level, { persist: false });
+    }
     if (!rows.length) {
       root.innerHTML = '<div class="sim-setup-empty">Save at least one simulation session before assigning setup rows.</div>';
       return;
@@ -9503,6 +9776,7 @@ export class App {
           ...session,
           vars: _normalizeSimulationVars(session.vars),
           sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+          savedPlayback: _normalizeSimulationSavedPlayback(session.savedPlayback),
         })),
     );
     const sessionIndexById = new Map(sessions.map((session, index) => [session.id, index]));
@@ -9746,29 +10020,36 @@ export class App {
     runtime.vars = _normalizeSimulationVars(session.vars);
     runtime.paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
     runtime.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+    runtime.savedPlayback = this._getSimulationSavedPlaybackForRuntime(session);
     runtime.layerId = layer.id;
     runtime.sessionIndex = this.simulation.sessions.indexOf(session);
     runtime.sessionName = session.name;
     runtime.leaderX = this.W * 0.5;
     runtime.leaderY = this.H * 0.5;
     runtime.strokeFrame = 0;
+    runtime.playbackCursor = 0;
+    runtime.playbackComplete = false;
     this._withSimulationRuntimeContext(runtime, () => {
       runtime.brushInstance.resetSimulationPlaybackState?.({ compositePreview: false });
       this._normalizeSimulationData();
       const runtimeParams = this.getP();
       this._constrainSimulationDataToBounds(runtime.brush, runtimeParams);
-      const allSpawns = this._ensureSimulationSpawns(runtime.brush);
-      const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
-      const spawn = spawns[0] || allSpawns[0];
-      for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
-        pathItem.travelDistance = 0;
+      if (runtime.savedPlayback) {
+        runtime.brushInstance.prepareSavedPlayback?.(runtime.savedPlayback, runtimeParams);
+      } else {
+        const allSpawns = this._ensureSimulationSpawns(runtime.brush);
+        const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
+        const spawn = spawns[0] || allSpawns[0];
+        for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
+          pathItem.travelDistance = 0;
+        }
+        this._updateSimulationLeader(0, runtimeParams);
+        runtime.leaderX = this.leaderX;
+        runtime.leaderY = this.leaderY;
+        runtime.brushInstance.onDown?.(spawn.x, spawn.y, 1);
+        runtime.brushInstance.configureSimulation?.(this._getSimulationBrushData(runtime.brush), runtimeParams);
+        runtime.brushInstance.ensureSimulationSpawnAppearance?.(runtimeParams);
       }
-      this._updateSimulationLeader(0, runtimeParams);
-      runtime.leaderX = this.leaderX;
-      runtime.leaderY = this.leaderY;
-      runtime.brushInstance.onDown?.(spawn.x, spawn.y, 1);
-      runtime.brushInstance.configureSimulation?.(this._getSimulationBrushData(runtime.brush), runtimeParams);
-      runtime.brushInstance.ensureSimulationSpawnAppearance?.(runtimeParams);
     });
   }
 
@@ -9821,12 +10102,15 @@ export class App {
         vars: _normalizeSimulationVars(session.vars),
         paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
         sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+        savedPlayback: this._getSimulationSavedPlaybackForRuntime(session),
         layerId: layer.id,
         sessionIndex: binding.sessionIndex,
         sessionName: session.name,
         leaderX: this.W * 0.5,
         leaderY: this.H * 0.5,
         strokeFrame: 0,
+        playbackCursor: 0,
+        playbackComplete: false,
         brushInstance: null,
       };
       try {
@@ -9846,8 +10130,29 @@ export class App {
   }
 
   _stepMultiSessionSimulation(elapsed, p) {
+    let liveRuntimeCount = 0;
+    let savedRuntimeCount = 0;
+    let savedRuntimeCompleteCount = 0;
     for (const runtime of this.simulation.runtimeSessions) {
       if (!runtime?.brushInstance) continue;
+      if (runtime.savedPlayback) {
+        savedRuntimeCount++;
+        if (runtime.playbackCursor >= (runtime.savedPlayback.frames?.length || 0)) {
+          runtime.playbackComplete = true;
+          savedRuntimeCompleteCount++;
+          continue;
+        }
+        this._withSimulationRuntimeContext(runtime, () => {
+          const runtimeParams = this.getP();
+          this._applySimulationEphemeralFade(runtimeParams);
+          runtime.brushInstance.renderSavedPlaybackFrame?.(runtime.savedPlayback, runtime.playbackCursor, runtimeParams);
+        });
+        runtime.playbackCursor += 1;
+        runtime.playbackComplete = runtime.playbackCursor >= runtime.savedPlayback.frames.length;
+        if (runtime.playbackComplete) savedRuntimeCompleteCount++;
+        continue;
+      }
+      liveRuntimeCount++;
       this._withSimulationRuntimeContext(runtime, () => {
         const runtimeParams = this.getP();
         this._updateSimulationLeader(elapsed, runtimeParams);
@@ -9858,6 +10163,12 @@ export class App {
       });
     }
     this._updateSimulationLeader(elapsed, p);
+    const allSavedPlaybackComplete = savedRuntimeCount > 0
+      && liveRuntimeCount === 0
+      && savedRuntimeCompleteCount === savedRuntimeCount;
+    if (allSavedPlaybackComplete && this.simulation.running) {
+      this._pauseSimulationAtSavedPlaybackEnd();
+    }
   }
 
   _teardownMultiSessionRuntimeSessions({ commitPreview = false, cache = false } = {}) {
@@ -10280,6 +10591,8 @@ export class App {
             const session = this.simulation.sessions[row.sessionIndex] || null;
             if (!session) return '';
             const isEditing = row.sessionIndex === this.simulation.activeSessionIndex;
+            const playbackStatus = this._getSimulationSavedPlaybackStatus(session);
+            const playbackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
             const normalizedLayerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
             const selectedLayerIdSet = new Set(normalizedLayerIds);
             const selectedSensingLayerSet = new Set(row.sensingLayerIds);
@@ -10295,6 +10608,7 @@ export class App {
                       <span class="sim-stage-card-title">${_escapeHtml(session.name || `Session ${row.sessionIndex + 1}`)}</span>
                       ${isEditing ? '<span class="sim-stage-badge active">Draft loaded</span>' : ''}
                       <span class="sim-stage-badge${row.enabled ? '' : ' muted'}">${row.enabled ? 'Mounted' : 'Off'}</span>
+                      <span class="sim-stage-badge ${playbackBadgeTone}">${_escapeHtml(playbackStatus.badge)}</span>
                     </div>
                     <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} · Sensing: ${_escapeHtml(sensingSummary)} · ${routeCount} route${routeCount === 1 ? '' : 's'}</div>
                   </div>
@@ -10356,18 +10670,25 @@ export class App {
                       }).join('')}
                     </div>
                   </div>
+                  <div class="sim-inspector-note">${_escapeHtml(playbackStatus.summary)}</div>
                 </div>
               </details>`;
           }).join('')}</div>`;
         })()
       : '';
+    const activePlaybackStatus = this._getSimulationSavedPlaybackStatus(activeSavedSession);
+    const activePlaybackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(activePlaybackStatus);
     const savedSessionControls = isBoid
       ? `
         <div class="sim-inspector-note">Use the brush sidebar or this editor to keep session-specific boid settings, guide edits, and stage routing together.</div>
         ${renderInspectorSubgroup('Active Session Draft', `
           <div class="sim-stage-draft">
             <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px;">
+              <span class="sim-stage-badge ${activePlaybackBadgeTone}">${_escapeHtml(activePlaybackStatus.badge)}</span>
+            </div>
             <div class="sim-inspector-note">${_escapeHtml(sessionContext.editorSummary)}</div>
+            <div class="sim-inspector-note">${_escapeHtml(activePlaybackStatus.summary)}</div>
             <label class="sim-inspector-row">
               <span>
                 <span>Multi-Session Playback</span>
@@ -11522,16 +11843,33 @@ export class App {
       button.disabled = !canStepPaths;
     });
     const status = document.getElementById('simStatus');
+    const playbackBadge = document.getElementById('simPlaybackReadyBadge');
+    const routingSummary = document.getElementById('simRoutingSummary');
     if (status) {
       const context = this._getSimulationSessionContextSummary();
       const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
       const extras = [];
+      const savedRuntimeStats = this._getSavedPlaybackRuntimeStats();
       const sessionLabel = context.playbackLabel || 'Session';
       if (this.simulation.heatmapVisible) extras.push('Heatmap');
+      if (savedRuntimeStats.total > 0) {
+        extras.push(savedRuntimeStats.completed >= savedRuntimeStats.total
+          ? 'Saved complete'
+          : `Saved ${savedRuntimeStats.completed}/${savedRuntimeStats.total}`);
+      }
       if (this._simulationExport.armedOnStart) extras.push('REC Armed');
       if (this._simulationExport.recording) extras.push('REC');
       const stateLabel = extras.length ? `${base} · ${extras.join(' · ')}` : base;
       status.textContent = `${sessionLabel} · ${stateLabel}`;
+      if (playbackBadge) {
+        const playbackStatus = this._getSimulationSavedPlaybackStatus(context.session);
+        const badgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
+        playbackBadge.textContent = context.playbackBadge;
+        playbackBadge.className = `sim-playback-readout ${badgeTone}`;
+      }
+      if (routingSummary) {
+        routingSummary.textContent = this._getSimulationPlaybackBarSummary(context);
+      }
     }
     this._syncSimulationSessionContextUi();
     this._refreshSimulationExportUi();
@@ -11580,6 +11918,7 @@ export class App {
     this._constrainSimulationDataToBounds(this.activeBrush);
     this.stopSimulation(false);
     this.simulation.starting = true;
+    let diagnostics = null;
     try {
       this.simulation.running = true;
       this.simulation.paused = false;
@@ -11591,7 +11930,8 @@ export class App {
       this.strokeFrame = 0;
 
       if (this._shouldUseMultiSessionPlayback()) {
-        const diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
+        this._simulationSavedPlaybackCapture = null;
+        diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
         if (diagnostics.healedBindings) this.saveSession();
         if (!diagnostics.runnableRoutes.length) {
           this.simulation.running = false;
@@ -11613,6 +11953,7 @@ export class App {
         brush.deactivate?.();
         this.simulation.runtimeSessions = runtimeSessions;
       } else {
+        this._beginSimulationSavedPlaybackCapture();
         this.simulation.runtimeSessions = [];
         const allSpawns = this._ensureSimulationSpawns();
         const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
@@ -11633,7 +11974,7 @@ export class App {
       this._syncSimulationUI();
       if (announce) {
         this.showToast(this.simulation.runtimeSessions.length
-          ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
+          ? this._buildSimulationRunToastMessage(this.simulation.runtimeSessions, diagnostics?.runnableRoutes?.length || 0)
           : 'Simulation running');
       }
     } catch (error) {
@@ -11658,7 +11999,9 @@ export class App {
     this.simulation.paused = true;
     this.isDrawing = false;
     this._syncSimulationUI();
-    this.showToast('Simulation paused');
+    this.showToast(this.simulation.runtimeSessions.length
+      ? `Simulation paused (${this.simulation.runtimeSessions.length} sessions)`
+      : 'Simulation paused');
   }
 
   resumeSimulation() {
@@ -11667,7 +12010,9 @@ export class App {
     this.simulation.running = true;
     this.isDrawing = true;
     this._syncSimulationUI();
-    this.showToast('Simulation resumed');
+    this.showToast(this.simulation.runtimeSessions.length
+      ? `Simulation resumed (${this.simulation.runtimeSessions.length} sessions)`
+      : 'Simulation resumed');
   }
 
   stopSimulation(showToast = true) {
@@ -11692,6 +12037,7 @@ export class App {
     this.simulation.motionPathVelocity = { x: 0, y: 0 };
     this.isDrawing = false;
     this.isTapering = false;
+    this._simulationSavedPlaybackCapture = null;
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
   }
@@ -17475,6 +17821,9 @@ export class App {
     }
     if ((this.isDrawing || this.simulation.running) && brush && brush.onFrame && !this._hasActiveMultiSessionPlayback()) {
       brush.onFrame(elapsed);
+      if (this.simulation.running && this.simulation.enabled && this.activeBrush === 'boid') {
+        this._syncSimulationSavedPlaybackCapture(brush);
+      }
     } else if (!this.isDrawing && !this.simulation.running && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
       // Skip during taper — taperFrame already steps the sim
@@ -18840,6 +19189,7 @@ export class App {
       vars: this.simulation.vars,
       sessions: this.simulation.sessions,
       activeSessionIndex: this.simulation.activeSessionIndex,
+      savedPlayback: this.simulation.savedPlayback,
       multiSessionEnabled: this.simulation.multiSessionEnabled,
       multiSessionBindings: this.simulation.multiSessionBindings,
     };
@@ -19397,9 +19747,11 @@ export class App {
               controlState: _sanitizeSimulationSessionData(session.controlState) || {},
               paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
               sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+              savedPlayback: _normalizeSimulationSavedPlayback(session.savedPlayback),
             }));
         }
         this.simulation.activeSessionIndex = Number.isFinite(val?.activeSessionIndex) ? Math.round(val.activeSessionIndex) : -1;
+        this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(val?.savedPlayback);
         this.simulation.multiSessionEnabled = !!val?.multiSessionEnabled;
         this.simulation.multiSessionBindings = Array.isArray(val?.multiSessionBindings) ? _deepClone(val.multiSessionBindings) : [];
         continue;

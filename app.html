@@ -302,6 +302,10 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-playback-divider{width:1px;height:22px;background:rgba(255,255,255,0.08);}
 .sim-playback-readout{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border-radius:999px;background:rgba(6,10,18,0.9);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03);color:#dfe7f8;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .sim-playback-readout.sim-session-readout{max-width:min(32vw,260px);overflow:hidden;text-overflow:ellipsis;}
+.sim-playback-readout.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+.sim-playback-readout.muted{color:#98a6bd;}
+.sim-playback-readout.warn{background:rgba(146,54,54,0.72);border-color:rgba(225,99,99,0.35);color:#ffd6d6;}
+#simPlaybackBar .sim-routing-summary{max-width:min(46vw,420px);white-space:normal;line-height:1.3;color:#adc0e2;}
 #simRecordBtn.recording{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.52);color:#fff;box-shadow:0 0 10px rgba(224,80,80,0.32);animation:simRecordPulse 1.05s ease-in-out infinite;}
 #simPlaybackBar .sim-pill:disabled{opacity:0.38;cursor:not-allowed;box-shadow:none;}
 #simPlaybackBar .sim-pill:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
@@ -407,6 +411,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-stage-badge{display:inline-flex;align-items:center;min-height:18px;padding:0 7px;border-radius:999px;background:rgba(255,255,255,0.08);color:#dfe7f8;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;}
 .sim-stage-badge.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));color:#fff;}
 .sim-stage-badge.muted{background:rgba(255,255,255,0.05);color:#98a6bd;}
+.sim-stage-badge.warn{background:rgba(146,54,54,0.72);color:#ffd6d6;}
 .sim-stage-card-body{display:grid;gap:8px;padding:0 10px 10px;}
 .sim-stage-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
 .sim-stage-field{display:grid;gap:5px;}
@@ -648,6 +653,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #simSetupModal .sim-setup-futureField span{color:#9cabca;font-size:9px;letter-spacing:.04em;text-transform:uppercase;}
 #simSetupModal .sim-setup-future{min-width:150px;color:#9cabca;font-size:10px;line-height:1.45;}
 #simSetupModal .sim-setup-status{min-height:18px;color:#adc0e2;font-size:11px;line-height:1.45;}
+#simSetupModal .sim-setup-status.success{color:#a9e6b5;}
 #simSetupModal .sim-setup-status.warn{color:#ffd08a;}
 #simSetupModal .sim-setup-status.error{color:#ff9e9e;}
 #simSetupModal .sim-setup-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);}
@@ -998,10 +1004,12 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   </button>
   <span class="sim-playback-divider" aria-hidden="true"></span>
   <span class="sim-playback-readout" id="simFrameCounter">Frame 0000</span>
+  <span class="sim-playback-readout muted" id="simPlaybackReadyBadge">No saved playback</span>
   <span class="sim-playback-divider" aria-hidden="true"></span>
   <button class="sim-pill" id="simRecordBtn" type="button">⏺ Record</button>
   <button class="sim-pill" id="simExportBtn" type="button">Export</button>
   <span class="sim-status" id="simStatus">Ready</span>
+  <span class="sim-status sim-routing-summary" id="simRoutingSummary"></span>
 </div>
 
 <!-- Left Edge Sliders -->
