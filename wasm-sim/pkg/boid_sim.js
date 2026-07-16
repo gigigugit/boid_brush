@@ -8,6 +8,13 @@ export function boid_clear_agents(handle) {
 }
 
 /**
+ * @param {number} handle
+ */
+export function boid_clear_sensing_rules(handle) {
+    wasm.boid_clear_sensing_rules(handle);
+}
+
+/**
  * @param {number} width
  * @param {number} height
  * @param {number} max_agents
@@ -63,11 +70,39 @@ export function boid_get_sensing_buffer_ptr(handle) {
 
 /**
  * @param {number} handle
+ * @param {number} index
+ * @returns {number}
+ */
+export function boid_get_sensing_rule_buffer_ptr(handle, index) {
+    const ret = wasm.boid_get_sensing_rule_buffer_ptr(handle, index);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
+ * @param {number} rule_count
+ */
+export function boid_init_multi_sensing(handle, rule_count) {
+    wasm.boid_init_multi_sensing(handle, rule_count);
+}
+
+/**
+ * @param {number} handle
  * @param {number} w
  * @param {number} h
  */
 export function boid_init_sensing(handle, w, h) {
     wasm.boid_init_sensing(handle, w, h);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} index
+ * @param {number} w
+ * @param {number} h
+ */
+export function boid_init_sensing_rule(handle, index, w, h) {
+    wasm.boid_init_sensing_rule(handle, index, w, h);
 }
 
 /**
@@ -93,6 +128,20 @@ export function boid_set_leader_range(handle, start_index, end_index, leader_cou
  */
 export function boid_set_params(handle) {
     wasm.boid_set_params(handle);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} index
+ * @param {number} enabled
+ * @param {number} attract
+ * @param {number} strength
+ * @param {number} radius
+ * @param {number} fit_radius
+ * @param {number} threshold
+ */
+export function boid_set_sensing_rule(handle, index, enabled, attract, strength, radius, fit_radius, threshold) {
+    wasm.boid_set_sensing_rule(handle, index, enabled, attract, strength, radius, fit_radius, threshold);
 }
 
 /**
