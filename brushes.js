@@ -38,6 +38,21 @@ const MIN_ALLOWED_SIM_HARDNESS = 0.1;
 const FLUID_FINAL_PASS_MAX_SETTLING_STEPS = 480;
 const FLUID_FINAL_PASS_REPLAY_STEPS_PER_FRAME = 12;
 const FLUID_FINAL_PASS_SETTLE_STEPS_PER_FRAME = 6;
+
+function projectSensingSample(rule, r, g, b, a) {
+  const alphaScale = a / 255;
+  if (rule.channel === 'red') return Math.round(r * alphaScale);
+  if (rule.channel === 'green') return Math.round(g * alphaScale);
+  if (rule.channel === 'blue') return Math.round(b * alphaScale);
+  if (rule.channel === 'alpha') return a;
+  if (rule.channel === 'lightness') return Math.round((0.299 * r + 0.587 * g + 0.114 * b) * alphaScale);
+  if (rule.channel === 'saturation') {
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    return mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
+  }
+  return Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
+}
 const FLUID3D_MOVE_EMIT_RATIO = 0.5;
 const FLUID3D_ACTIVE_SUBSTEPS = 3;
 const FLUID3D_FINAL_PASS_SETTLING_STEPS = 48;
@@ -1298,20 +1313,6 @@ export class BoidBrush {
       }
       return this._sensingLum[index];
     });
-    const projectSample = (rule, r, g, b, a) => {
-      const alphaScale = a / 255;
-      if (rule.channel === 'red') return Math.round(r * alphaScale);
-      if (rule.channel === 'green') return Math.round(g * alphaScale);
-      if (rule.channel === 'blue') return Math.round(b * alphaScale);
-      if (rule.channel === 'alpha') return a;
-      if (rule.channel === 'lightness') return Math.round((0.299 * r + 0.587 * g + 0.114 * b) * alphaScale);
-      if (rule.channel === 'saturation') {
-        const mx = Math.max(r, g, b);
-        const mn = Math.min(r, g, b);
-        return mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
-      }
-      return Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
-    };
     const sx = w / dw;
     const sy = h / dh;
     for (let dy = 0; dy < dh; dy++) {
@@ -1322,7 +1323,7 @@ export class BoidBrush {
         const r = rgba[idx], g = rgba[idx + 1], b = rgba[idx + 2], a = rgba[idx + 3];
         const outIndex = dy * dw + dx;
         for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) {
-          lumMaps[ruleIndex][outIndex] = projectSample(rules[ruleIndex], r, g, b, a);
+          lumMaps[ruleIndex][outIndex] = projectSensingSample(rules[ruleIndex], r, g, b, a);
         }
       }
     }

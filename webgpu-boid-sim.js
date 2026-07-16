@@ -103,7 +103,11 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  return !Array.isArray(p?.sensingRules) || p.sensingRules.filter(rule => rule?.enabled).length <= 1;
+  return getEnabledSensingRuleCount(p) <= 1;
+}
+
+function getEnabledSensingRuleCount(p) {
+  return Array.isArray(p?.sensingRules) ? p.sensingRules.filter(rule => rule?.enabled).length : 0;
 }
 
 export class WebGPUBoidSim {
@@ -1191,8 +1195,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   uploadSensingRules(rules, luminanceMaps, w, h) {
-    const enabledRules = Array.isArray(rules) ? rules.filter(rule => rule?.enabled) : [];
-    if (enabledRules.length <= 1) {
+    if (getEnabledSensingRuleCount({ sensingRules: rules }) <= 1) {
       this.uploadSensing(luminanceMaps?.[0] || new Uint8Array(Math.max(1, (w || 1) * (h || 1))), w, h);
       return;
     }

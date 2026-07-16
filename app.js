@@ -482,6 +482,7 @@ function _createDefaultSensingRule(overrides = {}) {
 }
 
 function _normalizeSensingRule(value, fallback = {}) {
+  // Some older saved state used "follow" for what is now the attract mode.
   const mode = value?.mode === 'follow' ? 'attract' : value?.mode;
   const channel = value?.channel;
   return _createDefaultSensingRule({

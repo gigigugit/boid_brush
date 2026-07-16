@@ -72,6 +72,8 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
 
 function sensingRuleControlId(index, field) {
   if (index === 1) {
+    // Rule 1 keeps the legacy IDs so existing presets/session restores and
+    // leader override source bindings keep working without migration glue.
     return {
       enabled: 'sensingEnabled',
       mode: 'sensingMode',

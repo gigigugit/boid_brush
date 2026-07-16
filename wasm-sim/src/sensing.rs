@@ -160,13 +160,13 @@ pub fn apply_sensing_rules_force(
 
         let mut fx = 0.0f32;
         let mut fy = 0.0f32;
-        let fit_r = rule.fit_radius.max(0.0);
+        let fit_radius = rule.fit_radius.max(0.0);
         const SAMPLES: usize = 8;
         for i in 0..SAMPLES {
             let a = (i as f32 / SAMPLES as f32) * PI * 2.0;
             let sx = bx + a.cos() * rule.radius;
             let sy = by + a.sin() * rule.radius;
-            let v = map.sample_fit(sx, sy, fit_r);
+            let v = map.sample_fit(sx, sy, fit_radius);
             if v > rule.threshold {
                 let dx = a.cos();
                 let dy = a.sin();
