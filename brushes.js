@@ -1271,6 +1271,13 @@ export class BoidBrush {
 
   /** Capture canvas luminance and upload to WASM for pixel sensing */
   _uploadSensing(p) {
+    const rules = this._getActiveSensingRules(p);
+    if (!rules.length) {
+      this.sim.clearSensingRules?.();
+      this._sensingUploaded = false;
+      this._sensingSignature = this._buildSensingSignature(p);
+      return;
+    }
     const imgData = this.app.buildSensingData(p);
     const rgba = imgData.data;
     const w = imgData.width;
@@ -1279,11 +1286,32 @@ export class BoidBrush {
     const dw = Math.max(1, w >> 2);
     const dh = Math.max(1, h >> 2);
     const lumLen = dw * dh;
-    if (!this._sensingLum || this._sensingLum.length !== lumLen) {
-      this._sensingLum = new Uint8Array(lumLen);
+    if (!Array.isArray(this._sensingLum)) {
+      this._sensingLum = [];
     }
-    const lum = this._sensingLum;
-    const channel = p.sensingChannel || 'darkness';
+    if (this._sensingLum.length > rules.length) {
+      this._sensingLum.length = rules.length;
+    }
+    const lumMaps = rules.map((_, index) => {
+      if (!(this._sensingLum[index] instanceof Uint8Array) || this._sensingLum[index].length !== lumLen) {
+        this._sensingLum[index] = new Uint8Array(lumLen);
+      }
+      return this._sensingLum[index];
+    });
+    const projectSample = (rule, r, g, b, a) => {
+      const alphaScale = a / 255;
+      if (rule.channel === 'red') return Math.round(r * alphaScale);
+      if (rule.channel === 'green') return Math.round(g * alphaScale);
+      if (rule.channel === 'blue') return Math.round(b * alphaScale);
+      if (rule.channel === 'alpha') return a;
+      if (rule.channel === 'lightness') return Math.round((0.299 * r + 0.587 * g + 0.114 * b) * alphaScale);
+      if (rule.channel === 'saturation') {
+        const mx = Math.max(r, g, b);
+        const mn = Math.min(r, g, b);
+        return mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
+      }
+      return Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
+    };
     const sx = w / dw;
     const sy = h / dh;
     for (let dy = 0; dy < dh; dy++) {
@@ -1292,22 +1320,17 @@ export class BoidBrush {
         const srcX = Math.min(Math.floor(dx * sx), w - 1);
         const idx = (srcY * w + srcX) * 4;
         const r = rgba[idx], g = rgba[idx + 1], b = rgba[idx + 2], a = rgba[idx + 3];
-        const alphaScale = a / 255;
-        let v;
-        if (channel === 'red') v = Math.round(r * alphaScale);
-        else if (channel === 'green') v = Math.round(g * alphaScale);
-        else if (channel === 'blue') v = Math.round(b * alphaScale);
-        else if (channel === 'alpha') v = a;
-        else if (channel === 'lightness') v = Math.round((0.299 * r + 0.587 * g + 0.114 * b) * alphaScale);
-        else if (channel === 'saturation') {
-          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-          v = mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
+        const outIndex = dy * dw + dx;
+        for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) {
+          lumMaps[ruleIndex][outIndex] = projectSample(rules[ruleIndex], r, g, b, a);
         }
-        else /* 'darkness' */ v = Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
-        lum[dy * dw + dx] = v;
       }
     }
-    this.sim.uploadSensing(lum, dw, dh);
+    if (typeof this.sim.uploadSensingRules === 'function') {
+      this.sim.uploadSensingRules(rules, lumMaps, dw, dh);
+    } else {
+      this.sim.uploadSensing(lumMaps[0], dw, dh);
+    }
     this._sensingUploaded = true;
     this._sensingSignature = this._buildSensingSignature(p);
   }
@@ -1316,15 +1339,35 @@ export class BoidBrush {
     return JSON.stringify({
       source: p.sensingSource || 'below',
       selectedSources: this.app.getSensingSourceSelectionSignature?.() || '[]',
-      channel: p.sensingChannel || 'darkness',
-      enabled: !!p.sensingEnabled,
-      mode: p.sensingMode || 'avoid',
-      strength: Number(p.sensingStrength || 0).toFixed(4),
-      radius: Number(p.sensingRadius || 0).toFixed(2),
-      fitRadius: Number(p.sensingFitRadius || 0).toFixed(2),
-      threshold: Number(p.sensingThreshold || 0).toFixed(4),
+      ignoreCurrentStroke: !!p.sensingIgnoreCurrentStroke,
+      rules: this._getActiveSensingRules(p).map(rule => ({
+        channel: rule.channel || 'darkness',
+        enabled: !!rule.enabled,
+        mode: rule.mode || 'avoid',
+        strength: Number(rule.strength || 0).toFixed(4),
+        radius: Number(rule.radius || 0).toFixed(2),
+        fitRadius: Number(rule.fitRadius || 0).toFixed(2),
+        threshold: Number(rule.threshold || 0).toFixed(4),
+      })),
       updateFrames: Math.max(1, Math.min(50, Math.round(p.sensingUpdateFrames || 30))),
     });
+  }
+
+  _getActiveSensingRules(p) {
+    if (typeof this.app.getEnabledSensingRules === 'function') {
+      const rules = this.app.getEnabledSensingRules(p);
+      if (rules.length) return rules;
+    }
+    if (!p?.sensingEnabled) return [];
+    return [{
+      enabled: true,
+      mode: p.sensingMode || 'avoid',
+      channel: p.sensingChannel || 'darkness',
+      strength: p.sensingStrength ?? 0.5,
+      radius: p.sensingRadius ?? 20,
+      fitRadius: p.sensingFitRadius ?? 0,
+      threshold: p.sensingThreshold ?? 0.1,
+    }];
   }
 
   _hasAgents() {
@@ -1370,7 +1413,9 @@ export class BoidBrush {
       if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
       if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
       if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+      if (typeof vars.sensingIgnoreCurrentStroke === 'boolean') next.sensingIgnoreCurrentStroke = vars.sensingIgnoreCurrentStroke;
     }
+    this.app._syncSensingRulesInParams?.(next);
     next.leader = _resolveLeaderParams(next);
     return next;
   }
@@ -2046,10 +2091,13 @@ export class BoidBrush {
     this._sensingSignature = '';
 
     const simP = this._applySimVars(p);
+    this.app.captureSensingStrokeSnapshot?.(simP);
 
     // Upload sensing data at stroke start if enabled
-    if (simP.sensingEnabled) {
+    if (this._getActiveSensingRules(simP).length) {
       this._uploadSensing(simP);
+    } else {
+      this.sim.clearSensingRules?.();
     }
 
     // Push undo on first stroke frame that actually stamps
@@ -2160,6 +2208,7 @@ export class BoidBrush {
     this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
     this._hoverSpawned = false;
     this._spawnOverrides = null;
+    this.app.clearSensingStrokeSnapshot?.();
   }
 
   configureSimulation(data, p) {
@@ -2482,7 +2531,7 @@ export class BoidBrush {
     const simP = this._applySimVars(p);
     const app = this.app;
 
-    if (simP.sensingEnabled) {
+    if (this._getActiveSensingRules(simP).length) {
       const sensingSourceIsBelow = simP.sensingSource === 'below';
       const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(simP.sensingUpdateFrames || 30)));
       const sensingSignature = this._buildSensingSignature(simP);
@@ -2499,6 +2548,7 @@ export class BoidBrush {
         }
       }
     } else {
+      this.sim.clearSensingRules?.();
       this._sensingUploaded = false;
       this._sensingSignature = '';
     }

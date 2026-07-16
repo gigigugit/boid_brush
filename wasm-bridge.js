@@ -329,6 +329,7 @@ export class BoidSim {
    * @param {number} h - Height of the luminance map.
    */
   uploadSensing(luminance, w, h) {
+    this.clearSensingRules();
     if (this._handle !== null && typeof this._mod.boid_init_sensing === 'function') this._mod.boid_init_sensing(this._handle, w, h);
     else this._mod.init_sensing(w, h);
     const ptr = this._handle !== null && typeof this._mod.boid_get_sensing_buffer_ptr === 'function'
@@ -340,6 +341,42 @@ export class BoidSim {
     dst.set(luminance);
     if (this._handle !== null && typeof this._mod.boid_update_sensing === 'function') this._mod.boid_update_sensing(this._handle);
     else this._mod.update_sensing();
+  }
+
+  uploadSensingRules(rules, luminanceMaps, w, h) {
+    if (!Array.isArray(rules) || !rules.length || !Array.isArray(luminanceMaps) || !luminanceMaps.length) {
+      this.clearSensingRules();
+      return;
+    }
+    if (this._handle === null || typeof this._mod.boid_init_multi_sensing !== 'function') {
+      this.uploadSensing(luminanceMaps[0], w, h);
+      return;
+    }
+    this._mod.boid_init_multi_sensing(this._handle, rules.length);
+    rules.forEach((rule, index) => {
+      this._mod.boid_set_sensing_rule(
+        this._handle,
+        index,
+        rule?.enabled ? 1 : 0,
+        rule?.mode === 'attract' ? 1 : 0,
+        Number(rule?.strength) || 0,
+        Number(rule?.radius) || 0,
+        Number(rule?.fitRadius) || 0,
+        Number(rule?.threshold) || 0,
+      );
+      this._mod.boid_init_sensing_rule(this._handle, index, w, h);
+      const ptr = this._mod.boid_get_sensing_rule_buffer_ptr(this._handle, index);
+      if (!ptr) return;
+      const mem = this._getMemory();
+      const dst = new Uint8Array(mem.buffer, ptr, w * h);
+      dst.set(luminanceMaps[index] || luminanceMaps[0]);
+    });
+  }
+
+  clearSensingRules() {
+    if (this._handle !== null && typeof this._mod.boid_clear_sensing_rules === 'function') {
+      this._mod.boid_clear_sensing_rules(this._handle);
+    }
   }
 
   /** @private Recreate typed views if memory buffer has changed (growth). */

@@ -247,6 +247,18 @@ const FACTORY_DEFAULTS = Object.freeze({
   sensingRadius: 20,
   sensingFitRadius: 0,
   sensingThreshold: 10,
+  sensingRule2Strength: 50,
+  sensingRule2Radius: 20,
+  sensingRule2FitRadius: 0,
+  sensingRule2Threshold: 10,
+  sensingRule3Strength: 50,
+  sensingRule3Radius: 20,
+  sensingRule3FitRadius: 0,
+  sensingRule3Threshold: 10,
+  sensingRule4Strength: 50,
+  sensingRule4Radius: 20,
+  sensingRule4FitRadius: 0,
+  sensingRule4Threshold: 10,
   sensingUpdateFrames: 30,
   antFollow: 40,
   antPheromoneRate: 50,
@@ -293,6 +305,10 @@ const FACTORY_DEFAULTS = Object.freeze({
   taperSize: true,
   taperOpacity: true,
   sensingEnabled: false,
+  sensingRule2Enabled: false,
+  sensingRule3Enabled: false,
+  sensingRule4Enabled: false,
+  sensingIgnoreCurrentStroke: false,
   showBoids: true,
   showSpawn: true,
   antTrailVisible: true,
@@ -313,7 +329,13 @@ const FACTORY_DEFAULTS = Object.freeze({
   fluid3dRenderMode: 'volume',
   canvasTexturePreset: 'builtin-paper-grain',
   sensingMode: 'avoid',
+  sensingRule2Mode: 'avoid',
+  sensingRule3Mode: 'avoid',
+  sensingRule4Mode: 'avoid',
   sensingChannel: 'darkness',
+  sensingRule2Channel: 'darkness',
+  sensingRule3Channel: 'darkness',
+  sensingRule4Channel: 'darkness',
   sensingSource: 'below',
   bgColor: '#313131',
   _docSized: true,
@@ -407,6 +429,7 @@ const SIM_SPAWN_DISTRIBUTION_MODES = ['uniform', 'density', 'noise'];
 const SIM_SENSING_MODES = ['avoid', 'attract'];
 const SIM_SENSING_CHANNELS = ['darkness', 'lightness', 'saturation', 'red', 'green', 'blue', 'alpha'];
 const SIM_SENSING_SOURCES = ['below', 'active', 'all', 'selected'];
+const MAX_SENSING_RULES = 4;
 const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const MAX_SWARM_COUNT = 2000;
@@ -444,6 +467,43 @@ const SIM_HEATMAP_TARGET_CELLS = 48;
 const SIM_HEATMAP_MAX_ALPHA = 1;
 const DEFAULT_SIM_SEEK = 0;
 const MAX_SIM_SESSION_NAME_LENGTH = 64;
+
+function _createDefaultSensingRule(overrides = {}) {
+  return {
+    enabled: false,
+    mode: 'avoid',
+    channel: 'darkness',
+    strength: 0.5,
+    radius: 20,
+    fitRadius: 0,
+    threshold: 0.1,
+    ...overrides,
+  };
+}
+
+function _normalizeSensingRule(value, fallback = {}) {
+  const mode = value?.mode === 'follow' ? 'attract' : value?.mode;
+  const channel = value?.channel;
+  return _createDefaultSensingRule({
+    enabled: typeof value?.enabled === 'boolean' ? value.enabled : !!fallback.enabled,
+    mode: SIM_SENSING_MODES.includes(mode) ? mode : (fallback.mode || 'avoid'),
+    channel: SIM_SENSING_CHANNELS.includes(channel) ? channel : (fallback.channel || 'darkness'),
+    strength: Number.isFinite(value?.strength) ? _clamp(value.strength, 0, 1) : (Number.isFinite(fallback.strength) ? fallback.strength : 0.5),
+    radius: Number.isFinite(value?.radius) ? Math.max(0, value.radius) : (Number.isFinite(fallback.radius) ? fallback.radius : 20),
+    fitRadius: Number.isFinite(value?.fitRadius) ? Math.max(0, value.fitRadius) : (Number.isFinite(fallback.fitRadius) ? fallback.fitRadius : 0),
+    threshold: Number.isFinite(value?.threshold) ? _clamp(value.threshold, 0, 1) : (Number.isFinite(fallback.threshold) ? fallback.threshold : 0.1),
+  });
+}
+
+function _normalizeSensingRules(value, fallbackRules = []) {
+  const raw = Array.isArray(value) ? value : [];
+  const rules = [];
+  for (let index = 0; index < MAX_SENSING_RULES; index++) {
+    const fallback = fallbackRules[index] || {};
+    rules.push(_normalizeSensingRule(raw[index], fallback));
+  }
+  return rules;
+}
 const MOTION_PATH_HANDLE_RADIUS = 7;
 const MOTION_PATH_HIT_RADIUS = 12;
 const SYMMETRY_GUIDE_HANDLE_RADIUS = 9;
@@ -1915,6 +1975,8 @@ export class App {
     this._sensingSourcePickerPanel = null;
     this._sensingSourcePickerPointerHandler = null;
     this._sensingSourcePickerKeyHandler = null;
+    this._sensingStrokeSnapshotCanvas = null;
+    this._sensingStrokeSnapshotCtx = null;
 
     // Undo/redo
     this.undoStack = [];
@@ -5725,6 +5787,87 @@ export class App {
 
   invalidateParams() { this._paramsDirty = true; }
 
+  _getSensingRuleControlIds(index) {
+    if (index === 1) {
+      return {
+        enabled: 'sensingEnabled',
+        mode: 'sensingMode',
+        channel: 'sensingChannel',
+        strength: 'sensingStrength',
+        radius: 'sensingRadius',
+        fitRadius: 'sensingFitRadius',
+        threshold: 'sensingThreshold',
+      };
+    }
+    const prefix = `sensingRule${index}`;
+    return {
+      enabled: `${prefix}Enabled`,
+      mode: `${prefix}Mode`,
+      channel: `${prefix}Channel`,
+      strength: `${prefix}Strength`,
+      radius: `${prefix}Radius`,
+      fitRadius: `${prefix}FitRadius`,
+      threshold: `${prefix}Threshold`,
+    };
+  }
+
+  _syncSensingRulesInParams(target) {
+    const fallbackPrimary = _createDefaultSensingRule({
+      enabled: !!target?.sensingEnabled,
+      mode: target?.sensingMode || 'avoid',
+      channel: target?.sensingChannel || 'darkness',
+      strength: Number.isFinite(target?.sensingStrength) ? target.sensingStrength : 0.5,
+      radius: Number.isFinite(target?.sensingRadius) ? target.sensingRadius : 20,
+      fitRadius: Number.isFinite(target?.sensingFitRadius) ? target.sensingFitRadius : 0,
+      threshold: Number.isFinite(target?.sensingThreshold) ? target.sensingThreshold : 0.1,
+    });
+    const rules = _normalizeSensingRules(target?.sensingRules, [fallbackPrimary]);
+    target.sensingRules = rules;
+    const primary = rules.find(rule => rule.enabled) || rules[0] || fallbackPrimary;
+    target.sensingEnabled = !!primary.enabled;
+    target.sensingMode = primary.mode;
+    target.sensingChannel = primary.channel;
+    target.sensingStrength = primary.strength;
+    target.sensingRadius = primary.radius;
+    target.sensingFitRadius = primary.fitRadius;
+    target.sensingThreshold = primary.threshold;
+    target.sensingIgnoreCurrentStroke = !!target.sensingIgnoreCurrentStroke;
+    return target;
+  }
+
+  getEnabledSensingRules(p = this.getP()) {
+    const rules = Array.isArray(p?.sensingRules) ? p.sensingRules : [];
+    return rules.filter(rule => rule?.enabled);
+  }
+
+  captureSensingStrokeSnapshot(p = this.getP()) {
+    if (!p?.sensingIgnoreCurrentStroke || !this.getEnabledSensingRules(p).length) {
+      this.clearSensingStrokeSnapshot();
+      return false;
+    }
+    const layer = this.getActiveLayer();
+    if (!layer?.canvas) return false;
+    const { width, height } = layer.canvas;
+    if (!this._sensingStrokeSnapshotCanvas
+      || this._sensingStrokeSnapshotCanvas.width !== width
+      || this._sensingStrokeSnapshotCanvas.height !== height) {
+      this._sensingStrokeSnapshotCanvas = document.createElement('canvas');
+      this._sensingStrokeSnapshotCanvas.width = width;
+      this._sensingStrokeSnapshotCanvas.height = height;
+      this._sensingStrokeSnapshotCtx = this._sensingStrokeSnapshotCanvas.getContext('2d');
+    }
+    this._sensingStrokeSnapshotCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._sensingStrokeSnapshotCtx.clearRect(0, 0, width, height);
+    this._sensingStrokeSnapshotCtx.drawImage(layer.canvas, 0, 0);
+    return true;
+  }
+
+  clearSensingStrokeSnapshot() {
+    if (!this._sensingStrokeSnapshotCanvas || !this._sensingStrokeSnapshotCtx) return;
+    this._sensingStrokeSnapshotCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this._sensingStrokeSnapshotCtx.clearRect(0, 0, this._sensingStrokeSnapshotCanvas.width, this._sensingStrokeSnapshotCanvas.height);
+  }
+
   getP() {
     if (!this._paramsDirty && this._cachedP) {
       return this._simulationContextOverride
@@ -5751,6 +5894,20 @@ export class App {
 
     const scale = val('brushScale') / 100;
     const stampImageAllowed = !STAMP_IMAGE_DISABLED_BRUSHES.has(this.activeBrush);
+    const readSensingRule = index => {
+      const ids = this._getSensingRuleControlIds(index);
+      return _createDefaultSensingRule({
+        enabled: chk(ids.enabled),
+        mode: sel(ids.mode) || 'avoid',
+        channel: sel(ids.channel) || 'darkness',
+        strength: val(ids.strength) / 100,
+        radius: val(ids.radius),
+        fitRadius: val(ids.fitRadius),
+        threshold: val(ids.threshold) / 100,
+      });
+    };
+    const sensingRules = Array.from({ length: MAX_SENSING_RULES }, (_, index) => readSensingRule(index + 1));
+    const primarySensingRule = sensingRules[0];
 
     this._cachedP = {
       // Brush scale
@@ -5840,15 +5997,17 @@ export class App {
       taperSize: chk('taperSize'),
       taperOpacity: chk('taperOpacity'),
       // Sensing
-      sensingEnabled: chk('sensingEnabled'),
-      sensingMode: sel('sensingMode') || 'avoid',
-      sensingChannel: sel('sensingChannel') || 'darkness',
-      sensingStrength: val('sensingStrength') / 100,
-      sensingRadius: val('sensingRadius'),
-      sensingFitRadius: val('sensingFitRadius'),
-      sensingThreshold: val('sensingThreshold') / 100,
+      sensingRules,
+      sensingEnabled: primarySensingRule.enabled,
+      sensingMode: primarySensingRule.mode,
+      sensingChannel: primarySensingRule.channel,
+      sensingStrength: primarySensingRule.strength,
+      sensingRadius: primarySensingRule.radius,
+      sensingFitRadius: primarySensingRule.fitRadius,
+      sensingThreshold: primarySensingRule.threshold,
       sensingUpdateFrames: Math.max(1, Math.min(50, Math.round(val('sensingUpdateFrames') || 30))),
       sensingSource: sel('sensingSource') || 'below',
+      sensingIgnoreCurrentStroke: chk('sensingIgnoreCurrentStroke'),
       // Visual
       showBoids: chk('showBoids'),
       showSpawn: chk('showSpawn'),
@@ -5995,6 +6154,7 @@ export class App {
       simMotionPathMode: sel('simMotionPathMode') === 'forces' ? 'forces' : 'path',
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
+    this._syncSensingRulesInParams(this._cachedP);
     return this._simulationContextOverride
       ? this._getRuntimeScopedParams(this._cachedP)
       : this._cachedP;
@@ -6042,7 +6202,8 @@ export class App {
     if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
     if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
     if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
-    return next;
+    if (typeof vars.sensingIgnoreCurrentStroke === 'boolean') next.sensingIgnoreCurrentStroke = vars.sensingIgnoreCurrentStroke;
+    return this._syncSensingRulesInParams(next);
   }
 
   _getSimulationVars() {
@@ -18845,11 +19006,21 @@ export class App {
   buildSensingData(p = this.getP()) {
     const src = p.sensingSource;
     const w = this.W * this.DPR, h = this.H * this.DPR;
+    const activeLayerIndex = this.getActiveLayerIndex();
+    const useActiveSnapshot = !!p.sensingIgnoreCurrentStroke && !!this._sensingStrokeSnapshotCanvas;
+    const getLayerSource = (layer, layerIndex) => {
+      if (useActiveSnapshot && layerIndex === activeLayerIndex) {
+        return this._sensingStrokeSnapshotCanvas;
+      }
+      return layer?.canvas || null;
+    };
     if (src === 'active') {
-      // Read directly from the active layer bitmap; the reusable offscreen
-      // surface only helps when multiple layers must be composited first.
-      const l = this.getActiveLayer();
-      return l.ctx.getImageData(0, 0, w, h);
+      const layer = this.getActiveLayer();
+      const sourceCanvas = getLayerSource(layer, activeLayerIndex);
+      if (useActiveSnapshot && sourceCanvas && this._sensingStrokeSnapshotCtx) {
+        return this._sensingStrokeSnapshotCtx.getImageData(0, 0, w, h);
+      }
+      return layer.ctx.getImageData(0, 0, w, h);
     }
     if (!this._sensingCompositeCanvas) {
       this._sensingCompositeCanvas = document.createElement('canvas');
@@ -18864,34 +19035,34 @@ export class App {
     tc.setTransform(1, 0, 0, 1, 0, 0);
     tc.clearRect(0, 0, w, h);
 
-    const drawLayer = layer => {
+    const drawLayer = (layer, layerIndex) => {
       if (!layer) return;
+      const sourceCanvas = getLayerSource(layer, layerIndex);
+      if (!sourceCanvas) return;
       tc.globalAlpha = layer.opacity;
       tc.globalCompositeOperation = getCanvasBlendMode(layer.blend);
-      tc.drawImage(layer.canvas, 0, 0);
+      tc.drawImage(sourceCanvas, 0, 0);
     };
-
-    const activeLayerIndex = this.getActiveLayerIndex();
 
     if (src === 'below') {
       // Layers below active
       for (let i = this.layers.length - 1; i > activeLayerIndex; i--) {
         const l = this.layers[i];
         if (!l.visible) continue;
-        drawLayer(l);
+        drawLayer(l, i);
       }
     } else if (src === 'all') {
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
         if (!l.visible) continue;
-        drawLayer(l);
+        drawLayer(l, i);
       }
     } else if (src === 'selected') {
       const selectedIds = new Set(this._serializeSensingSourceSelection());
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
         if (!selectedIds.has(l.id)) continue;
-        drawLayer(l);
+        drawLayer(l, i);
       }
     }
     return tc.getImageData(0, 0, w, h);

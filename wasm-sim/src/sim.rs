@@ -13,7 +13,7 @@ use crate::boid::*;
 use crate::forces::{self, Rng};
 use crate::noise::SimplexNoise;
 use crate::params::{AgentParams, SimParams, PARAMS_LEN};
-use crate::sensing::{self, SensingMap};
+use crate::sensing::{self, SensingMap, SensingRule};
 use crate::spawn::{self, SpawnShape};
 
 #[cfg(feature = "spatial-hash")]
@@ -39,6 +39,9 @@ pub struct Simulation {
     pub noise: SimplexNoise,
     /// Pixel sensing map.
     pub sensing: SensingMap,
+    /// Optional multi-rule sensing maps.
+    pub sensing_rules: Vec<SensingRule>,
+    pub sensing_maps: Vec<SensingMap>,
     /// Scratch buffer for spawn shape positions.
     spawn_scratch: Vec<(f32, f32)>,
     /// Spatial grid for O(n·k) neighbor queries (built each frame when
@@ -62,6 +65,8 @@ impl Simulation {
             rng: Rng::new(seed),
             noise: SimplexNoise::new(seed as f32),
             sensing: SensingMap::new(),
+            sensing_rules: Vec::new(),
+            sensing_maps: Vec::new(),
             spawn_scratch: Vec::with_capacity(256),
             #[cfg(feature = "spatial-hash")]
             spatial_grid: SpatialGrid::new(max),
@@ -81,6 +86,11 @@ impl Simulation {
             // refresh its canvas-to-sensing scale factors for the new display size.
             self.sensing
                 .resize(self.sensing.width, self.sensing.height, width, height);
+        }
+        for map in self.sensing_maps.iter_mut() {
+            if map.width > 0 && map.height > 0 {
+                map.resize(map.width, map.height, width, height);
+            }
         }
     }
 
@@ -331,7 +341,17 @@ impl Simulation {
             );
 
             // Sensing
-            sensing::apply_sensing_force(&mut self.buf, base, &agent_params, &self.sensing);
+            if !self.sensing_rules.is_empty() && self.sensing_maps.len() == self.sensing_rules.len() {
+                sensing::apply_sensing_rules_force(
+                    &mut self.buf,
+                    base,
+                    &agent_params,
+                    &self.sensing_maps,
+                    &self.sensing_rules,
+                );
+            } else {
+                sensing::apply_sensing_force(&mut self.buf, base, &agent_params, &self.sensing);
+            }
         }
 
         // Phase 2: Neighbor forces (cohesion, separation, alignment)

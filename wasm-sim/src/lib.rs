@@ -268,6 +268,8 @@ pub fn get_sensing_buffer_ptr() -> *const u8 {
 #[wasm_bindgen]
 pub fn init_sensing(w: u32, h: u32) {
     with_default_boid_sim(|sim| {
+        sim.sensing_rules.clear();
+        sim.sensing_maps.clear();
         sim.sensing.resize(w, h, sim.width, sim.height);
     });
 }
@@ -369,6 +371,8 @@ pub fn boid_get_sensing_buffer_ptr(handle: u32) -> *const u8 {
 #[wasm_bindgen]
 pub fn boid_init_sensing(handle: u32, w: u32, h: u32) {
     with_boid_sim(handle, |sim| {
+        sim.sensing_rules.clear();
+        sim.sensing_maps.clear();
         sim.sensing.resize(w, h, sim.width, sim.height);
     });
 }
@@ -376,6 +380,72 @@ pub fn boid_init_sensing(handle: u32, w: u32, h: u32) {
 #[wasm_bindgen]
 pub fn boid_update_sensing(handle: u32) {
     with_boid_sim(handle, |_| {});
+}
+
+#[wasm_bindgen]
+pub fn boid_clear_sensing_rules(handle: u32) {
+    with_boid_sim(handle, |sim| {
+        sim.sensing_rules.clear();
+        sim.sensing_maps.clear();
+    });
+}
+
+#[wasm_bindgen]
+pub fn boid_init_multi_sensing(handle: u32, rule_count: u32) {
+    with_boid_sim(handle, |sim| {
+        sim.sensing_rules = vec![sensing::SensingRule::default(); rule_count as usize];
+        sim.sensing_maps = (0..rule_count).map(|_| sensing::SensingMap::new()).collect();
+    });
+}
+
+#[wasm_bindgen]
+pub fn boid_set_sensing_rule(
+    handle: u32,
+    index: u32,
+    enabled: u32,
+    attract: u32,
+    strength: f32,
+    radius: f32,
+    fit_radius: f32,
+    threshold: f32,
+) {
+    with_boid_sim(handle, |sim| {
+        let idx = index as usize;
+        if idx >= sim.sensing_rules.len() {
+            return;
+        }
+        sim.sensing_rules[idx] = sensing::SensingRule {
+            enabled: enabled != 0,
+            attract: attract != 0,
+            strength: strength.max(0.0),
+            radius: radius.max(0.0),
+            fit_radius: fit_radius.max(0.0),
+            threshold: threshold.clamp(0.0, 1.0),
+        };
+    });
+}
+
+#[wasm_bindgen]
+pub fn boid_init_sensing_rule(handle: u32, index: u32, w: u32, h: u32) {
+    with_boid_sim(handle, |sim| {
+        let idx = index as usize;
+        if idx >= sim.sensing_maps.len() {
+            return;
+        }
+        sim.sensing_maps[idx].resize(w, h, sim.width, sim.height);
+    });
+}
+
+#[wasm_bindgen]
+pub fn boid_get_sensing_rule_buffer_ptr(handle: u32, index: u32) -> *const u8 {
+    with_boid_sim(handle, |sim| {
+        let idx = index as usize;
+        if idx >= sim.sensing_maps.len() || sim.sensing_maps[idx].data.is_empty() {
+            std::ptr::null()
+        } else {
+            sim.sensing_maps[idx].data.as_ptr()
+        }
+    })
 }
 
 #[wasm_bindgen]
@@ -579,6 +649,58 @@ mod tests {
         assert!(
             sim.buf[base + boid::AX] < 0.0,
             "Expected negative ax (avoid right), got {}",
+            sim.buf[base + boid::AX]
+        );
+    }
+
+    #[test]
+    fn test_multi_sensing_rules_accumulate_forces() {
+        let mut sim = Simulation::new(100, 100, 10);
+        sim.sensing_rules = vec![
+            sensing::SensingRule {
+                enabled: true,
+                attract: false,
+                strength: 1.0,
+                radius: 10.0,
+                fit_radius: 0.0,
+                threshold: 0.1,
+            },
+            sensing::SensingRule {
+                enabled: true,
+                attract: true,
+                strength: 1.0,
+                radius: 10.0,
+                fit_radius: 0.0,
+                threshold: 0.1,
+            },
+        ];
+        sim.sensing_maps = vec![sensing::SensingMap::new(), sensing::SensingMap::new()];
+        sim.sensing_maps[0].resize(100, 100, 100, 100);
+        sim.sensing_maps[1].resize(100, 100, 100, 100);
+        for y in 0..100u32 {
+            for x in 50..100u32 {
+                sim.sensing_maps[0].data[(y * 100 + x) as usize] = 255;
+            }
+            for x in 0..50u32 {
+                sim.sensing_maps[1].data[(y * 100 + x) as usize] = 255;
+            }
+        }
+        sim.params.max_speed = 4.0;
+        sim.spawn_one(45.0, 50.0);
+        let base = 0;
+        sim.buf[base + boid::AX] = 0.0;
+        sim.buf[base + boid::AY] = 0.0;
+        let params = sim.params.params_for(false);
+        crate::sensing::apply_sensing_rules_force(
+            &mut sim.buf,
+            base,
+            &params,
+            &sim.sensing_maps,
+            &sim.sensing_rules,
+        );
+        assert!(
+            sim.buf[base + boid::AX] < 0.0,
+            "Expected combined rules to push agent left, got {}",
             sim.buf[base + boid::AX]
         );
     }

@@ -12,6 +12,16 @@ use crate::boid::*;
 use crate::params::AgentParams;
 use core::f32::consts::PI;
 
+#[derive(Clone, Debug, Default)]
+pub struct SensingRule {
+    pub enabled: bool,
+    pub attract: bool,
+    pub strength: f32,
+    pub radius: f32,
+    pub fit_radius: f32,
+    pub threshold: f32,
+}
+
 /// Sensing buffer: single-channel luminance at (sensing_w × sensing_h).
 /// The JS host writes raw u8 luminance values here via get_sensing_buffer_ptr().
 pub struct SensingMap {
@@ -123,4 +133,56 @@ pub fn apply_sensing_force(buf: &mut [f32], base: usize, p: &AgentParams, map: &
     let ms = p.max_speed;
     buf[base + AX] += fx * p.sensing_strength * ms;
     buf[base + AY] += fy * p.sensing_strength * ms;
+}
+
+#[inline]
+pub fn apply_sensing_rules_force(
+    buf: &mut [f32],
+    base: usize,
+    p: &AgentParams,
+    maps: &[SensingMap],
+    rules: &[SensingRule],
+) {
+    if rules.is_empty() || maps.is_empty() {
+        return;
+    }
+
+    let bx = buf[base + X];
+    let by = buf[base + Y];
+    let ms = p.max_speed;
+    let mut total_fx = 0.0f32;
+    let mut total_fy = 0.0f32;
+
+    for (rule, map) in rules.iter().zip(maps.iter()) {
+        if !rule.enabled || map.data.is_empty() || rule.strength == 0.0 || rule.radius <= 0.0 {
+            continue;
+        }
+
+        let mut fx = 0.0f32;
+        let mut fy = 0.0f32;
+        let fit_r = rule.fit_radius.max(0.0);
+        const SAMPLES: usize = 8;
+        for i in 0..SAMPLES {
+            let a = (i as f32 / SAMPLES as f32) * PI * 2.0;
+            let sx = bx + a.cos() * rule.radius;
+            let sy = by + a.sin() * rule.radius;
+            let v = map.sample_fit(sx, sy, fit_r);
+            if v > rule.threshold {
+                let dx = a.cos();
+                let dy = a.sin();
+                if rule.attract {
+                    fx += dx * v;
+                    fy += dy * v;
+                } else {
+                    fx -= dx * v;
+                    fy -= dy * v;
+                }
+            }
+        }
+        total_fx += fx * rule.strength * ms;
+        total_fy += fy * rule.strength * ms;
+    }
+
+    buf[base + AX] += total_fx;
+    buf[base + AY] += total_fy;
 }

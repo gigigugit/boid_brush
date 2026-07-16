@@ -70,6 +70,69 @@ function sliderRow(id, label, min, max, value, fmt, desc) {
   return `<label>${label} <span id="v_${id}">${fmtFn(value)}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${value}"></label>${descHtml}`;
 }
 
+function sensingRuleControlId(index, field) {
+  if (index === 1) {
+    return {
+      enabled: 'sensingEnabled',
+      mode: 'sensingMode',
+      channel: 'sensingChannel',
+      strength: 'sensingStrength',
+      radius: 'sensingRadius',
+      fitRadius: 'sensingFitRadius',
+      threshold: 'sensingThreshold',
+    }[field];
+  }
+  const prefix = `sensingRule${index}`;
+  return {
+    enabled: `${prefix}Enabled`,
+    mode: `${prefix}Mode`,
+    channel: `${prefix}Channel`,
+    strength: `${prefix}Strength`,
+    radius: `${prefix}Radius`,
+    fitRadius: `${prefix}FitRadius`,
+    threshold: `${prefix}Threshold`,
+  }[field];
+}
+
+function sensingRuleBlock(index) {
+  const ids = {
+    enabled: sensingRuleControlId(index, 'enabled'),
+    mode: sensingRuleControlId(index, 'mode'),
+    channel: sensingRuleControlId(index, 'channel'),
+    strength: sensingRuleControlId(index, 'strength'),
+    radius: sensingRuleControlId(index, 'radius'),
+    fitRadius: sensingRuleControlId(index, 'fitRadius'),
+    threshold: sensingRuleControlId(index, 'threshold'),
+  };
+  return `
+    <div data-sensing-rule-row="${index}" style="margin:6px 0 8px;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 6px 0;">
+        <span>Rule ${index}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#9fb0c6;">Enable <input type="checkbox" id="${ids.enabled}" data-sensing-rule-enabled="${index}"></span>
+      </label>
+      <div data-sensing-rule-fields="${index}">
+        <label>Mode <select id="${ids.mode}"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
+        <label>Channel <select id="${ids.channel}"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
+        ${sliderRow(ids.strength, 'Strength', 0, 100, 50, v => (v/100).toFixed(2))}
+        ${sliderRow(ids.radius, 'Radius', 5, 80, 20)}
+        ${sliderRow(ids.fitRadius, 'Fit Radius', 0, 80, 0)}
+        ${sliderRow(ids.threshold, 'Threshold', 0, 100, 10, v => (v/100).toFixed(2))}
+      </div>
+    </div>`;
+}
+
+function _syncSensingRuleUi() {
+  document.querySelectorAll('[data-sensing-rule-row]').forEach(row => {
+    const index = row.dataset.sensingRuleRow;
+    const enabled = !!document.querySelector(`[data-sensing-rule-enabled="${index}"]`)?.checked;
+    row.style.opacity = enabled ? '1' : '0.65';
+    row.querySelectorAll('input, select').forEach(control => {
+      if (control.matches('[data-sensing-rule-enabled]')) return;
+      control.disabled = !enabled;
+    });
+  });
+}
+
 function nudgeSliderRow(id, label, min, max, value, fmt, desc, delta = 1) {
   const fmtFn = fmt || (v => v);
   const descHtml = desc ? `<span class="slider-desc">${desc}</span>` : '';
@@ -710,15 +773,12 @@ export function buildSidebar(app) {
     <!-- Sensing -->
     <div class="section-header" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
     <div class="section-body" data-section="sensing">
-      <label>Enable <input type="checkbox" id="sensingEnabled"></label>
-      <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
-      <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
-      ${sliderRow('sensingStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2))}
-      ${sliderRow('sensingRadius', 'Radius', 5, 80, 20)}
-      ${sliderRow('sensingFitRadius', 'Fit Radius', 0, 80, 0)}
-      ${sliderRow('sensingThreshold', 'Threshold', 0, 100, 10, v => (v/100).toFixed(2))}
+      <span class="slider-desc">Combine multiple rules like “avoid alpha” and “attract red” against the same sensing source.</span>
+      ${[1, 2, 3, 4].map(index => sensingRuleBlock(index)).join('')}
       ${sliderRow('sensingUpdateFrames', 'Update Every', 1, 50, 30, v => `${Math.round(v)}f`, 'Frames between sensing refreshes for Active and All sources')}
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option><option value="selected">Selected Layers</option></select></label>
+      <label>Ignore Current Stroke <input type="checkbox" id="sensingIgnoreCurrentStroke"></label>
+      <span class="slider-desc">Sample the active layer from its pre-stroke snapshot so sensing can ignore paint being deposited right now.</span>
       <div style="display:flex;gap:6px;align-items:flex-start;">
         <button id="sensingSourceLayersBtn" type="button" style="flex:0 0 auto;padding:6px 10px;background:rgba(58,106,232,0.18);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#dce6ff;font-size:11px;cursor:pointer;">Pick Layers</button>
         <span id="sensingSourceLayersSummary" class="slider-desc" style="margin:0;flex:1;min-width:0;">Custom: No custom sources selected</span>
@@ -879,8 +939,12 @@ export function buildSidebar(app) {
   sb.querySelectorAll('input[type="text"]').forEach(el => {
     el.addEventListener('input', () => app.invalidateParams());
   });
+  sb.querySelectorAll('[data-sensing-rule-enabled]').forEach(toggle => {
+    toggle.addEventListener('change', _syncSensingRuleUi);
+  });
   document.getElementById('symmetryMode')?.addEventListener('change', _syncSymmetryModeUi);
   _syncSymmetryModeUi();
+  _syncSensingRuleUi();
   document.getElementById('showSimulationOverlayControls')?.addEventListener('change', () => {
     app._syncSimulationUI?.();
   });
@@ -1805,6 +1869,7 @@ export function syncUI(app) {
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
   _syncSymmetryModeUi();
+  _syncSensingRuleUi();
   app._refreshSensingLayerSourceUi?.();
   app._syncMotionPathUI?.();
 }

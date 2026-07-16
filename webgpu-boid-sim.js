@@ -103,7 +103,7 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  return true;
+  return !Array.isArray(p?.sensingRules) || p.sensingRules.filter(rule => rule?.enabled).length <= 1;
 }
 
 export class WebGPUBoidSim {
@@ -1188,6 +1188,19 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         depthOrArrayLayers: 1,
       },
     );
+  }
+
+  uploadSensingRules(rules, luminanceMaps, w, h) {
+    const enabledRules = Array.isArray(rules) ? rules.filter(rule => rule?.enabled) : [];
+    if (enabledRules.length <= 1) {
+      this.uploadSensing(luminanceMaps?.[0] || new Uint8Array(Math.max(1, (w || 1) * (h || 1))), w, h);
+      return;
+    }
+    this.helper.uploadSensingRules?.(rules, luminanceMaps, w, h);
+  }
+
+  clearSensingRules() {
+    this.helper.clearSensingRules?.();
   }
 
   get wasm() {
