@@ -1205,6 +1205,7 @@ export function buildSimulationControlsPanel(app) {
           <button class="sim-pill active" id="simDrawerInspectorToggle">Settings</button>
         </div>
         <div id="simTreePanel" class="sim-tree-panel"></div>
+        <div id="simForceVizPanel" class="sim-tree-panel" style="display:none;"></div>
       </div>
     </div>
   `;
@@ -1498,6 +1499,245 @@ export function buildSimulationControlsPanel(app) {
 
   app._renderSimulationTreePanel = renderTree;
   renderTree();
+
+  // ── Force Visualization submode panel ───────────────────────────────────
+  // Renders inside the same simulationControlsPanel shell as the tree panel,
+  // gated to visible only while simulation.mode === 'forceVisualization'.
+  // Every control here maps 1:1 to app.js force-viz state mutators — no
+  // control re-implements boid physics, it only edits routing/camera config.
+  const fvPanel = panel.querySelector('#simForceVizPanel');
+  const fvOption = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+
+  const renderForceViz = () => {
+    if (!fvPanel) return;
+    const sim = app.simulation;
+    const isForceViz = sim?.mode === 'forceVisualization';
+    fvPanel.style.display = isForceViz ? '' : 'none';
+    if (!isForceViz) return;
+    const scenario = app._getActiveForceVizScenario?.();
+    if (!scenario) { fvPanel.innerHTML = ''; return; }
+    const fv = sim.forceViz;
+    const activeGroup = scenario.groups.find(g => g.id === fv.ui.activeGroupId) || scenario.groups[0];
+    const activeAttractor = scenario.attractors.find(a => a.id === fv.ui.activeAttractorId) || scenario.attractors[0];
+    const cam = fv.camera;
+    const spawns = app._getForceVizSpawnOptions?.() || [];
+    const paths = app._getForceVizPathOptions?.() || [];
+    const layers = app._getSimulationTargetLayers?.() || [];
+
+    const groupOptions = scenario.groups.map((g, i) => fvOption(g.id, g.name || `Group ${i + 1}`, g.id === activeGroup?.id)).join('');
+    const attractorOptions = scenario.attractors.map((a, i) => fvOption(a.id, a.name || `Attractor ${i + 1}`, a.id === activeAttractor?.id)).join('');
+    const spawnOptions = ['<option value="">— Unbound —</option>', ...spawns.map((s, i) => fvOption(String(s.id), `Spawn ${i + 1}${s.enabled === false ? ' (disabled)' : ''}`, activeGroup?.spawnId === s.id))].join('');
+    const layerOptions = ['<option value="">— Active layer —</option>', ...layers.map(l => fvOption(l.id, l.name || 'Layer', activeGroup?.layerId === l.id))].join('');
+    const pathOptions = ['<option value="">— No path —</option>', ...paths.map((pth, i) => fvOption(pth.id, `Path ${i + 1}`, activeAttractor?.movement?.pathId === pth.id))].join('');
+    const otherAttractors = scenario.attractors.filter(a => a.id !== activeAttractor?.id);
+    const sharedOptions = otherAttractors.map(a => fvOption(a.id, a.name, activeAttractor?.sharedAttractorId === a.id)).join('');
+
+    const routeRows = scenario.routes.map(route => {
+      const routeGroupOptions = scenario.groups.map(g => fvOption(g.id, g.name, g.id === route.groupId)).join('');
+      const routeAttractorOptions = scenario.attractors.map(a => fvOption(a.id, a.name, a.id === route.attractorId)).join('');
+      return `
+        <div class="sim-tree-node" style="flex-direction:column;align-items:stretch;gap:4px;" data-fv-route-row="${route.id}">
+          <div class="sim-row" style="gap:4px;">
+            <select data-fv-route-group="${route.id}" style="flex:1;min-width:0;">${routeGroupOptions}</select>
+            <span style="color:#7d8594;">→</span>
+            <select data-fv-route-attractor="${route.id}" style="flex:1;min-width:0;">${routeAttractorOptions}</select>
+          </div>
+          <label style="margin:0;">Weight <span id="v_fvRouteWeight_${route.id}">${(route.weight ?? 1).toFixed(2)}</span>
+            <input type="range" id="fvRouteWeight_${route.id}" min="0" max="300" value="${Math.round(Math.max(0, Math.min(3, route.weight ?? 1)) * 100)}" data-fv-route-weight="${route.id}">
+          </label>
+          <div class="sim-row" style="justify-content:space-between;">
+            <label style="margin:0;display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" data-fv-route-enabled="${route.id}" ${route.enabled !== false ? 'checked' : ''}> Enabled</label>
+            <button type="button" class="sim-pill warn" data-fv-route-remove="${route.id}" ${scenario.routes.length <= 1 ? 'disabled' : ''}>Remove</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    const cameraPolicy = cam.policy;
+    const showFor = (...policies) => policies.includes(cameraPolicy) ? '' : 'display:none;';
+
+    fvPanel.innerHTML = `
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Group</span></div>
+        <div class="sim-row" style="gap:6px;">
+          <select id="fvGroupSelect" style="flex:1;min-width:0;">${groupOptions}</select>
+          <button type="button" class="sim-pill" id="fvGroupAdd">+ Group</button>
+          <button type="button" class="sim-pill warn" id="fvGroupRemove" ${scenario.groups.length <= 1 ? 'disabled' : ''}>Remove</button>
+        </div>
+        <label>Bound Spawn<select id="fvGroupSpawn">${spawnOptions}</select></label>
+        <span class="slider-desc">Groups reference an existing spawn definition — no separate spawn config is created here.</span>
+        <label>Paint Layer<select id="fvGroupLayer">${layerOptions}</select></label>
+      </div>
+
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Attractor</span></div>
+        <div class="sim-row" style="gap:6px;">
+          <select id="fvAttractorSelect" style="flex:1;min-width:0;">${attractorOptions}</select>
+          <button type="button" class="sim-pill" id="fvAttractorAdd">+ Attractor</button>
+          <button type="button" class="sim-pill warn" id="fvAttractorRemove" ${scenario.attractors.length <= 1 ? 'disabled' : ''}>Remove</button>
+        </div>
+        <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" id="fvAttractorEnabled" ${activeAttractor.enabled !== false ? 'checked' : ''}> Enabled</label>
+        <label>Type<select id="fvAttractorType">
+          ${['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'].map(t => fvOption(t, t[0].toUpperCase() + t.slice(1), t === activeAttractor.type)).join('')}
+        </select></label>
+        <div class="sim-row" style="gap:6px;">
+          <label style="flex:1;">X<input type="number" id="fvAttractorX" value="${Math.round(activeAttractor.x)}"></label>
+          <label style="flex:1;">Y<input type="number" id="fvAttractorY" value="${Math.round(activeAttractor.y)}"></label>
+        </div>
+        ${nudgeSliderRow('fvAttractorStrength', 'Strength', 0, 500, Math.round(activeAttractor.strength * 100), v => (v / 100).toFixed(2), 'Pull applied to routed boids, scaled by the route weight')}
+        ${nudgeSliderRow('fvAttractorRadius', 'Radius', 1, 800, Math.round(activeAttractor.radius), v => v + 'px', 'Full-strength radius (same falloff as a normal attract guide point)')}
+        ${nudgeSliderRow('fvAttractorInfluenceRadius', 'Influence Radius', 1, 1600, Math.round(activeAttractor.influenceRadius), v => v + 'px', 'Outer radius where pull fades to zero')}
+        <div data-fv-attractor-type-panel="moving" style="${activeAttractor.type === 'moving' ? '' : 'display:none;'}">
+          <div class="sim-row" style="gap:6px;">
+            <label style="flex:1;">Vel X<input type="number" id="fvMoveVX" value="${activeAttractor.movement.velocityX}"></label>
+            <label style="flex:1;">Vel Y<input type="number" id="fvMoveVY" value="${activeAttractor.movement.velocityY}"></label>
+          </div>
+        </div>
+        <div data-fv-attractor-type-panel="unreachable" style="${activeAttractor.type === 'unreachable' ? '' : 'display:none;'}">
+          ${nudgeSliderRow('fvDriftRadius', 'Drift Radius', 0, 400, Math.round(activeAttractor.movement.driftRadius), v => v + 'px', 'How far it drifts from its anchor — never fully caught')}
+          ${nudgeSliderRow('fvDriftSpeed', 'Drift Speed', 0, 200, Math.round(activeAttractor.movement.driftSpeed * 100), v => (v / 100).toFixed(2), 'Drift cycle speed (radians/sec)')}
+        </div>
+        <div data-fv-attractor-type-panel="orbiting" style="${activeAttractor.type === 'orbiting' ? '' : 'display:none;'}">
+          <div class="sim-row" style="gap:6px;">
+            <label style="flex:1;">Orbit Center X<input type="number" id="fvOrbitCX" value="${Math.round(activeAttractor.movement.orbitCenterX)}"></label>
+            <label style="flex:1;">Orbit Center Y<input type="number" id="fvOrbitCY" value="${Math.round(activeAttractor.movement.orbitCenterY)}"></label>
+          </div>
+          ${nudgeSliderRow('fvOrbitRadius', 'Orbit Radius', 0, 800, Math.round(activeAttractor.movement.orbitRadius), v => v + 'px')}
+          ${nudgeSliderRow('fvOrbitSpeed', 'Orbit Speed', -300, 300, Math.round(activeAttractor.movement.orbitSpeed * 100), v => (v / 100).toFixed(2), 'Radians/sec, negative reverses direction')}
+        </div>
+        <div data-fv-attractor-type-panel="path" style="${activeAttractor.type === 'path' ? '' : 'display:none;'}">
+          <label>Guide Path<select id="fvAttractorPath">${pathOptions}</select></label>
+          <span class="slider-desc">Reuses the same animated guide path used for path guides.</span>
+        </div>
+        <div data-fv-attractor-type-panel="shared" style="${activeAttractor.type === 'shared' ? '' : 'display:none;'}">
+          <label>Mirrors Attractor<select id="fvAttractorShared">${sharedOptions || '<option value="">— No other attractors —</option>'}</select></label>
+          <span class="slider-desc">Position always matches the target attractor — useful for multiple groups converging on one shared target.</span>
+        </div>
+      </div>
+
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Routes</span><span class="sim-stage-badge muted">${scenario.routes.length}</span></div>
+        <div class="sim-tree-list">${routeRows}</div>
+        <button type="button" class="sim-pill" id="fvRouteAdd">+ Route</button>
+      </div>
+
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Camera</span></div>
+        <label>Policy<select id="fvCameraPolicy">
+          ${[
+            ['fixed', 'Fixed (manual)'],
+            ['followBoid', 'Follow Boid'],
+            ['followCentroid', 'Follow Centroid'],
+            ['frameGroups', 'Frame Groups'],
+            ['orbit', 'Orbit'],
+          ].map(([value, label]) => fvOption(value, label, value === cameraPolicy)).join('')}
+        </select></label>
+        <div style="${showFor('followBoid')}">
+          ${nudgeSliderRow('fvCamBoidIndex', 'Boid Sample Index', 0, 63, cam.targetBoidIndex || 0, v => String(v), 'Index into the sampled candidate list, not the raw agent count')}
+        </div>
+        <div style="${showFor('frameGroups')}">
+          ${nudgeSliderRow('fvCamPadding', 'Framing Padding', 0, 400, Math.round(cam.padding), v => v + 'px')}
+        </div>
+        <div style="${showFor('orbit')}">
+          ${nudgeSliderRow('fvCamOrbitSpeed', 'Orbit Speed', -300, 300, Math.round(cam.orbitSpeed * 100), v => (v / 100).toFixed(2), 'Camera rotation speed (radians/sec)')}
+        </div>
+        ${nudgeSliderRow('fvCamSmoothing', 'Smoothing', 1, 100, Math.round(cam.smoothing * 100), v => (v / 100).toFixed(2), 'Per-frame lerp factor toward the resolved camera target')}
+        ${nudgeSliderRow('fvCamLookahead', 'Lookahead', 0, 100, Math.round(cam.lookahead * 100), v => (v / 100).toFixed(2), 'Shifts focus ahead using the tracked average velocity')}
+        <div class="sim-row" style="gap:6px;">
+          <label style="flex:1;">Offset X<input type="number" id="fvCamOffsetX" value="${Math.round(cam.offsetX)}"></label>
+          <label style="flex:1;">Offset Y<input type="number" id="fvCamOffsetY" value="${Math.round(cam.offsetY)}"></label>
+        </div>
+        <div class="sim-row" style="gap:6px;">
+          <label style="flex:1;">Min Zoom<input type="number" step="0.05" id="fvCamMinZoom" value="${cam.minZoom.toFixed(2)}"></label>
+          <label style="flex:1;">Max Zoom<input type="number" step="0.05" id="fvCamMaxZoom" value="${cam.maxZoom.toFixed(2)}"></label>
+        </div>
+        <label>Interruption<select id="fvCamInterruption">
+          ${[
+            ['holdOnUserInput', 'Hold on user input'],
+            ['resumeAfterDelay', 'Resume after delay'],
+            ['ignoreUserInput', 'Ignore user input'],
+          ].map(([value, label]) => fvOption(value, label, value === cam.interruption)).join('')}
+        </select></label>
+        <div style="${cam.interruption === 'resumeAfterDelay' ? '' : 'display:none;'}">
+          ${nudgeSliderRow('fvCamResumeDelay', 'Resume Delay', 0, 100, Math.round(cam.resumeDelay * 10), v => (v / 10).toFixed(1) + 's')}
+        </div>
+        <label>On Stop / Exit<select id="fvCamExitBehavior">
+          ${[
+            ['restoreManualView', 'Restore manual view'],
+            ['retainCurrentView', 'Retain current view'],
+          ].map(([value, label]) => fvOption(value, label, value === cam.exitBehavior)).join('')}
+        </select></label>
+      </div>
+    `;
+
+    fvPanel.querySelector('#fvGroupSelect')?.addEventListener('change', e => app._setForceVizActiveGroup(e.target.value));
+    fvPanel.querySelector('#fvGroupAdd')?.addEventListener('click', () => app._addForceVizGroup());
+    fvPanel.querySelector('#fvGroupRemove')?.addEventListener('click', () => app._removeForceVizGroup(activeGroup.id));
+    fvPanel.querySelector('#fvGroupSpawn')?.addEventListener('change', e => app._updateForceVizGroup(activeGroup.id, { spawnId: e.target.value || null }));
+    fvPanel.querySelector('#fvGroupLayer')?.addEventListener('change', e => app._updateForceVizGroup(activeGroup.id, { layerId: e.target.value || null }));
+
+    fvPanel.querySelector('#fvAttractorSelect')?.addEventListener('change', e => app._setForceVizActiveAttractor(e.target.value));
+    fvPanel.querySelector('#fvAttractorAdd')?.addEventListener('click', () => app._addForceVizAttractor());
+    fvPanel.querySelector('#fvAttractorRemove')?.addEventListener('click', () => app._removeForceVizAttractor(activeAttractor.id));
+    fvPanel.querySelector('#fvAttractorEnabled')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { enabled: !!e.target.checked }));
+    fvPanel.querySelector('#fvAttractorType')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { type: e.target.value }));
+    fvPanel.querySelector('#fvAttractorX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { x: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { y: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorStrength')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { strength: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvAttractorRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { radius: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorInfluenceRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { influenceRadius: +e.target.value }));
+    fvPanel.querySelector('#fvMoveVX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { velocityX: +e.target.value } }));
+    fvPanel.querySelector('#fvMoveVY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { velocityY: +e.target.value } }));
+    fvPanel.querySelector('#fvDriftRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { driftRadius: +e.target.value } }));
+    fvPanel.querySelector('#fvDriftSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { driftSpeed: +e.target.value / 100 } }));
+    fvPanel.querySelector('#fvOrbitCX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterX: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitCY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterY: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitRadius: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitSpeed: +e.target.value / 100 } }));
+    fvPanel.querySelector('#fvAttractorPath')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { pathId: e.target.value || null } }));
+    fvPanel.querySelector('#fvAttractorShared')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { sharedAttractorId: e.target.value || null }));
+
+    fvPanel.querySelector('#fvRouteAdd')?.addEventListener('click', () => app._addForceVizRoute());
+    scenario.routes.forEach(route => {
+      fvPanel.querySelector(`[data-fv-route-group="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { groupId: e.target.value }));
+      fvPanel.querySelector(`[data-fv-route-attractor="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { attractorId: e.target.value }));
+      fvPanel.querySelector(`[data-fv-route-weight="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { weight: +e.target.value / 100 }));
+      fvPanel.querySelector(`[data-fv-route-enabled="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { enabled: !!e.target.checked }));
+      fvPanel.querySelector(`[data-fv-route-remove="${route.id}"]`)?.addEventListener('click', () => app._removeForceVizRoute(route.id));
+    });
+
+    fvPanel.querySelector('#fvCameraPolicy')?.addEventListener('change', e => app._updateForceVizCamera({ policy: e.target.value }));
+    fvPanel.querySelector('#fvCamBoidIndex')?.addEventListener('change', e => app._updateForceVizCamera({ targetBoidIndex: +e.target.value }));
+    fvPanel.querySelector('#fvCamPadding')?.addEventListener('change', e => app._updateForceVizCamera({ padding: +e.target.value }));
+    fvPanel.querySelector('#fvCamOrbitSpeed')?.addEventListener('change', e => app._updateForceVizCamera({ orbitSpeed: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamSmoothing')?.addEventListener('change', e => app._updateForceVizCamera({ smoothing: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamLookahead')?.addEventListener('change', e => app._updateForceVizCamera({ lookahead: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamOffsetX')?.addEventListener('change', e => app._updateForceVizCamera({ offsetX: +e.target.value }));
+    fvPanel.querySelector('#fvCamOffsetY')?.addEventListener('change', e => app._updateForceVizCamera({ offsetY: +e.target.value }));
+    fvPanel.querySelector('#fvCamMinZoom')?.addEventListener('change', e => app._updateForceVizCamera({ minZoom: +e.target.value }));
+    fvPanel.querySelector('#fvCamMaxZoom')?.addEventListener('change', e => app._updateForceVizCamera({ maxZoom: +e.target.value }));
+    fvPanel.querySelector('#fvCamInterruption')?.addEventListener('change', e => app._updateForceVizCamera({ interruption: e.target.value }));
+    fvPanel.querySelector('#fvCamResumeDelay')?.addEventListener('change', e => app._updateForceVizCamera({ resumeDelay: +e.target.value / 10 }));
+    fvPanel.querySelector('#fvCamExitBehavior')?.addEventListener('change', e => app._updateForceVizCamera({ exitBehavior: e.target.value }));
+
+    // Live readout feedback while dragging, without rebuilding the panel
+    // mid-drag (which would drop the pointer capture on the range input).
+    // The formatted value + full re-render still happens on 'change' above.
+    fvPanel.querySelectorAll('input[type="range"]').forEach(inp => {
+      const span = fvPanel.querySelector('#v_' + inp.id);
+      if (!span) return;
+      inp.addEventListener('input', () => { span.textContent = inp.value; });
+    });
+    // nudgeSliderRow() ships +/- buttons but only buildSidebar() wires them
+    // globally for #sidebar; wire the copies rendered in this panel too.
+    fvPanel.querySelectorAll('.slider-nudge-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = fvPanel.querySelector('#' + btn.dataset.target);
+        _nudgeRangeValue(target, Number(btn.dataset.delta) || 0);
+      });
+    });
+  };
+  app._renderForceVizPanel = renderForceViz;
+  renderForceViz();
 
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
