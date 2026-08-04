@@ -8354,6 +8354,8 @@ export class App {
     if (!Number.isFinite(alpha) || alpha <= 0 || typeof drawBand !== 'function') return;
     const scratch = this._getSimulationOverlayScratchContext();
     if (!scratch?.ctx || !scratch.canvas) return;
+    scratch.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    scratch.ctx.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
     drawBand(scratch.ctx);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -13594,18 +13596,18 @@ export class App {
         ctx.stroke();
         ctx.restore();
       }
-      ctx.fillStyle = 'rgba(18,18,22,0.55)';
+      ctx.fillStyle = 'rgba(18,18,22,0.72)';
       ctx.beginPath();
       ctx.arc(badge.x, badge.y, ui.deleteBadgeRadius, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.34)';
       ctx.lineWidth = Math.max(1, ui.scale);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
       ctx.font = `${ui.deleteBadgeFont}px Segoe UI, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('×', badge.x, badge.y + 0.5);
+      ctx.fillText('×', badge.x, badge.y + (0.5 * ui.scale));
     };
 
     const drawOverlayChip = (button, label) => {
@@ -13975,25 +13977,13 @@ export class App {
             }, 'Format');
           }
           for (const button of speedControls.deleteButtons) {
-            drawOverlayChip({ ...button, width: 20, height: 20 }, '×');
+            drawDelete('paths', 'pathSpeedPoint', { id: `speed:${button.speedPointId}` }, button.x, button.y);
           }
           for (const button of speedControls.radiusDeleteButtons) {
-            drawOverlayChip({
-              ...button,
-              width: 20,
-              height: 20,
-              strokeStyle: 'rgba(255,105,214,0.82)',
-              textStyle: 'rgba(255,222,246,0.98)',
-            }, '×');
+            drawDelete('paths', 'pathRadiusPoint', { id: `radius:${button.radiusPointId}` }, button.x, button.y);
           }
           for (const button of speedControls.strengthDeleteButtons) {
-            drawOverlayChip({
-              ...button,
-              width: 20,
-              height: 20,
-              strokeStyle: 'rgba(100,220,255,0.82)',
-              textStyle: 'rgba(196,244,255,0.98)',
-            }, '×');
+            drawDelete('paths', 'pathStrengthPoint', { id: `strength:${button.strengthPointId}` }, button.x, button.y);
           }
           const drawToggleChip = (button, active) => {
             if (!button) return;
