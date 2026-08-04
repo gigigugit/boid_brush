@@ -285,6 +285,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-stack{flex-direction:column;align-items:stretch;flex-wrap:nowrap;}
 .sim-pill{padding:6px 10px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.06);color:var(--ink-1);font-size:11px;font-weight:600;min-height:34px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;}
 #simHud .sim-stack .sim-pill{text-align:left;width:100%;}
+.sim-mode-select{min-height:28px;padding:4px 22px 4px 8px;font-size:10px;flex:0 0 auto;-webkit-appearance:none;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--ink-1) 50%),linear-gradient(135deg,var(--ink-1) 50%,transparent 50%);background-position:calc(100% - 12px) center,calc(100% - 8px) center;background-size:4px 4px,4px 4px;background-repeat:no-repeat;}
 .sim-pill:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 .sim-pill:disabled{opacity:0.45;cursor:not-allowed;box-shadow:none;}
 .sim-pill:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
@@ -307,6 +308,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-playback-readout.muted{color:#98a6bd;}
 .sim-playback-readout.warn{background:rgba(146,54,54,0.72);border-color:rgba(225,99,99,0.35);color:#ffd6d6;}
 #simPlaybackBar .sim-routing-summary{max-width:min(46vw,420px);white-space:normal;line-height:1.3;color:#adc0e2;}
+#simPlaybackBar .sim-force-viz-status{max-width:min(42vw,360px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9fd8c4;font-variant-numeric:tabular-nums;}
 #simRecordBtn.recording{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.52);color:#fff;box-shadow:0 0 10px rgba(224,80,80,0.32);animation:simRecordPulse 1.05s ease-in-out infinite;}
 #simPlaybackBar .sim-pill:disabled{opacity:0.38;cursor:not-allowed;box-shadow:none;}
 #simPlaybackBar .sim-pill:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
@@ -993,6 +995,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <div class="sim-card">
     <div class="sim-hud-header">
       <div class="sim-label">Simulation</div>
+      <select class="sim-pill sim-mode-select" id="simModeSelect" title="Simulation submode" aria-label="Simulation submode">
+        <option value="normal">Normal</option>
+        <option value="forceVisualization">Force Visualization</option>
+      </select>
       <button class="sim-pill sim-hud-toggle" id="simHudCollapseBtn" type="button" aria-controls="simHudBody" aria-expanded="true">Collapse</button>
     </div>
     <div class="sim-hud-body" id="simHudBody">
@@ -1046,6 +1052,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button class="sim-pill" id="simExportBtn" type="button">Export</button>
   <span class="sim-status" id="simStatus">Ready</span>
   <span class="sim-status sim-routing-summary" id="simRoutingSummary"></span>
+  <span class="sim-status sim-force-viz-status" id="simForceVizStatus" style="display:none;"></span>
 </div>
 
 <!-- Left Edge Sliders -->

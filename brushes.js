@@ -55,6 +55,7 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+const FORCE_VIZ_MAX_CANDIDATES = 64; // sampled agent positions cached per frame for camera policies
 // Predefined hue anchors used to visually separate detected boid quorum groups.
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
@@ -930,10 +931,10 @@ function _textureDepositDensity(app, p, x, y) {
 function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
+  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [], forceVizPoints: [] };
   const brushName = app._getSimulationContextBrush?.() || app.activeBrush;
   const data = app._getSimulationBrushData?.(brushName) || sim.brushData[brushName];
-  if (!data) return { points: [], pathTargets: [], edges: [] };
+  if (!data) return { points: [], pathTargets: [], edges: [], forceVizPoints: [] };
   return {
     points: Array.isArray(data.points)
       ? data.points
@@ -976,6 +977,14 @@ function _collectSimulationGuides(brush, p) {
             };
           })
       : [],
+    // Force Visualization submode: per-group weighted attractor guides. Always
+    // CPU-applied (never uploaded to the GPU point-guide buffer) so each guide
+    // point can be scoped to a group's agent index range via `groupRange` —
+    // this isolates per-group routing from the global GPU guide path while
+    // reusing the exact same attract/repel push math as normal guide points.
+    forceVizPoints: (brushName === 'boid' && sim.mode === 'forceVisualization' && typeof app._collectForceVizGuidePoints === 'function')
+      ? app._collectForceVizGuidePoints(brush, p)
+      : [],
   };
 }
 
@@ -1005,7 +1014,8 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
   const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
   const edgeGuides = guideState.edges || [];
-  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
+  const forceVizPoints = guideState.forceVizPoints || [];
+  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length && !forceVizPoints.length) return false;
   const { buffer, count, stride } = read;
   const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
 
@@ -1037,6 +1047,23 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
         shaped = _pathInfluenceFalloff(d, point.radius, outerRadius);
       }
       const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85 * sign;
+      vx += (dx / d) * push;
+      vy += (dy / d) * push;
+    }
+
+    // Force Visualization route guides: same attract falloff as normal guide
+    // points, but scoped to the spawn-derived agent index range for the
+    // route's group so different groups can be routed to different weighted
+    // attractors without a separate physics path.
+    for (const point of forceVizPoints) {
+      if (point.groupRange && (i < point.groupRange.start || i >= point.groupRange.end)) continue;
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const d = Math.hypot(dx, dy);
+      const outerRadius = Math.max(point.radius || 0, point.influenceRadius || point.radius || 0);
+      if (d <= 0.0001 || d > outerRadius) continue;
+      const shaped = d <= point.radius ? (1 - d / point.radius) : _pathInfluenceFalloff(d, point.radius, outerRadius);
+      const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
     }
@@ -1191,6 +1218,16 @@ export class BoidBrush {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._debugMaxEvents = 120;
+    // Force Visualization submode support: runtime-only, never persisted.
+    // Maps a spawn definition id -> the agent index range it produced this
+    // stroke, so routes can scope guide points to one spawn group's agents.
+    this._spawnRangesById = new Map();
+    this._primarySpawnId = null;
+    // Cached per-frame transient snapshot (centroid/bounds/avg velocity/
+    // sampled candidates) consumed by camera policies without re-reading
+    // the agent buffer. Populated from the same non-blocking readAgents()
+    // call the stroke loop already performs.
+    this._transientSnapshot = { count: 0 };
     _resetSimulationSpawnAppearance(this);
   }
 
@@ -1487,10 +1524,20 @@ export class BoidBrush {
       color: p.color,
       opacity: p.stampOpacity,
     }, p);
+    if (this._primarySpawnId != null) this._recordSimulationSpawnRange(this._primarySpawnId, spawnInfo);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     return true;
+  }
+
+  /** Force Visualization submode: remember which agent index range a spawn
+   *  definition produced this stroke, keyed by the spawn's own id. Routes
+   *  use this to scope a weighted attractor's guide point to just the boids
+   *  from its bound group instead of applying it globally. */
+  _recordSimulationSpawnRange(spawnId, spawnInfo) {
+    if (spawnId == null || !spawnInfo) return;
+    this._spawnRangesById.set(spawnId, { startIndex: spawnInfo.startIndex, endIndex: spawnInfo.endIndex });
   }
 
   _applyLifecycleAction(action, p, x, y, pressure = 1, useHoverAngle = false) {
@@ -2076,6 +2123,8 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
+    // Fresh stroke — spawn index ranges from the previous stroke no longer apply.
+    this._spawnRangesById.clear();
     this._pushRenderDebug('pointer-down', {
       x,
       y,
@@ -2090,6 +2139,7 @@ export class BoidBrush {
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
       ? ((selectedSpawn && selectedSpawn.enabled !== false) ? selectedSpawn : (simSpawns.find(spawn => spawn.enabled !== false) || simSpawns[0]))
       : null;
+    this._primarySpawnId = simSpawn?.id ?? null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
     this._spawnOverrides = spawnConfig ? {
       count: spawnConfig.count,
@@ -2252,6 +2302,7 @@ export class BoidBrush {
       const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
       this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
       _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
+      this._recordSimulationSpawnRange(spawn.id, spawnInfo);
     }
   }
 
@@ -2590,12 +2641,53 @@ export class BoidBrush {
     this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
-    // Read agents
+    // Read agents. readAgents() itself is non-blocking: on WebGPU it returns
+    // the latest CPU mirror already updated by an async mapAsync() readback
+    // (see webgpu-boid-sim.js _applyReadyResults), so caching a transient
+    // snapshot from it here never stalls the frame loop.
     const read = this.sim.readAgents();
     if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
+    if (app.simulation?.mode === 'forceVisualization') this._updateTransientSnapshot(read);
     this._renderAgentRead(read, p, {
       forceStamp: !!app.isDrawing || !!app.simulation?.running,
     });
+  }
+
+  /** Force Visualization submode: cache centroid/bounds/average velocity and
+   *  a sampled set of agent candidates from the current agent read. Camera
+   *  policies (followBoid/followCentroid/frameGroups/orbit) consume this
+   *  cached snapshot instead of re-scanning the agent buffer themselves. */
+  _updateTransientSnapshot(read) {
+    const { buffer, count, stride } = read || {};
+    if (!count) {
+      this._transientSnapshot = { count: 0 };
+      return;
+    }
+    let sumX = 0, sumY = 0, sumVX = 0, sumVY = 0;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const candidates = [];
+    const sampleStride = Math.max(1, Math.floor(count / FORCE_VIZ_MAX_CANDIDATES));
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const x = buffer[base + AGENT_X];
+      const y = buffer[base + AGENT_Y];
+      const vx = buffer[base + AGENT_VX];
+      const vy = buffer[base + AGENT_VY];
+      sumX += x; sumY += y; sumVX += vx; sumVY += vy;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (i % sampleStride === 0) candidates.push({ x, y, vx, vy, index: i });
+    }
+    this._transientSnapshot = {
+      count,
+      centroid: { x: sumX / count, y: sumY / count },
+      avgVelocity: { x: sumVX / count, y: sumVY / count },
+      bounds: { minX, minY, maxX, maxY },
+      candidates,
+      updatedAt: performance.now(),
+    };
   }
 
   taperFrame(t, p) {
@@ -2802,6 +2894,9 @@ export class BoidBrush {
 
   deactivate() {
     this.resetSimulationPlaybackState({ compositePreview: true });
+    this._spawnRangesById.clear();
+    this._primarySpawnId = null;
+    this._transientSnapshot = { count: 0 };
   }
 
   destroy() {

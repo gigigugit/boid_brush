@@ -39,6 +39,21 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
+// ── Force Visualization submode ─────────────────────────────────────────
+// A `simulation.mode` alternative to the default 'normal' authoring mode.
+// Scenarios describe groups (bound to existing spawn definitions), weighted
+// attractors, and routes that connect them; a separate camera policy frames
+// the result. All of it is persisted config — no runtimes, camera smoothing
+// accumulators, or resolved per-frame positions live on this state.
+const FORCE_VIZ_ATTRACTOR_TYPES = ['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'];
+const FORCE_VIZ_CAMERA_POLICIES = ['fixed', 'followBoid', 'followCentroid', 'frameGroups', 'orbit'];
+const FORCE_VIZ_CAMERA_INTERRUPTIONS = ['holdOnUserInput', 'resumeAfterDelay', 'ignoreUserInput'];
+const FORCE_VIZ_CAMERA_EXIT_BEHAVIORS = ['restoreManualView', 'retainCurrentView'];
+const FORCE_VIZ_MANUAL_INPUT_HOLD_MS = 900;
+const FORCE_VIZ_LOOKAHEAD_SCALE = 14;
+const FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS = 80;
+const FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH = 1.2;
+
 // Keep the inline JSON editor's single-key accent lightweight and deterministic.
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
 const WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
@@ -587,6 +602,16 @@ function _clamp01(v) {
 
 function _lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+/** Shortest-path angle interpolation (radians), used by the Force
+ *  Visualization camera adapter so orbit/rotation smoothing doesn't spin
+ *  the long way around when crossing the -PI/PI wrap. */
+function _lerpAngle(a, b, t) {
+  let delta = (b - a) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  else if (delta < -Math.PI) delta += Math.PI * 2;
+  return a + delta * t;
 }
 
 function _clamp(value, min, max) {
@@ -2138,6 +2163,11 @@ export class App {
       inspectorCollapsed: false,
       inspectorSections: {},
       editorTool: 'spawn',
+      // Submode: 'normal' (default, unchanged authoring/playback behavior) or
+      // 'forceVisualization' (scenario-driven groups/attractors/routes with a
+      // policy-driven camera). Persisted; normal mode ignores it entirely.
+      mode: 'normal',
+      forceViz: null, // populated below by _createDefaultForceVizState()
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -2166,6 +2196,15 @@ export class App {
       clipboard: null,
       nextId: 1,
     };
+    // populated in _init() after the first resize, once this.W/this.H
+    // reflect real canvas dimensions (see _createDefaultForceVizState()).
+    // Force Visualization runtime-only state — never persisted/serialized.
+    // Holds the manual view the user had before entering the submode (for
+    // the 'restoreManualView' exit behavior) and small camera bookkeeping
+    // (orbit angle accumulator, last manual pan/zoom/rotate timestamp for
+    // interruption handling).
+    this._forceVizManualViewSnapshot = null;
+    this._forceVizCameraRuntime = { lastManualInputAt: 0, orbitAngle: 0, lastElapsed: null };
     this._simulationSavedPlaybackCapture = null;
     this.motionPath = this._createDefaultMotionPathState();
     this.motionPathEditor = this._createMotionPathEditorState();
@@ -2556,6 +2595,7 @@ export class App {
   async _init() {
     this.selectionMgr = new SelectionManager(this);
     this._resizeAll();
+    this.simulation.forceViz = this._createDefaultForceVizState();
     this.compositor = new Compositor(this.compositeCanvas);
     this.compositor.resize(this.W, this.H, this.DPR);
     this._addBackgroundLayer();
@@ -6770,6 +6810,686 @@ export class App {
     if (this.simulation.selected && !this._getSelectedSimulationEntry()) {
       this.simulation.selected = null;
     }
+    this._normalizeForceVizState();
+  }
+
+  // ========================================================
+  // FORCE VISUALIZATION SUBMODE
+  // ========================================================
+  // Scenarios are pure config: groups (bound to an existing spawn
+  // definition + optional paint layer), attractors (fixed/unreachable/
+  // moving/orbiting/path/shared), and routes that connect a group to an
+  // attractor with a weight. Everything here is persisted; per-frame
+  // resolved positions, camera smoothing bookkeeping, and agent index
+  // ranges are computed fresh each run and never saved (see
+  // _forceVizCameraRuntime and BoidBrush._spawnRangesById).
+
+  _createForceVizId(prefix) {
+    return `${prefix}-${(this.simulation.nextId++).toString(36)}`;
+  }
+
+  _createDefaultForceVizCameraConfig() {
+    return {
+      policy: 'fixed', // fixed | followBoid | followCentroid | frameGroups | orbit
+      targetGroupId: null,
+      targetBoidIndex: 0,
+      smoothing: 0.12, // 0..1 per-frame lerp factor
+      offsetX: 0,
+      offsetY: 0,
+      lookahead: 0, // 0..1 velocity lookahead factor
+      padding: 80, // px padding used by frameGroups
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      orbitRadius: 260,
+      orbitSpeed: 0.25, // radians/sec
+      interruption: 'holdOnUserInput', // holdOnUserInput | resumeAfterDelay | ignoreUserInput
+      resumeDelay: 1.5, // seconds, used by resumeAfterDelay
+      exitBehavior: 'restoreManualView', // restoreManualView | retainCurrentView
+    };
+  }
+
+  _createDefaultForceVizAttractor(overrides = {}) {
+    return {
+      id: this._createForceVizId('attractor'),
+      name: overrides.name || 'Attractor 1',
+      type: 'fixed',
+      enabled: true,
+      x: Number.isFinite(overrides.x) ? overrides.x : this.W * 0.5,
+      y: Number.isFinite(overrides.y) ? overrides.y : this.H * 0.5,
+      strength: FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH,
+      radius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS,
+      influenceRadius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2,
+      hardness: DEFAULT_SIM_HARDNESS,
+      movement: {
+        velocityX: 0,
+        velocityY: 0,
+        driftRadius: 40,
+        driftSpeed: 0.15,
+        orbitCenterX: this.W * 0.5,
+        orbitCenterY: this.H * 0.5,
+        orbitRadius: 100,
+        orbitSpeed: 0.5,
+        pathId: null,
+      },
+      sharedAttractorId: null,
+    };
+  }
+
+  _createDefaultForceVizGroup(overrides = {}) {
+    return {
+      id: this._createForceVizId('group'),
+      name: overrides.name || 'Group 1',
+      spawnId: overrides.spawnId ?? null,
+      layerId: overrides.layerId ?? null,
+    };
+  }
+
+  _createDefaultForceVizRoute(overrides = {}) {
+    return {
+      id: this._createForceVizId('route'),
+      groupId: overrides.groupId ?? null,
+      attractorId: overrides.attractorId ?? null,
+      weight: Number.isFinite(overrides.weight) ? overrides.weight : 1,
+      enabled: true,
+    };
+  }
+
+  _createDefaultForceVizScenario() {
+    const group = this._createDefaultForceVizGroup();
+    const attractor = this._createDefaultForceVizAttractor();
+    return {
+      id: this._createForceVizId('scenario'),
+      name: 'Scenario 1',
+      groups: [group],
+      attractors: [attractor],
+      routes: [this._createDefaultForceVizRoute({ groupId: group.id, attractorId: attractor.id })],
+    };
+  }
+
+  _createDefaultForceVizState() {
+    const scenario = this._createDefaultForceVizScenario();
+    return {
+      activeScenarioIndex: 0,
+      scenarios: [scenario],
+      // The UI edits one group/attractor/route at a time while the
+      // underlying model stays array-based so more can be added later.
+      ui: {
+        activeGroupId: scenario.groups[0]?.id ?? null,
+        activeAttractorId: scenario.attractors[0]?.id ?? null,
+        activeRouteId: scenario.routes[0]?.id ?? null,
+      },
+      camera: this._createDefaultForceVizCameraConfig(),
+    };
+  }
+
+  _normalizeForceVizCameraConfig(raw) {
+    const defaults = this._createDefaultForceVizCameraConfig();
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    return {
+      policy: FORCE_VIZ_CAMERA_POLICIES.includes(cfg.policy) ? cfg.policy : defaults.policy,
+      targetGroupId: typeof cfg.targetGroupId === 'string' ? cfg.targetGroupId : null,
+      targetBoidIndex: Number.isFinite(cfg.targetBoidIndex) ? Math.max(0, Math.round(cfg.targetBoidIndex)) : defaults.targetBoidIndex,
+      smoothing: Number.isFinite(cfg.smoothing) ? _clamp01(cfg.smoothing) : defaults.smoothing,
+      offsetX: Number.isFinite(cfg.offsetX) ? cfg.offsetX : defaults.offsetX,
+      offsetY: Number.isFinite(cfg.offsetY) ? cfg.offsetY : defaults.offsetY,
+      lookahead: Number.isFinite(cfg.lookahead) ? _clamp01(cfg.lookahead) : defaults.lookahead,
+      padding: Number.isFinite(cfg.padding) ? Math.max(0, cfg.padding) : defaults.padding,
+      minZoom: Number.isFinite(cfg.minZoom) ? Math.max(MIN_ZOOM, cfg.minZoom) : defaults.minZoom,
+      maxZoom: Number.isFinite(cfg.maxZoom) ? Math.min(MAX_ZOOM, cfg.maxZoom) : defaults.maxZoom,
+      orbitRadius: Number.isFinite(cfg.orbitRadius) ? Math.max(1, cfg.orbitRadius) : defaults.orbitRadius,
+      orbitSpeed: Number.isFinite(cfg.orbitSpeed) ? cfg.orbitSpeed : defaults.orbitSpeed,
+      interruption: FORCE_VIZ_CAMERA_INTERRUPTIONS.includes(cfg.interruption) ? cfg.interruption : defaults.interruption,
+      resumeDelay: Number.isFinite(cfg.resumeDelay) ? Math.max(0, cfg.resumeDelay) : defaults.resumeDelay,
+      exitBehavior: FORCE_VIZ_CAMERA_EXIT_BEHAVIORS.includes(cfg.exitBehavior) ? cfg.exitBehavior : defaults.exitBehavior,
+    };
+  }
+
+  _normalizeForceVizAttractor(raw) {
+    const defaults = this._createDefaultForceVizAttractor();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const movement = src.movement && typeof src.movement === 'object' ? src.movement : {};
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('attractor'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
+      type: FORCE_VIZ_ATTRACTOR_TYPES.includes(src.type) ? src.type : defaults.type,
+      enabled: src.enabled !== false,
+      x: Number.isFinite(src.x) ? src.x : defaults.x,
+      y: Number.isFinite(src.y) ? src.y : defaults.y,
+      strength: Number.isFinite(src.strength) ? Math.max(0, src.strength) : defaults.strength,
+      radius: Number.isFinite(src.radius) ? Math.max(1, src.radius) : defaults.radius,
+      influenceRadius: Number.isFinite(src.influenceRadius) ? Math.max(1, src.influenceRadius) : defaults.influenceRadius,
+      hardness: Number.isFinite(src.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, src.hardness)) : defaults.hardness,
+      movement: {
+        velocityX: Number.isFinite(movement.velocityX) ? movement.velocityX : defaults.movement.velocityX,
+        velocityY: Number.isFinite(movement.velocityY) ? movement.velocityY : defaults.movement.velocityY,
+        driftRadius: Number.isFinite(movement.driftRadius) ? Math.max(0, movement.driftRadius) : defaults.movement.driftRadius,
+        driftSpeed: Number.isFinite(movement.driftSpeed) ? movement.driftSpeed : defaults.movement.driftSpeed,
+        orbitCenterX: Number.isFinite(movement.orbitCenterX) ? movement.orbitCenterX : defaults.movement.orbitCenterX,
+        orbitCenterY: Number.isFinite(movement.orbitCenterY) ? movement.orbitCenterY : defaults.movement.orbitCenterY,
+        orbitRadius: Number.isFinite(movement.orbitRadius) ? Math.max(0, movement.orbitRadius) : defaults.movement.orbitRadius,
+        orbitSpeed: Number.isFinite(movement.orbitSpeed) ? movement.orbitSpeed : defaults.movement.orbitSpeed,
+        pathId: typeof movement.pathId === 'string' ? movement.pathId : null,
+      },
+      sharedAttractorId: typeof src.sharedAttractorId === 'string' ? src.sharedAttractorId : null,
+    };
+  }
+
+  _normalizeForceVizGroup(raw) {
+    const defaults = this._createDefaultForceVizGroup();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('group'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
+      spawnId: (typeof src.spawnId === 'string' || typeof src.spawnId === 'number') ? src.spawnId : null,
+      layerId: typeof src.layerId === 'string' ? src.layerId : null,
+    };
+  }
+
+  _normalizeForceVizRoute(raw, groupIds, attractorIds) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const groupId = groupIds.has(src.groupId) ? src.groupId : null;
+    const attractorId = attractorIds.has(src.attractorId) ? src.attractorId : null;
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('route'),
+      groupId,
+      attractorId,
+      weight: Number.isFinite(src.weight) ? Math.max(0, src.weight) : 1,
+      enabled: src.enabled !== false,
+    };
+  }
+
+  _normalizeForceVizScenario(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const groups = (Array.isArray(src.groups) ? src.groups : []).map(group => this._normalizeForceVizGroup(group));
+    const attractors = (Array.isArray(src.attractors) ? src.attractors : []).map(attractor => this._normalizeForceVizAttractor(attractor));
+    if (!groups.length) groups.push(this._createDefaultForceVizGroup());
+    if (!attractors.length) attractors.push(this._createDefaultForceVizAttractor());
+    const groupIds = new Set(groups.map(group => group.id));
+    const attractorIds = new Set(attractors.map(attractor => attractor.id));
+    // Shared attractors must reference another attractor in the same scenario.
+    for (const attractor of attractors) {
+      if (attractor.type === 'shared' && (!attractor.sharedAttractorId || !attractorIds.has(attractor.sharedAttractorId) || attractor.sharedAttractorId === attractor.id)) {
+        attractor.sharedAttractorId = attractors.find(other => other.id !== attractor.id)?.id ?? null;
+      }
+    }
+    let routes = (Array.isArray(src.routes) ? src.routes : [])
+      .map(route => this._normalizeForceVizRoute(route, groupIds, attractorIds))
+      .filter(route => route.groupId && route.attractorId);
+    if (!routes.length) {
+      routes = [this._createDefaultForceVizRoute({ groupId: groups[0].id, attractorId: attractors[0].id })];
+    }
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('scenario'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : 'Scenario',
+      groups,
+      attractors,
+      routes,
+    };
+  }
+
+  /** Normalizes/migrates `simulation.forceViz` in place. Safe to call
+   *  repeatedly (constructor, after load, after workspace import) — older
+   *  saves that predate this submode simply get the default state. */
+  _normalizeForceVizState() {
+    const raw = this.simulation.forceViz;
+    const scenarios = (raw && Array.isArray(raw.scenarios) && raw.scenarios.length
+      ? raw.scenarios
+      : [this._createDefaultForceVizScenario()]
+    ).map(scenario => this._normalizeForceVizScenario(scenario));
+    const activeScenarioIndex = Number.isFinite(raw?.activeScenarioIndex)
+      ? Math.max(0, Math.min(scenarios.length - 1, Math.round(raw.activeScenarioIndex)))
+      : 0;
+    const scenario = scenarios[activeScenarioIndex];
+    const uiRaw = raw?.ui && typeof raw.ui === 'object' ? raw.ui : {};
+    const groupIds = new Set(scenario.groups.map(group => group.id));
+    const attractorIds = new Set(scenario.attractors.map(attractor => attractor.id));
+    const routeIds = new Set(scenario.routes.map(route => route.id));
+    this.simulation.forceViz = {
+      activeScenarioIndex,
+      scenarios,
+      ui: {
+        activeGroupId: groupIds.has(uiRaw.activeGroupId) ? uiRaw.activeGroupId : scenario.groups[0].id,
+        activeAttractorId: attractorIds.has(uiRaw.activeAttractorId) ? uiRaw.activeAttractorId : scenario.attractors[0].id,
+        activeRouteId: routeIds.has(uiRaw.activeRouteId) ? uiRaw.activeRouteId : scenario.routes[0].id,
+      },
+      camera: this._normalizeForceVizCameraConfig(raw?.camera),
+    };
+  }
+
+  _getActiveForceVizScenario() {
+    const fv = this.simulation.forceViz;
+    if (!fv) return null;
+    return fv.scenarios[fv.activeScenarioIndex] || fv.scenarios[0] || null;
+  }
+
+  _getForceVizGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.groups.find(group => group.id === groupId) || null;
+  }
+
+  _getForceVizAttractor(attractorId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.attractors.find(attractor => attractor.id === attractorId) || null;
+  }
+
+  _getForceVizRoutesForGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.routes.filter(route => route.groupId === groupId) || [];
+  }
+
+  /** Options for the "bind to spawn" control: existing boid spawn
+   *  definitions, not a duplicate physics/spawn config. */
+  _getForceVizSpawnOptions() {
+    const data = this._getSimulationBrushData('boid');
+    return Array.isArray(data?.spawns) ? data.spawns : [];
+  }
+
+  _getForceVizPathOptions() {
+    const data = this._getSimulationBrushData('boid');
+    return Array.isArray(data?.paths) ? data.paths : [];
+  }
+
+  _setSimulationMode(mode) {
+    const next = mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+    if (this.simulation.mode === next) return;
+    if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
+    if (next === 'forceVisualization') {
+      this._forceVizManualViewSnapshot = this._captureViewState();
+    } else {
+      this._restoreOrRetainForceVizView();
+    }
+    this.simulation.mode = next;
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    this.showToast(next === 'forceVisualization' ? 'Force Visualization mode ON' : 'Force Visualization mode OFF');
+  }
+
+  /** Applies the configured exit behavior after a run stops: restores the
+   *  manual view captured on entering the submode, or leaves the camera
+   *  wherever the run left it ('retainCurrentView'). The snapshot itself is
+   *  kept so repeated run/stop cycles within the same submode session keep
+   *  restoring to the same baseline view. */
+  _applyForceVizExitBehaviorOnStop() {
+    const cfg = this.simulation.forceViz?.camera;
+    const exitBehavior = cfg?.exitBehavior || 'restoreManualView';
+    if (exitBehavior !== 'restoreManualView' || !this._forceVizManualViewSnapshot) return;
+    const snapshot = this._forceVizManualViewSnapshot;
+    this.viewZoom = snapshot.zoom;
+    this.viewPanX = snapshot.panX;
+    this.viewPanY = snapshot.panY;
+    this.viewRotation = snapshot.rotation;
+    this._applyViewTransform();
+  }
+
+  /** Called when actually leaving Force Visualization mode (not just
+   *  stopping a run): applies the same exit behavior, then discards the
+   *  snapshot since there is no longer a submode session to return to. */
+  _restoreOrRetainForceVizView() {
+    this._applyForceVizExitBehaviorOnStop();
+    this._forceVizManualViewSnapshot = null;
+  }
+
+  _addForceVizGroup() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const group = this._createDefaultForceVizGroup({ name: `Group ${scenario.groups.length + 1}` });
+    scenario.groups.push(group);
+    this.simulation.forceViz.ui.activeGroupId = group.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return group;
+  }
+
+  _removeForceVizGroup(groupId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.groups.length <= 1) return;
+    scenario.groups = scenario.groups.filter(group => group.id !== groupId);
+    scenario.routes = scenario.routes.filter(route => route.groupId !== groupId);
+    if (!scenario.routes.length) {
+      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+    }
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveGroup(groupId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeGroupId = groupId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizGroup(groupId, patch) {
+    const group = this._getForceVizGroup(groupId);
+    if (!group) return;
+    Object.assign(group, patch);
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _addForceVizAttractor() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const attractor = this._createDefaultForceVizAttractor({ name: `Attractor ${scenario.attractors.length + 1}` });
+    scenario.attractors.push(attractor);
+    this.simulation.forceViz.ui.activeAttractorId = attractor.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return attractor;
+  }
+
+  _removeForceVizAttractor(attractorId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.attractors.length <= 1) return;
+    scenario.attractors = scenario.attractors.filter(attractor => attractor.id !== attractorId);
+    scenario.routes = scenario.routes.filter(route => route.attractorId !== attractorId);
+    for (const attractor of scenario.attractors) {
+      if (attractor.sharedAttractorId === attractorId) attractor.sharedAttractorId = null;
+    }
+    if (!scenario.routes.length) {
+      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+    }
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveAttractor(attractorId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeAttractorId = attractorId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizAttractor(attractorId, patch) {
+    const attractor = this._getForceVizAttractor(attractorId);
+    if (!attractor) return;
+    if (patch && typeof patch === 'object' && patch.movement) {
+      attractor.movement = { ...attractor.movement, ...patch.movement };
+      const { movement, ...rest } = patch;
+      Object.assign(attractor, rest);
+    } else {
+      Object.assign(attractor, patch);
+    }
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _addForceVizRoute() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const groupId = this.simulation.forceViz.ui.activeGroupId || scenario.groups[0].id;
+    const attractorId = this.simulation.forceViz.ui.activeAttractorId || scenario.attractors[0].id;
+    const route = this._createDefaultForceVizRoute({ groupId, attractorId });
+    scenario.routes.push(route);
+    this.simulation.forceViz.ui.activeRouteId = route.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return route;
+  }
+
+  _removeForceVizRoute(routeId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.routes.length <= 1) return;
+    scenario.routes = scenario.routes.filter(route => route.id !== routeId);
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveRoute(routeId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeRouteId = routeId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizRoute(routeId, patch) {
+    const scenario = this._getActiveForceVizScenario();
+    const route = scenario?.routes.find(entry => entry.id === routeId);
+    if (!route) return;
+    Object.assign(route, patch);
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _updateForceVizCamera(patch) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.camera = this._normalizeForceVizCameraConfig({ ...this.simulation.forceViz.camera, ...patch });
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  /** Live position for one attractor this frame. Reuses the same animated
+   *  path-target math as simulation guide paths for the 'path' type, so a
+   *  path attractor and a path guide behave identically. */
+  _resolveForceVizAttractorPosition(attractor, elapsed, scenario, depth = 0) {
+    if (!attractor) return null;
+    switch (attractor.type) {
+      case 'moving': {
+        const vx = attractor.movement?.velocityX || 0;
+        const vy = attractor.movement?.velocityY || 0;
+        return { x: attractor.x + vx * elapsed, y: attractor.y + vy * elapsed };
+      }
+      case 'unreachable': {
+        // Drifts continuously around its anchor so the influence falloff
+        // never fully saturates — boids chase it but never quite arrive.
+        const driftAngle = elapsed * (attractor.movement?.driftSpeed || 0);
+        const driftRadius = attractor.movement?.driftRadius || 0;
+        return {
+          x: attractor.x + Math.cos(driftAngle) * driftRadius,
+          y: attractor.y + Math.sin(driftAngle) * driftRadius,
+        };
+      }
+      case 'orbiting': {
+        const cx = attractor.movement?.orbitCenterX ?? attractor.x;
+        const cy = attractor.movement?.orbitCenterY ?? attractor.y;
+        const radius = Math.max(0, attractor.movement?.orbitRadius || 0);
+        const angle = elapsed * (attractor.movement?.orbitSpeed || 0);
+        return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+      }
+      case 'path': {
+        const pathItem = this._getForceVizPathOptions().find(entry => entry.id === attractor.movement?.pathId);
+        if (!pathItem) return { x: attractor.x, y: attractor.y };
+        const target = this._getAnimatedSimulationPathTarget(pathItem, this.getP());
+        return target ? { x: target.x, y: target.y } : { x: attractor.x, y: attractor.y };
+      }
+      case 'shared': {
+        if (depth > 4) return { x: attractor.x, y: attractor.y };
+        const target = scenario?.attractors.find(entry => entry.id === attractor.sharedAttractorId);
+        if (!target || target.id === attractor.id) return { x: attractor.x, y: attractor.y };
+        return this._resolveForceVizAttractorPosition(target, elapsed, scenario, depth + 1);
+      }
+      case 'fixed':
+      default:
+        return { x: attractor.x, y: attractor.y };
+    }
+  }
+
+  /** Maps a Force Visualization group to the agent index range its bound
+   *  spawn produced this stroke (see BoidBrush._spawnRangesById). Returns
+   *  null when the group isn't bound or hasn't spawned yet — the route is
+   *  simply skipped for this frame rather than falling back to "everyone". */
+  _resolveForceVizGroupRange(brush, group) {
+    const ranges = brush?._spawnRangesById;
+    if (!ranges || group?.spawnId == null) return null;
+    const range = ranges.get(group.spawnId);
+    if (!range) return null;
+    return { start: range.startIndex, end: range.endIndex };
+  }
+
+  /** Builds the CPU-applied, group-scoped guide points routes describe.
+   *  Called from brushes.js `_collectSimulationGuides` only while
+   *  simulation.mode === 'forceVisualization'. */
+  _collectForceVizGuidePoints(brush, p) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || !scenario.routes.length) return [];
+    const elapsed = (performance.now() - this._startTime) / 1000;
+    const points = [];
+    for (const route of scenario.routes) {
+      if (route.enabled === false) continue;
+      const weight = Math.max(0, route.weight ?? 1);
+      if (weight <= 0) continue;
+      const group = this._getForceVizGroup(route.groupId, scenario);
+      const attractor = this._getForceVizAttractor(route.attractorId, scenario);
+      if (!group || !attractor || attractor.enabled === false) continue;
+      const groupRange = this._resolveForceVizGroupRange(brush, group);
+      if (!groupRange) continue;
+      const pos = this._resolveForceVizAttractorPosition(attractor, elapsed, scenario);
+      if (!pos) continue;
+      points.push({
+        x: pos.x,
+        y: pos.y,
+        strength: Math.max(0, (attractor.strength ?? 0) * weight),
+        radius: Math.max(1, attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS),
+        influenceRadius: Math.max(attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS, attractor.influenceRadius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2),
+        groupRange,
+      });
+    }
+    return points;
+  }
+
+  /** Computes the pan (viewPanX/viewPanY) that would center canvas point
+   *  (focusX, focusY) in the viewport at the given zoom/rotation, reusing
+   *  the exact same anchor math manual pan/zoom/pinch already use — the
+   *  camera adapter never introduces a second coordinate system. */
+  _computeForceVizCenteredPan(focusX, focusY, zoom, rotation) {
+    const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+    const w = areaRect?.width || this.W;
+    const h = areaRect?.height || this.H;
+    const savedZoom = this.viewZoom;
+    const savedRotation = this.viewRotation;
+    this.viewZoom = zoom;
+    this.viewRotation = rotation;
+    this._setViewPanForScreenAnchor(focusX, focusY, w / 2, h / 2);
+    const panX = this.viewPanX;
+    const panY = this.viewPanY;
+    this.viewZoom = savedZoom;
+    this.viewRotation = savedRotation;
+    return { panX, panY };
+  }
+
+  _isForceVizCameraInterrupted(cfg) {
+    if (cfg.interruption === 'ignoreUserInput') return false;
+    const runtime = this._forceVizCameraRuntime;
+    const sinceMs = performance.now() - (runtime.lastManualInputAt || 0);
+    if (cfg.interruption === 'resumeAfterDelay') {
+      return sinceMs < Math.max(0, (cfg.resumeDelay || 0) * 1000);
+    }
+    // holdOnUserInput: pause automation briefly after any manual pan/zoom/rotate.
+    return sinceMs < FORCE_VIZ_MANUAL_INPUT_HOLD_MS;
+  }
+
+  /** Resolves the desired focus point/zoom/rotation for the active camera
+   *  policy from BoidBrush's cached transient snapshot (centroid/bounds/
+   *  average velocity/candidates) — never re-scans the agent buffer here.
+   *  Returns null when the policy has nothing to frame yet (e.g. no agents
+   *  spawned) so the adapter leaves the camera exactly where it is. */
+  _resolveForceVizCameraDesired(brush, elapsed) {
+    const cfg = this.simulation.forceViz.camera;
+    const snapshot = brush?._transientSnapshot;
+    switch (cfg.policy) {
+      case 'followBoid': {
+        if (!snapshot?.count || !snapshot.candidates?.length) return null;
+        const idx = Math.max(0, Math.min(snapshot.candidates.length - 1, Math.round(cfg.targetBoidIndex || 0)));
+        const candidate = snapshot.candidates[idx];
+        return { focusX: candidate.x, focusY: candidate.y, velX: candidate.vx, velY: candidate.vy, zoom: this.viewZoom, rotation: this.viewRotation };
+      }
+      case 'followCentroid': {
+        if (!snapshot?.count) return null;
+        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: snapshot.avgVelocity.x, velY: snapshot.avgVelocity.y, zoom: this.viewZoom, rotation: this.viewRotation };
+      }
+      case 'frameGroups': {
+        if (!snapshot?.count) return null;
+        const { minX, minY, maxX, maxY } = snapshot.bounds;
+        const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+        const areaW = areaRect?.width || this.W;
+        const areaH = areaRect?.height || this.H;
+        const pad = Math.max(0, cfg.padding || 0);
+        const boundsW = Math.max(1, maxX - minX);
+        const boundsH = Math.max(1, maxY - minY);
+        const zoom = Math.max(0.01, Math.min(areaW / (boundsW + pad * 2), areaH / (boundsH + pad * 2)));
+        return { focusX: (minX + maxX) / 2, focusY: (minY + maxY) / 2, velX: 0, velY: 0, zoom, rotation: this.viewRotation };
+      }
+      case 'orbit': {
+        if (!snapshot?.count) return null;
+        const runtime = this._forceVizCameraRuntime;
+        const dt = Number.isFinite(runtime.lastElapsed) ? Math.max(0, Math.min(0.25, elapsed - runtime.lastElapsed)) : 0;
+        runtime.orbitAngle = (runtime.orbitAngle || 0) + (cfg.orbitSpeed || 0) * dt;
+        runtime.lastElapsed = elapsed;
+        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: 0, velY: 0, zoom: this.viewZoom, rotation: runtime.orbitAngle };
+      }
+      case 'fixed':
+      default:
+        return null;
+    }
+  }
+
+  /** The single adapter that turns a resolved camera policy target into
+   *  actual view state changes: applies offset/lookahead, clamps zoom,
+   *  respects interruption, smooths toward the target, and finally calls
+   *  the same _applyViewTransform() manual pan/zoom uses. Canvas
+   *  coordinates are untouched — this only moves viewZoom/viewPanX/
+   *  viewPanY/viewRotation, the same fields manual navigation uses. */
+  _applyForceVizCameraFrame(brush, elapsed) {
+    const sim = this.simulation;
+    if (!sim.enabled || sim.mode !== 'forceVisualization' || !sim.running) return;
+    if (this.activeBrush !== 'boid') return;
+    const cfg = sim.forceViz?.camera;
+    if (!cfg || this._isForceVizCameraInterrupted(cfg)) return;
+    const desired = this._resolveForceVizCameraDesired(brush, elapsed);
+    if (!desired) return;
+    const minZoom = Math.max(MIN_ZOOM, cfg.minZoom);
+    const maxZoom = Math.min(MAX_ZOOM, cfg.maxZoom);
+    const clampedZoom = Math.max(minZoom, Math.min(maxZoom, desired.zoom));
+    const lookahead = Math.max(0, cfg.lookahead || 0);
+    const focusX = desired.focusX + (desired.velX || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetX || 0);
+    const focusY = desired.focusY + (desired.velY || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetY || 0);
+    const targetRotation = Number.isFinite(desired.rotation) ? desired.rotation : this.viewRotation;
+    const target = this._computeForceVizCenteredPan(focusX, focusY, clampedZoom, targetRotation);
+    const smoothing = Math.max(0.001, Math.min(1, cfg.smoothing));
+    this.viewZoom = _lerp(this.viewZoom, clampedZoom, smoothing);
+    this.viewPanX = _lerp(this.viewPanX, target.panX, smoothing);
+    this.viewPanY = _lerp(this.viewPanY, target.panY, smoothing);
+    this.viewRotation = _lerpAngle(this.viewRotation, targetRotation, smoothing);
+    this._applyViewTransform();
+  }
+
+  /** Compact camera/status text for the HUD — the only place this reads
+   *  from is the same transient snapshot + camera config the adapter uses. */
+  _formatForceVizStatusText() {
+    const sim = this.simulation;
+    if (sim.mode !== 'forceVisualization') return '';
+    const cfg = sim.forceViz?.camera;
+    const scenario = this._getActiveForceVizScenario();
+    const routeCount = scenario?.routes.filter(route => route.enabled !== false).length || 0;
+    const policyLabel = {
+      fixed: 'Fixed',
+      followBoid: 'Follow Boid',
+      followCentroid: 'Follow Centroid',
+      frameGroups: 'Frame Groups',
+      orbit: 'Orbit',
+    }[cfg?.policy] || 'Fixed';
+    const stateLabel = sim.running ? 'Running' : (sim.paused ? 'Paused' : 'Ready');
+    return `${stateLabel} · ${routeCount} route${routeCount === 1 ? '' : 's'} · Cam: ${policyLabel} · ${Math.round(this.viewZoom * 100)}%`;
+  }
+
+  _syncForceVizUI() {
+    const select = document.getElementById('simModeSelect');
+    if (select && select.value !== this.simulation.mode) select.value = this.simulation.mode;
+    document.querySelectorAll('[data-sim-force-viz-only]').forEach(el => {
+      el.style.display = this.simulation.mode === 'forceVisualization' ? '' : 'none';
+    });
+    this._renderForceVizPanel?.();
+    this._updateForceVizStatusText();
+  }
+
+  /** Cheap per-frame text refresh, split out from _syncForceVizUI() (which
+   *  also toggles DOM visibility) so the camera-frame hook in the main RAF
+   *  loop isn't doing a querySelectorAll every frame. */
+  _updateForceVizStatusText() {
+    const status = document.getElementById('simForceVizStatus');
+    if (!status) return;
+    const text = this._formatForceVizStatusText();
+    if (status.textContent !== text) status.textContent = text;
+    const nextDisplay = text ? '' : 'none';
+    if (status.style.display !== nextDisplay) status.style.display = nextDisplay;
   }
 
   _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
@@ -11858,6 +12578,7 @@ export class App {
   }
 
   _syncSimulationUI() {
+    this._syncForceVizUI();
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
@@ -12160,6 +12881,7 @@ export class App {
     this.isDrawing = false;
     this.isTapering = false;
     this._simulationSavedPlaybackCapture = null;
+    if (wasActive && this.simulation.mode === 'forceVisualization') this._applyForceVizExitBehaviorOnStop();
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
   }
@@ -15971,6 +16693,9 @@ export class App {
       this.simulation.hudCollapsed = !this.simulation.hudCollapsed;
       this._syncSimulationUI();
     });
+    document.getElementById('simModeSelect')?.addEventListener('change', event => {
+      this._setSimulationMode(event.target.value);
+    });
     ['simInspectorToggle', 'simDrawerInspectorToggle'].forEach(id => {
       document.getElementById(id)?.addEventListener('click', () => {
         // Toggle simulation tab visibility in right panel
@@ -17152,6 +17877,7 @@ export class App {
   _onTouchMove(e) {
     if (this._pinchActive && e.touches.length === 2) {
       e.preventDefault();
+      this._forceVizCameraRuntime.lastManualInputAt = performance.now();
       const t0 = e.touches[0], t1 = e.touches[1];
       const dx = t1.clientX - t0.clientX;
       const dy = t1.clientY - t0.clientY;
@@ -17185,6 +17911,7 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
+    this._forceVizCameraRuntime.lastManualInputAt = performance.now();
     // Shift+scroll = rotate view
     if (e.shiftKey) {
       const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
@@ -17967,6 +18694,11 @@ export class App {
       brush.onFrame(elapsed);
       if (this.simulation.running && this.simulation.enabled && this.activeBrush === 'boid') {
         this._syncSimulationSavedPlaybackCapture(brush);
+        // Force Visualization camera: resolves its target from the BoidBrush
+        // transient snapshot brush.onFrame() just refreshed, then smooths
+        // view state via the same _applyViewTransform() manual nav uses.
+        this._applyForceVizCameraFrame(brush, elapsed);
+        this._updateForceVizStatusText();
       }
     } else if (!this.isDrawing && !this.simulation.running && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
@@ -19659,6 +20391,10 @@ export class App {
       inspectorCollapsed: this.simulation.inspectorCollapsed,
       inspectorSections: this.simulation.inspectorSections,
       editorTool: this.simulation.editorTool,
+      // 'normal' | 'forceVisualization' — config only, no runtimes/camera
+      // smoothing state. See _createDefaultForceVizState().
+      mode: this.simulation.mode,
+      forceViz: _deepClone(this.simulation.forceViz),
       brushData: this.simulation.brushData,
       nextId: this.simulation.nextId,
       vars: this.simulation.vars,
@@ -20230,6 +20966,11 @@ export class App {
         this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(val?.savedPlayback);
         this.simulation.multiSessionEnabled = !!val?.multiSessionEnabled;
         this.simulation.multiSessionBindings = Array.isArray(val?.multiSessionBindings) ? _deepClone(val.multiSessionBindings) : [];
+        // Older saves predate the submode entirely — missing `mode`/`forceViz`
+        // falls back to 'normal' plus the default scenario via normalization.
+        this.simulation.mode = val?.mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+        this.simulation.forceViz = val?.forceViz && typeof val.forceViz === 'object' ? _deepClone(val.forceViz) : null;
+        this._normalizeForceVizState();
         continue;
       }
       if (id === '_symmetryState') {
