@@ -12549,6 +12549,15 @@ export class App {
     }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
+    const forceVizBtn = document.getElementById('simForceVizToggle');
+    if (forceVizBtn) {
+      const forceVizOn = this.simulation.mode === 'forceVisualization';
+      const forceVizLabel = forceVizOn ? 'Force Visualization mode on' : 'Force Visualization mode off';
+      forceVizBtn.classList.toggle('active', forceVizOn);
+      forceVizBtn.setAttribute('aria-pressed', forceVizOn ? 'true' : 'false');
+      forceVizBtn.setAttribute('aria-label', forceVizLabel);
+      forceVizBtn.title = forceVizLabel;
+    }
     const simTabActive = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]')?.classList.contains('active');
     inspectorButtons.forEach(button => button?.classList.toggle('active', !!simTabActive));
     guidesButtons.forEach(button => {
@@ -16528,6 +16537,9 @@ export class App {
       this.invalidateParams();
       source.dispatchEvent(new Event('change', { bubbles: true }));
       this._syncSimulationUI();
+    });
+    document.getElementById('simForceVizToggle')?.addEventListener('click', () => {
+      this._setSimulationMode(this.simulation.mode === 'forceVisualization' ? 'normal' : 'forceVisualization');
     });
     document.getElementById('simSetupExplorerBtn')?.addEventListener('click', event => {
       this.toggleSimulationSessionRoutingPicker(event.currentTarget);
