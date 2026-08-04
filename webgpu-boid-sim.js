@@ -103,7 +103,7 @@ function packGuideMeta(pointCount, pathTargetCount) {
 }
 
 function isSupportedByGpu(p) {
-  return true;
+  return !p?.forceCpuSimulation;
 }
 
 export class WebGPUBoidSim {

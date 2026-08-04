@@ -1,5 +1,5 @@
-﻿// =============================================================================
-// app.js — Core painting application engine
+// =============================================================================
+// app.js � Core painting application engine
 //
 // Manages canvases, layers, undo/redo, parameter cache, frame loop,
 // session persistence, and wires all modules together.
@@ -7,7 +7,7 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildTreadmillPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -39,20 +39,20 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
-// ── Force Visualization submode ─────────────────────────────────────────
+// -- Treadmill Canvas submode -----------------------------------------
 // A `simulation.mode` alternative to the default 'normal' authoring mode.
 // Scenarios describe groups (bound to existing spawn definitions), weighted
 // attractors, and routes that connect them; a separate camera policy frames
-// the result. All of it is persisted config — no runtimes, camera smoothing
+// the result. All of it is persisted config � no runtimes, camera smoothing
 // accumulators, or resolved per-frame positions live on this state.
-const FORCE_VIZ_ATTRACTOR_TYPES = ['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'];
-const FORCE_VIZ_CAMERA_POLICIES = ['fixed', 'followBoid', 'followCentroid', 'frameGroups', 'orbit'];
-const FORCE_VIZ_CAMERA_INTERRUPTIONS = ['holdOnUserInput', 'resumeAfterDelay', 'ignoreUserInput'];
-const FORCE_VIZ_CAMERA_EXIT_BEHAVIORS = ['restoreManualView', 'retainCurrentView'];
-const FORCE_VIZ_MANUAL_INPUT_HOLD_MS = 900;
-const FORCE_VIZ_LOOKAHEAD_SCALE = 14;
-const FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS = 80;
-const FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH = 1.2;
+const TREADMILL_ATTRACTOR_TYPES = ['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'];
+const TREADMILL_CAMERA_POLICIES = ['fixed', 'followBoid', 'followCentroid', 'frameGroups', 'orbit'];
+const TREADMILL_CAMERA_INTERRUPTIONS = ['holdOnUserInput', 'resumeAfterDelay', 'ignoreUserInput'];
+const TREADMILL_CAMERA_EXIT_BEHAVIORS = ['restoreManualView', 'retainCurrentView'];
+const TREADMILL_MANUAL_INPUT_HOLD_MS = 900;
+const TREADMILL_LOOKAHEAD_SCALE = 14;
+const TREADMILL_DEFAULT_ATTRACTOR_RADIUS = 80;
+const TREADMILL_DEFAULT_ATTRACTOR_STRENGTH = 1.2;
 
 // Keep the inline JSON editor's single-key accent lightweight and deterministic.
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
@@ -580,7 +580,7 @@ async function _fetchWithRetry(resource, {
       lastError = error;
       if (attempt >= attempts) throw error;
     }
-    // Exponential back-off with jitter — gives TLS 0-RTT (HTTP 425) time to settle
+    // Exponential back-off with jitter � gives TLS 0-RTT (HTTP 425) time to settle
     const jitter = Math.random() * 100;
     await _sleep(delayMs * attempt + jitter);
   }
@@ -936,7 +936,7 @@ function _buildMotionPathRadialSpokes(center, spokeHandle, count, spread) {
   const normalizedCount = _normalizeMotionPathRadialCount(count);
   const normalizedSpread = _normalizeMotionPathRadialSpread(spread);
   const isSingleSpoke = normalizedCount <= 1;
-  // A single spoke always behaves like a single directed line, even if its spread slider reaches 360°.
+  // A single spoke always behaves like a single directed line, even if its spread slider reaches 360�.
   const fullCircle = !isSingleSpoke && normalizedSpread >= MOTION_PATH_RADIAL_FULL_CIRCLE_THRESHOLD;
   const baseAngle = Math.atan2(spokeHandle.y - center.y, spokeHandle.x - center.x);
   let startAngle = baseAngle;
@@ -1435,13 +1435,13 @@ function _sampleQuadraticBezierPoint(start, control, end, t) {
 function _parseSymmetrySizeMultipliers(value) {
   if (Array.isArray(value)) {
     const parsed = value
-      .map(entry => Number.parseFloat(String(entry).replace(/×/g, '').trim()))
+      .map(entry => Number.parseFloat(String(entry).replace(/�/g, '').trim()))
       .filter(entry => Number.isFinite(entry) && entry > 0);
     return parsed.length ? parsed : [1];
   }
   const parsed = String(value ?? '')
     .split(/[,\s;|/]+/)
-    .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
+    .map(entry => Number.parseFloat(entry.replace(/�/g, '').trim()))
     .filter(entry => Number.isFinite(entry) && entry > 0);
   return parsed.length ? parsed : [1];
 }
@@ -1961,8 +1961,8 @@ export class App {
     this._rawPressure = 0.5;  // unsmoothed pressure for EMA calculation
     this.tiltX = 0;       // stylus tilt in degrees (-90..90)
     this.tiltY = 0;
-    this.azimuth = 0;     // stylus azimuth in radians (0..2π)
-    this.altitude = Math.PI / 2; // stylus altitude (π/2 = vertical)
+    this.azimuth = 0;     // stylus azimuth in radians (0..2p)
+    this.altitude = Math.PI / 2; // stylus altitude (p/2 = vertical)
     this.prevAzimuth = 0;
     this.azimuthDeltaDeg = 0;
     this.azimuthUpdateCount = 0;
@@ -2046,7 +2046,7 @@ export class App {
     this._heightDirty = false;
     this._impastoOverlayCanvas = null;
 
-    // Reusable 1×1 canvas for CSS color parsing (smudge)
+    // Reusable 1�1 canvas for CSS color parsing (smudge)
     this._colorParseCanvas = document.createElement('canvas');
     this._colorParseCanvas.width = 1;
     this._colorParseCanvas.height = 1;
@@ -2077,10 +2077,10 @@ export class App {
       inspectorSections: {},
       editorTool: 'spawn',
       // Submode: 'normal' (default, unchanged authoring/playback behavior) or
-      // 'forceVisualization' (scenario-driven groups/attractors/routes with a
-      // policy-driven camera). Persisted; normal mode ignores it entirely.
+      // 'treadmillCanvas' (one flock moving toward a frame-bound attractor).
+      // Persisted; normal mode ignores it entirely.
       mode: 'normal',
-      forceViz: null, // populated below by _createDefaultForceVizState()
+      treadmill: null, // populated below by _createDefaultTreadmillState()
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -2110,14 +2110,28 @@ export class App {
       nextId: 1,
     };
     // populated in _init() after the first resize, once this.W/this.H
-    // reflect real canvas dimensions (see _createDefaultForceVizState()).
-    // Force Visualization runtime-only state — never persisted/serialized.
-    // Holds the manual view the user had before entering the submode (for
-    // the 'restoreManualView' exit behavior) and small camera bookkeeping
-    // (orbit angle accumulator, last manual pan/zoom/rotate timestamp for
-    // interruption handling).
-    this._forceVizManualViewSnapshot = null;
-    this._forceVizCameraRuntime = { lastManualInputAt: 0, orbitAngle: 0, lastElapsed: null };
+    // reflect real canvas dimensions (see _createDefaultTreadmillState()).
+    // Treadmill Canvas runtime-only state � never persisted/serialized.
+    // The origin moves with the frame; individual boid positions never wrap
+    // or reset while the attractor stays at its configured screen offset.
+    this._treadmillManualViewSnapshot = null;
+    this._treadmillCameraRuntime = { lastManualInputAt: 0, orbitAngle: 0, lastElapsed: null };
+    this._treadmillRuntime = {
+      originX: null,
+      originY: null,
+      targetX: null,
+      targetY: null,
+      cameraX: null,
+      cameraY: null,
+      cameraZoom: 1,
+      lastElapsed: null,
+      viewAnchorCameraX: null,
+      viewAnchorCameraY: null,
+      viewAnchorPanX: 0,
+      viewAnchorPanY: 0,
+      viewAnchorRotation: 0,
+    };
+    this._treadmillPresentationLayerId = null;
     this._simulationSavedPlaybackCapture = null;
     this.motionPath = this._createDefaultMotionPathState();
     this.motionPathEditor = this._createMotionPathEditorState();
@@ -2508,7 +2522,7 @@ export class App {
   async _init() {
     this.selectionMgr = new SelectionManager(this);
     this._resizeAll();
-    this.simulation.forceViz = this._createDefaultForceVizState();
+    this.simulation.treadmill = this._createDefaultTreadmillState();
     this.compositor = new Compositor(this.compositeCanvas);
     this.compositor.resize(this.W, this.H, this.DPR);
     this._addBackgroundLayer();
@@ -2533,6 +2547,7 @@ export class App {
     buildLayersPanel(this);
     buildGuidesPanel(this);
     buildSimulationControlsPanel(this);
+    buildTreadmillPanel(this);
     initEdgeSliders(this);
     this._initPerformanceTelemetry();
 
@@ -2584,7 +2599,7 @@ export class App {
 
   _resizeAll() {
     if (this._docSized) {
-      // Document has explicit size — don't resize to viewport
+      // Document has explicit size � don't resize to viewport
       const transformEl = document.getElementById('canvasTransform');
       if (transformEl) {
         transformEl.style.width = this.W + 'px';
@@ -2741,7 +2756,7 @@ export class App {
 
     this._smudgeImageData = null;
     this.compositeAllLayers();
-    this.showToast(`📐 Canvas: ${newW}×${newH}`);
+    this.showToast(`?? Canvas: ${newW}�${newH}`);
   }
 
   _showCanvasSizeModal() {
@@ -2999,7 +3014,7 @@ export class App {
     }
     const { autoApplyToggle } = this._getWorkspaceJsonModalElements();
     if (autoApplyToggle?.checked) {
-      this._setWorkspaceJsonModalStatus('Draft updated. Applying changes…');
+      this._setWorkspaceJsonModalStatus('Draft updated. Applying changes�');
       this._scheduleWorkspaceJsonAutoApply();
       return;
     }
@@ -3337,7 +3352,7 @@ export class App {
     this._workspaceJsonEditorSessionIndex = sessionIndex === 'draft' ? -1 : sessionIndex;
     this._populateWorkspaceJsonEditor(bundle);
     this._setWorkspaceJsonModalStatus(`${this._getWorkspaceJsonDocumentSpec(docKey).label} reloaded from the current workspace snapshot.`, 'success');
-    this.showToast('↺ JSON reset to current');
+    this.showToast('? JSON reset to current');
     return true;
   }
 
@@ -3413,7 +3428,7 @@ export class App {
     this._workspaceJsonEditorBaseDoc = _deepClone(parsed);
     this._renderWorkspaceJsonStructuredEditor(parsed);
     this._setWorkspaceJsonModalStatus('Workspace JSON formatted.', 'success');
-    this.showToast('✨ JSON formatted');
+    this.showToast('? JSON formatted');
     return true;
   }
 
@@ -3427,11 +3442,11 @@ export class App {
         `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
         'success',
       );
-      this.showToast('✓ JSON valid');
+      this.showToast('? JSON valid');
       return true;
     }
     this._setWorkspaceJsonModalStatus('Document JSON is valid. Ready to apply.', 'success');
-    this.showToast('✓ JSON valid');
+    this.showToast('? JSON valid');
     return true;
   }
 
@@ -3450,7 +3465,7 @@ export class App {
     try {
       await navigator.clipboard.writeText(text);
       this._setWorkspaceJsonModalStatus('Workspace JSON copied to the clipboard.', 'success');
-      this.showToast('📋 Workspace JSON copied');
+      this.showToast('?? Workspace JSON copied');
       return true;
     } catch (error) {
       console.error('Workspace JSON copy failed:', error);
@@ -3506,7 +3521,7 @@ export class App {
       } else {
         this._setWorkspaceJsonModalStatus(`${this._getWorkspaceJsonDocumentSpec(docKey).label} applied successfully.`, 'success');
       }
-      if (!quiet) this.showToast(`💾 ${this._getWorkspaceJsonDocumentSpec(docKey).label} applied`);
+      if (!quiet) this.showToast(`?? ${this._getWorkspaceJsonDocumentSpec(docKey).label} applied`);
       return true;
     } catch (error) {
       console.error('Workspace JSON apply failed:', error);
@@ -3635,12 +3650,12 @@ export class App {
     if (recordBtn) {
       recordBtn.classList.toggle('recording', state.recording);
       recordBtn.classList.toggle('active', state.recording || state.armedOnStart);
-      recordBtn.textContent = state.recording ? '⏺ Stop Rec' : (state.armedOnStart ? '⏺ Armed' : '⏺ Record');
+      recordBtn.textContent = state.recording ? '? Stop Rec' : (state.armedOnStart ? '? Armed' : '? Record');
       recordBtn.disabled = state.exportBusy;
     }
     const exportBtn = document.getElementById('simExportBtn');
     if (exportBtn) {
-      exportBtn.textContent = state.exportBusy ? 'Exporting…' : 'Export';
+      exportBtn.textContent = state.exportBusy ? 'Exporting�' : 'Export';
       exportBtn.disabled = state.exportBusy;
     }
     const frameCounter = document.getElementById('simFrameCounter');
@@ -3652,21 +3667,21 @@ export class App {
     }
     const downloadBtn = document.getElementById('simExportDownloadBtn');
     if (downloadBtn) {
-      downloadBtn.textContent = state.exportBusy ? 'Exporting…' : 'Export Latest';
+      downloadBtn.textContent = state.exportBusy ? 'Exporting�' : 'Export Latest';
       downloadBtn.disabled = state.exportBusy || (!state.blob && !state.recording);
     }
     const status = document.getElementById('simExportStatusText');
     if (status) {
       if (state.exportBusy) {
-        status.textContent = `Exporting ${options.format.toUpperCase()} at ${options.frameRate} FPS (${options.quality})…`;
+        status.textContent = `Exporting ${options.format.toUpperCase()} at ${options.frameRate} FPS (${options.quality})�`;
       } else if (state.recording) {
-        status.textContent = `Recording in progress · ${options.frameRate} FPS · ${options.quality} quality · target ${options.format.toUpperCase()}`;
+        status.textContent = `Recording in progress � ${options.frameRate} FPS � ${options.quality} quality � target ${options.format.toUpperCase()}`;
       } else if (state.armedOnStart) {
-        status.textContent = `Auto-record armed · recording will start with the next simulation run · ${options.frameRate} FPS · ${options.quality} quality · target ${options.format.toUpperCase()}`;
+        status.textContent = `Auto-record armed � recording will start with the next simulation run � ${options.frameRate} FPS � ${options.quality} quality � target ${options.format.toUpperCase()}`;
       } else if (state.blob) {
-        status.textContent = `Latest capture ready · ${(state.blob.size / (1024 * 1024)).toFixed(2)} MB · export ${options.format.toUpperCase()} at ${options.frameRate} FPS (${options.quality})`;
+        status.textContent = `Latest capture ready � ${(state.blob.size / (1024 * 1024)).toFixed(2)} MB � export ${options.format.toUpperCase()} at ${options.frameRate} FPS (${options.quality})`;
       } else {
-        status.textContent = `No recording captured yet · ${options.frameRate} FPS · ${options.quality} quality · target ${options.format.toUpperCase()}`;
+        status.textContent = `No recording captured yet � ${options.frameRate} FPS � ${options.quality} quality � target ${options.format.toUpperCase()}`;
       }
     }
   }
@@ -3689,7 +3704,7 @@ export class App {
     }
     state.armedOnStart = true;
     this._syncSimulationUI();
-    this.showToast('⏺ Recording armed for next run');
+    this.showToast('? Recording armed for next run');
   }
 
   _getSimulationRecordingMimeType() {
@@ -3713,12 +3728,12 @@ export class App {
     const state = this._simulationExport;
     if (state.recording) return true;
     if (typeof MediaRecorder === 'undefined' || typeof this.compositeCanvas?.captureStream !== 'function') {
-      this.showToast('⚠ Browser recording is unavailable');
+      this.showToast('? Browser recording is unavailable');
       return false;
     }
     const mimeType = this._getSimulationRecordingMimeType();
     if (!mimeType) {
-      this.showToast('⚠ No supported recording codec found');
+      this.showToast('? No supported recording codec found');
       return false;
     }
     state.blob = null;
@@ -3744,7 +3759,7 @@ export class App {
       if (event.data && event.data.size > 0) state.chunks.push(event.data);
     };
     recorder.onerror = () => {
-      this.showToast('⚠ Recording failed');
+      this.showToast('? Recording failed');
     };
     recorder.onstop = () => {
       const blob = state.chunks.length ? new Blob(state.chunks, { type: state.mimeType || 'video/webm' }) : null;
@@ -3757,13 +3772,13 @@ export class App {
       const resolve = state.resolveStop;
       state.resolveStop = null;
       state.stopPromise = null;
-      if (state.stopAnnounce) this.showToast('⏹ Recording stopped');
+      if (state.stopAnnounce) this.showToast('? Recording stopped');
       state.stopAnnounce = false;
       this._syncSimulationUI();
       if (resolve) resolve(state.blob);
     };
     recorder.start(SIM_EXPORT_TIMESLICE_MS);
-    this.showToast('⏺ Recording started');
+    this.showToast('? Recording started');
     this._syncSimulationUI();
     return true;
   }
@@ -3878,7 +3893,7 @@ export class App {
     const options = this._readSimulationExportOptionsFromUi();
     const sourceBlob = await this._ensureSimulationRecordingBlob();
     if (!sourceBlob) {
-      this.showToast('⚠ Record a simulation first');
+      this.showToast('? Record a simulation first');
       this._refreshSimulationExportUi();
       return;
     }
@@ -3889,10 +3904,10 @@ export class App {
       if (!exported?.blob) throw new Error('No export output produced');
       const stamp = new Date().toISOString().replace(/[.:]/g, '-');
       this._downloadBlob(exported.blob, `simulation-${stamp}.${exported.extension}`);
-      this.showToast(`💾 Exported ${exported.extension.toUpperCase()}`);
+      this.showToast(`?? Exported ${exported.extension.toUpperCase()}`);
     } catch (error) {
       console.error('Simulation export failed:', error);
-      this.showToast(options.format === 'webm' ? '⚠ Export failed' : '⚠ Export failed — try WebM');
+      this.showToast(options.format === 'webm' ? '? Export failed' : '? Export failed � try WebM');
     } finally {
       state.exportBusy = false;
       this._syncSimulationUI();
@@ -4015,6 +4030,23 @@ export class App {
     this.compositeAllLayers();
   }
 
+  _ensureTreadmillPresentationLayer() {
+    const activeLayerId = this.layers[this.activeLayerIdx]?.id || null;
+    let layer = this._getLayerById(this._treadmillPresentationLayerId);
+    if (!layer) {
+      const { canvas, ctx } = this.makeLayerCanvas();
+      layer = this._createLayerRecord(canvas, ctx, { name: 'Treadmill Canvas' });
+      this._treadmillPresentationLayerId = layer.id;
+    }
+    const existingIndex = this.layers.indexOf(layer);
+    if (existingIndex >= 0) this.layers.splice(existingIndex, 1);
+    this.layers.unshift(layer);
+    const activeIndex = this.layers.findIndex(candidate => candidate.id === activeLayerId);
+    if (activeIndex >= 0) this.setActiveLayer(activeIndex);
+    this._syncLayerSwitcher();
+    return layer;
+  }
+
   _getLayerById(id) {
     if (!id) return null;
     return this.layers.find(layer => layer.id === id) || null;
@@ -4064,7 +4096,7 @@ export class App {
     btn.title = `Alpha Lock (/) ${on ? 'ON' : 'OFF'}`;
   }
 
-  // ── Background layer ──────────────────────────────────────
+  // -- Background layer --------------------------------------
 
   _addBackgroundLayer() {
     const { canvas, ctx } = this.makeLayerCanvas();
@@ -4164,7 +4196,8 @@ export class App {
     const rightView = rightPanel?.querySelector(':scope > .panel-view.active')?.dataset.panelView || '';
     document.body.classList.toggle('json-panel-expanded', rightOpen && rightView === 'json');
     const simDrawerTab = leftTabs?.querySelector('.panel-tab[data-panel-view="simulationControls"]');
-    const simDrawerAvailable = !!simDrawerTab && !simDrawerTab.classList.contains('panel-tab-hidden');
+    const treadmillTab = leftTabs?.querySelector('.panel-tab[data-panel-view="treadmill"]');
+    const simDrawerAvailable = [simDrawerTab, treadmillTab].some(tab => tab && !tab.classList.contains('panel-tab-hidden'));
     if (leftTabs) {
       leftTabs.classList.toggle('panel-tabs--visible', alwaysShow || leftOpen || simDrawerAvailable);
       leftTabs.classList.toggle('panel-tabs--open', !!leftOpen);
@@ -4794,7 +4827,7 @@ export class App {
     this._syncColorPickerUi();
   }
 
-  // ── Canvas texture ─────────────────────────────────────────
+  // -- Canvas texture -----------------------------------------
 
   /**
    * Build the default built-in paper texture.
@@ -4834,7 +4867,7 @@ export class App {
     return c;
   }
 
-  /** Linen canvas texture — coarse woven grid with thread noise. */
+  /** Linen canvas texture � coarse woven grid with thread noise. */
   _buildBuiltinLinenTextureCanvas() {
     const sz = 256;
     const c = document.createElement('canvas');
@@ -4864,7 +4897,7 @@ export class App {
     return c;
   }
 
-  /** Rough watercolor paper — pronounced tooth with soft pits. */
+  /** Rough watercolor paper � pronounced tooth with soft pits. */
   _buildBuiltinWatercolorTextureCanvas() {
     const sz = 256;
     const c = document.createElement('canvas');
@@ -4896,7 +4929,7 @@ export class App {
     return c;
   }
 
-  /** Charcoal / drawing paper — fine consistent tooth with light directional grain. */
+  /** Charcoal / drawing paper � fine consistent tooth with light directional grain. */
   _buildBuiltinCharcoalTextureCanvas() {
     const sz = 192;
     const c = document.createElement('canvas');
@@ -4927,7 +4960,7 @@ export class App {
     return c;
   }
 
-  /** Smooth Bristol board — subtle micro-texture, nearly flat. */
+  /** Smooth Bristol board � subtle micro-texture, nearly flat. */
   _buildBuiltinBristolTextureCanvas() {
     const sz = 128;
     const c = document.createElement('canvas');
@@ -5009,7 +5042,7 @@ export class App {
     this._paramsDirty = true;
     if (document.getElementById('sidebar')) syncUI(this);
     if (this.compositeCanvas) this.compositeAllLayers({ forceFull: true });
-    if (!silent && texture) this.showToast(`🖼 Texture: ${texture.name}`);
+    if (!silent && texture) this.showToast(`?? Texture: ${texture.name}`);
   }
 
   async _ensureBuiltinCanvasTexture() {
@@ -5086,10 +5119,10 @@ export class App {
         reader.readAsDataURL(file);
       });
       await this._setCustomCanvasTextureFromDataUrl(dataUrl, file?.name || 'Custom Upload', { silent: true });
-      this.showToast('🖼 Texture loaded & enabled');
+      this.showToast('?? Texture loaded & enabled');
       return true;
     } catch {
-      this.showToast('⚠ Texture load failed — invalid image');
+      this.showToast('? Texture load failed � invalid image');
       return false;
     }
   }
@@ -5115,7 +5148,7 @@ export class App {
     };
     this.invalidateParams();
     if (document.getElementById('sidebar')) syncUI(this);
-    if (!silent) this.showToast('🖼 Stamp image loaded');
+    if (!silent) this.showToast('?? Stamp image loaded');
     this._maybeAutoSaveSession();
     return this._customStampImage;
   }
@@ -5131,7 +5164,7 @@ export class App {
       await this._setCustomStampImageFromDataUrl(dataUrl, file?.name || 'Custom Stamp');
       return true;
     } catch {
-      this.showToast('⚠ Stamp image load failed — invalid image');
+      this.showToast('? Stamp image load failed � invalid image');
       return false;
     }
   }
@@ -5151,7 +5184,7 @@ export class App {
       if (enableEl) enableEl.checked = true;
     }
     if (document.getElementById('sidebar')) syncUI(this);
-    if (!silent) this.showToast(`🖼 Stamp preset: ${preset.name}`);
+    if (!silent) this.showToast(`?? Stamp preset: ${preset.name}`);
     this._maybeAutoSaveSession();
     return true;
   }
@@ -5220,7 +5253,7 @@ export class App {
       });
     } catch {
       this._customStampImage = null;
-      this.showToast('⚠ Saved custom stamp could not be restored');
+      this.showToast('? Saved custom stamp could not be restored');
     }
   }
 
@@ -5392,7 +5425,7 @@ export class App {
         await this._setCustomCanvasTextureFromDataUrl(state.custom.dataUrl, state.custom.name || 'Custom Upload', { activate: false });
       } catch {
         this._customCanvasTexture = null;
-        this.showToast('⚠ Saved custom texture could not be restored');
+        this.showToast('? Saved custom texture could not be restored');
       }
     }
     if (!this.setCanvasTextureById(state?.activeId || DEFAULT_CANVAS_TEXTURE_ID, { silent: true })) {
@@ -5544,14 +5577,29 @@ export class App {
     }
     this.compositeAllLayers();
     this.recordLastChangeMarker('Layer cleared');
-    this.showToast('🗑 Layer cleared');
+    this.showToast('?? Layer cleared');
   }
 
   compositeAllLayers(options = {}) {
     this._smudgeImageData = null; // invalidate smudge cache
     const p = this._cachedP || this.getP();
     const forceFullComposite = !!(options.forceFull || (p.impasto && p.impastoStrength > 0));
-    this.compositor?.composite(this.layers, this.W, this.H, { forceFull: forceFullComposite });
+    const display = this.simulation?.treadmill?.display;
+    let compositeLayers = this.layers;
+    if (this.simulation?.mode === 'treadmillCanvas' && this.activeBrush === 'boid' && display) {
+      const hiddenLayerIds = new Set();
+      if (display.showCanvasLayer === false) {
+        const targetLayerId = this.getActiveLayer()?.id || null;
+        if (targetLayerId) hiddenLayerIds.add(targetLayerId);
+      }
+      if (display.showPresentationLayer === false && this._treadmillPresentationLayerId) {
+        hiddenLayerIds.add(this._treadmillPresentationLayerId);
+      }
+      if (hiddenLayerIds.size) {
+        compositeLayers = this.layers.filter(layer => !hiddenLayerIds.has(layer.id));
+      }
+    }
+    this.compositor?.composite(compositeLayers, this.W, this.H, { forceFull: forceFullComposite });
 
     // Impasto: recompute lighting overlay from height map when dirty, then draw
     if (p.impasto && p.impastoStrength > 0) {
@@ -5716,7 +5764,7 @@ export class App {
     const u = this.undoStack.pop();
     this.activeLayerIdx = u.i;
     this._restoreState(u.s);
-    this.showToast('↩ Undo');
+    this.showToast('? Undo');
     this._updateSimUndoRedoBtns();
   }
 
@@ -5726,7 +5774,7 @@ export class App {
     const r = this.redoStack.pop();
     this.activeLayerIdx = r.i;
     this._restoreState(r.s);
-    this.showToast('↪ Redo');
+    this.showToast('? Redo');
     this._updateSimUndoRedoBtns();
   }
 
@@ -6347,7 +6395,7 @@ export class App {
     return ready
       ? {
           ready: true,
-          badge: `Saved playback · ${frameCount} frames`,
+          badge: `Saved playback � ${frameCount} frames`,
           summary: `Saved playback is ready (${frameCount} frames). Multi-session playback will reuse it instead of recomputing this boid session live.`,
           playback,
         }
@@ -6368,7 +6416,7 @@ export class App {
     if (this._shouldUseMultiSessionPlayback()) {
       const diagnostics = this._getMultiSessionRouteDiagnostics();
       if (diagnostics.blockReason) return diagnostics.blockReason;
-      return `Run ready · ${context.routingSummary}`;
+      return `Run ready � ${context.routingSummary}`;
     }
     return context.playbackSummary;
   }
@@ -6471,8 +6519,8 @@ export class App {
     this.isDrawing = false;
     this._syncSimulationUI();
     this.showToast(savedStats.total > 0
-      ? `Saved playback complete — paused at end (${savedStats.completed}/${savedStats.total} sessions)`
-      : 'Saved playback complete — paused at end');
+      ? `Saved playback complete � paused at end (${savedStats.completed}/${savedStats.total} sessions)`
+      : 'Saved playback complete � paused at end');
   }
 
   _syncSimulationSessionContextUi() {
@@ -6564,7 +6612,7 @@ export class App {
     } else if (!armedBindings.length) {
       blockReason = 'Enable (mount) at least one saved session route before running multiple sessions';
     } else if (!runnableRoutes.length) {
-      blockReason = 'Mounted sessions have no valid target layer routes — reselect target layer(s) in Simulation Setup';
+      blockReason = 'Mounted sessions have no valid target layer routes � reselect target layer(s) in Simulation Setup';
     }
 
     return {
@@ -6715,11 +6763,11 @@ export class App {
     if (this.simulation.selected && !this._getSelectedSimulationEntry()) {
       this.simulation.selected = null;
     }
-    this._normalizeForceVizState();
+    this._normalizeTreadmillState();
   }
 
   // ========================================================
-  // FORCE VISUALIZATION SUBMODE
+  // TREADMILL CANVAS SUBMODE
   // ========================================================
   // Scenarios are pure config: groups (bound to an existing spawn
   // definition + optional paint layer), attractors (fixed/unreachable/
@@ -6727,43 +6775,45 @@ export class App {
   // attractor with a weight. Everything here is persisted; per-frame
   // resolved positions, camera smoothing bookkeeping, and agent index
   // ranges are computed fresh each run and never saved (see
-  // _forceVizCameraRuntime and BoidBrush._spawnRangesById).
+  // _treadmillCameraRuntime and BoidBrush._spawnRangesById).
 
-  _createForceVizId(prefix) {
+  _createTreadmillId(prefix) {
     return `${prefix}-${(this.simulation.nextId++).toString(36)}`;
   }
 
-  _createDefaultForceVizCameraConfig() {
+  _createDefaultTreadmillCameraConfig() {
     return {
-      policy: 'fixed', // fixed | followBoid | followCentroid | frameGroups | orbit
-      targetGroupId: null,
-      targetBoidIndex: 0,
-      smoothing: 0.12, // 0..1 per-frame lerp factor
-      offsetX: 0,
-      offsetY: 0,
-      lookahead: 0, // 0..1 velocity lookahead factor
-      padding: 80, // px padding used by frameGroups
+      autoFrame: true,
+      follow: 0.12,
+      framePadding: 90,
+      frameSmoothing: 0.16,
       minZoom: MIN_ZOOM,
       maxZoom: MAX_ZOOM,
-      orbitRadius: 260,
-      orbitSpeed: 0.25, // radians/sec
-      interruption: 'holdOnUserInput', // holdOnUserInput | resumeAfterDelay | ignoreUserInput
-      resumeDelay: 1.5, // seconds, used by resumeAfterDelay
       exitBehavior: 'restoreManualView', // restoreManualView | retainCurrentView
     };
   }
 
-  _createDefaultForceVizAttractor(overrides = {}) {
+  _createDefaultTreadmillDisplayConfig() {
     return {
-      id: this._createForceVizId('attractor'),
+      showCanvasLayer: true,
+      showPresentationLayer: false,
+    };
+  }
+
+  _createDefaultTreadmillAttractor(overrides = {}) {
+    return {
+      id: this._createTreadmillId('attractor'),
       name: overrides.name || 'Attractor 1',
       type: 'fixed',
       enabled: true,
-      x: Number.isFinite(overrides.x) ? overrides.x : this.W * 0.5,
+      x: Number.isFinite(overrides.x) ? overrides.x : this.W * 0.72,
       y: Number.isFinite(overrides.y) ? overrides.y : this.H * 0.5,
-      strength: FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH,
-      radius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS,
-      influenceRadius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2,
+      strength: TREADMILL_DEFAULT_ATTRACTOR_STRENGTH,
+      radius: TREADMILL_DEFAULT_ATTRACTOR_RADIUS,
+      influenceRadius: TREADMILL_DEFAULT_ATTRACTOR_RADIUS * 2,
+      treadmillLead: 1.15,
+      screenX: 0.72,
+      screenY: 0.5,
       hardness: DEFAULT_SIM_HARDNESS,
       movement: {
         velocityX: 0,
@@ -6780,18 +6830,28 @@ export class App {
     };
   }
 
-  _createDefaultForceVizGroup(overrides = {}) {
+  _createDefaultTreadmillGroup(overrides = {}) {
     return {
-      id: this._createForceVizId('group'),
+      id: this._createTreadmillId('group'),
       name: overrides.name || 'Group 1',
       spawnId: overrides.spawnId ?? null,
       layerId: overrides.layerId ?? null,
+      count: Number.isFinite(overrides.count) ? overrides.count : 64,
+      seek: Number.isFinite(overrides.seek) ? overrides.seek : 0.5,
+      cohesion: Number.isFinite(overrides.cohesion) ? overrides.cohesion : 0.22,
+      separation: Number.isFinite(overrides.separation) ? overrides.separation : 0.38,
+      alignment: Number.isFinite(overrides.alignment) ? overrides.alignment : 0.34,
+      maxSpeed: Number.isFinite(overrides.maxSpeed) ? overrides.maxSpeed : 5.5,
+      neighborRadius: Number.isFinite(overrides.neighborRadius) ? overrides.neighborRadius : 80,
+      wander: Number.isFinite(overrides.wander) ? overrides.wander : 0.06,
+      damping: Number.isFinite(overrides.damping) ? overrides.damping : 0.95,
+      headingDamper: Number.isFinite(overrides.headingDamper) ? overrides.headingDamper : 0.7,
     };
   }
 
-  _createDefaultForceVizRoute(overrides = {}) {
+  _createDefaultTreadmillRoute(overrides = {}) {
     return {
-      id: this._createForceVizId('route'),
+      id: this._createTreadmillId('route'),
       groupId: overrides.groupId ?? null,
       attractorId: overrides.attractorId ?? null,
       weight: Number.isFinite(overrides.weight) ? overrides.weight : 1,
@@ -6799,20 +6859,20 @@ export class App {
     };
   }
 
-  _createDefaultForceVizScenario() {
-    const group = this._createDefaultForceVizGroup();
-    const attractor = this._createDefaultForceVizAttractor();
+  _createDefaultTreadmillScenario() {
+    const group = this._createDefaultTreadmillGroup();
+    const attractor = this._createDefaultTreadmillAttractor();
     return {
-      id: this._createForceVizId('scenario'),
+      id: this._createTreadmillId('scenario'),
       name: 'Scenario 1',
       groups: [group],
       attractors: [attractor],
-      routes: [this._createDefaultForceVizRoute({ groupId: group.id, attractorId: attractor.id })],
+      routes: [this._createDefaultTreadmillRoute({ groupId: group.id, attractorId: attractor.id })],
     };
   }
 
-  _createDefaultForceVizState() {
-    const scenario = this._createDefaultForceVizScenario();
+  _createDefaultTreadmillState() {
+    const scenario = this._createDefaultTreadmillScenario();
     return {
       activeScenarioIndex: 0,
       scenarios: [scenario],
@@ -6823,50 +6883,55 @@ export class App {
         activeAttractorId: scenario.attractors[0]?.id ?? null,
         activeRouteId: scenario.routes[0]?.id ?? null,
       },
-      camera: this._createDefaultForceVizCameraConfig(),
+      display: this._createDefaultTreadmillDisplayConfig(),
+      camera: this._createDefaultTreadmillCameraConfig(),
     };
   }
 
-  _normalizeForceVizCameraConfig(raw) {
-    const defaults = this._createDefaultForceVizCameraConfig();
+  _normalizeTreadmillDisplayConfig(raw) {
+    const defaults = this._createDefaultTreadmillDisplayConfig();
     const cfg = raw && typeof raw === 'object' ? raw : {};
     return {
-      policy: FORCE_VIZ_CAMERA_POLICIES.includes(cfg.policy) ? cfg.policy : defaults.policy,
-      targetGroupId: typeof cfg.targetGroupId === 'string' ? cfg.targetGroupId : null,
-      targetBoidIndex: Number.isFinite(cfg.targetBoidIndex) ? Math.max(0, Math.round(cfg.targetBoidIndex)) : defaults.targetBoidIndex,
-      smoothing: Number.isFinite(cfg.smoothing) ? _clamp01(cfg.smoothing) : defaults.smoothing,
-      offsetX: Number.isFinite(cfg.offsetX) ? cfg.offsetX : defaults.offsetX,
-      offsetY: Number.isFinite(cfg.offsetY) ? cfg.offsetY : defaults.offsetY,
-      lookahead: Number.isFinite(cfg.lookahead) ? _clamp01(cfg.lookahead) : defaults.lookahead,
-      padding: Number.isFinite(cfg.padding) ? Math.max(0, cfg.padding) : defaults.padding,
-      minZoom: Number.isFinite(cfg.minZoom) ? Math.max(MIN_ZOOM, cfg.minZoom) : defaults.minZoom,
-      maxZoom: Number.isFinite(cfg.maxZoom) ? Math.min(MAX_ZOOM, cfg.maxZoom) : defaults.maxZoom,
-      orbitRadius: Number.isFinite(cfg.orbitRadius) ? Math.max(1, cfg.orbitRadius) : defaults.orbitRadius,
-      orbitSpeed: Number.isFinite(cfg.orbitSpeed) ? cfg.orbitSpeed : defaults.orbitSpeed,
-      interruption: FORCE_VIZ_CAMERA_INTERRUPTIONS.includes(cfg.interruption) ? cfg.interruption : defaults.interruption,
-      resumeDelay: Number.isFinite(cfg.resumeDelay) ? Math.max(0, cfg.resumeDelay) : defaults.resumeDelay,
-      exitBehavior: FORCE_VIZ_CAMERA_EXIT_BEHAVIORS.includes(cfg.exitBehavior) ? cfg.exitBehavior : defaults.exitBehavior,
+      showCanvasLayer: cfg.showCanvasLayer !== false,
+      showPresentationLayer: cfg.showPresentationLayer === true,
     };
   }
 
-  _normalizeForceVizAttractor(raw) {
-    const defaults = this._createDefaultForceVizAttractor();
+  _normalizeTreadmillCameraConfig(raw) {
+    const defaults = this._createDefaultTreadmillCameraConfig();
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    return {
+      autoFrame: cfg.autoFrame !== false,
+      follow: Number.isFinite(cfg.follow) ? _clamp01(cfg.follow) : defaults.follow,
+      framePadding: Number.isFinite(cfg.framePadding) ? Math.max(0, cfg.framePadding) : defaults.framePadding,
+      frameSmoothing: Number.isFinite(cfg.frameSmoothing) ? _clamp01(cfg.frameSmoothing) : defaults.frameSmoothing,
+      minZoom: Number.isFinite(cfg.minZoom) ? Math.max(MIN_ZOOM, cfg.minZoom) : defaults.minZoom,
+      maxZoom: Number.isFinite(cfg.maxZoom) ? Math.min(MAX_ZOOM, cfg.maxZoom) : defaults.maxZoom,
+      exitBehavior: TREADMILL_CAMERA_EXIT_BEHAVIORS.includes(cfg.exitBehavior) ? cfg.exitBehavior : defaults.exitBehavior,
+    };
+  }
+
+  _normalizeTreadmillAttractor(raw) {
+    const defaults = this._createDefaultTreadmillAttractor();
     const src = raw && typeof raw === 'object' ? raw : {};
     const movement = src.movement && typeof src.movement === 'object' ? src.movement : {};
     const rawPathId = (typeof movement.pathId === 'string' || typeof movement.pathId === 'number') ? movement.pathId : null;
     const boundPath = rawPathId == null
       ? null
-      : this._getForceVizPathOptions().find(path => String(path.id) === String(rawPathId));
+      : this._getTreadmillPathOptions().find(path => String(path.id) === String(rawPathId));
     return {
-      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('attractor'),
+      id: typeof src.id === 'string' && src.id ? src.id : this._createTreadmillId('attractor'),
       name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
-      type: FORCE_VIZ_ATTRACTOR_TYPES.includes(src.type) ? src.type : defaults.type,
+      type: TREADMILL_ATTRACTOR_TYPES.includes(src.type) ? src.type : defaults.type,
       enabled: src.enabled !== false,
       x: Number.isFinite(src.x) ? src.x : defaults.x,
       y: Number.isFinite(src.y) ? src.y : defaults.y,
       strength: Number.isFinite(src.strength) ? Math.max(0, src.strength) : defaults.strength,
       radius: Number.isFinite(src.radius) ? Math.max(1, src.radius) : defaults.radius,
       influenceRadius: Number.isFinite(src.influenceRadius) ? Math.max(1, src.influenceRadius) : defaults.influenceRadius,
+      treadmillLead: Number.isFinite(src.treadmillLead) ? Math.max(0.8, Math.min(1.8, src.treadmillLead)) : defaults.treadmillLead,
+      screenX: Number.isFinite(src.screenX) ? _clamp01(src.screenX) : defaults.screenX,
+      screenY: Number.isFinite(src.screenY) ? _clamp01(src.screenY) : defaults.screenY,
       hardness: Number.isFinite(src.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, src.hardness)) : defaults.hardness,
       movement: {
         velocityX: Number.isFinite(movement.velocityX) ? movement.velocityX : defaults.movement.velocityX,
@@ -6883,27 +6948,37 @@ export class App {
     };
   }
 
-  _normalizeForceVizGroup(raw) {
-    const defaults = this._createDefaultForceVizGroup();
+  _normalizeTreadmillGroup(raw) {
+    const defaults = this._createDefaultTreadmillGroup();
     const src = raw && typeof raw === 'object' ? raw : {};
     const rawSpawnId = (typeof src.spawnId === 'string' || typeof src.spawnId === 'number') ? src.spawnId : null;
     const boundSpawn = rawSpawnId == null
       ? null
-      : this._getForceVizSpawnOptions().find(spawn => String(spawn.id) === String(rawSpawnId));
+      : this._getTreadmillSpawnOptions().find(spawn => String(spawn.id) === String(rawSpawnId));
     return {
-      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('group'),
+      id: typeof src.id === 'string' && src.id ? src.id : this._createTreadmillId('group'),
       name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
       spawnId: boundSpawn?.id ?? rawSpawnId,
       layerId: typeof src.layerId === 'string' ? src.layerId : null,
+      count: Number.isFinite(src.count) ? Math.max(1, Math.min(MAX_SWARM_COUNT, Math.round(src.count))) : defaults.count,
+      seek: Number.isFinite(src.seek) ? _clamp01(src.seek) : defaults.seek,
+      cohesion: Number.isFinite(src.cohesion) ? _clamp01(src.cohesion) : defaults.cohesion,
+      separation: Number.isFinite(src.separation) ? _clamp01(src.separation) : defaults.separation,
+      alignment: Number.isFinite(src.alignment) ? _clamp01(src.alignment) : defaults.alignment,
+      maxSpeed: Number.isFinite(src.maxSpeed) ? Math.max(1, Math.min(30, src.maxSpeed)) : defaults.maxSpeed,
+      neighborRadius: Number.isFinite(src.neighborRadius) ? Math.max(10, Math.min(240, src.neighborRadius)) : defaults.neighborRadius,
+      wander: Number.isFinite(src.wander) ? _clamp01(src.wander) : defaults.wander,
+      damping: Number.isFinite(src.damping) ? Math.max(0.8, Math.min(1, src.damping)) : defaults.damping,
+      headingDamper: Number.isFinite(src.headingDamper) ? _clamp01(src.headingDamper) : defaults.headingDamper,
     };
   }
 
-  _normalizeForceVizRoute(raw, groupIds, attractorIds) {
+  _normalizeTreadmillRoute(raw, groupIds, attractorIds) {
     const src = raw && typeof raw === 'object' ? raw : {};
     const groupId = groupIds.has(src.groupId) ? src.groupId : null;
     const attractorId = attractorIds.has(src.attractorId) ? src.attractorId : null;
     return {
-      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('route'),
+      id: typeof src.id === 'string' && src.id ? src.id : this._createTreadmillId('route'),
       groupId,
       attractorId,
       weight: Number.isFinite(src.weight) ? Math.max(0, src.weight) : 1,
@@ -6911,12 +6986,12 @@ export class App {
     };
   }
 
-  _normalizeForceVizScenario(raw) {
+  _normalizeTreadmillScenario(raw) {
     const src = raw && typeof raw === 'object' ? raw : {};
-    const groups = (Array.isArray(src.groups) ? src.groups : []).map(group => this._normalizeForceVizGroup(group));
-    const attractors = (Array.isArray(src.attractors) ? src.attractors : []).map(attractor => this._normalizeForceVizAttractor(attractor));
-    if (!groups.length) groups.push(this._createDefaultForceVizGroup());
-    if (!attractors.length) attractors.push(this._createDefaultForceVizAttractor());
+    const groups = (Array.isArray(src.groups) ? src.groups : []).map(group => this._normalizeTreadmillGroup(group));
+    const attractors = (Array.isArray(src.attractors) ? src.attractors : []).map(attractor => this._normalizeTreadmillAttractor(attractor));
+    if (!groups.length) groups.push(this._createDefaultTreadmillGroup());
+    if (!attractors.length) attractors.push(this._createDefaultTreadmillAttractor());
     const groupIds = new Set(groups.map(group => group.id));
     const attractorIds = new Set(attractors.map(attractor => attractor.id));
     // Shared attractors must reference another attractor in the same scenario.
@@ -6926,13 +7001,13 @@ export class App {
       }
     }
     let routes = (Array.isArray(src.routes) ? src.routes : [])
-      .map(route => this._normalizeForceVizRoute(route, groupIds, attractorIds))
+      .map(route => this._normalizeTreadmillRoute(route, groupIds, attractorIds))
       .filter(route => route.groupId && route.attractorId);
     if (!routes.length) {
-      routes = [this._createDefaultForceVizRoute({ groupId: groups[0].id, attractorId: attractors[0].id })];
+      routes = [this._createDefaultTreadmillRoute({ groupId: groups[0].id, attractorId: attractors[0].id })];
     }
     return {
-      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('scenario'),
+      id: typeof src.id === 'string' && src.id ? src.id : this._createTreadmillId('scenario'),
       name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : 'Scenario',
       groups,
       attractors,
@@ -6940,15 +7015,15 @@ export class App {
     };
   }
 
-  /** Normalizes/migrates `simulation.forceViz` in place. Safe to call
-   *  repeatedly (constructor, after load, after workspace import) — older
+  /** Normalizes/migrates `simulation.treadmill` in place. Safe to call
+   *  repeatedly (constructor, after load, after workspace import) � older
    *  saves that predate this submode simply get the default state. */
-  _normalizeForceVizState() {
-    const raw = this.simulation.forceViz;
+  _normalizeTreadmillState() {
+    const raw = this.simulation.treadmill;
     const scenarios = (raw && Array.isArray(raw.scenarios) && raw.scenarios.length
       ? raw.scenarios
-      : [this._createDefaultForceVizScenario()]
-    ).map(scenario => this._normalizeForceVizScenario(scenario));
+      : [this._createDefaultTreadmillScenario()]
+    ).map(scenario => this._normalizeTreadmillScenario(scenario));
     const activeScenarioIndex = Number.isFinite(raw?.activeScenarioIndex)
       ? Math.max(0, Math.min(scenarios.length - 1, Math.round(raw.activeScenarioIndex)))
       : 0;
@@ -6957,7 +7032,7 @@ export class App {
     const groupIds = new Set(scenario.groups.map(group => group.id));
     const attractorIds = new Set(scenario.attractors.map(attractor => attractor.id));
     const routeIds = new Set(scenario.routes.map(route => route.id));
-    this.simulation.forceViz = {
+    this.simulation.treadmill = {
       activeScenarioIndex,
       scenarios,
       ui: {
@@ -6965,54 +7040,59 @@ export class App {
         activeAttractorId: attractorIds.has(uiRaw.activeAttractorId) ? uiRaw.activeAttractorId : scenario.attractors[0].id,
         activeRouteId: routeIds.has(uiRaw.activeRouteId) ? uiRaw.activeRouteId : scenario.routes[0].id,
       },
-      camera: this._normalizeForceVizCameraConfig(raw?.camera),
+      display: this._normalizeTreadmillDisplayConfig(raw?.display),
+      camera: this._normalizeTreadmillCameraConfig(raw?.camera),
     };
   }
 
-  _getActiveForceVizScenario() {
-    const fv = this.simulation.forceViz;
+  _getActiveTreadmillScenario() {
+    const fv = this.simulation.treadmill;
     if (!fv) return null;
     return fv.scenarios[fv.activeScenarioIndex] || fv.scenarios[0] || null;
   }
 
-  _getForceVizGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+  _getTreadmillGroup(groupId, scenario = this._getActiveTreadmillScenario()) {
     return scenario?.groups.find(group => group.id === groupId) || null;
   }
 
-  _getForceVizAttractor(attractorId, scenario = this._getActiveForceVizScenario()) {
+  _getTreadmillAttractor(attractorId, scenario = this._getActiveTreadmillScenario()) {
     return scenario?.attractors.find(attractor => attractor.id === attractorId) || null;
   }
 
-  _getForceVizRoutesForGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+  _getTreadmillRoutesForGroup(groupId, scenario = this._getActiveTreadmillScenario()) {
     return scenario?.routes.filter(route => route.groupId === groupId) || [];
   }
 
   /** Options for the "bind to spawn" control: existing boid spawn
    *  definitions, not a duplicate physics/spawn config. */
-  _getForceVizSpawnOptions() {
+  _getTreadmillSpawnOptions() {
     const data = this._getSimulationBrushData('boid');
     return Array.isArray(data?.spawns) ? data.spawns : [];
   }
 
-  _getForceVizPathOptions() {
+  _getTreadmillPathOptions() {
     const data = this._getSimulationBrushData('boid');
     return Array.isArray(data?.paths) ? data.paths : [];
   }
 
   _setSimulationMode(mode) {
-    const next = mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+    const next = mode === 'treadmillCanvas' ? 'treadmillCanvas' : 'normal';
     if (this.simulation.mode === next) return;
     if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
-    if (next === 'forceVisualization') {
-      this._forceVizManualViewSnapshot = this._captureViewState();
+    if (next === 'treadmillCanvas') {
+      this._treadmillManualViewSnapshot = this._captureViewState();
     } else {
-      this._restoreOrRetainForceVizView();
+      this._restoreOrRetainTreadmillView();
     }
     this.simulation.mode = next;
-    this._normalizeForceVizState();
+    this._normalizeTreadmillState();
+    if (next !== 'treadmillCanvas') {
+      this.brushes?.boid?._suspendTreadmillPresentationLayer?.();
+      this.compositeAllLayers({ forceFull: true });
+    }
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
-    this.showToast(next === 'forceVisualization' ? 'Force Visualization mode ON' : 'Force Visualization mode OFF');
+    this.showToast(next === 'treadmillCanvas' ? 'Treadmill Canvas mode ON' : 'Treadmill Canvas mode OFF');
   }
 
   /** Applies the configured exit behavior after a run stops: restores the
@@ -7020,11 +7100,11 @@ export class App {
    *  wherever the run left it ('retainCurrentView'). The snapshot itself is
    *  kept so repeated run/stop cycles within the same submode session keep
    *  restoring to the same baseline view. */
-  _applyForceVizExitBehaviorOnStop() {
-    const cfg = this.simulation.forceViz?.camera;
+  _applyTreadmillExitBehaviorOnStop() {
+    const cfg = this.simulation.treadmill?.camera;
     const exitBehavior = cfg?.exitBehavior || 'restoreManualView';
-    if (exitBehavior !== 'restoreManualView' || !this._forceVizManualViewSnapshot) return;
-    const snapshot = this._forceVizManualViewSnapshot;
+    if (exitBehavior !== 'restoreManualView' || !this._treadmillManualViewSnapshot) return;
+    const snapshot = this._treadmillManualViewSnapshot;
     this.viewZoom = snapshot.zoom;
     this.viewPanX = snapshot.panX;
     this.viewPanY = snapshot.panY;
@@ -7032,65 +7112,65 @@ export class App {
     this._applyViewTransform();
   }
 
-  /** Called when actually leaving Force Visualization mode (not just
+  /** Called when actually leaving Treadmill Canvas mode (not just
    *  stopping a run): applies the same exit behavior, then discards the
    *  snapshot since there is no longer a submode session to return to. */
-  _restoreOrRetainForceVizView() {
-    this._applyForceVizExitBehaviorOnStop();
-    this._forceVizManualViewSnapshot = null;
+  _restoreOrRetainTreadmillView() {
+    this._applyTreadmillExitBehaviorOnStop();
+    this._treadmillManualViewSnapshot = null;
   }
 
-  _addForceVizGroup() {
-    const scenario = this._getActiveForceVizScenario();
+  _addTreadmillGroup() {
+    const scenario = this._getActiveTreadmillScenario();
     if (!scenario) return null;
-    const group = this._createDefaultForceVizGroup({ name: `Group ${scenario.groups.length + 1}` });
+    const group = this._createDefaultTreadmillGroup({ name: `Group ${scenario.groups.length + 1}` });
     scenario.groups.push(group);
-    this.simulation.forceViz.ui.activeGroupId = group.id;
+    this.simulation.treadmill.ui.activeGroupId = group.id;
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
     return group;
   }
 
-  _removeForceVizGroup(groupId) {
-    const scenario = this._getActiveForceVizScenario();
+  _removeTreadmillGroup(groupId) {
+    const scenario = this._getActiveTreadmillScenario();
     if (!scenario || scenario.groups.length <= 1) return;
     scenario.groups = scenario.groups.filter(group => group.id !== groupId);
     scenario.routes = scenario.routes.filter(route => route.groupId !== groupId);
     if (!scenario.routes.length) {
-      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+      scenario.routes.push(this._createDefaultTreadmillRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
     }
-    this._normalizeForceVizState();
+    this._normalizeTreadmillState();
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
   }
 
-  _setForceVizActiveGroup(groupId) {
-    if (!this.simulation.forceViz) return;
-    this.simulation.forceViz.ui.activeGroupId = groupId;
+  _setTreadmillActiveGroup(groupId) {
+    if (!this.simulation.treadmill) return;
+    this.simulation.treadmill.ui.activeGroupId = groupId;
     this._syncSimulationUI();
   }
 
-  _updateForceVizGroup(groupId, patch) {
-    const group = this._getForceVizGroup(groupId);
+  _updateTreadmillGroup(groupId, patch) {
+    const group = this._getTreadmillGroup(groupId);
     if (!group) return;
     Object.assign(group, patch);
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
   }
 
-  _addForceVizAttractor() {
-    const scenario = this._getActiveForceVizScenario();
+  _addTreadmillAttractor() {
+    const scenario = this._getActiveTreadmillScenario();
     if (!scenario) return null;
-    const attractor = this._createDefaultForceVizAttractor({ name: `Attractor ${scenario.attractors.length + 1}` });
+    const attractor = this._createDefaultTreadmillAttractor({ name: `Attractor ${scenario.attractors.length + 1}` });
     scenario.attractors.push(attractor);
-    this.simulation.forceViz.ui.activeAttractorId = attractor.id;
+    this.simulation.treadmill.ui.activeAttractorId = attractor.id;
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
     return attractor;
   }
 
-  _removeForceVizAttractor(attractorId) {
-    const scenario = this._getActiveForceVizScenario();
+  _removeTreadmillAttractor(attractorId) {
+    const scenario = this._getActiveTreadmillScenario();
     if (!scenario || scenario.attractors.length <= 1) return;
     scenario.attractors = scenario.attractors.filter(attractor => attractor.id !== attractorId);
     scenario.routes = scenario.routes.filter(route => route.attractorId !== attractorId);
@@ -7098,21 +7178,21 @@ export class App {
       if (attractor.sharedAttractorId === attractorId) attractor.sharedAttractorId = null;
     }
     if (!scenario.routes.length) {
-      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+      scenario.routes.push(this._createDefaultTreadmillRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
     }
-    this._normalizeForceVizState();
+    this._normalizeTreadmillState();
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
   }
 
-  _setForceVizActiveAttractor(attractorId) {
-    if (!this.simulation.forceViz) return;
-    this.simulation.forceViz.ui.activeAttractorId = attractorId;
+  _setTreadmillActiveAttractor(attractorId) {
+    if (!this.simulation.treadmill) return;
+    this.simulation.treadmill.ui.activeAttractorId = attractorId;
     this._syncSimulationUI();
   }
 
-  _updateForceVizAttractor(attractorId, patch) {
-    const attractor = this._getForceVizAttractor(attractorId);
+  _updateTreadmillAttractor(attractorId, patch) {
+    const attractor = this._getTreadmillAttractor(attractorId);
     if (!attractor) return;
     if (patch && typeof patch === 'object' && patch.movement) {
       attractor.movement = { ...attractor.movement, ...patch.movement };
@@ -7125,36 +7205,36 @@ export class App {
     this._maybeAutoSaveSession?.();
   }
 
-  _addForceVizRoute() {
-    const scenario = this._getActiveForceVizScenario();
+  _addTreadmillRoute() {
+    const scenario = this._getActiveTreadmillScenario();
     if (!scenario) return null;
-    const groupId = this.simulation.forceViz.ui.activeGroupId || scenario.groups[0].id;
-    const attractorId = this.simulation.forceViz.ui.activeAttractorId || scenario.attractors[0].id;
-    const route = this._createDefaultForceVizRoute({ groupId, attractorId });
+    const groupId = this.simulation.treadmill.ui.activeGroupId || scenario.groups[0].id;
+    const attractorId = this.simulation.treadmill.ui.activeAttractorId || scenario.attractors[0].id;
+    const route = this._createDefaultTreadmillRoute({ groupId, attractorId });
     scenario.routes.push(route);
-    this.simulation.forceViz.ui.activeRouteId = route.id;
+    this.simulation.treadmill.ui.activeRouteId = route.id;
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
     return route;
   }
 
-  _removeForceVizRoute(routeId) {
-    const scenario = this._getActiveForceVizScenario();
+  _removeTreadmillRoute(routeId) {
+    const scenario = this._getActiveTreadmillScenario();
     if (!scenario || scenario.routes.length <= 1) return;
     scenario.routes = scenario.routes.filter(route => route.id !== routeId);
-    this._normalizeForceVizState();
+    this._normalizeTreadmillState();
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
   }
 
-  _setForceVizActiveRoute(routeId) {
-    if (!this.simulation.forceViz) return;
-    this.simulation.forceViz.ui.activeRouteId = routeId;
+  _setTreadmillActiveRoute(routeId) {
+    if (!this.simulation.treadmill) return;
+    this.simulation.treadmill.ui.activeRouteId = routeId;
     this._syncSimulationUI();
   }
 
-  _updateForceVizRoute(routeId, patch) {
-    const scenario = this._getActiveForceVizScenario();
+  _updateTreadmillRoute(routeId, patch) {
+    const scenario = this._getActiveTreadmillScenario();
     const route = scenario?.routes.find(entry => entry.id === routeId);
     if (!route) return;
     Object.assign(route, patch);
@@ -7162,9 +7242,31 @@ export class App {
     this._maybeAutoSaveSession?.();
   }
 
-  _updateForceVizCamera(patch) {
-    if (!this.simulation.forceViz) return;
-    this.simulation.forceViz.camera = this._normalizeForceVizCameraConfig({ ...this.simulation.forceViz.camera, ...patch });
+  _updateTreadmillCamera(patch) {
+    if (!this.simulation.treadmill) return;
+    this.simulation.treadmill.camera = this._normalizeTreadmillCameraConfig({ ...this.simulation.treadmill.camera, ...patch });
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _updateTreadmillDisplay(patch) {
+    if (!this.simulation.treadmill) return;
+    this.simulation.treadmill.display = this._normalizeTreadmillDisplayConfig({
+      ...this.simulation.treadmill.display,
+      ...patch,
+    });
+    const brush = this.brushes?.boid;
+    if (this.simulation.mode === 'treadmillCanvas' && this.activeBrush === 'boid') {
+      if (this.simulation.treadmill.display.showPresentationLayer) {
+        brush?._renderTreadmillPresentationLayer?.(this.getP());
+      } else {
+        brush?._suspendTreadmillPresentationLayer?.();
+      }
+      if (this.simulation.treadmill.display.showCanvasLayer === false) {
+        brush?._resetStampInterpolationAnchors?.();
+      }
+      this.compositeAllLayers({ forceFull: true });
+    }
     this._syncSimulationUI();
     this._maybeAutoSaveSession?.();
   }
@@ -7172,7 +7274,7 @@ export class App {
   /** Live position for one attractor this frame. Reuses the same animated
    *  path-target math as simulation guide paths for the 'path' type, so a
    *  path attractor and a path guide behave identically. */
-  _resolveForceVizAttractorPosition(attractor, elapsed, scenario, depth = 0) {
+  _resolveTreadmillAttractorPosition(attractor, elapsed, scenario, depth = 0) {
     if (!attractor) return null;
     switch (attractor.type) {
       case 'moving': {
@@ -7182,7 +7284,7 @@ export class App {
       }
       case 'unreachable': {
         // Drifts continuously around its anchor so the influence falloff
-        // never fully saturates — boids chase it but never quite arrive.
+        // never fully saturates � boids chase it but never quite arrive.
         const driftAngle = elapsed * (attractor.movement?.driftSpeed || 0);
         const driftRadius = attractor.movement?.driftRadius || 0;
         return {
@@ -7198,7 +7300,7 @@ export class App {
         return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
       }
       case 'path': {
-        const pathItem = this._getForceVizPathOptions().find(entry => String(entry.id) === String(attractor.movement?.pathId));
+        const pathItem = this._getTreadmillPathOptions().find(entry => String(entry.id) === String(attractor.movement?.pathId));
         if (!pathItem) return { x: attractor.x, y: attractor.y };
         const target = this._getAnimatedSimulationPathTarget(pathItem, this.getP());
         return target ? { x: target.x, y: target.y } : { x: attractor.x, y: attractor.y };
@@ -7207,7 +7309,7 @@ export class App {
         if (depth > 4) return { x: attractor.x, y: attractor.y };
         const target = scenario?.attractors.find(entry => entry.id === attractor.sharedAttractorId);
         if (!target || target.id === attractor.id) return { x: attractor.x, y: attractor.y };
-        return this._resolveForceVizAttractorPosition(target, elapsed, scenario, depth + 1);
+        return this._resolveTreadmillAttractorPosition(target, elapsed, scenario, depth + 1);
       }
       case 'fixed':
       default:
@@ -7215,11 +7317,11 @@ export class App {
     }
   }
 
-  /** Maps a Force Visualization group to the agent index range its bound
+  /** Maps a Treadmill Canvas group to the agent index range its bound
    *  spawn produced this stroke (see BoidBrush._spawnRangesById). Returns
-   *  null when the group isn't bound or hasn't spawned yet — the route is
+   *  null when the group isn't bound or hasn't spawned yet � the route is
    *  simply skipped for this frame rather than falling back to "everyone". */
-  _resolveForceVizGroupRange(brush, group) {
+  _resolveTreadmillGroupRange(brush, group) {
     const ranges = brush?._spawnRangesById;
     if (!ranges || group?.spawnId == null) return null;
     const range = ranges.get(group.spawnId)
@@ -7230,40 +7332,53 @@ export class App {
 
   /** Builds the CPU-applied, group-scoped guide points routes describe.
    *  Called from brushes.js `_collectSimulationGuides` only while
-   *  simulation.mode === 'forceVisualization'. */
-  _collectForceVizGuidePoints(brush, p) {
-    const scenario = this._getActiveForceVizScenario();
-    if (!scenario || !scenario.routes.length) return [];
-    const elapsed = (performance.now() - this._startTime) / 1000;
-    const points = [];
-    for (const route of scenario.routes) {
-      if (route.enabled === false) continue;
-      const weight = Math.max(0, route.weight ?? 1);
-      if (weight <= 0) continue;
-      const group = this._getForceVizGroup(route.groupId, scenario);
-      const attractor = this._getForceVizAttractor(route.attractorId, scenario);
-      if (!group || !attractor || attractor.enabled === false) continue;
-      const groupRange = this._resolveForceVizGroupRange(brush, group);
-      if (!groupRange) continue;
-      const pos = this._resolveForceVizAttractorPosition(attractor, elapsed, scenario);
-      if (!pos) continue;
-      points.push({
-        x: pos.x,
-        y: pos.y,
-        strength: Math.max(0, (attractor.strength ?? 0) * weight),
-        radius: Math.max(1, attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS),
-        influenceRadius: Math.max(attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS, attractor.influenceRadius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2),
-        groupRange,
-      });
+   *  simulation.mode === 'treadmillCanvas'. */
+  _collectTreadmillGuidePoints(brush, p) {
+    const scenario = this._getActiveTreadmillScenario();
+    const group = scenario?.groups?.[0];
+    const attractor = scenario?.attractors?.[0];
+    const groupRange = this._resolveTreadmillGroupRange(brush, group);
+    const snapshot = brush?._transientSnapshot;
+    if (!group || !attractor || attractor.enabled === false || !groupRange || !snapshot?.count) return [];
+
+    const runtime = this._treadmillRuntime;
+    const offsetX = this.W * attractor.screenX;
+    const offsetY = this.H * attractor.screenY;
+    if (!Number.isFinite(runtime.originX) || !Number.isFinite(runtime.originY)) {
+      runtime.originX = snapshot.centroid.x - this.W * 0.34;
+      runtime.originY = snapshot.centroid.y - offsetY;
     }
-    return points;
+    runtime.targetX = runtime.originX + offsetX;
+    runtime.targetY = runtime.originY + offsetY;
+    const leadX = runtime.targetX - snapshot.centroid.x;
+    const leadY = runtime.targetY - snapshot.centroid.y;
+    const leadDistance = Math.hypot(leadX, leadY);
+    const directionX = leadDistance > 0.0001 ? leadX / leadDistance : 1;
+    const directionY = leadDistance > 0.0001 ? leadY / leadDistance : 0;
+    const desiredLead = Math.max(60, Math.abs(offsetX - this.W * 0.34));
+    const shortfall = Math.max(0, desiredLead - leadDistance);
+    const step = group.maxSpeed * attractor.treadmillLead + shortfall * 0.35;
+    runtime.originX += directionX * step;
+    runtime.originY += directionY * step;
+    runtime.targetX = runtime.originX + offsetX;
+    runtime.targetY = runtime.originY + offsetY;
+
+    return [{
+      x: runtime.targetX,
+      y: runtime.targetY,
+      strength: Math.max(0, attractor.strength ?? TREADMILL_DEFAULT_ATTRACTOR_STRENGTH),
+      radius: Math.max(1, attractor.radius ?? TREADMILL_DEFAULT_ATTRACTOR_RADIUS),
+      influenceRadius: Number.MAX_SAFE_INTEGER,
+      treadmillFrame: true,
+      groupRange,
+    }];
   }
 
   /** Computes the pan (viewPanX/viewPanY) that would center canvas point
    *  (focusX, focusY) in the viewport at the given zoom/rotation, reusing
-   *  the exact same anchor math manual pan/zoom/pinch already use — the
+   *  the exact same anchor math manual pan/zoom/pinch already use � the
    *  camera adapter never introduces a second coordinate system. */
-  _computeForceVizCenteredPan(focusX, focusY, zoom, rotation) {
+  _computeTreadmillCenteredPan(focusX, focusY, zoom, rotation) {
     const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
     const w = areaRect?.width || this.W;
     const h = areaRect?.height || this.H;
@@ -7279,128 +7394,152 @@ export class App {
     return { panX, panY };
   }
 
-  _isForceVizCameraInterrupted(cfg) {
+  _isTreadmillCameraInterrupted(cfg) {
     if (cfg.interruption === 'ignoreUserInput') return false;
-    const runtime = this._forceVizCameraRuntime;
+    const runtime = this._treadmillCameraRuntime;
     const sinceMs = performance.now() - (runtime.lastManualInputAt || 0);
     if (cfg.interruption === 'resumeAfterDelay') {
       return sinceMs < Math.max(0, (cfg.resumeDelay || 0) * 1000);
     }
     // holdOnUserInput: pause automation briefly after any manual pan/zoom/rotate.
-    return sinceMs < FORCE_VIZ_MANUAL_INPUT_HOLD_MS;
+    return sinceMs < TREADMILL_MANUAL_INPUT_HOLD_MS;
   }
 
   /** Resolves the desired focus point/zoom/rotation for the active camera
    *  policy from BoidBrush's cached transient snapshot (centroid/bounds/
-   *  average velocity/candidates) — never re-scans the agent buffer here.
+   *  average velocity/candidates) � never re-scans the agent buffer here.
    *  Returns null when the policy has nothing to frame yet (e.g. no agents
    *  spawned) so the adapter leaves the camera exactly where it is. */
-  _resolveForceVizCameraDesired(brush, elapsed) {
-    const cfg = this.simulation.forceViz.camera;
+  _resolveTreadmillCameraDesired(brush, elapsed) {
+    const cfg = this.simulation.treadmill.camera;
     const snapshot = brush?._transientSnapshot;
-    switch (cfg.policy) {
-      case 'followBoid': {
-        if (!snapshot?.count || !snapshot.candidates?.length) return null;
-        const idx = Math.max(0, Math.min(snapshot.candidates.length - 1, Math.round(cfg.targetBoidIndex || 0)));
-        const candidate = snapshot.candidates[idx];
-        return { focusX: candidate.x, focusY: candidate.y, velX: candidate.vx, velY: candidate.vy, zoom: this.viewZoom, rotation: this.viewRotation };
-      }
-      case 'followCentroid': {
-        if (!snapshot?.count) return null;
-        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: snapshot.avgVelocity.x, velY: snapshot.avgVelocity.y, zoom: this.viewZoom, rotation: this.viewRotation };
-      }
-      case 'frameGroups': {
-        if (!snapshot?.count) return null;
-        const { minX, minY, maxX, maxY } = snapshot.bounds;
-        const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
-        const areaW = areaRect?.width || this.W;
-        const areaH = areaRect?.height || this.H;
-        const pad = Math.max(0, cfg.padding || 0);
-        const boundsW = Math.max(1, maxX - minX);
-        const boundsH = Math.max(1, maxY - minY);
-        const zoom = Math.max(0.01, Math.min(areaW / (boundsW + pad * 2), areaH / (boundsH + pad * 2)));
-        return { focusX: (minX + maxX) / 2, focusY: (minY + maxY) / 2, velX: 0, velY: 0, zoom, rotation: this.viewRotation };
-      }
-      case 'orbit': {
-        if (!snapshot?.count) return null;
-        const runtime = this._forceVizCameraRuntime;
-        const dt = Number.isFinite(runtime.lastElapsed) ? Math.max(0, Math.min(0.25, elapsed - runtime.lastElapsed)) : 0;
-        runtime.orbitAngle = (runtime.orbitAngle || 0) + (cfg.orbitSpeed || 0) * dt;
-        runtime.lastElapsed = elapsed;
-        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: 0, velY: 0, zoom: this.viewZoom, rotation: runtime.orbitAngle };
-      }
-      case 'fixed':
-      default:
+    if (!snapshot?.count) return null;
+    const runtime = this._treadmillRuntime;
+    if (!cfg.autoFrame) {
+      if (Number.isFinite(runtime?.cameraX) && Number.isFinite(runtime?.cameraY) && Number.isFinite(runtime?.cameraZoom)) {
         return null;
+      }
+      return {
+        focusX: snapshot.centroid.x,
+        focusY: snapshot.centroid.y,
+        zoom: this.viewZoom,
+        rotation: this.viewRotation,
+      };
     }
+    const { minX, minY, maxX, maxY } = snapshot.bounds;
+    const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+    const areaW = areaRect?.width || this.W;
+    const areaH = areaRect?.height || this.H;
+    const padding = Math.max(0, cfg.framePadding || 0);
+    const boundsW = Math.max(1, maxX - minX);
+    const boundsH = Math.max(1, maxY - minY);
+    const zoom = Math.max(0.01, Math.min(areaW / (boundsW + padding * 2), areaH / (boundsH + padding * 2)));
+    return {
+      focusX: (minX + maxX) / 2,
+      focusY: (minY + maxY) / 2,
+      zoom,
+      rotation: this.viewRotation,
+    };
   }
 
   /** The single adapter that turns a resolved camera policy target into
    *  actual view state changes: applies offset/lookahead, clamps zoom,
    *  respects interruption, smooths toward the target, and finally calls
    *  the same _applyViewTransform() manual pan/zoom uses. Canvas
-   *  coordinates are untouched — this only moves viewZoom/viewPanX/
+   *  coordinates are untouched � this only moves viewZoom/viewPanX/
    *  viewPanY/viewRotation, the same fields manual navigation uses. */
-  _applyForceVizCameraFrame(brush, elapsed) {
+  _applyTreadmillCameraFrame(brush, elapsed) {
     const sim = this.simulation;
-    if (!sim.enabled || sim.mode !== 'forceVisualization' || !sim.running) return;
+    if (!sim.enabled || sim.mode !== 'treadmillCanvas' || !sim.running) return;
     if (this.activeBrush !== 'boid') return;
-    const cfg = sim.forceViz?.camera;
-    if (!cfg || this._isForceVizCameraInterrupted(cfg)) return;
-    const desired = this._resolveForceVizCameraDesired(brush, elapsed);
+    const cfg = sim.treadmill?.camera;
+    if (!cfg || this._isTreadmillCameraInterrupted(cfg)) return;
+    const desired = this._resolveTreadmillCameraDesired(brush, elapsed);
     if (!desired) return;
+    const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+    const width = areaRect?.width || this.W;
+    const height = areaRect?.height || this.H;
     const minZoom = Math.max(MIN_ZOOM, cfg.minZoom);
     const maxZoom = Math.min(MAX_ZOOM, cfg.maxZoom);
-    const clampedZoom = Math.max(minZoom, Math.min(maxZoom, desired.zoom));
-    const lookahead = Math.max(0, cfg.lookahead || 0);
-    const focusX = desired.focusX + (desired.velX || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetX || 0);
-    const focusY = desired.focusY + (desired.velY || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetY || 0);
-    const targetRotation = Number.isFinite(desired.rotation) ? desired.rotation : this.viewRotation;
-    const target = this._computeForceVizCenteredPan(focusX, focusY, clampedZoom, targetRotation);
-    const smoothing = Math.max(0.001, Math.min(1, cfg.smoothing));
-    this.viewZoom = _lerp(this.viewZoom, clampedZoom, smoothing);
-    this.viewPanX = _lerp(this.viewPanX, target.panX, smoothing);
-    this.viewPanY = _lerp(this.viewPanY, target.panY, smoothing);
-    this.viewRotation = _lerpAngle(this.viewRotation, targetRotation, smoothing);
-    this._applyViewTransform();
+    const targetZoom = Math.max(minZoom, Math.min(maxZoom, desired.zoom));
+    const targetCameraX = desired.focusX - width / (2 * targetZoom);
+    const targetCameraY = desired.focusY - height / (2 * targetZoom);
+    const runtime = this._treadmillRuntime;
+    if (!Number.isFinite(runtime.cameraX) || !Number.isFinite(runtime.cameraY)) {
+      runtime.cameraX = targetCameraX;
+      runtime.cameraY = targetCameraY;
+      runtime.cameraZoom = targetZoom;
+      runtime.lastElapsed = elapsed;
+      runtime.viewAnchorCameraX = targetCameraX;
+      runtime.viewAnchorCameraY = targetCameraY;
+      runtime.viewAnchorPanX = this.viewPanX;
+      runtime.viewAnchorPanY = this.viewPanY;
+      runtime.viewAnchorRotation = this.viewRotation;
+    } else {
+      const deltaSeconds = Math.max(0, Math.min(0.1, elapsed - (runtime.lastElapsed ?? elapsed)));
+      runtime.lastElapsed = elapsed;
+      const strength = Math.max(0.001, Math.min(1, cfg.autoFrame ? cfg.frameSmoothing : cfg.follow));
+      const lerp = 1 - Math.pow(1 - strength, Math.max(1, deltaSeconds * 60));
+      runtime.cameraX = _lerp(runtime.cameraX, targetCameraX, lerp);
+      runtime.cameraY = _lerp(runtime.cameraY, targetCameraY, lerp);
+      runtime.cameraZoom = _lerp(runtime.cameraZoom, targetZoom, lerp);
+    }
   }
 
-  /** Compact camera/status text for the HUD — the only place this reads
+  _projectTreadmillWorldPoint(worldX, worldY) {
+    const runtime = this._treadmillRuntime;
+    if (!Number.isFinite(runtime.cameraX) || !Number.isFinite(runtime.cameraY) || !Number.isFinite(runtime.cameraZoom)) return null;
+    const screenX = (worldX - runtime.cameraX) * runtime.cameraZoom;
+    const screenY = (worldY - runtime.cameraY) * runtime.cameraZoom;
+    const canvas = this._screenToCanvas(screenX, screenY);
+    return { screenX, screenY, canvasX: canvas.x, canvasY: canvas.y };
+  }
+
+  /** Compact camera/status text for the HUD � the only place this reads
    *  from is the same transient snapshot + camera config the adapter uses. */
-  _formatForceVizStatusText() {
+  _formatTreadmillStatusText() {
     const sim = this.simulation;
-    if (sim.mode !== 'forceVisualization') return '';
-    const cfg = sim.forceViz?.camera;
-    const scenario = this._getActiveForceVizScenario();
-    const routeCount = scenario?.routes.filter(route => route.enabled !== false).length || 0;
-    const policyLabel = {
-      fixed: 'Fixed',
-      followBoid: 'Follow Boid',
-      followCentroid: 'Follow Centroid',
-      frameGroups: 'Frame Groups',
-      orbit: 'Orbit',
-    }[cfg?.policy] || 'Fixed';
+    if (sim.mode !== 'treadmillCanvas') return '';
+    const cfg = sim.treadmill?.camera;
+    const snapshot = this.getCurrentBrush()?._transientSnapshot;
+    const target = this._treadmillRuntime;
     const stateLabel = sim.running ? 'Running' : (sim.paused ? 'Paused' : 'Ready');
-    return `${stateLabel} · ${routeCount} route${routeCount === 1 ? '' : 's'} · Cam: ${policyLabel} · ${Math.round(this.viewZoom * 100)}%`;
+    const targetLabel = Number.isFinite(target.targetX) ? ` � Target: ${Math.round(target.targetX)}, ${Math.round(target.targetY)}` : '';
+    return `${stateLabel} � ${snapshot?.count || 0} boids � ${cfg?.autoFrame ? 'Auto-frame' : 'Fixed'} � ${Math.round((target.cameraZoom || 1) * 100)}%${targetLabel}`;
   }
 
-  _syncForceVizUI() {
+  _syncTreadmillUI() {
     const select = document.getElementById('simModeSelect');
     if (select && select.value !== this.simulation.mode) select.value = this.simulation.mode;
-    document.querySelectorAll('[data-sim-force-viz-only]').forEach(el => {
-      el.style.display = this.simulation.mode === 'forceVisualization' ? '' : 'none';
+    const treadmillActive = this.simulation.mode === 'treadmillCanvas';
+    const treadmillTab = document.querySelector('#leftPanelTabs .panel-tab[data-panel-view="treadmill"]');
+    const leftPanel = document.getElementById('leftPanel');
+    if (treadmillTab) {
+      const wasActive = treadmillTab.classList.contains('active');
+      treadmillTab.classList.toggle('panel-tab-hidden', !treadmillActive);
+      if (!treadmillActive && wasActive) {
+        treadmillTab.classList.remove('active');
+        leftPanel?.querySelector(':scope > .panel-view[data-panel-view="treadmill"]')?.classList.remove('active');
+        const simulationTab = document.querySelector('#leftPanelTabs .panel-tab[data-panel-view="simulationControls"]');
+        simulationTab?.classList.add('active');
+        leftPanel?.querySelector(':scope > .panel-view[data-panel-view="simulationControls"]')?.classList.add('active');
+      }
+    }
+    document.querySelectorAll('[data-sim-treadmill-only]').forEach(el => {
+      el.style.display = treadmillActive ? '' : 'none';
     });
-    this._renderForceVizPanel?.();
-    this._updateForceVizStatusText();
+    this._renderTreadmillPanel?.();
+    this._updateTreadmillStatusText();
+    this._updateTabVisibility();
   }
 
-  /** Cheap per-frame text refresh, split out from _syncForceVizUI() (which
+  /** Cheap per-frame text refresh, split out from _syncTreadmillUI() (which
    *  also toggles DOM visibility) so the camera-frame hook in the main RAF
    *  loop isn't doing a querySelectorAll every frame. */
-  _updateForceVizStatusText() {
-    const status = document.getElementById('simForceVizStatus');
+  _updateTreadmillStatusText() {
+    const status = document.getElementById('simTreadmillStatus');
     if (!status) return;
-    const text = this._formatForceVizStatusText();
+    const text = this._formatTreadmillStatusText();
     if (status.textContent !== text) status.textContent = text;
     const nextDisplay = text ? '' : 'none';
     if (status.style.display !== nextDisplay) status.style.display = nextDisplay;
@@ -9288,12 +9427,12 @@ export class App {
     document.getElementById('simHelpModal')?.classList.remove('open');
   }
 
-  _openForceVizHelp() {
-    document.getElementById('forceVizHelpModal')?.classList.add('open');
+  _openTreadmillHelp() {
+    document.getElementById('treadmillHelpModal')?.classList.add('open');
   }
 
-  _closeForceVizHelp() {
-    document.getElementById('forceVizHelpModal')?.classList.remove('open');
+  _closeTreadmillHelp() {
+    document.getElementById('treadmillHelpModal')?.classList.remove('open');
   }
 
   _toggleSimTopbarGuide() {
@@ -9663,7 +9802,7 @@ export class App {
     }
     const paramSnapshot = this._captureSimulationSessionParamSnapshot();
     this._syncActiveSimulationSessionFromDraft();
-    // New sessions snapshot the currently active settings fresh — pass an empty
+    // New sessions snapshot the currently active settings fresh � pass an empty
     // base so leftover vars overrides from the previous draft (just captured
     // above by _syncActiveSimulationSessionFromDraft) don't stick around.
     this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, {});
@@ -10131,7 +10270,7 @@ export class App {
                   <div class="sim-setup-multi">
                     <button type="button" data-sim-setup-menu="${rowKey}" data-sim-setup-kind="layers">
                       <span>${_escapeHtml(this._buildSimulationSetupLayerSummary(row.layerIds, row.sessionIndex))}</span>
-                      <span aria-hidden="true">▾</span>
+                      <span aria-hidden="true">?</span>
                     </button>
                     <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="layers">
                       ${layerOptions.map(option => `
@@ -10156,7 +10295,7 @@ export class App {
                   <div class="sim-setup-multi">
                     <button type="button" data-sim-setup-menu="${rowKey}" data-sim-setup-kind="sensing" ${row.sensingSource === 'selected' ? '' : 'disabled'}>
                       <span>${_escapeHtml(this._buildSimulationSetupSensingSummary(row))}</span>
-                      <span aria-hidden="true">▾</span>
+                      <span aria-hidden="true">?</span>
                     </button>
                     <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="sensing">
                       ${sensingLayerOptions.map(option => `
@@ -10855,7 +10994,7 @@ export class App {
       try {
         runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush, gpuOptions);
       } catch (e) {
-        console.error(`Multi-session: failed to create runtime for session "${session.name}" → layer "${layer.name}":`, e);
+        console.error(`Multi-session: failed to create runtime for session "${session.name}" ? layer "${layer.name}":`, e);
         failedCount++;
         continue;
       }
@@ -10863,7 +11002,7 @@ export class App {
       runtimes.push(runtime);
     }
     if (failedCount > 0 && runtimes.length > 0) {
-      this.showToast(`${failedCount} session(s) failed to start — running ${runtimes.length} of ${runtimes.length + failedCount}`);
+      this.showToast(`${failedCount} session(s) failed to start � running ${runtimes.length} of ${runtimes.length + failedCount}`);
     }
     return runtimes;
   }
@@ -10974,7 +11113,7 @@ export class App {
       const renderSection = (sectionId, title, body, { collapsed = false } = {}) => {
         const openSection = collapsed ? false : isSectionOpen(sectionId);
         return `
-          <div class="section-header${openSection ? '' : ' closed'}" data-sim-section-toggle="${sectionId}">${_escapeHtml(title)} <span class="chevron">▼</span></div>
+          <div class="section-header${openSection ? '' : ' closed'}" data-sim-section-toggle="${sectionId}">${_escapeHtml(title)} <span class="chevron">?</span></div>
           <div class="section-body${openSection ? '' : ' collapsed'}" data-sim-section-body="${sectionId}">
             ${body}
           </div>`;
@@ -11004,21 +11143,21 @@ export class App {
         parts.push(item.closed ? 'Closed' : 'Open');
       }
       if (item.enabled === false) parts.push('Off');
-      return parts.join(' · ');
+      return parts.join(' � ');
     };
     const getGuideIcon = (group, item) => {
-      if (group.kind === 'spawn') return item.mask ? '◉' : '◎';
-      if (group.kind === 'path') return item.primitiveKind ? '⬡' : '≈';
-      if (group.kind === 'edge') return '⛶';
-      if (group.kind === 'pheromonePath') return '∿';
-      return item.type === 'repel' ? '↘' : '↗';
+      if (group.kind === 'spawn') return item.mask ? '?' : '?';
+      if (group.kind === 'path') return item.primitiveKind ? '?' : '�';
+      if (group.kind === 'edge') return '?';
+      if (group.kind === 'pheromonePath') return '?';
+      return item.type === 'repel' ? '?' : '?';
     };
     const getGuideMeta = (group, item) => {
       if (group.kind === 'spawn') {
-        if (item.mask?.bounds) return `${Math.round(item.mask.bounds.width)}×${Math.round(item.mask.bounds.height)} blob`;
+        if (item.mask?.bounds) return `${Math.round(item.mask.bounds.width)}�${Math.round(item.mask.bounds.height)} blob`;
         const radius = Number.isFinite(item.radius) ? `${Math.round(item.radius)}px` : 'Brush radius';
         const shape = item.shape || 'Brush shape';
-        return `${shape} · ${radius}`;
+        return `${shape} � ${radius}`;
       }
       if (group.kind === 'path') {
         const pointCount = Array.isArray(item.points) ? item.points.length : 0;
@@ -11029,16 +11168,16 @@ export class App {
           speedPoints ? `${speedPoints} spd` : '',
           radiusPoints ? `${radiusPoints} rad` : '',
           strengthPoints ? `${strengthPoints} str` : '',
-        ].filter(Boolean).join(' · ');
-        return `${item.closed ? 'Closed' : 'Open'} · ${pointCount} pts${extras ? ` · ${extras}` : ''}`;
+        ].filter(Boolean).join(' � ');
+        return `${item.closed ? 'Closed' : 'Open'} � ${pointCount} pts${extras ? ` � ${extras}` : ''}`;
       }
       if (group.kind === 'edge') {
-        return `${Array.isArray(item.points) ? item.points.length : 0} pts · ${Math.round(item.radius || 0)}px radius`;
+        return `${Array.isArray(item.points) ? item.points.length : 0} pts � ${Math.round(item.radius || 0)}px radius`;
       }
       if (group.kind === 'pheromonePath') {
-        return `${Array.isArray(item.points) ? item.points.length : 0} pts · ${(item.intensity ?? 0).toFixed(2)} intensity`;
+        return `${Array.isArray(item.points) ? item.points.length : 0} pts � ${(item.intensity ?? 0).toFixed(2)} intensity`;
       }
-      return `${item.type === 'repel' ? 'Repel' : 'Attract'} · ${Math.round(item.radius || 0)}px radius`;
+      return `${item.type === 'repel' ? 'Repel' : 'Attract'} � ${Math.round(item.radius || 0)}px radius`;
     };
     const sectionKeyForGroup = group => {
       if (group.kind === 'point') return group.label.toLowerCase().includes('repel') ? 'repelPoints' : 'attractPoints';
@@ -11059,7 +11198,7 @@ export class App {
           </div>
           <div class="sim-guide-layer-actions">
             <button type="button" class="sim-guide-layer-toggle ${item.enabled !== false ? 'active' : ''}" data-sim-toggle-item="1" data-sim-collection="${group.collection}" data-sim-id="${item.id}">${item.enabled !== false ? 'On' : 'Off'}</button>
-            <button type="button" class="sim-guide-layer-delete" data-sim-delete-item="1" data-sim-collection="${group.collection}" data-sim-id="${item.id}">×</button>
+            <button type="button" class="sim-guide-layer-delete" data-sim-delete-item="1" data-sim-collection="${group.collection}" data-sim-id="${item.id}">�</button>
           </div>
         </div>`).join('')}</div>`;
     };
@@ -11157,7 +11296,7 @@ export class App {
     const dampingValue = Number.isFinite(this.simulation.vars.damping) ? this.simulation.vars.damping : p.damping;
     const formatSimPanelValue = (id, value) => {
       switch (id) {
-        case 'simSpeed': return `${(value / 100).toFixed(1)}×`;
+        case 'simSpeed': return `${(value / 100).toFixed(1)}�`;
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
@@ -11349,9 +11488,9 @@ export class App {
                       <span class="sim-stage-badge${row.enabled ? '' : ' muted'}">${row.enabled ? 'Mounted' : 'Off'}</span>
                       <span class="sim-stage-badge ${playbackBadgeTone}">${_escapeHtml(playbackStatus.badge)}</span>
                     </div>
-                    <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} · Sensing: ${_escapeHtml(sensingSummary)} · ${routeCount} route${routeCount === 1 ? '' : 's'}</div>
+                    <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} � Sensing: ${_escapeHtml(sensingSummary)} � ${routeCount} route${routeCount === 1 ? '' : 's'}</div>
                   </div>
-                  <span class="sim-stage-card-caret" aria-hidden="true">▾</span>
+                  <span class="sim-stage-card-caret" aria-hidden="true">?</span>
                 </summary>
                 <div class="sim-stage-card-body">
                   <div class="sim-stage-row">
@@ -11422,7 +11561,7 @@ export class App {
         <div class="sim-inspector-note">Use the brush sidebar or this editor to keep session-specific boid settings, guide edits, and stage routing together.</div>
         ${renderInspectorSubgroup('Active Session Draft', `
           <div class="sim-stage-draft">
-            <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
+            <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session �${_escapeHtml(activeSavedSession.name || 'Untitled')}�` : 'Editing unsaved draft session'}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px;">
               <span class="sim-stage-badge ${activePlaybackBadgeTone}">${_escapeHtml(activePlaybackStatus.badge)}</span>
             </div>
@@ -11543,7 +11682,7 @@ export class App {
           </div>
         </div>
       ` : ''}
-      <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong> · ${selected ? `Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>` : 'Select a guide to edit it.'}</div>
+      <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> � Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}�</strong> � ${selected ? `Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>` : 'Select a guide to edit it.'}</div>
       ${renderSection('scene', 'Scene', `<div class="sim-inspector-note">Global simulation controls live here. Guide-specific overrides move into the floating format card so the layer list stays compact.</div>`) }
       ${renderTypeSection('playback', 'Playback & Bounds', [
         renderInspectorSubgroup('Playback', playbackSettingsBody),
@@ -11573,7 +11712,7 @@ export class App {
       const target = selected.target;
 
       // Helper: render a slider row for a numeric override field.
-      // Slider value = stored value / scale  (e.g. scale=0.01 → slider 0-200 maps to stored 0-2.0).
+      // Slider value = stored value / scale  (e.g. scale=0.01 ? slider 0-200 maps to stored 0-2.0).
       // When the field is not set on target, shows "Brush def." and places thumb at midpoint.
       const simSlider = (field, type, label, min, max, step, scale, showNumberInput = false) => {
         const raw = target[field];
@@ -11587,7 +11726,7 @@ export class App {
           sliderVal = Math.round((+min + +max) / 2);
         }
         const fmtStored = v => {
-          if (type === 'angle') return v + '°';
+          if (type === 'angle') return v + '�';
           if (type === 'integer') return String(Math.round(v));
           return scale < 1 ? v.toFixed(2) : v.toFixed(1);
         };
@@ -11604,7 +11743,7 @@ export class App {
             <span class="sim-slider-label">${label}</span>
             <div class="sim-slider-meta">
               <span class="sim-inspector-value" data-sim-val-label="${field}">${displayVal}</span>
-              <button class="sim-fld-reset" data-sim-reset="${field}" title="Match current default"${resetOpacity}>×</button>
+              <button class="sim-fld-reset" data-sim-reset="${field}" title="Match current default"${resetOpacity}>�</button>
             </div>
           </div>
           <div class="sim-slider-controls">
@@ -11636,7 +11775,7 @@ export class App {
           <span class="sim-format-chip-label">${label}:</span>
           <input type="number" class="sim-format-number" min="${type === 'angle' ? -180 : (type === 'integer' ? Math.round(min * scale) : min * scale)}" max="${type === 'angle' ? 180 : (type === 'integer' ? Math.round(max * scale) : max * scale)}" step="${type === 'integer' ? 1 : (type === 'angle' ? 1 : scale < 1 ? scale : step * scale)}" value="${inputVal}" placeholder="--"
                  data-sim-field="${field}" data-sim-type="${type}" data-sim-scale="${scale}" data-sim-input-kind="number">
-          <button type="button" class="sim-format-trigger" data-sim-format-toggle="${field}" aria-expanded="${open ? 'true' : 'false'}">▾</button>
+          <button type="button" class="sim-format-trigger" data-sim-format-toggle="${field}" aria-expanded="${open ? 'true' : 'false'}">?</button>
           <div class="sim-format-popover sim-format-slider-popover ${open ? 'open' : ''}" data-sim-format-popover="${field}">
             <div class="sim-format-slider-wrap">
               <input type="range" class="sim-format-slider" min="${min}" max="${max}" step="${step}" value="${sliderVal}"
@@ -11779,7 +11918,7 @@ export class App {
               <button type="button" class="sim-format-reset" data-sim-format-dock="1">${this._simFormatMenuUi.docked ? 'Undock' : 'Dock Top'}</button>
               ${compactControls.join('')}
               <button type="button" class="sim-format-reset" data-sim-reset-all="${resetFields.join(',')}">Match Current</button>
-              <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">×</button>
+              <button type="button" class="sim-format-close" data-sim-clear-selection="1" aria-label="Close format menu">�</button>
             </div>
           </div>`;
       }
@@ -11851,7 +11990,7 @@ export class App {
         pushGuideSlider('intensity', 'number', 'Intensity', 0, 100, 5, 0.01);
       }
       guideEditorMarkup = `
-        <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> · Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}×</strong> · Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>${selected.kind === 'spawn' || selected.kind === 'point' || selected.kind === 'path' || selected.kind === 'edge' || selected.kind === 'pheromonePath' ? ` · ${_escapeHtml(getGuideMeta({ kind: selected.kind, collection: selected.collection }, target))}` : ''}</div>
+        <div class="sim-guide-panel-summary">Current tool: <strong>${this.simulation.editorTool}</strong> � Playback speed <strong data-sim-summary="simSpeed">${p.simSpeed.toFixed(1)}�</strong> � Selected <strong>${_escapeHtml(selected.kind === 'point' ? selected.target.type : selected.kind)}</strong>${selected.kind === 'spawn' || selected.kind === 'point' || selected.kind === 'path' || selected.kind === 'edge' || selected.kind === 'pheromonePath' ? ` � ${_escapeHtml(getGuideMeta({ kind: selected.kind, collection: selected.collection }, target))}` : ''}</div>
         ${renderInspectorSubgroup(guideKindTitle, guideRows.length ? guideRows.join('') : '<div class="sim-inspector-note">No per-item overrides available for this guide.</div>')}
         ${guideResetFields.length ? `<div class="sim-inspector-actions" style="margin-top:6px"><button type="button" data-sim-reset-all="${guideResetFields.join(',')}">Match Current Defaults</button><button type="button" data-sim-clear-selection="1">Clear Selection</button></div>` : ''}
       `;
@@ -12204,7 +12343,7 @@ export class App {
             : type === 'integer'
               ? clampToStoredBounds(el, Math.round(+el.value * scale), 1)
               : clampToStoredBounds(el, +el.value * scale);
-          if (type === 'angle') lbl.textContent = `${liveValue}°`;
+          if (type === 'angle') lbl.textContent = `${liveValue}�`;
           else if (type === 'integer') lbl.textContent = String(liveValue);
           else lbl.textContent = liveValue.toFixed(scale < 1 ? 2 : 1);
           const numberInput = Array.from(controlRoot.querySelectorAll(`[data-sim-field="${field}"]`))
@@ -12243,7 +12382,7 @@ export class App {
             ? clampToStoredBounds(el, Math.round(+el.value), 1)
             : clampToStoredBounds(el, +el.value);
           if (lbl) {
-            if (type === 'angle') lbl.textContent = `${Math.round(numericValue)}°`;
+            if (type === 'angle') lbl.textContent = `${Math.round(numericValue)}�`;
             else if (type === 'integer') lbl.textContent = String(numericValue);
             else lbl.textContent = numericValue.toFixed(scale < 1 ? 2 : 1);
           }
@@ -12271,7 +12410,7 @@ export class App {
       el.addEventListener('blur', resetUndo);
     });
 
-    // Reset buttons — clear an override field and re-render.
+    // Reset buttons � clear an override field and re-render.
     queryAllInRoots('[data-sim-reset]').forEach(btn => {
       btn.addEventListener('click', () => {
         const entry = this._getSelectedSimulationEntry();
@@ -12475,7 +12614,7 @@ export class App {
   }
 
   _syncSimulationUI() {
-    this._syncForceVizUI();
+    this._syncTreadmillUI();
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
@@ -12559,15 +12698,16 @@ export class App {
     }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
-    const forceVizBtn = document.getElementById('simForceVizToggle');
-    if (forceVizBtn) {
-      const forceVizOn = this.simulation.mode === 'forceVisualization';
-      const forceVizLabel = forceVizOn ? 'Force Visualization mode on' : 'Force Visualization mode off';
-      forceVizBtn.classList.toggle('active', forceVizOn);
-      forceVizBtn.setAttribute('aria-pressed', forceVizOn ? 'true' : 'false');
-      forceVizBtn.setAttribute('aria-label', forceVizLabel);
-      forceVizBtn.title = forceVizLabel;
-    }
+    ['simTreadmillToggle', 'simDrawerTreadmillToggle'].forEach(id => {
+      const treadmillBtn = document.getElementById(id);
+      if (!treadmillBtn) return;
+      const treadmillOn = this.simulation.mode === 'treadmillCanvas';
+      const treadmillLabel = treadmillOn ? 'Treadmill Canvas mode on' : 'Treadmill Canvas mode off';
+      treadmillBtn.classList.toggle('active', treadmillOn);
+      treadmillBtn.setAttribute('aria-pressed', treadmillOn ? 'true' : 'false');
+      treadmillBtn.setAttribute('aria-label', treadmillLabel);
+      treadmillBtn.title = treadmillLabel;
+    });
     const simTabActive = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]')?.classList.contains('active');
     inspectorButtons.forEach(button => button?.classList.toggle('active', !!simTabActive));
     guidesButtons.forEach(button => {
@@ -12608,8 +12748,8 @@ export class App {
       }
       if (this._simulationExport.armedOnStart) extras.push('REC Armed');
       if (this._simulationExport.recording) extras.push('REC');
-      const stateLabel = extras.length ? `${base} · ${extras.join(' · ')}` : base;
-      status.textContent = `${sessionLabel} · ${stateLabel}`;
+      const stateLabel = extras.length ? `${base} � ${extras.join(' � ')}` : base;
+      status.textContent = `${sessionLabel} � ${stateLabel}`;
       if (playbackBadge) {
         const playbackStatus = this._getSimulationSavedPlaybackStatus(context.session);
         const badgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
@@ -12663,7 +12803,24 @@ export class App {
     if (!this.simulation.enabled || !this._isMotionBrush()) return;
     const brush = this.getCurrentBrush();
     if (!brush) return;
-    if (this.simulation.running || this.simulation.starting) return;
+    const isTreadmillBoid = this.simulation.mode === 'treadmillCanvas' && this.activeBrush === 'boid';
+    if (this.simulation.running || this.simulation.starting) {
+      const hasRunnableTreadmillAgents = isTreadmillBoid && brush._ready && brush._hasAgents?.();
+      if (!isTreadmillBoid || this.simulation.starting || hasRunnableTreadmillAgents) return;
+      this.simulation.running = false;
+      this.simulation.paused = false;
+      this.isDrawing = false;
+    }
+    if (isTreadmillBoid && !brush._ready) {
+      for (let frame = 0; frame < 60 && !brush._ready; frame++) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+      await brush.init?.();
+      if (!brush._ready) {
+        this.showToast('Treadmill unavailable: Boid engine did not initialize');
+        return;
+      }
+    }
     this._constrainSimulationDataToBounds(this.activeBrush);
     this.stopSimulation(false);
     this.simulation.starting = true;
@@ -12673,6 +12830,23 @@ export class App {
       this.simulation.paused = false;
       this.simulation.frameCount = 0;
       this.simulation.pathDistance = 0;
+      if (this.simulation.mode === 'treadmillCanvas') {
+        this._treadmillRuntime = {
+          originX: null,
+          originY: null,
+          targetX: null,
+          targetY: null,
+          cameraX: null,
+          cameraY: null,
+          cameraZoom: 1,
+          lastElapsed: null,
+          viewAnchorCameraX: null,
+          viewAnchorCameraY: null,
+          viewAnchorPanX: 0,
+          viewAnchorPanY: 0,
+          viewAnchorRotation: 0,
+        };
+      }
       const simParams = this.getP();
       this.isDrawing = true;
       this.undoPushedThisStroke = false;
@@ -12714,19 +12888,16 @@ export class App {
         }
         this.simulation.runtimeStrokeStarts = this._collectSimulationStrokeStartSpawns(this.activeBrush, simParams);
         const launchSpawn = this.simulation.runtimeStrokeStarts[0] || spawn;
-        const bindForceVizSpawn = this.simulation.mode === 'forceVisualization'
+        const bindTreadmillSpawn = this.simulation.mode === 'treadmillCanvas'
           && this.activeBrush === 'boid'
-          && spawn
-          && Array.isArray(this.simulation.forceViz?.scenarios);
-        if (bindForceVizSpawn) {
-          const activeScenario = this._getActiveForceVizScenario();
-          const activeRoutes = activeScenario?.routes || [];
-          const activeGroups = activeScenario?.groups || [];
-          const boundSpawnIds = new Set(activeRoutes.filter(route => route.enabled !== false).map(route => route.groupId));
-          const primaryGroup = activeGroups.find(group => boundSpawnIds.has(group.id) && group.spawnId != null)
-            || activeGroups.find(group => group.spawnId != null)
-            || null;
-          brush._primarySpawnId = primaryGroup?.spawnId ?? spawn.id ?? null;
+          && spawn;
+        if (bindTreadmillSpawn) {
+          // The initial onDown batch is the first enabled spawn. Its range
+          // must remain keyed to that same spawn ID; assigning it to an
+          // arbitrary routed group makes another spawn's route unresolved.
+          brush._primarySpawnId = spawn.id;
+          const group = this._getActiveTreadmillScenario()?.groups?.[0];
+          if (group) group.spawnId = spawn.id;
         }
         this._updateSimulationLeader(0, simParams);
         brush.onDown?.(launchSpawn.x, launchSpawn.y, 1);
@@ -12801,7 +12972,7 @@ export class App {
     this.isDrawing = false;
     this.isTapering = false;
     this._simulationSavedPlaybackCapture = null;
-    if (wasActive && this.simulation.mode === 'forceVisualization') this._applyForceVizExitBehaviorOnStop();
+    if (wasActive && this.simulation.mode === 'treadmillCanvas') this._applyTreadmillExitBehaviorOnStop();
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
   }
@@ -13629,7 +13800,7 @@ export class App {
       ctx.font = `${ui.deleteBadgeFont}px Segoe UI, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('×', badge.x, badge.y + (0.5 * ui.scale));
+      ctx.fillText('�', badge.x, badge.y + (0.5 * ui.scale));
     };
 
     const drawOverlayChip = (button, label) => {
@@ -14013,7 +14184,7 @@ export class App {
               ...button,
               strokeStyle: active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)',
               textStyle: active ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.4)',
-            }, active ? '✓' : '○');
+            }, active ? '?' : '?');
           };
           if (speedControls.speedToggleButton) drawToggleChip(speedControls.speedToggleButton, this._simPathOverlayUi.showSpeedHandles);
           if (speedControls.radiusToggleButton) drawToggleChip(speedControls.radiusToggleButton, this._simPathOverlayUi.showRadiusHandles);
@@ -14977,7 +15148,7 @@ export class App {
       const pathId = index === 0 && Number.isFinite(reusePathId) ? reusePathId : doc.nextPathId++;
       created.push({
         id: pathId,
-        name: `${resolvedGroupName} · Line ${index + 1}`,
+        name: `${resolvedGroupName} � Line ${index + 1}`,
         kind: 'polyline',
         closed: false,
         endBehavior: 'restart',
@@ -15036,7 +15207,7 @@ export class App {
     }
     members.forEach((member, index) => {
       const spoke = spokes[index] || spokes[spokes.length - 1] || spokeHandle;
-      member.name = `${resolvedGroupName} · Line ${index + 1}`;
+      member.name = `${resolvedGroupName} � Line ${index + 1}`;
       member.kind = 'polyline';
       member.groupId = groupId;
       member.groupKind = 'radial';
@@ -15996,7 +16167,7 @@ export class App {
       if (doc) select.value = String(doc.id);
     }
     const compiled = this._compileActiveMotionPathGraph(this.getP());
-    const summary = `${doc?.paths?.length || 0} path${(doc?.paths?.length || 0) === 1 ? '' : 's'} · ${compiled?.agents?.length || 0} agent${(compiled?.agents?.length || 0) === 1 ? '' : 's'}`;
+    const summary = `${doc?.paths?.length || 0} path${(doc?.paths?.length || 0) === 1 ? '' : 's'} � ${compiled?.agents?.length || 0} agent${(compiled?.agents?.length || 0) === 1 ? '' : 's'}`;
     const sidebarName = document.getElementById('motionPathDocName');
     if (sidebarName) sidebarName.textContent = doc?.name || 'No graph';
     const sidebarSummary = document.getElementById('motionPathDocSummary');
@@ -16016,7 +16187,7 @@ export class App {
         : this.motionPathEditor.activeTool === 'delete'
           ? 'Delete Tool'
           : 'Select Tool';
-      badge.textContent = this.motionPathEditor.insertPointMode ? 'Click to Place Point' : `${toolLabel} · View ${zoomLabel}`;
+      badge.textContent = this.motionPathEditor.insertPointMode ? 'Click to Place Point' : `${toolLabel} � View ${zoomLabel}`;
     }
     const zoomBadge = document.getElementById('motionPathToolbarZoomLabel');
     if (zoomBadge) zoomBadge.textContent = `${Math.round((doc?.view?.zoom || 1) * 100)}%`;
@@ -16057,13 +16228,13 @@ export class App {
         ? Math.round(_normalizeMotionPathRadialSpread(singleSelected.radialSpread))
         : 0;
     const radialDetails = radialCount > 0
-      ? ` · ${radialCount} spoke${radialCount === 1 ? '' : 's'} · ${radialSpread}° spread`
+      ? ` � ${radialCount} spoke${radialCount === 1 ? '' : 's'} � ${radialSpread}� spread`
       : '';
     if (selectionMeta) {
       selectionMeta.textContent = radialGroup && selectedCount > 1
-        ? `radial group · ${selectedCount} selected line${selectedCount === 1 ? '' : 's'}${radialDetails}`
+        ? `radial group � ${selectedCount} selected line${selectedCount === 1 ? '' : 's'}${radialDetails}`
         : singleSelected
-        ? `${singleSelected.kind}${singleSelected.closed ? ' · closed' : ''} · ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'}${radialDetails} · ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} · ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` · ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` · node size ${selectedPoint.stampScale.toFixed(2)}x · node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
+        ? `${singleSelected.kind}${singleSelected.closed ? ' � closed' : ''} � ${singleSelected.points.length} control point${singleSelected.points.length === 1 ? '' : 's'}${radialDetails} � ${_getMotionPathDirectionModeLabel(singleSelected.directionMode)} � ${_getMotionPathStartModeLabel(singleSelected.startMode)}${singleSelected.closed ? '' : ` � ${_getMotionPathEndBehaviorLabel(singleSelected.endBehavior)}`}${selectedPoint ? ` � node size ${selectedPoint.stampScale.toFixed(2)}x � node speed ${selectedPoint.speedScale.toFixed(2)}x` : ''}`
         : selectedCount > 1
           ? `${selectedCount} primitives selected`
           : 'No primitive selected';
@@ -16272,7 +16443,7 @@ export class App {
     if (cur && cur.deactivate) cur.deactivate();
     this.activeBrush = name;
     // Update brush dropdown button
-    const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', motionPath: '🧭 Motion Path', fluid: '🌊 LBM Fluid', fluid3d: '💧 3D Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
+    const brushLabels = { boid: '?? Boid', ant: '?? Ant', bristle: '?? Bristle', motionPath: '?? Motion Path', fluid: '?? LBM Fluid', fluid3d: '?? 3D Fluid', simple: '?? Simple', eraser: '? Eraser' };
     const btn = document.getElementById('brushBtn');
     if (btn) {
       btn.textContent = brushLabels[name] || name;
@@ -16315,7 +16486,7 @@ export class App {
     this._commitFloatingPixels();
     this.selectionMgr.clear();
     this._syncSelectionUI();
-    this.showToast('✕ Deselected');
+    this.showToast('? Deselected');
   }
 
   /** Stamp floating pixels back onto the active layer (if any). */
@@ -16349,10 +16520,10 @@ export class App {
     this.selectionMgr.transformActive = !this.selectionMgr.transformActive;
     if (this.selectionMgr.transformActive) {
       this.setTool('transform');
-      this.showToast('🔒 Transform mode ON');
+      this.showToast('?? Transform mode ON');
     } else {
       this.setTool('brush');
-      this.showToast('🔒 Transform mode OFF');
+      this.showToast('?? Transform mode OFF');
     }
     this._syncSelectionUI();
   }
@@ -16362,7 +16533,7 @@ export class App {
     this.selectionMgr.keepProportional = !this.selectionMgr.keepProportional;
     const btn = document.getElementById('proportionalToggle');
     if (btn) btn.classList.toggle('active', this.selectionMgr.keepProportional);
-    this.showToast(this.selectionMgr.keepProportional ? '🔒 Proportional: ON' : '🔒 Proportional: OFF');
+    this.showToast(this.selectionMgr.keepProportional ? '?? Proportional: ON' : '?? Proportional: OFF');
   }
 
   // ========================================================
@@ -16451,7 +16622,7 @@ export class App {
       document.getElementById('layersToggle')?.classList.toggle('active', open);
       this._updateTabVisibility();
     });
-    // ── Panel tab switching (drawer handles) ──
+    // -- Panel tab switching (drawer handles) --
     document.querySelectorAll('.panel-tabs').forEach(tabBar => {
       tabBar.addEventListener('click', e => {
         const tab = e.target.closest('.panel-tab');
@@ -16486,7 +16657,7 @@ export class App {
         this._updateTabVisibility();
       });
     });
-    // ── Always show tabs setting ──
+    // -- Always show tabs setting --
     const alwaysShowTabsCb = document.getElementById('alwaysShowTabs');
     if (alwaysShowTabsCb) {
       const storedAlwaysShowTabs = localStorage.getItem('bb_alwaysShowTabs');
@@ -16550,8 +16721,10 @@ export class App {
       source.dispatchEvent(new Event('change', { bubbles: true }));
       this._syncSimulationUI();
     });
-    document.getElementById('simForceVizToggle')?.addEventListener('click', () => {
-      this._setSimulationMode(this.simulation.mode === 'forceVisualization' ? 'normal' : 'forceVisualization');
+    ['simTreadmillToggle', 'simDrawerTreadmillToggle'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => {
+        this._setSimulationMode(this.simulation.mode === 'treadmillCanvas' ? 'normal' : 'treadmillCanvas');
+      });
     });
     document.getElementById('simSetupExplorerBtn')?.addEventListener('click', event => {
       this.toggleSimulationSessionRoutingPicker(event.currentTarget);
@@ -16642,8 +16815,8 @@ export class App {
     });
     document.getElementById('simHelpClose')?.addEventListener('click', () => this._closeSimulationHelp());
     document.getElementById('simHelpBackdrop')?.addEventListener('click', () => this._closeSimulationHelp());
-    document.getElementById('forceVizHelpClose')?.addEventListener('click', () => this._closeForceVizHelp());
-    document.getElementById('forceVizHelpBackdrop')?.addEventListener('click', () => this._closeForceVizHelp());
+    document.getElementById('treadmillHelpClose')?.addEventListener('click', () => this._closeTreadmillHelp());
+    document.getElementById('treadmillHelpBackdrop')?.addEventListener('click', () => this._closeTreadmillHelp());
     document.getElementById('simDistributePointsClose')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsBackdrop')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsCancel')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
@@ -16707,7 +16880,7 @@ export class App {
         this._formatWorkspaceJsonEditor();
       } catch (error) {
         this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
-        this.showToast('⚠ JSON format failed');
+        this.showToast('? JSON format failed');
       }
     });
     document.getElementById('workspaceJsonValidate')?.addEventListener('click', () => {
@@ -16715,7 +16888,7 @@ export class App {
         this._validateWorkspaceJsonEditor();
       } catch (error) {
         this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
-        this.showToast('⚠ JSON validation failed');
+        this.showToast('? JSON validation failed');
       }
     });
     document.getElementById('workspaceJsonCopy')?.addEventListener('click', () => {
@@ -16761,7 +16934,7 @@ export class App {
       try {
         await this.importWorkspaceSettingsText(await file.text());
         this._hideSimulationSetupExplorer({ discard: true });
-        this.showToast(`📂 Loaded workspace file ${file.name}`);
+        this.showToast(`?? Loaded workspace file ${file.name}`);
       } catch (error) {
         console.error('Workspace import failed:', error);
         this._setSimulationSetupStatus(error?.message || 'Workspace import failed.', 'error');
@@ -16810,7 +16983,7 @@ export class App {
           this._formatWorkspaceJsonEditor();
         } catch (error) {
           this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON format failed.', 'error');
-          this.showToast('⚠ JSON format failed');
+          this.showToast('? JSON format failed');
         }
       } else if (lowered === 'v') {
         event.preventDefault();
@@ -16818,7 +16991,7 @@ export class App {
           this._validateWorkspaceJsonEditor();
         } catch (error) {
           this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
-          this.showToast('⚠ JSON validation failed');
+          this.showToast('? JSON validation failed');
         }
       } else if (lowered === 'c') {
         event.preventDefault();
@@ -16913,7 +17086,7 @@ export class App {
         const name = _normalizeMotionPathGroupName(e.target.value, `Radial ${selectedGroup.groupId}`);
         this._getMotionPathGroupMembers(selectedGroup.groupId).forEach((path, index) => {
           path.groupName = name;
-          path.name = `${name} · Line ${index + 1}`;
+          path.name = `${name} � Line ${index + 1}`;
         });
         this._markMotionPathDocumentUpdated();
         this._syncMotionPathUI();
@@ -17117,7 +17290,7 @@ export class App {
         }
 
         // 3. Move trailing items into the menu until the topbar fits.
-        //    Skip items that are hidden by app logic (display:none) — they
+        //    Skip items that are hidden by app logic (display:none) � they
         //    don't contribute to overflow width and should stay in the topbar
         //    so that show/hide toggling by app code continues to work.
         for (let i = items.length - 1; i >= 0; i--) {
@@ -17151,7 +17324,7 @@ export class App {
     };
     this._layoutTopbarOverflow = layout;
 
-    // Caret click — open/close the menu and position it under the toggle button.
+    // Caret click � open/close the menu and position it under the toggle button.
     // stopPropagation prevents the toggle's own click from reaching onDocClick
     // which is attached to the document and would immediately close the menu.
     toggle.addEventListener('click', e => {
@@ -17280,7 +17453,7 @@ export class App {
       this.penAngleSampleValid = true;
       this.penAngleSource = 'tilt';
     } else {
-      // Pen is vertical or no tilt data — leave previous values
+      // Pen is vertical or no tilt data � leave previous values
       this.penAngleSource = 'none';
     }
 
@@ -17439,7 +17612,7 @@ export class App {
       this.leaderX = x;
       this.leaderY = y;
       // Notify brush of hover for Apple Pencil hover preview/spawn
-      // Skip during taper — hover would clear the tapering boids
+      // Skip during taper � hover would clear the tapering boids
       if (!this.isTapering && !(this.simulation.enabled && this._isMotionBrush())) {
         const brush = this.getCurrentBrush();
         if (brush && brush.onHover) brush.onHover(x, y);
@@ -17481,12 +17654,12 @@ export class App {
     this._activePointers.delete(e.pointerId);
     if (this._handleSimulationPointerUp()) return;
     if (this._handleSymmetryPointerUp()) return;
-    // Move-drag end (any tool mode) — keep pixels floating
+    // Move-drag end (any tool mode) � keep pixels floating
     if (this.selectionMgr?._isMoving) {
       this.selectionMgr.moveOnUp();
       return;
     }
-    // Transform tool dispatch — keep pixels floating
+    // Transform tool dispatch � keep pixels floating
     if (this.activeTool === 'transform' && this.selectionMgr?._transformHandle) {
       this.selectionMgr.transformOnUp();
       return;
@@ -17727,7 +17900,7 @@ export class App {
     this.invalidateParams();
     const span = document.getElementById('v_stampSize');
     if (span) span.textContent = slider.value;
-    this.showToast(`🖌 Brush size: ${slider.value}`);
+    this.showToast(`?? Brush size: ${slider.value}`);
   }
 
   // ========================================================
@@ -17768,7 +17941,7 @@ export class App {
   _onTouchMove(e) {
     if (this._pinchActive && e.touches.length === 2) {
       e.preventDefault();
-      this._forceVizCameraRuntime.lastManualInputAt = performance.now();
+      this._treadmillCameraRuntime.lastManualInputAt = performance.now();
       const t0 = e.touches[0], t1 = e.touches[1];
       const dx = t1.clientX - t0.clientX;
       const dy = t1.clientY - t0.clientY;
@@ -17802,7 +17975,7 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
-    this._forceVizCameraRuntime.lastManualInputAt = performance.now();
+    this._treadmillCameraRuntime.lastManualInputAt = performance.now();
     // Shift+scroll = rotate view
     if (e.shiftKey) {
       const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
@@ -17852,19 +18025,19 @@ export class App {
     this.viewRotation = 0;
     this.viewFlipped = false;
     this._applyViewTransform();
-    this.showToast('🔍 View reset');
+    this.showToast('?? View reset');
   }
 
   flipView() {
     this.viewFlipped = !this.viewFlipped;
     this._applyViewTransform();
-    this.showToast(this.viewFlipped ? '🪞 View flipped' : '🪞 View unflipped');
+    this.showToast(this.viewFlipped ? '?? View flipped' : '?? View unflipped');
   }
 
   toggleTiling() {
     this.tilingMode = !this.tilingMode;
     this._syncTilingUI();
-    this.showToast(this.tilingMode ? '🔁 Tiling: ON' : '🔁 Tiling: OFF');
+    this.showToast(this.tilingMode ? '?? Tiling: ON' : '?? Tiling: OFF');
   }
 
   _syncTilingUI() {
@@ -18069,7 +18242,7 @@ export class App {
     this._resetPerformanceTelemetryStats();
     this._notePerformanceEvent(t.enabled ? 'telemetry enabled' : 'telemetry disabled');
     this._refreshPerformanceTelemetryUI(true);
-    this.showToast(t.enabled ? '📊 Perf telemetry enabled' : '📊 Perf telemetry disabled');
+    this.showToast(t.enabled ? '?? Perf telemetry enabled' : '?? Perf telemetry disabled');
   }
 
   async setPerformanceWakeLockEnabled(enabled) {
@@ -18079,7 +18252,7 @@ export class App {
     if (t.wakeLockPreferred) await this._requestPerformanceWakeLock();
     else await this._releasePerformanceWakeLock();
     this._refreshPerformanceTelemetryUI(true);
-    this.showToast(t.wakeLockPreferred ? '🔆 Wake lock requested' : '🔆 Wake lock released');
+    this.showToast(t.wakeLockPreferred ? '?? Wake lock requested' : '?? Wake lock released');
   }
 
   async _requestPerformanceWakeLock() {
@@ -18212,16 +18385,16 @@ export class App {
     const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
     const hiddenMs = t.hiddenMs + (t.hiddenAt ? performance.now() - t.hiddenAt : 0);
     const wakeLockState = t.wakeLockPreferred
-      ? ` • wake ${t.wakeLockActive ? 'on' : 'waiting'}`
+      ? ` � wake ${t.wakeLockActive ? 'on' : 'waiting'}`
       : '';
     const lines = [
-      `State: ${t.visibilityState}${t.focused ? ' • focused' : ' • blurred'}${wakeLockState}`,
-      `Frames: ${t.frameCount} • avg ${avgFrame.toFixed(1)}ms • ~${fps.toFixed(0)}fps • slow ${t.slowFrameCount}`,
-      `Attribution: brush ${(t.totalBrushMs / frameCount).toFixed(1)} • overlay ${(t.totalOverlayMs / frameCount).toFixed(1)} • clear ${(t.totalClearMs / frameCount).toFixed(1)} • status ${(t.totalStatusMs / frameCount).toFixed(1)} ms/frame`,
-      `Render: submit ${t.renderSubmittedStamps} • est ${t.renderEstimatedStamps} • fb ${t.renderFallbackCount} • backends wg:${t.renderBackendCounts.webgpu} gl:${t.renderBackendCounts.webgl} c2d:${t.renderBackendCounts.canvas} cpu:${t.renderBackendCounts.legacy}`,
-      `Worst: ${t.worstFrameMs.toFixed(1)}ms (${t.worstFramePhase}) • long tasks ${t.longTaskCount} (${t.longTaskTotalMs.toFixed(0)}ms) • raf gaps ${t.throttleGapCount}`,
-      `Lifecycle: hidden ${(hiddenMs / 1000).toFixed(1)}s • vis ${t.visibilityChanges} • blur ${t.focusLostCount} • pagehide ${t.pageHideCount} • freeze ${t.freezeCount}`,
-      `Device: ${t.hardwareConcurrency || '?'} cores • ${t.deviceMemoryGB || '?'}GB mem${t.memoryMB != null ? ` • heap ${t.memoryMB.toFixed(0)}MB` : ''}`,
+      `State: ${t.visibilityState}${t.focused ? ' � focused' : ' � blurred'}${wakeLockState}`,
+      `Frames: ${t.frameCount} � avg ${avgFrame.toFixed(1)}ms � ~${fps.toFixed(0)}fps � slow ${t.slowFrameCount}`,
+      `Attribution: brush ${(t.totalBrushMs / frameCount).toFixed(1)} � overlay ${(t.totalOverlayMs / frameCount).toFixed(1)} � clear ${(t.totalClearMs / frameCount).toFixed(1)} � status ${(t.totalStatusMs / frameCount).toFixed(1)} ms/frame`,
+      `Render: submit ${t.renderSubmittedStamps} � est ${t.renderEstimatedStamps} � fb ${t.renderFallbackCount} � backends wg:${t.renderBackendCounts.webgpu} gl:${t.renderBackendCounts.webgl} c2d:${t.renderBackendCounts.canvas} cpu:${t.renderBackendCounts.legacy}`,
+      `Worst: ${t.worstFrameMs.toFixed(1)}ms (${t.worstFramePhase}) � long tasks ${t.longTaskCount} (${t.longTaskTotalMs.toFixed(0)}ms) � raf gaps ${t.throttleGapCount}`,
+      `Lifecycle: hidden ${(hiddenMs / 1000).toFixed(1)}s � vis ${t.visibilityChanges} � blur ${t.focusLostCount} � pagehide ${t.pageHideCount} � freeze ${t.freezeCount}`,
+      `Device: ${t.hardwareConcurrency || '?'} cores � ${t.deviceMemoryGB || '?'}GB mem${t.memoryMB != null ? ` � heap ${t.memoryMB.toFixed(0)}MB` : ''}`,
     ];
     if (t.recentEvents.length) lines.push(`Recent: ${t.recentEvents.slice(0, 3).join(' | ')}`);
     readoutEl.textContent = lines.join('\n');
@@ -18290,10 +18463,10 @@ export class App {
     const snapshot = this._buildPerformanceTelemetrySnapshot();
     try {
       await navigator.clipboard.writeText(snapshot);
-      this.showToast('📋 Perf snapshot copied');
+      this.showToast('?? Perf snapshot copied');
     } catch {
       console.info(snapshot);
-      this.showToast('📋 Perf snapshot logged to console');
+      this.showToast('?? Perf snapshot logged to console');
     }
   }
 
@@ -18301,7 +18474,7 @@ export class App {
     this._resetPerformanceTelemetryStats();
     this._notePerformanceEvent('telemetry reset');
     this._refreshPerformanceTelemetryUI(true);
-    this.showToast('♻ Perf telemetry reset');
+    this.showToast('? Perf telemetry reset');
   }
 
   _captureCompositeDebugImageData() {
@@ -18518,10 +18691,10 @@ export class App {
     panel.querySelector('#ephemeralGhostDebugCopy')?.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(summaryText);
-        this.showToast('📋 Ghost debug copied');
+        this.showToast('?? Ghost debug copied');
       } catch {
         console.info(result.summary);
-        this.showToast('📋 Ghost debug logged');
+        this.showToast('?? Ghost debug logged');
       }
     });
     return result;
@@ -18556,7 +18729,7 @@ export class App {
     let overlayMs = 0;
     let statusMs = 0;
 
-    // Taper pass — after stroke ends
+    // Taper pass � after stroke ends
     const brushStart = perf ? performance.now() : 0;
     if (this.isTapering && brush && brush.taperFrame) {
       this.taperFrame++;
@@ -18585,15 +18758,16 @@ export class App {
       brush.onFrame(elapsed);
       if (this.simulation.running && this.simulation.enabled && this.activeBrush === 'boid') {
         this._syncSimulationSavedPlaybackCapture(brush);
-        // Force Visualization camera: resolves its target from the BoidBrush
+        // Treadmill Canvas camera: resolves its target from the BoidBrush
         // transient snapshot brush.onFrame() just refreshed, then smooths
         // view state via the same _applyViewTransform() manual nav uses.
-        this._applyForceVizCameraFrame(brush, elapsed);
-        this._updateForceVizStatusText();
+        this._applyTreadmillCameraFrame(brush, elapsed);
+        if (this.simulation.mode === 'treadmillCanvas') this._queueTreadmillEmptyRestart(brush);
+        this._updateTreadmillStatusText();
       }
     } else if (!this.isDrawing && !this.simulation.running && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
-      // Skip during taper — taperFrame already steps the sim
+      // Skip during taper � taperFrame already steps the sim
       brush.onHoverFrame(elapsed);
     }
     if (perf) brushMs = performance.now() - brushStart;
@@ -18603,7 +18777,11 @@ export class App {
     this.lctx.clearRect(0, 0, this.W, this.H);
     if (perf) clearMs = performance.now() - clearStart;
 
-    const showingCanvasTexturePreview = p.canvasTextureShowOnCanvas && this.hasCanvasTexture();
+    const drawTreadmillPresentation = this.simulation.mode === 'treadmillCanvas'
+      && (this.simulation.running || this.simulation.paused);
+    const showingCanvasTexturePreview = p.canvasTextureShowOnCanvas
+      && this.hasCanvasTexture()
+      && !drawTreadmillPresentation;
     if (showingCanvasTexturePreview) {
       this._renderCanvasTexturePreview(p);
     }
@@ -18623,7 +18801,7 @@ export class App {
     }
 
     if (!showingCanvasTexturePreview) this._drawSymmetryGuideOverlay(this.lctx, p);
-    if (!showingCanvasTexturePreview && brush && brush.drawOverlay) {
+    if ((!showingCanvasTexturePreview || drawTreadmillPresentation) && brush && brush.drawOverlay) {
       brush.drawOverlay(this.lctx, p);
     }
     if (!showingCanvasTexturePreview) this.drawSimulationOverlay(this.lctx);
@@ -18667,11 +18845,31 @@ export class App {
     this._rafId = requestAnimationFrame(() => this._frameLoop());
   }
 
+  _queueTreadmillEmptyRestart(brush) {
+    if (this._treadmillEmptyRestartQueued || this.simulation.frameCount < 3) return;
+    const readCount = brush?._treadmillRead?.count ?? brush?.sim?.readAgents?.().count ?? 0;
+    if (readCount > 0) return;
+    this._treadmillEmptyRestartQueued = true;
+    const restart = async () => {
+      this._treadmillEmptyRestartQueued = false;
+      if (!this.simulation.enabled || !this.simulation.running || this.simulation.mode !== 'treadmillCanvas' || this.activeBrush !== 'boid') return;
+      const currentBrush = this.getCurrentBrush();
+      const currentCount = currentBrush?._treadmillRead?.count ?? currentBrush?.sim?.readAgents?.().count ?? 0;
+      if (currentCount > 0) return;
+      this.simulation.running = false;
+      this.simulation.paused = false;
+      this.isDrawing = false;
+      await this.startSimulation({ announce: false });
+    };
+    if (typeof queueMicrotask === 'function') queueMicrotask(restart);
+    else setTimeout(restart, 0);
+  }
+
   _updateStatus(brush) {
-    let info = `${this.W}×${this.H} | Layer ${this.activeLayerIdx + 1}/${this.layers.length}`;
+    let info = `${this.W}�${this.H} | Layer ${this.activeLayerIdx + 1}/${this.layers.length}`;
     if (this.viewZoom !== 1 || this.viewRotation !== 0) {
       info += ` | ${Math.round(this.viewZoom * 100)}%`;
-      if (this.viewRotation !== 0) info += ` ${Math.round(this.viewRotation * 180 / Math.PI)}°`;
+      if (this.viewRotation !== 0) info += ` ${Math.round(this.viewRotation * 180 / Math.PI)}�`;
     }
     if (this.simulation.running) info += ' | Sim: running';
     else if (this.simulation.paused) info += ' | Sim: paused';
@@ -18849,11 +19047,11 @@ export class App {
           color = `rgb(${r},${g},${b})`;
         }
       } else if (p.smudgeOnly) {
-        // Nothing on canvas to smudge — skip stamp entirely
+        // Nothing on canvas to smudge � skip stamp entirely
         return;
       }
     } else if (p.smudgeOnly) {
-      // Smudge is 0 but smudgeOnly is on — nothing to do
+      // Smudge is 0 but smudgeOnly is on � nothing to do
       return;
     }
     ctx.beginPath();
@@ -18949,7 +19147,7 @@ export class App {
       const n = parseInt(hex, 16);
       return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
     }
-    // Fallback: render into 1×1 canvas and read back
+    // Fallback: render into 1�1 canvas and read back
     const c = this._colorParseCtx;
     c.clearRect(0, 0, 1, 1);
     c.fillStyle = color;
@@ -18976,20 +19174,20 @@ export class App {
       this.setTool('brush');
       return;
     }
-    // Reuse the 1×1 parse canvas to avoid creating a new context
+    // Reuse the 1�1 parse canvas to avoid creating a new context
     const ctx = this._colorParseCtx;
     ctx.clearRect(0, 0, 1, 1);
     ctx.drawImage(src, -px, -py);
     const d = ctx.getImageData(0, 0, 1, 1).data;
     if (d[3] === 0) {
-      // Transparent pixel — sample background color instead
+      // Transparent pixel � sample background color instead
       this.setColorValue('primary', this.getColorValue('background', '#ffffff'));
     } else {
       const toHex = v => v.toString(16).padStart(2, '0');
       this.setColorValue('primary', `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`);
     }
     this._recordColor(this.getColorValue('primary', '#1a1a1a'));
-    this.showToast(`🔬 Picked ${this.getColorValue('primary', '#1a1a1a')}`);
+    this.showToast(`?? Picked ${this.getColorValue('primary', '#1a1a1a')}`);
     // Return to brush mode after picking
     this.setTool('brush');
   }
@@ -19077,7 +19275,7 @@ export class App {
     layer.dirty = true;
     this.compositeAllLayers();
     this.recordLastChangeMarker('Fill');
-    this.showToast('🪣 Filled');
+    this.showToast('?? Filled');
   }
 
   /**
@@ -19106,7 +19304,7 @@ export class App {
 
   /**
    * Sample the average alpha within a circular stamp footprint on the active layer.
-   * Returns 0–1. Samples 9 points (center + 8 surrounding at half-radius) for
+   * Returns 0�1. Samples 9 points (center + 8 surrounding at half-radius) for
    * performance, giving a smooth fade-out at edges near transparent pixels.
    */
   _sampleSmudgeAreaAlpha(x, y, size) {
@@ -19142,14 +19340,14 @@ export class App {
   /**
    * Kubelka-Munk two-flux reflectance mixing.
    * Converts brush and canvas colours to K/S coefficients, mixes them by
-   * brushStrength, and converts back to RGB — producing physically-based
-   * subtractive pigment mixing (blue + yellow → vibrant green).
+   * brushStrength, and converts back to RGB � producing physically-based
+   * subtractive pigment mixing (blue + yellow ? vibrant green).
    *
    * @param {string} brushColorHex  Hex colour string of the brush (e.g. "#ff0000")
-   * @param {number} canvasR        Existing canvas red   channel (0–255)
-   * @param {number} canvasG        Existing canvas green channel (0–255)
-   * @param {number} canvasB        Existing canvas blue  channel (0–255)
-   * @param {number} strength       Mix strength 0–1 (1 = full brush colour)
+   * @param {number} canvasR        Existing canvas red   channel (0�255)
+   * @param {number} canvasG        Existing canvas green channel (0�255)
+   * @param {number} canvasB        Existing canvas blue  channel (0�255)
+   * @param {number} strength       Mix strength 0�1 (1 = full brush colour)
    * @returns {{ r: number, g: number, b: number }}
    */
   _kmMixColors(brushColorHex, canvasR, canvasG, canvasB, strength) {
@@ -19157,9 +19355,9 @@ export class App {
 
     // Convert 0-255 channel to linear reflectance [0.001, 0.999]
     const toR = v => Math.max(0.001, Math.min(0.999, v / 255));
-    // Kubelka-Munk remission function: K/S = (1 - R)² / (2R)
+    // Kubelka-Munk remission function: K/S = (1 - R)� / (2R)
     const toKS = R => ((1 - R) * (1 - R)) / (2 * R);
-    // Convert K/S back to reflectance: R = 1 + K/S - sqrt((K/S)² + 2*(K/S))
+    // Convert K/S back to reflectance: R = 1 + K/S - sqrt((K/S)� + 2*(K/S))
     const toRefl = ks => {
       const r = 1 + ks - Math.sqrt(ks * ks + 2 * ks);
       return Math.max(0, Math.min(1, r));
@@ -19191,7 +19389,7 @@ export class App {
 
   /**
    * Compute a lighting overlay canvas from the height map using Sobel normals
-   * and a directional light model (Phong N·L).
+   * and a directional light model (Phong N�L).
    * Only called when _heightDirty is true; result is cached as _impastoOverlayCanvas.
    */
   _computeImpastoOverlay(p) {
@@ -19241,7 +19439,7 @@ export class App {
         const Ny = len > 1e-6 ? ny / len : 0;
         const Nz = len > 1e-6 ? nz / len : 1;
 
-        // N·L dot product, clamped
+        // N�L dot product, clamped
         const NdotL = Math.max(0, Math.min(1, Nx * Lx + Ny * Ly + Nz * Lz));
 
         // Map to output: 128 is neutral; above = highlights, below = shadows
@@ -19492,7 +19690,7 @@ export class App {
     const options = this.layers.map(layer => ({
       id: layer.id,
       label: layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer'),
-      meta: layer.isBackground ? 'Canvas background fill' : `${Math.round(layer.opacity * 100)}% • ${layer.visible ? 'visible' : 'hidden'}`,
+      meta: layer.isBackground ? 'Canvas background fill' : `${Math.round(layer.opacity * 100)}% � ${layer.visible ? 'visible' : 'hidden'}`,
       checked: selected.has(layer.id),
     }));
     panel.innerHTML = `
@@ -19694,7 +19892,7 @@ export class App {
         a.download = 'boid-brush.png';
         a.href = canvas.toDataURL('image/png');
         a.click();
-        this.showToast('💾 Saved');
+        this.showToast('?? Saved');
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -19703,7 +19901,7 @@ export class App {
       a.href = url;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      this.showToast('💾 Saved');
+      this.showToast('?? Saved');
     }, 'image/png');
   }
 
@@ -19718,7 +19916,7 @@ export class App {
         const l = this.getActiveLayer();
         const bounds = this.selectionMgr.getBounds();
         const extracted = this.selectionMgr.extractPixels(l.canvas, this.DPR);
-        if (!extracted) { this.showToast('⚠ Nothing selected'); return; }
+        if (!extracted) { this.showToast('? Nothing selected'); return; }
         const blob = await extracted.convertToBlob({ type: 'image/png' });
         this._clipboardBlob = blob;
         this._clipboardMetadata = bounds;  // Store original location & size
@@ -19729,15 +19927,15 @@ export class App {
             clipboardOk = true;
           }
         } catch { /* Clipboard unavailable */ }
-        this.showToast(clipboardOk ? '📋 Selection copied' : '📋 Selection copied (in-app)');
-      } catch { this.showToast('⚠ Copy failed'); }
+        this.showToast(clipboardOk ? '?? Selection copied' : '?? Selection copied (in-app)');
+      } catch { this.showToast('? Copy failed'); }
       return;
     }
     // No selection: copy flat composite of all layers
     try {
       const canvas = this._compositeFlatCanvas();
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-      if (!blob) { this.showToast('⚠ Copy failed'); return; }
+      if (!blob) { this.showToast('? Copy failed'); return; }
       // Always store internally for in-app paste fallback
       this._clipboardBlob = blob;
       this._clipboardMetadata = null;  // No selection = no stored location
@@ -19750,9 +19948,9 @@ export class App {
           clipboardOk = true;
         }
       } catch { /* Clipboard API unavailable or denied */ }
-      this.showToast(clipboardOk ? '📋 Copied to clipboard' : '📋 Copied (in-app only)');
+      this.showToast(clipboardOk ? '?? Copied to clipboard' : '?? Copied (in-app only)');
     } catch (err) {
-      this.showToast('⚠ Copy failed');
+      this.showToast('? Copy failed');
     }
   }
 
@@ -19771,7 +19969,7 @@ export class App {
         this.compositeAllLayers();
         this.recordLastChangeMarker('Paste');
         URL.revokeObjectURL(url);
-        this.showToast('📋 Pasted at original location');
+        this.showToast('?? Pasted at original location');
         return;
       }
       // If a selection is active, paste into the selection bounding box
@@ -19790,7 +19988,7 @@ export class App {
           this.compositeAllLayers();
           this.recordLastChangeMarker('Paste');
           URL.revokeObjectURL(url);
-          this.showToast('📋 Pasted into selection');
+          this.showToast('?? Pasted into selection');
           return;
         }
       }
@@ -19814,11 +20012,11 @@ export class App {
       this.compositeAllLayers();
       this.recordLastChangeMarker('Paste');
       URL.revokeObjectURL(url);
-      this.showToast('📋 Pasted');
+      this.showToast('?? Pasted');
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      this.showToast('⚠ Paste failed — invalid image');
+      this.showToast('? Paste failed � invalid image');
     };
     img.src = url;
   }
@@ -19838,7 +20036,7 @@ export class App {
           }
         }
       }
-    } catch { /* Clipboard API unavailable or denied — fall through */ }
+    } catch { /* Clipboard API unavailable or denied � fall through */ }
 
     // Tier 2: use internal clipboard buffer (from in-app copy)
     if (this._clipboardBlob) {
@@ -19862,12 +20060,12 @@ export class App {
   // SESSION PERSISTENCE
   /** Cut the selected region from the active layer to clipboard. */
   async cutToClipboard() {
-    if (!this.selectionMgr?.active) { this.showToast('⚠ No selection to cut'); return; }
+    if (!this.selectionMgr?.active) { this.showToast('? No selection to cut'); return; }
     const l = this.getActiveLayer();
     if (l.isBackground) { this.showToast('Cannot cut from background layer'); return; }
     try {
       const extracted = this.selectionMgr.extractPixels(l.canvas, this.DPR);
-      if (!extracted) { this.showToast('⚠ Cut failed'); return; }
+      if (!extracted) { this.showToast('? Cut failed'); return; }
       const blob = await extracted.convertToBlob({ type: 'image/png' });
       this._clipboardBlob = blob;
       try {
@@ -19880,8 +20078,8 @@ export class App {
       l.dirty = true;
       this.compositeAllLayers();
       this.recordLastChangeMarker('Cut');
-      this.showToast('✂ Cut');
-    } catch { this.showToast('⚠ Cut failed'); }
+      this.showToast('? Cut');
+    } catch { this.showToast('? Cut failed'); }
   }
 
   // ========================================================
@@ -19951,10 +20149,10 @@ export class App {
       inspectorCollapsed: this.simulation.inspectorCollapsed,
       inspectorSections: this.simulation.inspectorSections,
       editorTool: this.simulation.editorTool,
-      // 'normal' | 'forceVisualization' — config only, no runtimes/camera
-      // smoothing state. See _createDefaultForceVizState().
+      // 'normal' | 'treadmillCanvas' � config only, no runtimes/camera
+      // smoothing state. See _createDefaultTreadmillState().
       mode: this.simulation.mode,
-      forceViz: _deepClone(this.simulation.forceViz),
+      treadmill: _deepClone(this.simulation.treadmill),
       brushData: this.simulation.brushData,
       nextId: this.simulation.nextId,
       vars: this.simulation.vars,
@@ -20122,7 +20320,7 @@ export class App {
     }
     this._renderViewBookmarksPanel?.();
     this.saveSession();
-    this.showToast(overwriteIndex >= 0 ? '🔖 Bookmark updated' : '🔖 Bookmark saved');
+    this.showToast(overwriteIndex >= 0 ? '?? Bookmark updated' : '?? Bookmark saved');
     return true;
   }
 
@@ -20138,7 +20336,7 @@ export class App {
     this.viewBookmarks = [...this.viewBookmarks];
     this._renderViewBookmarksPanel?.();
     this.saveSession();
-    this.showToast(`✏️ ${nextName}`);
+    this.showToast(`?? ${nextName}`);
     return true;
   }
 
@@ -20148,7 +20346,7 @@ export class App {
     this.viewBookmarks = this.viewBookmarks.filter(entry => entry.id !== id);
     this._renderViewBookmarksPanel?.();
     this.saveSession();
-    this.showToast(`🗑 ${bookmark.name}`);
+    this.showToast(`?? ${bookmark.name}`);
     return true;
   }
 
@@ -20173,15 +20371,15 @@ export class App {
   jumpToViewBookmark(id) {
     const bookmark = this.viewBookmarks.find(entry => entry.id === id);
     if (!bookmark) return false;
-    return this._applyNavigationSnapshot(bookmark, `🔖 ${bookmark.name}`);
+    return this._applyNavigationSnapshot(bookmark, `?? ${bookmark.name}`);
   }
 
   jumpToLastChange() {
     if (!this.lastChangeMarker) {
-      this.showToast('⚠ No recent change recorded');
+      this.showToast('? No recent change recorded');
       return false;
     }
-    const label = this.lastChangeMarker.label ? `↩ ${this.lastChangeMarker.label}` : '↩ Last change';
+    const label = this.lastChangeMarker.label ? `? ${this.lastChangeMarker.label}` : '? Last change';
     return this._applyNavigationSnapshot(this.lastChangeMarker, label);
   }
 
@@ -20335,7 +20533,7 @@ export class App {
     try {
       this._syncActiveSimulationSessionFromDraft();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this._captureSessionControls()));
-    } catch { /* quota exceeded — ignore */ }
+    } catch { /* quota exceeded � ignore */ }
   }
 
   _readWorkspacePresets() {
@@ -20385,11 +20583,11 @@ export class App {
       const stamp = new Date().toISOString().replace(/[.:]/g, '-');
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
       this._downloadBlob(blob, `boid-brush-workspace-${stamp}.json`);
-      this.showToast('💾 Workspace file saved');
+      this.showToast('?? Workspace file saved');
       return true;
     } catch (error) {
       console.error('Workspace file export failed:', error);
-      this.showToast('⚠ Workspace file export failed');
+      this.showToast('? Workspace file export failed');
       return false;
     }
   }
@@ -20525,15 +20723,16 @@ export class App {
         this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(val?.savedPlayback);
         this.simulation.multiSessionEnabled = !!val?.multiSessionEnabled;
         this.simulation.multiSessionBindings = Array.isArray(val?.multiSessionBindings) ? _deepClone(val.multiSessionBindings) : [];
-        // Older saves predate the submode entirely — missing `mode`/`forceViz`
-        // falls back to 'normal' plus the default scenario via normalization.
-        this.simulation.mode = val?.mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
-        this.simulation.forceViz = val?.forceViz && typeof val.forceViz === 'object' ? _deepClone(val.forceViz) : null;
+        // Older Force Visualization saves migrate into the focused treadmill
+        // mode. Saves without either mode keep normal simulation behavior.
+        this.simulation.mode = ['treadmillCanvas', 'forceVisualization'].includes(val?.mode) ? 'treadmillCanvas' : 'normal';
+        const treadmillState = val?.treadmill ?? val?.forceViz;
+        this.simulation.treadmill = treadmillState && typeof treadmillState === 'object' ? _deepClone(treadmillState) : null;
         // A persisted session owns its own manual-view baseline. Discard any
         // runtime snapshot from the previously open workspace; _restoreSession
         // captures the restored view after `_view` has been applied.
-        this._forceVizManualViewSnapshot = null;
-        this._normalizeForceVizState();
+        this._treadmillManualViewSnapshot = null;
+        this._normalizeTreadmillState();
         continue;
       }
       if (id === '_symmetryState') {
@@ -20624,7 +20823,7 @@ export class App {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
       if (restoredView) this._applyViewState(restoredView);
-      this._forceVizManualViewSnapshot = this.simulation.mode === 'forceVisualization'
+      this._treadmillManualViewSnapshot = this.simulation.mode === 'treadmillCanvas'
         ? this._captureViewState()
         : null;
       if (this.activeTool === 'transform' && !this.selectionMgr?.active) {
@@ -20650,7 +20849,7 @@ export class App {
     console.error('App init failed:', error);
     const message = error?.message || 'Unknown startup error';
     this.setStatus(`Startup failed: ${message}`);
-    this.showToast('⚠ Startup failed');
+    this.showToast('? Startup failed');
   }
 
   async _clearReloadCaches() {
@@ -20707,7 +20906,7 @@ export class App {
   async reloadAppWithCacheBust({ wipeSession = false } = {}) {
     const btn = document.getElementById('reloadAppBtn');
     if (btn) btn.disabled = true;
-    this.setStatus(wipeSession ? 'Reloading app (clearing saved data and caches)…' : 'Reloading app (clearing caches)…');
+    this.setStatus(wipeSession ? 'Reloading app (clearing saved data and caches)�' : 'Reloading app (clearing caches)�');
     await this._clearReloadCaches();
     this._clearReloadStorageArtifacts({ wipeSession });
     const url = new URL(window.location.href);
@@ -20726,11 +20925,11 @@ export class App {
       return;
     }
     if (previousBuildId !== APP_BUILD_ID) {
-      this.showToast(`Updated build: ${previousBuildId} → ${APP_BUILD_ID}`);
+      this.showToast(`Updated build: ${previousBuildId} ? ${APP_BUILD_ID}`);
     }
   }
 
   setStatus(msg) {
-    this.statusEl.textContent = `${msg} · Build ${APP_BUILD_ID}`;
+    this.statusEl.textContent = `${msg} � Build ${APP_BUILD_ID}`;
   }
 }

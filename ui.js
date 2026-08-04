@@ -1200,12 +1200,13 @@ export function buildSimulationControlsPanel(app) {
         <div class="sim-row sim-stack">
           <button class="sim-pill" id="simDrawerRunBtn" type="button">▶ Run</button>
           <button class="sim-pill warn" id="simDrawerStopBtn" type="button">⏹ Stop</button>
+          <button class="sim-pill" id="simDrawerTreadmillToggle" type="button" aria-pressed="false">Treadmill</button>
           <button class="sim-pill" id="simDrawerStepBackBtn" type="button">Step Path -</button>
           <button class="sim-pill" id="simDrawerStepForwardBtn" type="button">Step Path +</button>
           <button class="sim-pill active" id="simDrawerInspectorToggle">Settings</button>
         </div>
         <div id="simTreePanel" class="sim-tree-panel"></div>
-        <div id="simForceVizPanel" class="sim-tree-panel" style="display:none;"></div>
+        <div id="simTreadmillPanel" class="sim-tree-panel" style="display:none;"></div>
       </div>
     </div>
   `;
@@ -1500,28 +1501,28 @@ export function buildSimulationControlsPanel(app) {
   app._renderSimulationTreePanel = renderTree;
   renderTree();
 
-  // ── Force Visualization submode panel ───────────────────────────────────
+  // ── Treadmill Canvas submode panel ───────────────────────────────────
   // Renders inside the same simulationControlsPanel shell as the tree panel,
-  // gated to visible only while simulation.mode === 'forceVisualization'.
-  // Every control here maps 1:1 to app.js force-viz state mutators — no
+  // gated to visible only while simulation.mode === 'treadmillCanvas'.
+  // Every control here maps 1:1 to app.js treadmill state mutators — no
   // control re-implements boid physics, it only edits routing/camera config.
-  const fvPanel = panel.querySelector('#simForceVizPanel');
+  const fvPanel = panel.querySelector('#simTreadmillPanel');
   const fvOption = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
 
-  const renderForceViz = () => {
+  const renderTreadmill = () => {
     if (!fvPanel) return;
     const sim = app.simulation;
-    const isForceViz = sim?.mode === 'forceVisualization';
-    fvPanel.style.display = isForceViz ? '' : 'none';
-    if (!isForceViz) return;
-    const scenario = app._getActiveForceVizScenario?.();
+    const isTreadmill = sim?.mode === 'treadmillCanvas';
+    fvPanel.style.display = isTreadmill ? '' : 'none';
+    if (!isTreadmill) return;
+    const scenario = app._getActiveTreadmillScenario?.();
     if (!scenario) { fvPanel.innerHTML = ''; return; }
-    const fv = sim.forceViz;
+    const fv = sim.treadmill;
     const activeGroup = scenario.groups.find(g => g.id === fv.ui.activeGroupId) || scenario.groups[0];
     const activeAttractor = scenario.attractors.find(a => a.id === fv.ui.activeAttractorId) || scenario.attractors[0];
     const cam = fv.camera;
-    const spawns = app._getForceVizSpawnOptions?.() || [];
-    const paths = app._getForceVizPathOptions?.() || [];
+    const spawns = app._getTreadmillSpawnOptions?.() || [];
+    const paths = app._getTreadmillPathOptions?.() || [];
     const layers = app._getSimulationTargetLayers?.() || [];
 
     const groupOptions = scenario.groups.map((g, i) => fvOption(g.id, g.name || `Group ${i + 1}`, g.id === activeGroup?.id)).join('');
@@ -1587,8 +1588,10 @@ export function buildSimulationControlsPanel(app) {
           <label style="flex:1;">Y<input type="number" id="fvAttractorY" value="${Math.round(activeAttractor.y)}"></label>
         </div>
         ${nudgeSliderRow('fvAttractorStrength', 'Strength', 0, 500, Math.round(activeAttractor.strength * 100), v => (v / 100).toFixed(2), 'Pull applied to routed boids, scaled by the route weight')}
-        ${nudgeSliderRow('fvAttractorRadius', 'Radius', 1, 800, Math.round(activeAttractor.radius), v => v + 'px', 'Full-strength radius (same falloff as a normal attract guide point)')}
-        ${nudgeSliderRow('fvAttractorInfluenceRadius', 'Influence Radius', 1, 1600, Math.round(activeAttractor.influenceRadius), v => v + 'px', 'Outer radius where pull fades to zero')}
+        ${nudgeSliderRow('fvAttractorRadius', 'Pursuit Area', 1, 800, Math.round(activeAttractor.radius), v => v + 'px', 'The group is rebased toward this distance after it approaches the fixed pointer')}
+        ${nudgeSliderRow('fvAttractorInfluenceRadius', 'Containment Limit', 1, 1600, Math.round(activeAttractor.influenceRadius), v => v + 'px', 'Absolute non-wrapping boundary for every routed boid')}
+        ${nudgeSliderRow('fvTreadmillStandoff', 'Never-arrive Distance', 5, 95, Math.round(activeAttractor.treadmillStandoffRatio * 100), v => v + '%', 'The group is counter-moved before its centroid can reach the pointer')}
+        ${nudgeSliderRow('fvTreadmillStrength', 'Treadmill Strength', 5, 100, Math.round(activeAttractor.treadmillRebaseStrength * 100), v => v + '%', 'How strongly the whole flock is moved back after making progress')}
         <div data-fv-attractor-type-panel="moving" style="${activeAttractor.type === 'moving' ? '' : 'display:none;'}">
           <div class="sim-row" style="gap:6px;">
             <label style="flex:1;">Vel X<input type="number" id="fvMoveVX" value="${activeAttractor.movement.velocityX}"></label>
@@ -1672,62 +1675,64 @@ export function buildSimulationControlsPanel(app) {
       </div>
     `;
 
-    fvPanel.querySelector('#fvHelpBtn')?.addEventListener('click', () => app._openForceVizHelp?.());
-    fvPanel.querySelector('#fvGroupSelect')?.addEventListener('change', e => app._setForceVizActiveGroup(e.target.value));
-    fvPanel.querySelector('#fvGroupAdd')?.addEventListener('click', () => app._addForceVizGroup());
-    fvPanel.querySelector('#fvGroupRemove')?.addEventListener('click', () => app._removeForceVizGroup(activeGroup.id));
+    fvPanel.querySelector('#fvHelpBtn')?.addEventListener('click', () => app._openTreadmillHelp?.());
+    fvPanel.querySelector('#fvGroupSelect')?.addEventListener('change', e => app._setTreadmillActiveGroup(e.target.value));
+    fvPanel.querySelector('#fvGroupAdd')?.addEventListener('click', () => app._addTreadmillGroup());
+    fvPanel.querySelector('#fvGroupRemove')?.addEventListener('click', () => app._removeTreadmillGroup(activeGroup.id));
     fvPanel.querySelector('#fvGroupSpawn')?.addEventListener('change', e => {
       const spawn = spawns.find(candidate => String(candidate.id) === e.target.value);
-      app._updateForceVizGroup(activeGroup.id, { spawnId: spawn?.id ?? null });
+      app._updateTreadmillGroup(activeGroup.id, { spawnId: spawn?.id ?? null });
     });
-    fvPanel.querySelector('#fvGroupLayer')?.addEventListener('change', e => app._updateForceVizGroup(activeGroup.id, { layerId: e.target.value || null }));
+    fvPanel.querySelector('#fvGroupLayer')?.addEventListener('change', e => app._updateTreadmillGroup(activeGroup.id, { layerId: e.target.value || null }));
 
-    fvPanel.querySelector('#fvAttractorSelect')?.addEventListener('change', e => app._setForceVizActiveAttractor(e.target.value));
-    fvPanel.querySelector('#fvAttractorAdd')?.addEventListener('click', () => app._addForceVizAttractor());
-    fvPanel.querySelector('#fvAttractorRemove')?.addEventListener('click', () => app._removeForceVizAttractor(activeAttractor.id));
-    fvPanel.querySelector('#fvAttractorEnabled')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { enabled: !!e.target.checked }));
-    fvPanel.querySelector('#fvAttractorType')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { type: e.target.value }));
-    fvPanel.querySelector('#fvAttractorX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { x: +e.target.value }));
-    fvPanel.querySelector('#fvAttractorY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { y: +e.target.value }));
-    fvPanel.querySelector('#fvAttractorStrength')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { strength: +e.target.value / 100 }));
-    fvPanel.querySelector('#fvAttractorRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { radius: +e.target.value }));
-    fvPanel.querySelector('#fvAttractorInfluenceRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { influenceRadius: +e.target.value }));
-    fvPanel.querySelector('#fvMoveVX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { velocityX: +e.target.value } }));
-    fvPanel.querySelector('#fvMoveVY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { velocityY: +e.target.value } }));
-    fvPanel.querySelector('#fvDriftRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { driftRadius: +e.target.value } }));
-    fvPanel.querySelector('#fvDriftSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { driftSpeed: +e.target.value / 100 } }));
-    fvPanel.querySelector('#fvOrbitCX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterX: +e.target.value } }));
-    fvPanel.querySelector('#fvOrbitCY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterY: +e.target.value } }));
-    fvPanel.querySelector('#fvOrbitRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitRadius: +e.target.value } }));
-    fvPanel.querySelector('#fvOrbitSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitSpeed: +e.target.value / 100 } }));
+    fvPanel.querySelector('#fvAttractorSelect')?.addEventListener('change', e => app._setTreadmillActiveAttractor(e.target.value));
+    fvPanel.querySelector('#fvAttractorAdd')?.addEventListener('click', () => app._addTreadmillAttractor());
+    fvPanel.querySelector('#fvAttractorRemove')?.addEventListener('click', () => app._removeTreadmillAttractor(activeAttractor.id));
+    fvPanel.querySelector('#fvAttractorEnabled')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { enabled: !!e.target.checked }));
+    fvPanel.querySelector('#fvAttractorType')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { type: e.target.value }));
+    fvPanel.querySelector('#fvAttractorX')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { x: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorY')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { y: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorStrength')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { strength: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvAttractorRadius')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { radius: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorInfluenceRadius')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { influenceRadius: +e.target.value }));
+    fvPanel.querySelector('#fvTreadmillStandoff')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { treadmillStandoffRatio: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvTreadmillStrength')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { treadmillRebaseStrength: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvMoveVX')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { velocityX: +e.target.value } }));
+    fvPanel.querySelector('#fvMoveVY')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { velocityY: +e.target.value } }));
+    fvPanel.querySelector('#fvDriftRadius')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { driftRadius: +e.target.value } }));
+    fvPanel.querySelector('#fvDriftSpeed')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { driftSpeed: +e.target.value / 100 } }));
+    fvPanel.querySelector('#fvOrbitCX')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { orbitCenterX: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitCY')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { orbitCenterY: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitRadius')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { orbitRadius: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitSpeed')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { movement: { orbitSpeed: +e.target.value / 100 } }));
     fvPanel.querySelector('#fvAttractorPath')?.addEventListener('change', e => {
       const pathItem = paths.find(candidate => String(candidate.id) === e.target.value);
-      app._updateForceVizAttractor(activeAttractor.id, { movement: { pathId: pathItem?.id ?? null } });
+      app._updateTreadmillAttractor(activeAttractor.id, { movement: { pathId: pathItem?.id ?? null } });
     });
-    fvPanel.querySelector('#fvAttractorShared')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { sharedAttractorId: e.target.value || null }));
+    fvPanel.querySelector('#fvAttractorShared')?.addEventListener('change', e => app._updateTreadmillAttractor(activeAttractor.id, { sharedAttractorId: e.target.value || null }));
 
-    fvPanel.querySelector('#fvRouteAdd')?.addEventListener('click', () => app._addForceVizRoute());
+    fvPanel.querySelector('#fvRouteAdd')?.addEventListener('click', () => app._addTreadmillRoute());
     scenario.routes.forEach(route => {
-      fvPanel.querySelector(`[data-fv-route-group="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { groupId: e.target.value }));
-      fvPanel.querySelector(`[data-fv-route-attractor="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { attractorId: e.target.value }));
-      fvPanel.querySelector(`[data-fv-route-weight="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { weight: +e.target.value / 100 }));
-      fvPanel.querySelector(`[data-fv-route-enabled="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { enabled: !!e.target.checked }));
-      fvPanel.querySelector(`[data-fv-route-remove="${route.id}"]`)?.addEventListener('click', () => app._removeForceVizRoute(route.id));
+      fvPanel.querySelector(`[data-fv-route-group="${route.id}"]`)?.addEventListener('change', e => app._updateTreadmillRoute(route.id, { groupId: e.target.value }));
+      fvPanel.querySelector(`[data-fv-route-attractor="${route.id}"]`)?.addEventListener('change', e => app._updateTreadmillRoute(route.id, { attractorId: e.target.value }));
+      fvPanel.querySelector(`[data-fv-route-weight="${route.id}"]`)?.addEventListener('change', e => app._updateTreadmillRoute(route.id, { weight: +e.target.value / 100 }));
+      fvPanel.querySelector(`[data-fv-route-enabled="${route.id}"]`)?.addEventListener('change', e => app._updateTreadmillRoute(route.id, { enabled: !!e.target.checked }));
+      fvPanel.querySelector(`[data-fv-route-remove="${route.id}"]`)?.addEventListener('click', () => app._removeTreadmillRoute(route.id));
     });
 
-    fvPanel.querySelector('#fvCameraPolicy')?.addEventListener('change', e => app._updateForceVizCamera({ policy: e.target.value }));
-    fvPanel.querySelector('#fvCamBoidIndex')?.addEventListener('change', e => app._updateForceVizCamera({ targetBoidIndex: +e.target.value }));
-    fvPanel.querySelector('#fvCamPadding')?.addEventListener('change', e => app._updateForceVizCamera({ padding: +e.target.value }));
-    fvPanel.querySelector('#fvCamOrbitSpeed')?.addEventListener('change', e => app._updateForceVizCamera({ orbitSpeed: +e.target.value / 100 }));
-    fvPanel.querySelector('#fvCamSmoothing')?.addEventListener('change', e => app._updateForceVizCamera({ smoothing: +e.target.value / 100 }));
-    fvPanel.querySelector('#fvCamLookahead')?.addEventListener('change', e => app._updateForceVizCamera({ lookahead: +e.target.value / 100 }));
-    fvPanel.querySelector('#fvCamOffsetX')?.addEventListener('change', e => app._updateForceVizCamera({ offsetX: +e.target.value }));
-    fvPanel.querySelector('#fvCamOffsetY')?.addEventListener('change', e => app._updateForceVizCamera({ offsetY: +e.target.value }));
-    fvPanel.querySelector('#fvCamMinZoom')?.addEventListener('change', e => app._updateForceVizCamera({ minZoom: +e.target.value }));
-    fvPanel.querySelector('#fvCamMaxZoom')?.addEventListener('change', e => app._updateForceVizCamera({ maxZoom: +e.target.value }));
-    fvPanel.querySelector('#fvCamInterruption')?.addEventListener('change', e => app._updateForceVizCamera({ interruption: e.target.value }));
-    fvPanel.querySelector('#fvCamResumeDelay')?.addEventListener('change', e => app._updateForceVizCamera({ resumeDelay: +e.target.value / 10 }));
-    fvPanel.querySelector('#fvCamExitBehavior')?.addEventListener('change', e => app._updateForceVizCamera({ exitBehavior: e.target.value }));
+    fvPanel.querySelector('#fvCameraPolicy')?.addEventListener('change', e => app._updateTreadmillCamera({ policy: e.target.value }));
+    fvPanel.querySelector('#fvCamBoidIndex')?.addEventListener('change', e => app._updateTreadmillCamera({ targetBoidIndex: +e.target.value }));
+    fvPanel.querySelector('#fvCamPadding')?.addEventListener('change', e => app._updateTreadmillCamera({ padding: +e.target.value }));
+    fvPanel.querySelector('#fvCamOrbitSpeed')?.addEventListener('change', e => app._updateTreadmillCamera({ orbitSpeed: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamSmoothing')?.addEventListener('change', e => app._updateTreadmillCamera({ smoothing: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamLookahead')?.addEventListener('change', e => app._updateTreadmillCamera({ lookahead: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamOffsetX')?.addEventListener('change', e => app._updateTreadmillCamera({ offsetX: +e.target.value }));
+    fvPanel.querySelector('#fvCamOffsetY')?.addEventListener('change', e => app._updateTreadmillCamera({ offsetY: +e.target.value }));
+    fvPanel.querySelector('#fvCamMinZoom')?.addEventListener('change', e => app._updateTreadmillCamera({ minZoom: +e.target.value }));
+    fvPanel.querySelector('#fvCamMaxZoom')?.addEventListener('change', e => app._updateTreadmillCamera({ maxZoom: +e.target.value }));
+    fvPanel.querySelector('#fvCamInterruption')?.addEventListener('change', e => app._updateTreadmillCamera({ interruption: e.target.value }));
+    fvPanel.querySelector('#fvCamResumeDelay')?.addEventListener('change', e => app._updateTreadmillCamera({ resumeDelay: +e.target.value / 10 }));
+    fvPanel.querySelector('#fvCamExitBehavior')?.addEventListener('change', e => app._updateTreadmillCamera({ exitBehavior: e.target.value }));
 
     // Live readout feedback while dragging, without rebuilding the panel
     // mid-drag (which would drop the pointer capture on the range input).
@@ -1746,8 +1751,8 @@ export function buildSimulationControlsPanel(app) {
       });
     });
   };
-  app._renderForceVizPanel = renderForceViz;
-  renderForceViz();
+  app._renderTreadmillPanel = renderTreadmill;
+  renderTreadmill();
 
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
@@ -1856,6 +1861,89 @@ export function buildGuidesPanel(app) {
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
+}
+
+export function buildTreadmillPanel(app) {
+  const panel = document.getElementById('treadmillPanel');
+  if (!panel) return;
+
+  const slider = ({ id, label, min, max, step = 1, value, format = value => String(value) }) => `
+    <label class="sim-inspector-row" style="display:grid;grid-template-columns:1fr auto;gap:6px;margin:7px 0;">
+      <span>${escapeHtml(label)}</span><span id="tm_${id}_out" class="sim-inspector-value">${escapeHtml(format(value))}</span>
+      <input style="grid-column:1 / -1" type="range" id="tm_${id}" min="${min}" max="${max}" step="${step}" value="${value}">
+    </label>`;
+
+  const render = () => {
+    const treadmill = app.simulation?.treadmill;
+    const scenario = app._getActiveTreadmillScenario?.();
+    const group = scenario?.groups?.[0];
+    const attractor = scenario?.attractors?.[0];
+    const camera = treadmill?.camera;
+    const display = treadmill?.display;
+    const active = app.simulation?.mode === 'treadmillCanvas';
+    panel.innerHTML = `
+      <div class="sim-card">
+        <div class="sim-hud-header"><div class="sim-label">Treadmill Canvas</div></div>
+        <div class="sim-hud-body">
+          <button class="sim-pill${active ? ' active' : ''}" id="tm_mode" type="button" aria-pressed="${active}">${active ? 'Treadmill On' : 'Enable Treadmill'}</button>
+          <div class="sim-inspector-note" style="margin:7px 0">One flock follows a frame-bound attractor. The frame advances; boid positions are never wrapped or reset.</div>
+          <label class="sim-inspector-row"><span>Bound Spawn</span><select id="tm_spawn"><option value="">Current simulation flock</option>${(app._getTreadmillSpawnOptions?.() || []).map((spawn, index) => `<option value="${escapeHtml(String(spawn.id))}"${String(group?.spawnId) === String(spawn.id) ? ' selected' : ''}>Spawn ${index + 1}</option>`).join('')}</select></label>
+          ${slider({ id: 'count', label: 'Boids', min: 12, max: 320, step: 4, value: group?.count ?? 64 })}
+          ${slider({ id: 'seek', label: 'Seek force', min: 0, max: 100, value: Math.round((group?.seek ?? 0.5) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'separation', label: 'Separation', min: 0, max: 100, value: Math.round((group?.separation ?? 0.38) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'alignment', label: 'Alignment', min: 0, max: 100, value: Math.round((group?.alignment ?? 0.34) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'cohesion', label: 'Cohesion', min: 0, max: 100, value: Math.round((group?.cohesion ?? 0.22) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'maxSpeed', label: 'Max speed', min: 1, max: 12, step: 0.1, value: group?.maxSpeed ?? 5.5, format: value => Number(value).toFixed(1) })}
+          ${slider({ id: 'neighborRadius', label: 'Perception radius', min: 10, max: 240, value: group?.neighborRadius ?? 80, format: value => `${value}px` })}
+          ${slider({ id: 'wander', label: 'Wander', min: 0, max: 100, value: Math.round((group?.wander ?? 0.06) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'damping', label: 'Velocity damping', min: 80, max: 100, step: 0.5, value: Math.round((group?.damping ?? 0.95) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'headingDamper', label: 'Heading damper', min: 0, max: 95, value: Math.round((group?.headingDamper ?? 0.7) * 100), format: value => `${value}%` })}
+          <div class="sim-inspector-divider"></div>
+          ${slider({ id: 'treadmillLead', label: 'Treadmill lead', min: 80, max: 180, value: Math.round((attractor?.treadmillLead ?? 1.15) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'attractorX', label: 'Attractor X', min: 55, max: 88, value: Math.round((attractor?.screenX ?? 0.72) * 100), format: value => `${value}%` })}
+          ${slider({ id: 'attractorY', label: 'Attractor Y', min: 20, max: 80, value: Math.round((attractor?.screenY ?? 0.5) * 100), format: value => `${value}%` })}
+          <div class="sim-inspector-divider"></div>
+          <div class="sim-inspector-note" style="margin:7px 0">Isolation toggles let you compare the transient treadmill preview against the committed paint-layer result.</div>
+          <label class="sim-inspector-row"><span>Show canvas layer</span><input id="tm_showCanvasLayer" type="checkbox" ${display?.showCanvasLayer !== false ? 'checked' : ''}></label>
+          <label class="sim-inspector-row"><span>Show treadmill layer</span><input id="tm_showPresentationLayer" type="checkbox" ${display?.showPresentationLayer ? 'checked' : ''}></label>
+          <label class="sim-inspector-row"><span>Auto-frame flock</span><input id="tm_autoFrame" type="checkbox" ${camera?.autoFrame !== false ? 'checked' : ''}></label>
+          ${slider({ id: 'framePadding', label: 'Frame padding', min: 20, max: 260, value: camera?.framePadding ?? 90, format: value => `${value}px` })}
+          ${slider({ id: 'frameSmoothing', label: 'Frame smoothing', min: 2, max: 100, value: Math.round((camera?.frameSmoothing ?? 0.16) * 100), format: value => (value / 100).toFixed(2) })}
+          ${slider({ id: 'follow', label: 'Camera follow', min: 1, max: 100, value: Math.round((camera?.follow ?? 0.12) * 100), format: value => (value / 100).toFixed(2) })}
+        </div>
+      </div>`;
+
+    panel.querySelector('#tm_mode')?.addEventListener('click', () => app._setSimulationMode(active ? 'normal' : 'treadmillCanvas'));
+    panel.querySelector('#tm_spawn')?.addEventListener('change', event => app._updateTreadmillGroup?.(group.id, { spawnId: event.target.value || null }));
+    const bindings = {
+      count: ['group', value => Math.round(+value)],
+      seek: ['group', value => +value / 100], separation: ['group', value => +value / 100],
+      alignment: ['group', value => +value / 100], cohesion: ['group', value => +value / 100],
+      maxSpeed: ['group', value => +value], neighborRadius: ['group', value => +value],
+      wander: ['group', value => +value / 100], damping: ['group', value => +value / 100],
+      headingDamper: ['group', value => +value / 100], treadmillLead: ['attractor', value => +value / 100],
+      attractorX: ['attractor', value => +value / 100], attractorY: ['attractor', value => +value / 100],
+      framePadding: ['camera', value => +value], frameSmoothing: ['camera', value => +value / 100], follow: ['camera', value => +value / 100],
+    };
+    Object.entries(bindings).forEach(([id, [target, parse]]) => {
+      const input = panel.querySelector('#tm_' + id);
+      const output = panel.querySelector('#tm_' + id + '_out');
+      if (!input) return;
+      input.addEventListener('input', () => {
+        const value = parse(input.value);
+        if (target === 'group') group[id] = value;
+        else if (target === 'attractor') attractor[id === 'attractorX' ? 'screenX' : id === 'attractorY' ? 'screenY' : id] = value;
+        else camera[id] = value;
+        if (output) output.textContent = output.textContent.includes('%') ? `${input.value}%` : output.textContent.includes('px') ? `${input.value}px` : value.toFixed?.(2) ?? String(value);
+      });
+      input.addEventListener('change', () => app._maybeAutoSaveSession?.());
+    });
+    panel.querySelector('#tm_showCanvasLayer')?.addEventListener('change', event => app._updateTreadmillDisplay?.({ showCanvasLayer: !!event.target.checked }));
+    panel.querySelector('#tm_showPresentationLayer')?.addEventListener('change', event => app._updateTreadmillDisplay?.({ showPresentationLayer: !!event.target.checked }));
+    panel.querySelector('#tm_autoFrame')?.addEventListener('change', event => app._updateTreadmillCamera?.({ autoFrame: !!event.target.checked }));
+  };
+  app._renderTreadmillPanel = render;
+  render();
 }
 
 // ── Ant Math overlay panel ──────────────────────────────────
