@@ -1557,6 +1557,9 @@ export function buildSimulationControlsPanel(app) {
 
     fvPanel.innerHTML = `
       <div class="sim-tree-group">
+        <div class="sim-row" style="justify-content:flex-end;margin:0 0 6px;">
+          <button type="button" class="sim-pill" id="fvHelpBtn">How to start this mode</button>
+        </div>
         <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Group</span></div>
         <div class="sim-row" style="gap:6px;">
           <select id="fvGroupSelect" style="flex:1;min-width:0;">${groupOptions}</select>
@@ -1669,6 +1672,7 @@ export function buildSimulationControlsPanel(app) {
       </div>
     `;
 
+    fvPanel.querySelector('#fvHelpBtn')?.addEventListener('click', () => app._openForceVizHelp?.());
     fvPanel.querySelector('#fvGroupSelect')?.addEventListener('change', e => app._setForceVizActiveGroup(e.target.value));
     fvPanel.querySelector('#fvGroupAdd')?.addEventListener('click', () => app._addForceVizGroup());
     fvPanel.querySelector('#fvGroupRemove')?.addEventListener('click', () => app._removeForceVizGroup(activeGroup.id));

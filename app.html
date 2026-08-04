@@ -535,7 +535,12 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 }
 .sim-help-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:120;}
 .sim-help-modal.open{display:flex;}
-.sim-help-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);}
+.sim-help-backdrop{position:absolute;top:0;right:0;bottom:0;left:var(--left-panel-open-w, 0px);background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);}
+.force-viz-help-panel{width:min(700px,calc(100vw - var(--left-panel-open-w, 0px) - 32px));margin-left:var(--left-panel-open-w, 0px);}
+.force-viz-help-panel ol{margin:10px 0 0 18px;padding:0;display:grid;gap:8px;}
+.force-viz-help-panel li{line-height:1.55;}
+.force-viz-help-panel .sim-help-callout{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(138,180,248,0.24);background:rgba(64,99,173,0.14);}
+.force-viz-help-panel .sim-help-callout strong{color:#fff;}
 .sim-help-panel{position:relative;width:min(620px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;}
 .sim-help-panel h2{margin:0 0 6px;font-size:18px;color:#fff;}
 .sim-help-panel h3{margin:14px 0 6px;font-size:12px;color:#8ab4f8;text-transform:uppercase;letter-spacing:1px;}
@@ -1128,6 +1133,34 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <div id="antMathPanel"></div>
 
 <!-- ══════════ Simulation Help Pop-up ══════════ -->
+<div id="forceVizHelpModal" class="sim-help-modal">
+  <div class="sim-help-backdrop" id="forceVizHelpBackdrop"></div>
+  <div class="sim-help-panel force-viz-help-panel" role="dialog" aria-modal="false" aria-labelledby="forceVizHelpTitle" aria-describedby="forceVizHelpIntro">
+    <button class="sim-help-close" id="forceVizHelpClose" aria-label="Close force visualization help">✕</button>
+    <h2 id="forceVizHelpTitle">How to start Force Visualization mode</h2>
+    <p id="forceVizHelpIntro">Use this mode to set up small boid groups and route them toward named attractors. Follow these steps exactly if you want a clear first example.</p>
+    <h3>Example goal</h3>
+    <p>Create one boid group that keeps chasing an <strong>unreachable</strong> attractor, so you can immediately see the flock pursuing a target that keeps drifting away.</p>
+    <h3>Step-by-step</h3>
+    <ol>
+      <li>Choose the <strong>Boid</strong> brush from the brush picker, then click <strong>◎ Simulation</strong> in the top bar to enter simulation mode.</li>
+      <li>Open the <strong>left simulation panel</strong> if it is hidden. Make sure the simulation is in <strong>Force Visualization</strong> mode before editing the controls in this section.</li>
+      <li>In the <strong>Group</strong> block, leave the first group selected. Set <strong>Bound Spawn</strong> to a spawn you already placed on the canvas. If you do not have one yet, use the <strong>Spawn</strong> tool, click on the canvas once, and then return here.</li>
+      <li>In the <strong>Attractor</strong> block, keep one attractor selected and set <strong>Type</strong> to <strong>Unreachable</strong>.</li>
+      <li>Set the attractor <strong>X</strong> and <strong>Y</strong> near the area where you want the flock to travel. Start with a point somewhere away from the spawn so the movement is easy to read.</li>
+      <li>Raise <strong>Strength</strong> enough that the boids clearly care about the target, then make <strong>Influence Radius</strong> large enough to cover the route from the spawn toward the attractor.</li>
+      <li>Increase <strong>Drift Radius</strong> so the attractor keeps sliding around its anchor point, and give it a moderate <strong>Drift Speed</strong>. This is what makes it feel unreachable instead of static.</li>
+      <li>Open the <strong>Routes</strong> block and confirm there is a route from your group to this attractor. If there is more than one route, make sure the active group points to the unreachable attractor you just configured.</li>
+      <li>Leave the route <strong>Enabled</strong> and keep its <strong>Weight</strong> above zero. If the route weight is too low, the boids may appear to ignore the attractor.</li>
+      <li>Press <strong>▶ Run</strong>. Watch whether the flock leaves the spawn and curves toward the moving target. If nothing moves, first check that the spawn is enabled and that the route still points to the selected attractor.</li>
+      <li>Fine-tune the behavior: increase <strong>Drift Radius</strong> if the flock catches up too easily, increase <strong>Strength</strong> if they hesitate, or increase <strong>Influence Radius</strong> if they never seem to notice the target.</li>
+    </ol>
+    <div class="sim-help-callout">
+      <strong>Quick troubleshooting:</strong> if the boids stay still, the most common causes are no spawn assigned to the group, the route pointing at the wrong attractor, the route being disabled, or the simulation not actually running.
+    </div>
+  </div>
+</div>
+
 <div id="simHelpModal" class="sim-help-modal">
   <div class="sim-help-backdrop" id="simHelpBackdrop"></div>
   <div class="sim-help-panel" role="dialog" aria-modal="true" aria-labelledby="simHelpTitle" aria-describedby="simHelpIntro">
