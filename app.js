@@ -6948,6 +6948,10 @@ export class App {
     const defaults = this._createDefaultForceVizAttractor();
     const src = raw && typeof raw === 'object' ? raw : {};
     const movement = src.movement && typeof src.movement === 'object' ? src.movement : {};
+    const rawPathId = (typeof movement.pathId === 'string' || typeof movement.pathId === 'number') ? movement.pathId : null;
+    const boundPath = rawPathId == null
+      ? null
+      : this._getForceVizPathOptions().find(path => String(path.id) === String(rawPathId));
     return {
       id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('attractor'),
       name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
@@ -6968,7 +6972,7 @@ export class App {
         orbitCenterY: Number.isFinite(movement.orbitCenterY) ? movement.orbitCenterY : defaults.movement.orbitCenterY,
         orbitRadius: Number.isFinite(movement.orbitRadius) ? Math.max(0, movement.orbitRadius) : defaults.movement.orbitRadius,
         orbitSpeed: Number.isFinite(movement.orbitSpeed) ? movement.orbitSpeed : defaults.movement.orbitSpeed,
-        pathId: typeof movement.pathId === 'string' ? movement.pathId : null,
+        pathId: boundPath?.id ?? rawPathId,
       },
       sharedAttractorId: typeof src.sharedAttractorId === 'string' ? src.sharedAttractorId : null,
     };
@@ -7289,7 +7293,7 @@ export class App {
         return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
       }
       case 'path': {
-        const pathItem = this._getForceVizPathOptions().find(entry => entry.id === attractor.movement?.pathId);
+        const pathItem = this._getForceVizPathOptions().find(entry => String(entry.id) === String(attractor.movement?.pathId));
         if (!pathItem) return { x: attractor.x, y: attractor.y };
         const target = this._getAnimatedSimulationPathTarget(pathItem, this.getP());
         return target ? { x: target.x, y: target.y } : { x: attractor.x, y: attractor.y };

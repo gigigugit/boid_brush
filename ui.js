@@ -1532,7 +1532,7 @@ export function buildSimulationControlsPanel(app) {
     const attractorOptions = scenario.attractors.map((a, i) => fvOption(a.id, a.name || `Attractor ${i + 1}`, a.id === activeAttractor?.id)).join('');
     const spawnOptions = ['<option value="">— Unbound —</option>', ...spawns.map((s, i) => fvOption(String(s.id), `Spawn ${i + 1}${s.enabled === false ? ' (disabled)' : ''}`, String(activeGroup?.spawnId) === String(s.id)))].join('');
     const layerOptions = ['<option value="">— Active layer —</option>', ...layers.map(l => fvOption(l.id, l.name || 'Layer', activeGroup?.layerId === l.id))].join('');
-    const pathOptions = ['<option value="">— No path —</option>', ...paths.map((pth, i) => fvOption(pth.id, `Path ${i + 1}`, activeAttractor?.movement?.pathId === pth.id))].join('');
+    const pathOptions = ['<option value="">— No path —</option>', ...paths.map((pth, i) => fvOption(String(pth.id), `Path ${i + 1}`, String(activeAttractor?.movement?.pathId) === String(pth.id)))].join('');
     const otherAttractors = scenario.attractors.filter(a => a.id !== activeAttractor?.id);
     const sharedOptions = otherAttractors.map(a => fvOption(a.id, a.name, activeAttractor?.sharedAttractorId === a.id)).join('');
 
@@ -1700,7 +1700,10 @@ export function buildSimulationControlsPanel(app) {
     fvPanel.querySelector('#fvOrbitCY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterY: +e.target.value } }));
     fvPanel.querySelector('#fvOrbitRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitRadius: +e.target.value } }));
     fvPanel.querySelector('#fvOrbitSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitSpeed: +e.target.value / 100 } }));
-    fvPanel.querySelector('#fvAttractorPath')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { pathId: e.target.value || null } }));
+    fvPanel.querySelector('#fvAttractorPath')?.addEventListener('change', e => {
+      const pathItem = paths.find(candidate => String(candidate.id) === e.target.value);
+      app._updateForceVizAttractor(activeAttractor.id, { movement: { pathId: pathItem?.id ?? null } });
+    });
     fvPanel.querySelector('#fvAttractorShared')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { sharedAttractorId: e.target.value || null }));
 
     fvPanel.querySelector('#fvRouteAdd')?.addEventListener('click', () => app._addForceVizRoute());
