@@ -12836,6 +12836,20 @@ export class App {
         }
         this.simulation.runtimeStrokeStarts = this._collectSimulationStrokeStartSpawns(this.activeBrush, simParams);
         const launchSpawn = this.simulation.runtimeStrokeStarts[0] || spawn;
+        const bindForceVizSpawn = this.simulation.mode === 'forceVisualization'
+          && this.activeBrush === 'boid'
+          && spawn
+          && Array.isArray(this.simulation.forceViz?.scenarios);
+        if (bindForceVizSpawn) {
+          const activeScenario = this._getActiveForceVizScenario();
+          const activeRoutes = activeScenario?.routes || [];
+          const activeGroups = activeScenario?.groups || [];
+          const boundSpawnIds = new Set(activeRoutes.filter(route => route.enabled !== false).map(route => route.groupId));
+          const primaryGroup = activeGroups.find(group => boundSpawnIds.has(group.id) && group.spawnId != null)
+            || activeGroups.find(group => group.spawnId != null)
+            || null;
+          brush._primarySpawnId = primaryGroup?.spawnId ?? spawn.id ?? null;
+        }
         this._updateSimulationLeader(0, simParams);
         brush.onDown?.(launchSpawn.x, launchSpawn.y, 1);
         brush.configureSimulation?.(this._getSimulationBrushData(), simParams);
