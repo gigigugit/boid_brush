@@ -9383,6 +9383,14 @@ export class App {
     document.getElementById('simHelpModal')?.classList.remove('open');
   }
 
+  _openForceVizHelp() {
+    document.getElementById('forceVizHelpModal')?.classList.add('open');
+  }
+
+  _closeForceVizHelp() {
+    document.getElementById('forceVizHelpModal')?.classList.remove('open');
+  }
+
   _toggleSimTopbarGuide() {
     this._openSimulationHelp();
   }
@@ -16742,6 +16750,8 @@ export class App {
     });
     document.getElementById('simHelpClose')?.addEventListener('click', () => this._closeSimulationHelp());
     document.getElementById('simHelpBackdrop')?.addEventListener('click', () => this._closeSimulationHelp());
+    document.getElementById('forceVizHelpClose')?.addEventListener('click', () => this._closeForceVizHelp());
+    document.getElementById('forceVizHelpBackdrop')?.addEventListener('click', () => this._closeForceVizHelp());
     document.getElementById('simDistributePointsClose')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsBackdrop')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsCancel')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
