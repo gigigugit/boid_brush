@@ -6882,10 +6882,14 @@ export class App {
   _normalizeForceVizGroup(raw) {
     const defaults = this._createDefaultForceVizGroup();
     const src = raw && typeof raw === 'object' ? raw : {};
+    const rawSpawnId = (typeof src.spawnId === 'string' || typeof src.spawnId === 'number') ? src.spawnId : null;
+    const boundSpawn = rawSpawnId == null
+      ? null
+      : this._getForceVizSpawnOptions().find(spawn => String(spawn.id) === String(rawSpawnId));
     return {
       id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('group'),
       name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
-      spawnId: (typeof src.spawnId === 'string' || typeof src.spawnId === 'number') ? src.spawnId : null,
+      spawnId: boundSpawn?.id ?? rawSpawnId,
       layerId: typeof src.layerId === 'string' ? src.layerId : null,
     };
   }
@@ -7214,7 +7218,8 @@ export class App {
   _resolveForceVizGroupRange(brush, group) {
     const ranges = brush?._spawnRangesById;
     if (!ranges || group?.spawnId == null) return null;
-    const range = ranges.get(group.spawnId);
+    const range = ranges.get(group.spawnId)
+      || [...ranges.entries()].find(([spawnId]) => String(spawnId) === String(group.spawnId))?.[1];
     if (!range) return null;
     return { start: range.startIndex, end: range.endIndex };
   }
@@ -20494,6 +20499,10 @@ export class App {
         // falls back to 'normal' plus the default scenario via normalization.
         this.simulation.mode = val?.mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
         this.simulation.forceViz = val?.forceViz && typeof val.forceViz === 'object' ? _deepClone(val.forceViz) : null;
+        // A persisted session owns its own manual-view baseline. Discard any
+        // runtime snapshot from the previously open workspace; _restoreSession
+        // captures the restored view after `_view` has been applied.
+        this._forceVizManualViewSnapshot = null;
         this._normalizeForceVizState();
         continue;
       }
@@ -20585,6 +20594,9 @@ export class App {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
       if (restoredView) this._applyViewState(restoredView);
+      this._forceVizManualViewSnapshot = this.simulation.mode === 'forceVisualization'
+        ? this._captureViewState()
+        : null;
       if (this.activeTool === 'transform' && !this.selectionMgr?.active) {
         this.setTool('brush');
       }
