@@ -1,0 +1,77 @@
+- generic [active]:
+  - generic [ref=e2]:
+    - strong [ref=e3]: True Treadmill Prototype
+    - generic [ref=e4]: "FPS: --"
+    - generic [ref=e5]: "Agents: 64 | WASM step: 3.90ms | mean turn: 0.0 deg/frame"
+    - generic [ref=e6]: "World: 500496, 500352 | zoom: 1.02x | attractor: 1059, 358 | gap: 558px"
+  - generic [ref=e7]:
+    - generic [ref=e8]:
+      - text: Boids
+      - slider "Boids" [ref=e9]: "64"
+      - status [ref=e10]: "64"
+    - generic [ref=e11]:
+      - text: Seek force
+      - slider "Seek force" [ref=e12]: "50"
+      - status [ref=e13]: "0.50"
+    - generic [ref=e14]:
+      - text: Separation
+      - slider "Separation" [ref=e15]: "38"
+      - status [ref=e16]: "0.38"
+    - generic [ref=e17]:
+      - text: Alignment
+      - slider "Alignment" [ref=e18]: "34"
+      - status [ref=e19]: "0.34"
+    - generic [ref=e20]:
+      - text: Cohesion
+      - slider "Cohesion" [ref=e21]: "22"
+      - status [ref=e22]: "0.22"
+    - generic [ref=e23]:
+      - text: Max speed
+      - slider "Max speed" [ref=e24]: "5.5"
+      - status [ref=e25]: "5.5"
+    - generic [ref=e26]:
+      - text: Perception radius
+      - slider "Perception radius" [ref=e27]: "80"
+      - status [ref=e28]: 80px
+    - generic [ref=e29]:
+      - text: Wander
+      - slider "Wander" [ref=e30]: "6"
+      - status [ref=e31]: "0.06"
+    - generic [ref=e32]:
+      - text: Velocity damping
+      - slider "Velocity damping" [ref=e33]: "95"
+      - status [ref=e34]: "0.95"
+    - generic [ref=e35]:
+      - text: Heading damper
+      - slider "Heading damper" [ref=e36]: "70"
+      - status [ref=e37]: 70%
+    - generic [ref=e38]:
+      - text: Camera follow
+      - slider "Camera follow" [ref=e39]: "12"
+      - status [ref=e40]: "0.12"
+    - generic [ref=e41]:
+      - text: Treadmill lead
+      - slider "Treadmill lead" [ref=e42]: "115"
+      - status [ref=e43]: "1.15"
+    - generic [ref=e44]:
+      - text: Auto-frame flock
+      - checkbox "Auto-frame flock" [checked] [ref=e45]
+      - status [ref=e46]: "on"
+    - generic [ref=e47]:
+      - text: Frame padding
+      - slider "Frame padding" [ref=e48]: "90"
+      - status [ref=e49]: 90px
+    - generic [ref=e50]:
+      - text: Frame smoothing
+      - slider "Frame smoothing" [ref=e51]: "16"
+      - status [ref=e52]: "0.16"
+    - generic [ref=e53]:
+      - text: Attractor X
+      - slider "Attractor X" [ref=e54]: "72"
+      - status [ref=e55]: 72%
+    - generic [ref=e56]:
+      - text: Attractor Y
+      - slider "Attractor Y" [ref=e57]: "50"
+      - status [ref=e58]: 50%
+    - button "Reset flock" [ref=e59] [cursor=pointer]
+  - generic [ref=e60]: The attractor is fixed inside a flock-driven treadmill frame, not the camera or grid. As the flock advances, the frame and attractor advance together; camera framing can move the marker off-screen. No boid position is wrapped, clamped, or reset during flight.

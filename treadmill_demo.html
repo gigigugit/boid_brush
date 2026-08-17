@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boid Brush - True Treadmill Prototype</title>
+<style>
+:root {
+  color-scheme: dark;
+  --panel: rgba(13, 21, 31, 0.88);
+  --border: rgba(144, 198, 230, 0.24);
+  --text: #d9e9f4;
+  --muted: #8aa5b7;
+  --accent: #63ddff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; background: #07111b; color: var(--text); font: 13px/1.35 "Segoe UI", sans-serif; }
+canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+#world { background: #07111b; }
+#boids { pointer-events: none; }
+#hud, #controls { position: fixed; z-index: 2; background: var(--panel); border: 1px solid var(--border); backdrop-filter: blur(10px); }
+#hud { top: 14px; left: 14px; min-width: 258px; padding: 10px 12px; border-radius: 7px; }
+#hud strong { display: block; color: var(--accent); margin-bottom: 3px; }
+#hud div { color: var(--muted); }
+#controls { left: 14px; bottom: 14px; width: 270px; padding: 10px 12px; border-radius: 7px; }
+#controls label { display: grid; grid-template-columns: 112px 1fr 42px; align-items: center; gap: 7px; margin: 6px 0; color: var(--muted); }
+#controls input { accent-color: var(--accent); width: 100%; }
+#controls output { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+#controls button { width: 100%; margin-top: 7px; padding: 7px 9px; color: #06202b; background: var(--accent); border: 0; border-radius: 4px; font-weight: 700; cursor: pointer; }
+#pointer { position: fixed; z-index: 1; width: 22px; height: 22px; border: 2px solid #fff2a8; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 5px rgba(255, 214, 88, 0.14), 0 0 18px rgba(255, 222, 96, 0.7); pointer-events: none; }
+#pointer::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: #fff2a8; }
+#legend { position: fixed; z-index: 2; right: 14px; bottom: 14px; max-width: 290px; color: var(--muted); padding: 10px 12px; border-left: 2px solid var(--accent); background: rgba(7, 17, 27, 0.72); }
+</style>
+</head>
+<body>
+<canvas id="world"></canvas>
+<canvas id="boids"></canvas>
+<div id="pointer" aria-hidden="true"></div>
+<div id="hud">
+  <strong>True Treadmill Prototype</strong>
+  <div id="fps">FPS: --</div>
+  <div id="info">Preparing WASM simulation...</div>
+  <div id="motion">World: -- | Screen target: fixed</div>
+</div>
+<div id="controls">
+  <label>Boids <input id="count" type="range" min="12" max="320" step="4" value="64"><output id="countOut">64</output></label>
+  <label>Seek force <input id="seek" type="range" min="5" max="100" value="50"><output id="seekOut">0.50</output></label>
+  <label>Separation <input id="separation" type="range" min="0" max="100" value="38"><output id="separationOut">0.38</output></label>
+  <label>Alignment <input id="alignment" type="range" min="0" max="100" value="34"><output id="alignmentOut">0.34</output></label>
+  <label>Cohesion <input id="cohesion" type="range" min="0" max="100" value="22"><output id="cohesionOut">0.22</output></label>
+  <label>Max speed <input id="maxSpeed" type="range" min="1" max="12" step="0.1" value="5.5"><output id="maxSpeedOut">5.5</output></label>
+  <label>Perception radius <input id="perceptionRadius" type="range" min="10" max="240" step="1" value="80"><output id="perceptionRadiusOut">80px</output></label>
+  <label>Wander <input id="wander" type="range" min="0" max="100" value="6"><output id="wanderOut">0.06</output></label>
+  <label>Velocity damping <input id="damping" type="range" min="80" max="100" step="0.5" value="95"><output id="dampingOut">0.95</output></label>
+  <label>Heading damper <input id="headingDamper" type="range" min="0" max="95" value="70"><output id="headingDamperOut">70%</output></label>
+  <label>Camera follow <input id="follow" type="range" min="1" max="100" value="12"><output id="followOut">0.12</output></label>
+  <label>Treadmill lead <input id="treadmillLead" type="range" min="80" max="180" value="115"><output id="treadmillLeadOut">1.15</output></label>
+  <label>Auto-frame flock <input id="autoFrame" type="checkbox" checked><output id="autoFrameOut">on</output></label>
+  <label>Frame padding <input id="framePadding" type="range" min="20" max="260" value="90"><output id="framePaddingOut">90px</output></label>
+  <label>Frame smoothing <input id="frameSmoothing" type="range" min="2" max="100" value="16"><output id="frameSmoothingOut">0.16</output></label>
+  <label>Attractor X <input id="pointerX" type="range" min="55" max="88" value="72"><output id="pointerXOut">72%</output></label>
+  <label>Attractor Y <input id="pointerY" type="range" min="20" max="80" value="50"><output id="pointerYOut">50%</output></label>
+  <button id="reset">Reset flock</button>
+</div>
+<div id="legend">The attractor is fixed inside a flock-driven treadmill frame, not the camera or grid. As the flock advances, the frame and attractor advance together; camera framing can move the marker off-screen. No boid position is wrapped, clamped, or reset during flight.</div>
+<script type="module">
+import { BoidSim } from './wasm-bridge.js';
+
+const worldCanvas = document.getElementById('world');
+const boidCanvas = document.getElementById('boids');
+const worldCtx = worldCanvas.getContext('2d');
+const gl = boidCanvas.getContext('webgl2', { alpha: true, antialias: true });
+const pointer = document.getElementById('pointer');
+const info = document.getElementById('info');
+const motion = document.getElementById('motion');
+if (!gl) throw new Error('WebGL2 is required for this demo.');
+
+const controls = {
+  count: document.getElementById('count'), seek: document.getElementById('seek'),
+  separation: document.getElementById('separation'), alignment: document.getElementById('alignment'),
+  cohesion: document.getElementById('cohesion'), maxSpeed: document.getElementById('maxSpeed'),
+  perceptionRadius: document.getElementById('perceptionRadius'),
+  wander: document.getElementById('wander'), damping: document.getElementById('damping'),
+  headingDamper: document.getElementById('headingDamper'),
+  follow: document.getElementById('follow'), treadmillLead: document.getElementById('treadmillLead'), autoFrame: document.getElementById('autoFrame'),
+  framePadding: document.getElementById('framePadding'), frameSmoothing: document.getElementById('frameSmoothing'),
+  pointerX: document.getElementById('pointerX'), pointerY: document.getElementById('pointerY'),
+};
+for (const [key, input] of Object.entries(controls)) {
+  const output = document.getElementById(`${key}Out`);
+  const update = () => {
+    output.value = key === 'autoFrame' ? (input.checked ? 'on' : 'off')
+      : ['seek', 'separation', 'alignment', 'cohesion', 'wander', 'damping', 'follow', 'treadmillLead', 'frameSmoothing'].includes(key) ? (+input.value / 100).toFixed(2)
+        : key === 'headingDamper' || key.startsWith('pointer') ? `${input.value}%`
+          : ['framePadding', 'perceptionRadius'].includes(key) ? `${input.value}px` : input.value;
+  };
+  input.addEventListener('input', update); update();
+}
+
+let width = 1;
+let height = 1;
+let dpr = 1;
+let cameraX = 500000;
+let cameraY = 500000;
+let cameraZoom = 1;
+let treadmillOriginX = 500000;
+let treadmillOriginY = 500000;
+let attractorOffsetX = 0;
+let attractorOffsetY = 0;
+let attractorWorldX = treadmillOriginX;
+let attractorWorldY = treadmillOriginY;
+let sim;
+const WORLD_SIZE = 1000000;
+const MAX_AGENTS = 400;
+let frameData = new Float32Array(MAX_AGENTS * 5);
+let displayHeadings = new Float32Array(MAX_AGENTS);
+let headingInitialized = new Uint8Array(MAX_AGENTS);
+let meanTurnDegrees = 0;
+
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  width = window.innerWidth;
+  height = window.innerHeight;
+  for (const canvas of [worldCanvas, boidCanvas]) {
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+  }
+  worldCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  gl.viewport(0, 0, boidCanvas.width, boidCanvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const vs = `#version 300 es
+layout(location=0) in vec2 aVertex;
+layout(location=1) in vec2 aWorld;
+layout(location=2) in vec2 aVelocity;
+layout(location=3) in float aHeading;
+uniform vec2 uResolution;
+uniform vec2 uCamera;
+uniform float uZoom;
+out float vHue;
+void main() {
+  float angle = aHeading;
+  float c = cos(angle), s = sin(angle);
+  vec2 rotated = vec2(aVertex.x * c - aVertex.y * s, aVertex.x * s + aVertex.y * c);
+  vec2 screen = (aWorld - uCamera + rotated) * uZoom;
+  vec2 clip = screen / uResolution * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+  vHue = angle;
+}`;
+const fs = `#version 300 es
+precision mediump float;
+in float vHue;
+out vec4 color;
+void main() {
+  float hue = fract(vHue / 6.2831853 + 0.5);
+  vec3 rgb = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  color = vec4(mix(vec3(0.96), rgb, 0.72), 0.92);
+}`;
+function shader(type, source) {
+  const value = gl.createShader(type);
+  gl.shaderSource(value, source);
+  gl.compileShader(value);
+  if (!gl.getShaderParameter(value, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(value));
+  return value;
+}
+const program = gl.createProgram();
+gl.attachShader(program, shader(gl.VERTEX_SHADER, vs));
+gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+const resolutionUniform = gl.getUniformLocation(program, 'uResolution');
+const cameraUniform = gl.getUniformLocation(program, 'uCamera');
+const zoomUniform = gl.getUniformLocation(program, 'uZoom');
+
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+const triangle = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, triangle);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([11, 0, -7, 5, -7, -5]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const instances = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, instances);
+gl.bufferData(gl.ARRAY_BUFFER, MAX_AGENTS * 5 * Float32Array.BYTES_PER_ELEMENT, gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(1);
+gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 0);
+gl.vertexAttribDivisor(1, 1);
+gl.enableVertexAttribArray(2);
+gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 20, 8);
+gl.vertexAttribDivisor(2, 1);
+gl.enableVertexAttribArray(3);
+gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 20, 16);
+gl.vertexAttribDivisor(3, 1);
+gl.bindVertexArray(null);
+
+function attractorPlacement() {
+  return { x: width * (+controls.pointerX.value / 100), y: height * (+controls.pointerY.value / 100) };
+}
+function positionAttractorFromControls() {
+  const placement = attractorPlacement();
+  attractorOffsetX = placement.x;
+  attractorOffsetY = placement.y;
+  syncAttractorToTreadmill();
+}
+function syncAttractorToTreadmill() {
+  attractorWorldX = treadmillOriginX + attractorOffsetX;
+  attractorWorldY = treadmillOriginY + attractorOffsetY;
+}
+function resetFlock() {
+  sim.clearAgents();
+  treadmillOriginX = cameraX;
+  treadmillOriginY = cameraY;
+  positionAttractorFromControls();
+  const centerX = treadmillOriginX + width * 0.34;
+  const centerY = treadmillOriginY + height * (+controls.pointerY.value / 100);
+  sim.spawnBatch(centerX, centerY, +controls.count.value, 'circle', 0, 0.18, 42);
+  displayHeadings.fill(0);
+  headingInitialized.fill(0);
+}
+document.getElementById('reset').addEventListener('click', resetFlock);
+controls.count.addEventListener('change', resetFlock);
+for (const control of [controls.pointerX, controls.pointerY]) {
+  control.addEventListener('change', positionAttractorFromControls);
+}
+
+function drawWorldGrid(target) {
+  worldCtx.clearRect(0, 0, width, height);
+  worldCtx.fillStyle = '#07111b';
+  worldCtx.fillRect(0, 0, width, height);
+  const minor = 40;
+  const major = minor * 5;
+  const drawGrid = (spacing, stroke, lineWidth) => {
+    worldCtx.strokeStyle = stroke;
+    worldCtx.lineWidth = lineWidth;
+    worldCtx.beginPath();
+    const scaledSpacing = spacing * cameraZoom;
+    const offsetX = -((cameraX * cameraZoom % scaledSpacing) + scaledSpacing) % scaledSpacing;
+    const offsetY = -((cameraY * cameraZoom % scaledSpacing) + scaledSpacing) % scaledSpacing;
+    for (let x = offsetX; x <= width; x += scaledSpacing) { worldCtx.moveTo(x, 0); worldCtx.lineTo(x, height); }
+    for (let y = offsetY; y <= height; y += scaledSpacing) { worldCtx.moveTo(0, y); worldCtx.lineTo(width, y); }
+    worldCtx.stroke();
+  };
+  drawGrid(minor, 'rgba(125, 186, 219, 0.055)', 1);
+  drawGrid(major, 'rgba(125, 208, 246, 0.14)', 1);
+  worldCtx.fillStyle = 'rgba(113, 221, 255, 0.7)';
+  worldCtx.fillRect(width * 0.16 - 2, height * 0.5 - 2, 4, 4);
+  worldCtx.fillStyle = 'rgba(159, 201, 224, 0.78)';
+  worldCtx.font = '12px Segoe UI, sans-serif';
+  worldCtx.fillText('camera origin', 12, height - 16);
+  const attractorScreenX = (attractorWorldX - cameraX) * cameraZoom;
+  const attractorScreenY = (attractorWorldY - cameraY) * cameraZoom;
+  pointer.style.left = `${attractorScreenX}px`;
+  pointer.style.top = `${attractorScreenY}px`;
+}
+
+function floatOrigin(read) {
+  const threshold = 200000;
+  if (Math.abs(cameraX - WORLD_SIZE / 2) < threshold && Math.abs(cameraY - WORLD_SIZE / 2) < threshold) return;
+  const shiftX = cameraX - WORLD_SIZE / 2;
+  const shiftY = cameraY - WORLD_SIZE / 2;
+  for (let index = 0; index < read.count; index++) {
+    const base = index * read.stride;
+    read.buffer[base] -= shiftX;
+    read.buffer[base + 1] -= shiftY;
+  }
+  cameraX -= shiftX;
+  cameraY -= shiftY;
+  treadmillOriginX -= shiftX;
+  treadmillOriginY -= shiftY;
+  attractorWorldX -= shiftX;
+  attractorWorldY -= shiftY;
+}
+
+sim = await BoidSim.create(WORLD_SIZE, WORLD_SIZE, MAX_AGENTS);
+resetFlock();
+let previousTime = performance.now();
+let fpsFrames = 0;
+let fpsElapsed = 0;
+
+function loop(now) {
+  const dt = Math.min(0.05, Math.max(0.001, (now - previousTime) / 1000));
+  previousTime = now;
+  // The target is fixed in the treadmill frame. Camera pan/zoom never enters
+  // this calculation; only the frame's own conveyor motion advances it.
+  syncAttractorToTreadmill();
+  sim.writeParams({
+    seek: +controls.seek.value / 100,
+    cohesion: +controls.cohesion.value / 100,
+    separation: +controls.separation.value / 100,
+    alignment: +controls.alignment.value / 100,
+    jitter: 0.01,
+    wander: +controls.wander.value / 100,
+    wanderSpeed: 0.3,
+    maxSpeed: +controls.maxSpeed.value,
+    damping: +controls.damping.value / 100,
+    flowField: 0,
+    flowScale: 0.01,
+    fleeRadius: 0,
+    fov: 360,
+    neighborRadius: +controls.perceptionRadius.value,
+    individuality: 0.08,
+    sensingEnabled: false,
+    simBoundsMargin: -1,
+  }, attractorWorldX, attractorWorldY, now / 1000);
+  const stepStart = performance.now();
+  sim.step(dt);
+  const stepMs = performance.now() - stepStart;
+  const read = sim.readAgents();
+
+  let centroidX = 0;
+  let centroidY = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let index = 0; index < read.count; index++) {
+    const base = index * read.stride;
+    const x = read.buffer[base];
+    const y = read.buffer[base + 1];
+    centroidX += x;
+    centroidY += y;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  if (read.count) {
+    centroidX /= read.count;
+    centroidY /= read.count;
+    const leadX = attractorWorldX - centroidX;
+    const leadY = attractorWorldY - centroidY;
+    const leadDistance = Math.hypot(leadX, leadY);
+    const leadDirectionX = leadDistance > 0.0001 ? leadX / leadDistance : 1;
+    const leadDirectionY = leadDistance > 0.0001 ? leadY / leadDistance : 0;
+    const desiredLeadDistance = Math.max(60, Math.hypot(
+      attractorOffsetX - width * 0.34,
+      attractorOffsetY - height * (+controls.pointerY.value / 100),
+    ));
+    const leadMultiplier = +controls.treadmillLead.value / 100;
+    const leadShortfall = Math.max(0, desiredLeadDistance - leadDistance);
+    // The treadmill must outrun a high-seek flock. Its frame advances ahead
+    // of the target direction independently of camera movement; a shortfall
+    // correction restores the intended lead before the boids can catch it.
+    const treadmillStep = 5.5 * leadMultiplier + leadShortfall * 0.35;
+    treadmillOriginX += leadDirectionX * treadmillStep;
+    treadmillOriginY += leadDirectionY * treadmillStep;
+    syncAttractorToTreadmill();
+    const autoFrame = controls.autoFrame.checked;
+    const padding = +controls.framePadding.value;
+    const boundsWidth = Math.max(1, maxX - minX);
+    const boundsHeight = Math.max(1, maxY - minY);
+    const targetZoom = autoFrame
+      ? Math.max(0.2, Math.min(2.5, Math.min(width / (boundsWidth + padding * 2), height / (boundsHeight + padding * 2))))
+      : 1;
+    const focusX = autoFrame ? (minX + maxX) / 2 : centroidX - width * 0.15;
+    const focusY = autoFrame ? (minY + maxY) / 2 : centroidY;
+    const desiredCameraX = focusX - width / (2 * targetZoom);
+    const desiredCameraY = focusY - height / (2 * targetZoom);
+    const smoothing = autoFrame ? +controls.frameSmoothing.value / 100 : +controls.follow.value / 100;
+    const lerp = 1 - Math.pow(1 - smoothing, dt * 60);
+    cameraX += (desiredCameraX - cameraX) * lerp;
+    cameraY += (desiredCameraY - cameraY) * lerp;
+    cameraZoom += (targetZoom - cameraZoom) * lerp;
+  }
+  floatOrigin(read);
+
+  let totalTurn = 0;
+  const headingFollow = 1 - (+controls.headingDamper.value / 100);
+  for (let index = 0; index < read.count; index++) {
+    const source = index * read.stride;
+    const destination = index * 5;
+    const rawHeading = Math.atan2(read.buffer[source + 3], read.buffer[source + 2]);
+    if (!headingInitialized[index]) {
+      displayHeadings[index] = rawHeading;
+      headingInitialized[index] = 1;
+    }
+    let headingDelta = rawHeading - displayHeadings[index];
+    headingDelta = Math.atan2(Math.sin(headingDelta), Math.cos(headingDelta));
+    const appliedTurn = headingDelta * headingFollow;
+    totalTurn += Math.abs(appliedTurn);
+    displayHeadings[index] += appliedTurn;
+    frameData[destination] = read.buffer[source];
+    frameData[destination + 1] = read.buffer[source + 1];
+    frameData[destination + 2] = read.buffer[source + 2];
+    frameData[destination + 3] = read.buffer[source + 3];
+    frameData[destination + 4] = displayHeadings[index];
+  }
+  meanTurnDegrees = read.count ? totalTurn / read.count * 180 / Math.PI : 0;
+  drawWorldGrid();
+  gl.viewport(0, 0, boidCanvas.width, boidCanvas.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(program);
+  gl.uniform2f(resolutionUniform, width, height);
+  gl.uniform2f(cameraUniform, cameraX, cameraY);
+  gl.uniform1f(zoomUniform, cameraZoom);
+  gl.bindBuffer(gl.ARRAY_BUFFER, instances);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, frameData.subarray(0, read.count * 5));
+  gl.bindVertexArray(vao);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, read.count);
+  gl.bindVertexArray(null);
+
+  fpsFrames++;
+  fpsElapsed += dt;
+  if (fpsElapsed >= 0.5) {
+    document.getElementById('fps').textContent = `FPS: ${Math.round(fpsFrames / fpsElapsed)}`;
+    fpsFrames = 0;
+    fpsElapsed = 0;
+  }
+  const screenCentroidX = (centroidX - cameraX) * cameraZoom;
+  const screenCentroidY = (centroidY - cameraY) * cameraZoom;
+  const attractorScreenX = (attractorWorldX - cameraX) * cameraZoom;
+  const attractorScreenY = (attractorWorldY - cameraY) * cameraZoom;
+  const pointerGap = Math.hypot(attractorScreenX - screenCentroidX, attractorScreenY - screenCentroidY);
+  info.textContent = `Agents: ${read.count} | WASM step: ${stepMs.toFixed(2)}ms | mean turn: ${meanTurnDegrees.toFixed(1)} deg/frame`;
+  motion.textContent = `World: ${Math.round(centroidX)}, ${Math.round(centroidY)} | zoom: ${cameraZoom.toFixed(2)}x | attractor: ${Math.round(attractorScreenX)}, ${Math.round(attractorScreenY)} | gap: ${Math.round(pointerGap)}px`;
+  requestAnimationFrame(loop);
+}
+window.treadmillDemoDebug = () => ({
+  agents: (() => {
+    const read = sim.readAgents();
+    return Array.from({ length: read.count }, (_, index) => {
+      const base = index * read.stride;
+      return { x: read.buffer[base], y: read.buffer[base + 1] };
+    });
+  })(),
+  wander: +controls.wander.value / 100,
+  damping: +controls.damping.value / 100,
+  headingDamper: +controls.headingDamper.value / 100,
+  meanTurnDegrees,
+  camera: { x: cameraX, y: cameraY, zoom: cameraZoom },
+  attractor: {
+    x: attractorWorldX,
+    y: attractorWorldY,
+    treadmillOriginX,
+    treadmillOriginY,
+    offsetX: attractorOffsetX,
+    offsetY: attractorOffsetY,
+  },
+});
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

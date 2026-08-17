@@ -55,6 +55,8 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+const AGENT_OPACITY = 9;
+const TREADMILL_MAX_CANDIDATES = 64; // sampled agent positions cached per frame for camera policies
 // Predefined hue anchors used to visually separate detected boid quorum groups.
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
@@ -184,6 +186,25 @@ function _getSimulationSpawnAppearance(brush, index, p) {
     ? Math.max(0, Math.min(1, brush._agentSpawnOpacity[index]))
     : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
   return { color, opacity };
+}
+
+function _relativeLuminanceFromHex(color, fallback = 0) {
+  const hex = _normalizeBrushHexColor(color, '#000000');
+  const rgb = hexToRGB(hex);
+  if (!rgb) return fallback;
+  const channel = value => {
+    const normalized = value / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b);
+}
+
+function _getVisibleTreadmillStampColor(app, color) {
+  const stampColor = _normalizeBrushHexColor(color, '#000000');
+  const bgColor = _normalizeBrushHexColor(app?.getColorValue?.('background', '#313131'), '#313131');
+  const stampLum = _relativeLuminanceFromHex(stampColor, 0);
+  const bgLum = _relativeLuminanceFromHex(bgColor, 0.03);
+  return Math.abs(stampLum - bgLum) < 0.035 ? '#ffffff' : stampColor;
 }
 
 function _syncSimulationSpawnAppearance(brush, spawns, resolveConfig, p) {
@@ -930,10 +951,10 @@ function _textureDepositDensity(app, p, x, y) {
 function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
+  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [], treadmillPoints: [] };
   const brushName = app._getSimulationContextBrush?.() || app.activeBrush;
   const data = app._getSimulationBrushData?.(brushName) || sim.brushData[brushName];
-  if (!data) return { points: [], pathTargets: [], edges: [] };
+  if (!data) return { points: [], pathTargets: [], edges: [], treadmillPoints: [] };
   return {
     points: Array.isArray(data.points)
       ? data.points
@@ -976,6 +997,14 @@ function _collectSimulationGuides(brush, p) {
             };
           })
       : [],
+    // Treadmill Canvas submode: per-group weighted attractor guides. Always
+    // CPU-applied (never uploaded to the GPU point-guide buffer) so each guide
+    // point can be scoped to a group's agent index range via `groupRange` —
+    // this isolates per-group routing from the global GPU guide path while
+    // reusing the exact same attract/repel push math as normal guide points.
+    treadmillPoints: (brushName === 'boid' && sim.mode === 'treadmillCanvas' && typeof app._collectTreadmillGuidePoints === 'function')
+      ? app._collectTreadmillGuidePoints(brush, p)
+      : [],
   };
 }
 
@@ -1005,7 +1034,8 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
   const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
   const edgeGuides = guideState.edges || [];
-  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
+  const treadmillPoints = guideState.treadmillPoints || [];
+  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length && !treadmillPoints.length) return false;
   const { buffer, count, stride } = read;
   const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
 
@@ -1039,6 +1069,29 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
       const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85 * sign;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
+    }
+
+    // Treadmill Canvas routes continuously seek their fixed attractor like
+    // a held pointer. A range-wide rebase below removes shared progress before
+    // the flock arrives, producing the treadmill illusion without wrapping the
+    // canvas or breaking the group's local boid relationships.
+    for (const point of treadmillPoints) {
+      if (point.treadmillFrame) continue;
+      if (point.groupRange && (i < point.groupRange.start || i >= point.groupRange.end)) continue;
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const d = Math.hypot(dx, dy);
+      if (d <= 0.0001) continue;
+      const inwardX = dx / d;
+      const inwardY = dy / d;
+      const pursuitRadius = Math.max(1, point.radius || 1);
+      const containmentRadius = Math.max(pursuitRadius, point.influenceRadius || pursuitRadius);
+      const edgeFalloff = d <= pursuitRadius
+        ? 1
+        : Math.max(0.15, 1 - (d - pursuitRadius) / Math.max(1, containmentRadius - pursuitRadius));
+      const pull = point.strength * p.simSpeed * guideSpeedScale * 0.85 * edgeFalloff;
+      vx += inwardX * pull;
+      vy += inwardY * pull;
     }
 
     if (animatedPathTargets.length) {
@@ -1098,6 +1151,73 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
     buffer[base + AGENT_VX] = vx;
     buffer[base + AGENT_VY] = vy;
   }
+
+  // Treadmill coordinate frame: rebase each routed group's entire range once
+  // its centroid nears the fixed pointer. Every member is translated by the
+  // same amount, so flock shape/velocity stays coherent while the visible
+  // group keeps pursuing without ever arriving.
+  for (const point of treadmillPoints) {
+    if (point.treadmillFrame) continue;
+    const start = Math.max(0, Math.floor(point.groupRange?.start ?? 0));
+    const end = Math.min(count, Math.max(start, Math.floor(point.groupRange?.end ?? count)));
+    if (start >= end) continue;
+    const pursuitRadius = Math.max(1, point.radius || 1);
+    const containmentRadius = Math.max(pursuitRadius, point.influenceRadius || pursuitRadius);
+    const standoffRadius = Math.max(1, pursuitRadius * Math.max(0.05, Math.min(0.95, point.treadmillStandoffRatio ?? 0.65)));
+    const rebaseStrength = Math.max(0.05, Math.min(1, point.treadmillRebaseStrength ?? 0.8));
+    let centroidX = 0;
+    let centroidY = 0;
+    let avgVx = 0;
+    let avgVy = 0;
+    for (let i = start; i < end; i++) {
+      const base = i * stride;
+      centroidX += buffer[base + AGENT_X];
+      centroidY += buffer[base + AGENT_Y];
+      avgVx += buffer[base + AGENT_VX];
+      avgVy += buffer[base + AGENT_VY];
+    }
+    const groupCount = end - start;
+    centroidX /= groupCount;
+    centroidY /= groupCount;
+    avgVx /= groupCount;
+    avgVy /= groupCount;
+    const fromTargetX = centroidX - point.x;
+    const fromTargetY = centroidY - point.y;
+    const centroidDistance = Math.hypot(fromTargetX, fromTargetY);
+    let outwardX = centroidDistance > 0.0001 ? fromTargetX / centroidDistance : -avgVx;
+    let outwardY = centroidDistance > 0.0001 ? fromTargetY / centroidDistance : -avgVy;
+    const outwardLength = Math.hypot(outwardX, outwardY);
+    if (outwardLength <= 0.0001) {
+      outwardX = 1;
+      outwardY = 0;
+    } else {
+      outwardX /= outwardLength;
+      outwardY /= outwardLength;
+    }
+
+    let translateX = 0;
+    let translateY = 0;
+    if (centroidDistance < standoffRadius) {
+      const resetDistance = Math.max(0, pursuitRadius - centroidDistance) * rebaseStrength;
+      translateX = outwardX * resetDistance;
+      translateY = outwardY * resetDistance;
+    }
+    for (let i = start; i < end; i++) {
+      const base = i * stride;
+      let x = buffer[base + AGENT_X] + translateX;
+      let y = buffer[base + AGENT_Y] + translateY;
+      const deltaX = x - point.x;
+      const deltaY = y - point.y;
+      const distance = Math.hypot(deltaX, deltaY);
+      if (distance > containmentRadius) {
+        const scale = containmentRadius / distance;
+        x = point.x + deltaX * scale;
+        y = point.y + deltaY * scale;
+      }
+      buffer[base + AGENT_X] = x;
+      buffer[base + AGENT_Y] = y;
+    }
+  }
   return count > 0;
 }
 
@@ -1156,6 +1276,7 @@ export class BoidBrush {
     this.renderer = createBoidStampRenderer();
     this._ready = false;
     this._resetInterpolationState();
+    this._treadmillDisplayHeadings = [];
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
     this._boidsSpawned = false;
@@ -1191,6 +1312,16 @@ export class BoidBrush {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._debugMaxEvents = 120;
+    // Treadmill Canvas submode support: runtime-only, never persisted.
+    // Maps a spawn definition id -> the agent index range it produced this
+    // stroke, so routes can scope guide points to one spawn group's agents.
+    this._spawnRangesById = new Map();
+    this._primarySpawnId = null;
+    // Cached per-frame transient snapshot (centroid/bounds/avg velocity/
+    // sampled candidates) consumed by camera policies without re-reading
+    // the agent buffer. Populated from the same non-blocking readAgents()
+    // call the stroke loop already performs.
+    this._transientSnapshot = { count: 0 };
     _resetSimulationSpawnAppearance(this);
   }
 
@@ -1371,7 +1502,31 @@ export class BoidBrush {
       if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
       if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
     }
+    if (this.app.simulation?.mode === 'treadmillCanvas') {
+      const group = this.app._getActiveTreadmillScenario?.()?.groups?.[0];
+      if (group) {
+        next.seek = group.seek;
+        next.cohesion = group.cohesion;
+        next.separation = group.separation;
+        next.alignment = group.alignment;
+        next.maxSpeed = group.maxSpeed;
+        next.neighborRadius = group.neighborRadius;
+        next.wander = group.wander;
+        next.damping = group.damping;
+      }
+      // Treadmill simulation runs in virtual world coordinates, so document
+      // bounds must not clamp agents back into the visible canvas.
+      next.simBoundsMargin = -1;
+    }
+    // Treadmill Canvas applies group-scoped guides to the CPU mirror after
+    // each simulation frame. WebGPU readback is asynchronous, so that mutation
+    // would invalidate every pending position readback and freeze painted
+    // stamps at their initial positions. Keep this specialized mode synchronous.
+    next.forceCpuSimulation = this.app.simulation?.mode === 'treadmillCanvas';
     next.leader = _resolveLeaderParams(next);
+    if (this.app.simulation?.mode === 'treadmillCanvas' && next.leader) {
+      next.leader.simBoundsMargin = -1;
+    }
     return next;
   }
 
@@ -1406,10 +1561,20 @@ export class BoidBrush {
       color: p.color,
       opacity: p.stampOpacity,
     }, p);
+    if (this._primarySpawnId != null) this._recordSimulationSpawnRange(this._primarySpawnId, spawnInfo);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     return true;
+  }
+
+  /** Treadmill Canvas submode: remember which agent index range a spawn
+   *  definition produced this stroke, keyed by the spawn's own id. Routes
+   *  use this to scope a weighted attractor's guide point to just the boids
+   *  from its bound group instead of applying it globally. */
+  _recordSimulationSpawnRange(spawnId, spawnInfo) {
+    if (spawnId == null || !spawnInfo) return;
+    this._spawnRangesById.set(spawnId, { startIndex: spawnInfo.startIndex, endIndex: spawnInfo.endIndex });
   }
 
   _applyLifecycleAction(action, p, x, y, pressure = 1, useHoverAngle = false) {
@@ -1703,6 +1868,11 @@ export class BoidBrush {
   }
 
   _resetInterpolationState() {
+    this._resetStampInterpolationAnchors();
+    this._treadmillDisplayHeadings = [];
+  }
+
+  _resetStampInterpolationAnchors() {
     this._lastStampX = [];
     this._lastStampY = [];
     this._lastSpacingX = [];
@@ -1758,6 +1928,19 @@ export class BoidBrush {
       const color = (agentHue !== 0 || agentSat !== 0 || agentLit !== 0)
         ? hslToRGB(appearanceColor.hsl[0] + agentHue, appearanceColor.hsl[1] + agentSat, appearanceColor.hsl[2] + agentLit)
         : appearanceColor.rgb;
+      let rotation = p.stampImageRotation || 0;
+      if (this.app.simulation?.mode === 'treadmillCanvas') {
+        const group = this.app._getActiveTreadmillScenario?.()?.groups?.[0];
+        const rawHeading = Math.atan2(buffer[base + AGENT_VY], buffer[base + AGENT_VX]);
+        const priorHeading = this._treadmillDisplayHeadings[i];
+        if (!Number.isFinite(priorHeading)) {
+          this._treadmillDisplayHeadings[i] = rawHeading;
+        } else {
+          const delta = Math.atan2(Math.sin(rawHeading - priorHeading), Math.cos(rawHeading - priorHeading));
+          this._treadmillDisplayHeadings[i] = priorHeading + delta * (1 - (group?.headingDamper ?? 0.7));
+        }
+        rotation += this._treadmillDisplayHeadings[i];
+      }
       const pushInstance = (x, y) => {
         const renderPoints = p.symmetryEnabled
           ? this.app.getSymmetryPoints(x, y)
@@ -1781,7 +1964,7 @@ export class BoidBrush {
             }
           }
           if (instOpacity < 0.005 || instSize < 0.5) return;
-          instances.push(px, py, instSize, color.r, color.g, color.b, instOpacity);
+          instances.push(px, py, instSize, color.r, color.g, color.b, instOpacity, rotation);
         };
         for (const point of renderPoints) {
           const pointSize = size * (point.sizeMultiplier || 1);
@@ -1995,6 +2178,8 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
+    // Fresh stroke — spawn index ranges from the previous stroke no longer apply.
+    this._spawnRangesById.clear();
     this._pushRenderDebug('pointer-down', {
       x,
       y,
@@ -2006,12 +2191,21 @@ export class BoidBrush {
     const selectedEntry = this.app._getSelectedSimulationEntry?.();
     const selectedSpawn = selectedEntry?.kind === 'spawn' ? selectedEntry.target : null;
     const simSpawns = this.app._ensureSimulationSpawns('boid');
-    const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
-      ? ((selectedSpawn && selectedSpawn.enabled !== false) ? selectedSpawn : (simSpawns.find(spawn => spawn.enabled !== false) || simSpawns[0]))
+    const forcedSimulationSpawn = this.app.simulation?.enabled
+      && this.app.simulation?.mode === 'treadmillCanvas'
+      && this._primarySpawnId != null
+      ? simSpawns.find(spawn => String(spawn.id) === String(this._primarySpawnId))
       : null;
+    const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
+      ? (forcedSimulationSpawn || (selectedSpawn && selectedSpawn.enabled !== false ? selectedSpawn : (simSpawns.find(spawn => spawn.enabled !== false) || simSpawns[0])))
+      : null;
+    this._primarySpawnId = simSpawn?.id ?? null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
+    const treadmillGroup = this.app.simulation?.mode === 'treadmillCanvas'
+      ? this.app._getActiveTreadmillScenario?.()?.groups?.[0]
+      : null;
     this._spawnOverrides = spawnConfig ? {
-      count: spawnConfig.count,
+      count: treadmillGroup?.count ?? spawnConfig.count,
       color: spawnConfig.color,
       stampOpacity: spawnConfig.opacity,
       spawnShape: spawnConfig.shape,
@@ -2106,6 +2300,11 @@ export class BoidBrush {
       if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
         this.sim.markStateDirty?.();
       }
+      if (this.app.simulation?.mode === 'treadmillCanvas') {
+        this._updateTransientSnapshot({ buffer, count, stride });
+        this._treadmillRead = { buffer, count, stride };
+        return;
+      }
       if (count > 0) {
         const layer = this.app.getActiveLayer();
         const batchSupport = this._getBatchRendererSupport(p, false);
@@ -2171,6 +2370,7 @@ export class BoidBrush {
       const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
       this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
       _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
+      this._recordSimulationSpawnRange(spawn.id, spawnInfo);
     }
   }
 
@@ -2506,15 +2706,108 @@ export class BoidBrush {
     // Write sim params and step
     const guideState = _collectSimulationGuides(this, p);
     const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
-    this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
+    const treadmillTarget = guideState.treadmillPoints?.find(point => point.treadmillFrame);
+    this.sim.writeParams(simP, treadmillTarget?.x ?? app.leaderX, treadmillTarget?.y ?? app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
-    // Read agents
+    // Read agents. readAgents() itself is non-blocking: on WebGPU it returns
+    // the latest CPU mirror already updated by an async mapAsync() readback
+    // (see webgpu-boid-sim.js _applyReadyResults), so caching a transient
+    // snapshot from it here never stalls the frame loop.
     const read = this.sim.readAgents();
     if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
+    if (app.simulation?.mode === 'treadmillCanvas') {
+      const display = app.simulation?.treadmill?.display;
+      this._updateTransientSnapshot(read);
+      this._treadmillRead = read;
+      if (display?.showPresentationLayer) {
+        this._renderTreadmillPresentationLayer(p);
+      } else {
+        this._suspendTreadmillPresentationLayer();
+      }
+      if (display?.showCanvasLayer === false) {
+        this._resetStampInterpolationAnchors();
+        return;
+      }
+      const projectedRead = this._buildProjectedTreadmillRead(read);
+      this._renderAgentRead(projectedRead, p, {
+        forceStamp: !!app.isDrawing || !!app.simulation?.running,
+      });
+      return;
+    }
     this._renderAgentRead(read, p, {
       forceStamp: !!app.isDrawing || !!app.simulation?.running,
     });
+  }
+
+  /** Treadmill Canvas submode: cache centroid/bounds/average velocity and
+   *  a sampled set of agent candidates from the current agent read. Camera
+   *  policies (followBoid/followCentroid/frameGroups/orbit) consume this
+   *  cached snapshot instead of re-scanning the agent buffer themselves. */
+  _updateTransientSnapshot(read) {
+    const { buffer, count, stride } = read || {};
+    if (!count) {
+      this._transientSnapshot = { count: 0 };
+      return;
+    }
+    let sumX = 0, sumY = 0, sumVX = 0, sumVY = 0;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const candidates = [];
+    const sampleStride = Math.max(1, Math.floor(count / TREADMILL_MAX_CANDIDATES));
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const x = buffer[base + AGENT_X];
+      const y = buffer[base + AGENT_Y];
+      const vx = buffer[base + AGENT_VX];
+      const vy = buffer[base + AGENT_VY];
+      sumX += x; sumY += y; sumVX += vx; sumVY += vy;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (i % sampleStride === 0) candidates.push({ x, y, vx, vy, index: i });
+    }
+    this._transientSnapshot = {
+      count,
+      centroid: { x: sumX / count, y: sumY / count },
+      avgVelocity: { x: sumVX / count, y: sumVY / count },
+      bounds: { minX, minY, maxX, maxY },
+      candidates,
+      updatedAt: performance.now(),
+    };
+  }
+
+  _buildProjectedTreadmillRead(read) {
+    const { buffer, count, stride } = read || {};
+    if (!buffer || !count || !stride) return read;
+    const needed = count * stride;
+    if (!this._treadmillProjectedReadBuffer || this._treadmillProjectedReadBuffer.length !== needed) {
+      this._treadmillProjectedReadBuffer = new Float32Array(needed);
+    }
+    const projectedBuffer = this._treadmillProjectedReadBuffer;
+    projectedBuffer.set(buffer.subarray(0, needed));
+    for (let index = 0; index < count; index++) {
+      const base = index * stride;
+      const projected = this.app._projectTreadmillWorldPoint(
+        buffer[base + AGENT_X],
+        buffer[base + AGENT_Y],
+      );
+      if (!projected) {
+        projectedBuffer[base + AGENT_OPACITY] = 0;
+        continue;
+      }
+      projectedBuffer[base + AGENT_X] = projected.canvasX;
+      projectedBuffer[base + AGENT_Y] = projected.canvasY;
+    }
+    return { buffer: projectedBuffer, count, stride };
+  }
+
+  _suspendTreadmillPresentationLayer() {
+    const layer = this.app._getLayerById?.(this.app._treadmillPresentationLayerId);
+    if (!layer || layer.visible === false) return;
+    layer.visible = false;
+    layer.dirty = true;
+    layer.dirtyTiles = null;
   }
 
   taperFrame(t, p) {
@@ -2637,6 +2930,10 @@ export class BoidBrush {
 
   drawOverlay(ctx, p) {
     if (!this._ready) return;
+    if (this.app.simulation?.mode === 'treadmillCanvas' && (this.app.simulation?.running || this.app.simulation?.paused)) {
+      this._drawTreadmillTargetOverlay(ctx);
+      return;
+    }
     const { buffer, count, stride } = this.sim.readAgents();
     const groupIds = _computeBoidOverlayGroups(buffer, count, stride, p);
 
@@ -2684,6 +2981,85 @@ export class BoidBrush {
     }
   }
 
+  _drawTreadmillTargetOverlay(ctx) {
+    const runtime = this.app._treadmillRuntime;
+    if (!runtime) return;
+    const projected = this.app._projectTreadmillWorldPoint(runtime.targetX, runtime.targetY);
+    if (!projected) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 242, 168, 0.96)';
+    ctx.fillStyle = 'rgba(255, 226, 96, 0.25)';
+    ctx.lineWidth = 2 / Math.max(0.1, this.app.viewZoom);
+    ctx.beginPath();
+    ctx.arc(projected.canvasX, projected.canvasY, 11 / Math.max(0.1, this.app.viewZoom), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  _renderTreadmillPresentationLayer(p) {
+    const layer = this.app._ensureTreadmillPresentationLayer?.();
+    if (!layer?.ctx) return;
+    layer.visible = true;
+    const ctx = layer.ctx;
+    ctx.save();
+    ctx.setTransform(this.app.DPR, 0, 0, this.app.DPR, 0, 0);
+    ctx.clearRect(0, 0, this.app.W, this.app.H);
+    this._drawTreadmillPresentation(ctx, p);
+    ctx.restore();
+    layer.dirty = true;
+    layer.dirtyTiles = null;
+    this.app.compositeAllLayers();
+  }
+
+  _drawTreadmillPresentation(ctx, p) {
+    const read = this._treadmillRead;
+    if (!read?.count) return;
+    const { buffer, count, stride } = read;
+    const app = this.app;
+    const runtime = app._treadmillRuntime;
+    const radius = Math.max(3, Math.min(28, p.stampSize * 0.5));
+    const viewport = document.getElementById('canvasArea')?.getBoundingClientRect();
+    const viewportWidth = viewport?.width || app.W;
+    const viewportHeight = viewport?.height || app.H;
+    const group = app._getActiveTreadmillScenario?.()?.groups?.[0];
+    const headingFollow = 1 - (group?.headingDamper ?? 0.7);
+    const headings = this._treadmillDisplayHeadings || [];
+
+    ctx.save();
+    for (let index = 0; index < count; index++) {
+      const base = index * stride;
+      const projected = app._projectTreadmillWorldPoint(buffer[base + AGENT_X], buffer[base + AGENT_Y]);
+      if (!projected || projected.screenX < -radius || projected.screenY < -radius || projected.screenX > viewportWidth + radius || projected.screenY > viewportHeight + radius) continue;
+      const rawHeading = Math.atan2(buffer[base + AGENT_VY], buffer[base + AGENT_VX]);
+      const previous = headings[index];
+      const heading = Number.isFinite(previous)
+        ? previous + Math.atan2(Math.sin(rawHeading - previous), Math.cos(rawHeading - previous)) * headingFollow
+        : rawHeading;
+      headings[index] = heading;
+      const appearance = _getSimulationSpawnAppearance(this, index, p);
+      ctx.save();
+      ctx.translate(projected.canvasX, projected.canvasY);
+      ctx.rotate(heading);
+      ctx.fillStyle = _getVisibleTreadmillStampColor(app, appearance.color);
+      ctx.globalAlpha = Math.max(0.48, Math.min(1, appearance.opacity * (buffer[base + 9] || 1)));
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.beginPath();
+      ctx.moveTo(radius * 0.95, 0);
+      ctx.lineTo(radius * 0.2, radius * 0.28);
+      ctx.lineTo(radius * 0.2, -radius * 0.28);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
   getStatusInfo() {
     if (!this._ready) return 'WASM loading...';
     const { count } = this.sim.readAgents();
@@ -2721,6 +3097,9 @@ export class BoidBrush {
 
   deactivate() {
     this.resetSimulationPlaybackState({ compositePreview: true });
+    this._spawnRangesById.clear();
+    this._primarySpawnId = null;
+    this._transientSnapshot = { count: 0 };
   }
 
   destroy() {
