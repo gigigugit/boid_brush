@@ -3006,6 +3006,13 @@ export class App {
   }
 
   _handleWorkspaceJsonValueInput(event) {
+    if (this._workspaceJsonEditorMode === 'plain') {
+      const plainEditor = this._getWorkspaceJsonModalElements().editor;
+      if (!plainEditor || event.target !== plainEditor) return;
+    } else {
+      const structuredEditor = this._getWorkspaceJsonModalElements().structuredEditor;
+      if (!structuredEditor?.contains(event.target)) return;
+    }
     const field = event.target?.closest?.('[data-json-path][data-json-type]');
     if (this._workspaceJsonEditorMode !== 'plain' && !field) return;
     if (this._workspaceJsonEditorMode === 'plain') {
@@ -3048,6 +3055,7 @@ export class App {
   _syncWorkspaceJsonHighlight() {
     const { editor, highlight } = this._getWorkspaceJsonModalElements();
     if (!editor || !highlight) return;
+    if (this._workspaceJsonEditorMode !== 'plain') return;
     const raw = editor.value || '';
     const editorWrap = editor.parentElement;
     const useHighlight = raw.length <= WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS;
@@ -3065,6 +3073,7 @@ export class App {
   _syncWorkspaceJsonHighlightScroll() {
     const { editor, highlight } = this._getWorkspaceJsonModalElements();
     if (!editor || !highlight) return;
+    if (this._workspaceJsonEditorMode !== 'plain') return;
     highlight.scrollTop = editor.scrollTop;
     highlight.scrollLeft = editor.scrollLeft;
   }
