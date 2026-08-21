@@ -2879,7 +2879,10 @@ export class App {
     const nextRawText = typeof rawText === 'string' && rawText
       ? rawText
       : JSON.stringify(documentValue ?? {}, null, 2);
-    const lineCount = nextRawText ? nextRawText.split('\n').length : 0;
+    let lineCount = nextRawText ? 1 : 0;
+    for (let index = 0; index < nextRawText.length; index++) {
+      if (nextRawText.charCodeAt(index) === 10) lineCount += 1;
+    }
     const tooLarge = nextRawText.length > WORKSPACE_JSON_STRUCTURED_MAX_CHARS || lineCount > WORKSPACE_JSON_STRUCTURED_MAX_LINES;
     if (tooLarge) return { mode: 'plain', reason: 'size', rawText: nextRawText };
     if (this._isWorkspaceJsonTouchDevice()) return { mode: 'plain', reason: 'touch', rawText: nextRawText };
@@ -3030,7 +3033,7 @@ export class App {
         this._scheduleWorkspaceJsonAutoApply();
         return;
       }
-      this._setWorkspaceJsonModalStatus('Draft updated. Validate or Apply when ready.', 'success');
+      this._setWorkspaceJsonModalStatus('Draft updated. Validate or Apply when ready.');
       return;
     }
     if (field.classList.contains('workspace-json-valueField')) {
