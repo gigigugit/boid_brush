@@ -2001,6 +2001,7 @@ export class App {
     this._sensingSourcePickerPanel = null;
     this._sensingSourcePickerPointerHandler = null;
     this._sensingSourcePickerKeyHandler = null;
+    this._sensingRulesModalState = null;
 
     // Undo/redo
     this.undoStack = [];
@@ -9449,6 +9450,10 @@ export class App {
           <span>Every</span>
           <input type="number" min="1" max="50" step="1" data-sim-setup-future-field="sensingUpdateFrames" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingUpdateFrames) ? Math.round(row.sensingUpdateFrames) : 30}">
         </label>
+        <div class="sim-setup-rules">
+          <button type="button" data-sim-setup-rules-btn="${_escapeHtml(row.sessionId)}">Edit Rules…</button>
+          <span>${_escapeHtml(row.sensingRules ? _describeSensingRules(row.sensingRules) : '1 rule (from row controls)')}</span>
+        </div>
       </div>`;
     root.innerHTML = `
       <table class="sim-setup-table">
@@ -9577,6 +9582,13 @@ export class App {
           row.sensingLayerIds = this._seedDraftSensingSourceSelection('selected', row.sessionIndex);
         }
         this._renderSimulationSetupExplorer();
+      });
+    });
+    root.querySelectorAll('[data-sim-setup-rules-btn]').forEach(button => {
+      button.addEventListener('click', event => {
+        const row = this._getSimulationSetupDraftRow(event.currentTarget.dataset.simSetupRulesBtn);
+        if (!row) return;
+        this._openSensingRulesModal({ type: 'simRow', row });
       });
     });
     root.querySelectorAll('[data-sim-setup-menu]').forEach(button => {
@@ -16024,6 +16036,19 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('sensingRulesBtn')?.addEventListener('click', () => this._openSensingRulesModal({ type: 'drawing' }));
+    document.getElementById('sensingRulesClose')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesBackdrop')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesCancelBtn')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesApplyBtn')?.addEventListener('click', () => this._applySensingRulesModal());
+    document.getElementById('sensingRulesResetBtn')?.addEventListener('click', () => this._resetSensingRulesModal());
+    document.getElementById('sensingRulesAddBtn')?.addEventListener('click', () => {
+      const state = this._sensingRulesModalState;
+      if (!state || state.rules.length >= MAX_SENSING_RULES) return;
+      const last = state.rules[state.rules.length - 1] || _sensingRuleFromFlat(this.getP(), this._serializeSensingSourceSelection());
+      state.rules.push(_normalizeSensingRule({ ...last, layerIds: [...(last.layerIds || [])] }));
+      this._renderSensingRulesModal();
+    });
     document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
@@ -16114,6 +16139,15 @@ export class App {
       } catch (error) {
         console.error('Workspace import failed:', error);
         this._setSimulationSetupStatus(error?.message || 'Workspace import failed.', 'error');
+      }
+    });
+    document.addEventListener('keydown', event => {
+      const modal = document.getElementById('sensingRulesModal');
+      if (!modal?.classList.contains('open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this._closeSensingRulesModal();
       }
     });
     document.addEventListener('keydown', event => {
@@ -18744,6 +18778,268 @@ export class App {
     if (!summary) return;
     const rules = this.getP().sensingRules;
     summary.textContent = this._sensingRules ? _describeSensingRules(rules) : '1 rule (from controls above)';
+  }
+
+  _openSensingRulesModal(scope = { type: 'drawing' }) {
+    const modal = document.getElementById('sensingRulesModal');
+    if (!modal) return;
+    let rules = [];
+    if (scope.type === 'simRow' && scope.row) {
+      rules = normalizeSensingRules(scope.row.sensingRules);
+      if (!rules.length) {
+        rules = [_sensingRuleFromFlat({
+          sensingMode: scope.row.sensingMode,
+          sensingChannel: scope.row.sensingChannel,
+          sensingStrength: scope.row.sensingStrength,
+          sensingThreshold: scope.row.sensingThreshold,
+          sensingSource: scope.row.sensingSource,
+        }, scope.row.sensingLayerIds)];
+      }
+    } else {
+      rules = normalizeSensingRules(this._sensingRules);
+      if (!rules.length) {
+        rules = [_sensingRuleFromFlat(this.getP(), this._serializeSensingSourceSelection())];
+      }
+      scope = { type: 'drawing' };
+    }
+    this._sensingRulesModalState = {
+      scope,
+      rules: normalizeSensingRules(rules).map(rule => ({ ...rule, layerIds: [...(rule.layerIds || [])] })),
+    };
+    this._renderSensingRulesModal();
+    modal.classList.add('open');
+    queueMicrotask(() => document.getElementById('sensingRulesAddBtn')?.focus());
+  }
+
+  _closeSensingRulesModal() {
+    document.getElementById('sensingRulesModal')?.classList.remove('open');
+    this._sensingRulesModalState = null;
+  }
+
+  _renderSensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    const list = document.getElementById('sensingRulesList');
+    if (!state || !list) return;
+    const sourceLabels = { below: 'Below', active: 'Active', all: 'All', selected: 'Selected Layers' };
+    const channelLabels = {
+      darkness: 'Darkness',
+      lightness: 'Lightness',
+      saturation: 'Saturation',
+      red: 'Red',
+      green: 'Green',
+      blue: 'Blue',
+      alpha: 'Alpha',
+      hue: 'Hue match',
+    };
+    const context = document.getElementById('sensingRulesModalContext');
+    if (context) {
+      context.textContent = state.scope.type === 'simRow'
+        ? `Simulation session ${(state.scope.row?.sessionIndex ?? 0) + 1}: ${state.scope.row?.name || 'Untitled'}`
+        : 'Drawing Mode';
+    }
+    const addBtn = document.getElementById('sensingRulesAddBtn');
+    if (addBtn) addBtn.disabled = state.rules.length >= MAX_SENSING_RULES;
+    const layerOptions = this.layers.map(layer => ({
+      id: layer.id,
+      label: layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer'),
+    }));
+    const pct = value => Math.round(_clamp(value, 0, 1) * 100);
+    list.innerHTML = state.rules.map((rule, index) => `
+      <div class="sensing-rule-card" data-sensing-rule-index="${index}">
+        <div class="sensing-rule-card-header">
+          <label class="sensing-rule-enabled">
+            <input type="checkbox" data-sensing-rule-field="enabled" ${rule.enabled ? 'checked' : ''}>
+            <span>Rule ${index + 1}</span>
+          </label>
+          <div class="sensing-rule-actions">
+            <button type="button" data-sensing-rule-action="duplicate" ${state.rules.length >= MAX_SENSING_RULES ? 'disabled' : ''}>Duplicate</button>
+            <button type="button" data-sensing-rule-action="delete" ${state.rules.length <= 1 ? 'disabled' : ''}>Delete</button>
+          </div>
+        </div>
+        <div class="sensing-rule-grid">
+          <label class="sensing-rule-field">
+            <span>Response</span>
+            <select data-sensing-rule-field="mode">
+              <option value="avoid" ${rule.mode === 'avoid' ? 'selected' : ''}>Avoid</option>
+              <option value="attract" ${rule.mode === 'attract' ? 'selected' : ''}>Attract</option>
+            </select>
+          </label>
+          <label class="sensing-rule-field">
+            <span>Channel</span>
+            <select data-sensing-rule-field="channel">
+              ${SENSING_RULE_CHANNELS.map(channel => `<option value="${_escapeHtml(channel)}" ${rule.channel === channel ? 'selected' : ''}>${_escapeHtml(channelLabels[channel] || channel)}</option>`).join('')}
+            </select>
+          </label>
+          ${rule.channel === 'hue' ? `
+            <label class="sensing-rule-field">
+              <span>Hue Target <span class="sensing-rule-value" data-sensing-rule-value="hueTarget">${Math.round(rule.hueTarget)}°</span></span>
+              <span class="sensing-rule-hue-row">
+                <input type="range" min="0" max="360" step="1" data-sensing-rule-field="hueTarget" value="${Math.round(rule.hueTarget)}">
+                <span class="sensing-rule-swatch" data-sensing-rule-swatch style="background:hsl(${Math.round(rule.hueTarget)},100%,50%);"></span>
+              </span>
+            </label>
+            <label class="sensing-rule-field">
+              <span>Hue Tolerance <span class="sensing-rule-value" data-sensing-rule-value="hueTolerance">${Math.round(rule.hueTolerance)}°</span></span>
+              <input type="range" min="1" max="180" step="1" data-sensing-rule-field="hueTolerance" value="${Math.round(rule.hueTolerance)}">
+            </label>
+          ` : ''}
+          <label class="sensing-rule-field">
+            <span>Range Min <span class="sensing-rule-value" data-sensing-rule-value="rangeMin">${rule.rangeMin.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="rangeMin" value="${pct(rule.rangeMin)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Range Max <span class="sensing-rule-value" data-sensing-rule-value="rangeMax">${rule.rangeMax.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="rangeMax" value="${pct(rule.rangeMax)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Strength <span class="sensing-rule-value" data-sensing-rule-value="strength">${rule.strength.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="strength" value="${pct(rule.strength)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Source</span>
+            <select data-sensing-rule-field="source">
+              ${SIM_SENSING_SOURCES.map(source => `<option value="${_escapeHtml(source)}" ${rule.source === source ? 'selected' : ''}>${_escapeHtml(sourceLabels[source] || source)}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${rule.source === 'selected' ? `
+          <div class="sensing-rule-field">
+            <span>Selected Layers</span>
+            <div class="sensing-rule-layer-list">
+              ${layerOptions.map(option => `
+                <label>
+                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(option.id) ? 'checked' : ''}>
+                  <span>${_escapeHtml(option.label)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+        <div class="sensing-rule-summary">${_escapeHtml(_describeSensingRule(rule))}</div>
+      </div>
+    `).join('');
+    const updateSummary = index => {
+      const card = list.querySelector(`[data-sensing-rule-index="${index}"]`);
+      const rule = state.rules[index];
+      if (!card || !rule) return;
+      const summary = card.querySelector('.sensing-rule-summary');
+      if (summary) summary.textContent = _describeSensingRule(rule);
+      card.querySelectorAll('[data-sensing-rule-value]').forEach(node => {
+        const field = node.dataset.sensingRuleValue;
+        node.textContent = field === 'hueTarget' || field === 'hueTolerance'
+          ? `${Math.round(rule[field])}°`
+          : rule[field].toFixed(2);
+      });
+      const swatch = card.querySelector('[data-sensing-rule-swatch]');
+      if (swatch) swatch.style.background = `hsl(${Math.round(rule.hueTarget)},100%,50%)`;
+    };
+    const updateField = event => {
+      const fieldEl = event.target.closest('[data-sensing-rule-field]');
+      const layerEl = event.target.closest('[data-sensing-rule-layer]');
+      if (!fieldEl && !layerEl) return;
+      const card = event.target.closest('[data-sensing-rule-index]');
+      const index = Number(card?.dataset.sensingRuleIndex);
+      const rule = state.rules[index];
+      if (!rule) return;
+      if (layerEl) {
+        const ids = new Set(rule.layerIds || []);
+        if (layerEl.checked) ids.add(layerEl.value);
+        else ids.delete(layerEl.value);
+        rule.layerIds = _normalizeSimulationSensingSourceSelection([...ids]);
+        updateSummary(index);
+        return;
+      }
+      const field = fieldEl.dataset.sensingRuleField;
+      if (field === 'enabled') rule.enabled = !!fieldEl.checked;
+      else if (field === 'mode') rule.mode = fieldEl.value === 'attract' ? 'attract' : 'avoid';
+      else if (field === 'channel') rule.channel = SENSING_RULE_CHANNELS.includes(fieldEl.value) ? fieldEl.value : 'darkness';
+      else if (field === 'source') rule.source = SIM_SENSING_SOURCES.includes(fieldEl.value) ? fieldEl.value : 'below';
+      else if (field === 'hueTarget') rule.hueTarget = _clamp(Number(fieldEl.value) || 0, 0, 360);
+      else if (field === 'hueTolerance') rule.hueTolerance = _clamp(Number(fieldEl.value) || 1, 1, 180);
+      else if (field === 'rangeMin') {
+        rule.rangeMin = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+        if (rule.rangeMin > rule.rangeMax) rule.rangeMax = rule.rangeMin;
+      } else if (field === 'rangeMax') {
+        rule.rangeMax = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+        if (rule.rangeMax < rule.rangeMin) rule.rangeMin = rule.rangeMax;
+      } else if (field === 'strength') {
+        rule.strength = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+      }
+      state.rules[index] = _normalizeSensingRule(rule);
+      if (field === 'channel' || field === 'source' || field === 'rangeMin' || field === 'rangeMax') this._renderSensingRulesModal();
+      else updateSummary(index);
+    };
+    list.oninput = event => {
+      if (event.target?.matches?.('input[type="range"]')) updateField(event);
+    };
+    list.onchange = event => {
+      if (!event.target?.matches?.('input[type="range"]')) updateField(event);
+    };
+    list.onclick = event => {
+      const button = event.target.closest('[data-sensing-rule-action]');
+      if (!button) return;
+      const card = button.closest('[data-sensing-rule-index]');
+      const index = Number(card?.dataset.sensingRuleIndex);
+      const rule = state.rules[index];
+      if (!rule) return;
+      if (button.dataset.sensingRuleAction === 'duplicate' && state.rules.length < MAX_SENSING_RULES) {
+        state.rules.splice(index + 1, 0, _normalizeSensingRule({ ...rule, layerIds: [...(rule.layerIds || [])] }));
+      } else if (button.dataset.sensingRuleAction === 'delete' && state.rules.length > 1) {
+        state.rules.splice(index, 1);
+      }
+      this._renderSensingRulesModal();
+    };
+  }
+
+  _applySensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    if (!state) return;
+    const rules = normalizeSensingRules(state.rules);
+    if (state.scope.type === 'simRow' && state.scope.row) {
+      const row = state.scope.row;
+      row.sensingRules = rules.length ? rules : null;
+      const rule0 = rules[0];
+      if (rule0) {
+        row.sensingMode = rule0.mode;
+        if (SIM_SENSING_CHANNELS.includes(rule0.channel)) row.sensingChannel = rule0.channel;
+        row.sensingStrength = rule0.strength;
+        row.sensingThreshold = rule0.rangeMin;
+        row.sensingSource = rule0.source;
+        if (rule0.source === 'selected') row.sensingLayerIds = _normalizeSimulationSensingSourceSelection(rule0.layerIds);
+      }
+      const updates = {
+        sensingRules: row.sensingRules || undefined,
+        sensingMode: row.sensingMode,
+        sensingStrength: row.sensingStrength,
+        sensingThreshold: row.sensingThreshold,
+        sensingSource: row.sensingSource,
+      };
+      if (SIM_SENSING_CHANNELS.includes(row.sensingChannel)) updates.sensingChannel = row.sensingChannel;
+      const session = this._syncSimulationSetupRowSensingVars(row, updates);
+      const sensingLayerIds = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
+      if (session) session.sensingSourceSelection = sensingLayerIds;
+      const liveSession = this.simulation.sessions?.[row.sessionIndex];
+      if (liveSession) liveSession.sensingSourceSelection = sensingLayerIds;
+      this._renderSimulationSetupExplorer();
+      this._updateSimulationSetupSummary?.();
+    } else {
+      this._setSensingRules(rules);
+    }
+    this._closeSensingRulesModal();
+  }
+
+  _resetSensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    if (!state) return;
+    if (state.scope.type === 'simRow' && state.scope.row) {
+      state.scope.row.sensingRules = null;
+      this._syncSimulationSetupRowSensingVars(state.scope.row, { sensingRules: undefined });
+      this._renderSimulationSetupExplorer();
+      this._updateSimulationSetupSummary?.();
+    } else {
+      this._setSensingRules([]);
+    }
+    this._closeSensingRulesModal();
   }
 
   _serializeSensingSourceSelection() {

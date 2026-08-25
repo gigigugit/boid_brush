@@ -723,6 +723,10 @@ export function buildSidebar(app) {
         <button id="sensingSourceLayersBtn" type="button" style="flex:0 0 auto;padding:6px 10px;background:rgba(58,106,232,0.18);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#dce6ff;font-size:11px;cursor:pointer;">Pick Layers</button>
         <span id="sensingSourceLayersSummary" class="slider-desc" style="margin:0;flex:1;min-width:0;">Custom: No custom sources selected</span>
       </div>
+      <div style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;">
+        <button id="sensingRulesBtn" type="button" style="flex:0 0 auto;padding:6px 10px;background:rgba(58,106,232,0.18);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#dce6ff;font-size:11px;cursor:pointer;">Edit Rules…</button>
+        <span id="sensingRulesSummary" class="slider-desc" style="margin:0;flex:1;min-width:0;">1 rule (from controls above)</span>
+      </div>
     </div>
 
     <!-- Visual (boid + ant) -->
@@ -1806,6 +1810,7 @@ export function syncUI(app) {
   _syncLeaderOverrideUI();
   _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
+  app._refreshSensingRulesSummary?.();
   app._syncMotionPathUI?.();
 }
 

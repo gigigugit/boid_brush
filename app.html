@@ -652,6 +652,9 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #simSetupModal .sim-setup-futureField{display:grid;gap:3px;color:#b8c6df;font-size:10px;line-height:1.25;}
 #simSetupModal .sim-setup-futureField span{color:#9cabca;font-size:9px;letter-spacing:.04em;text-transform:uppercase;}
 #simSetupModal .sim-setup-future{min-width:150px;color:#9cabca;font-size:10px;line-height:1.45;}
+#simSetupModal .sim-setup-rules{display:grid;gap:5px;grid-column:1/-1;padding-top:2px;}
+#simSetupModal .sim-setup-rules button{width:100%;justify-content:center;text-align:center;}
+#simSetupModal .sim-setup-rules span{color:#9cabca;font-size:10px;line-height:1.35;text-transform:none;letter-spacing:0;}
 #simSetupModal .sim-setup-status{min-height:18px;color:#adc0e2;font-size:11px;line-height:1.45;}
 #simSetupModal .sim-setup-status.success{color:#a9e6b5;}
 #simSetupModal .sim-setup-status.warn{color:#ffd08a;}
@@ -662,12 +665,44 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #simSetupModal .sim-setup-footer button.warn{border-color:rgba(255,194,102,0.38);color:#ffcf8a;background:rgba(255,174,66,0.08);}
 #simSetupModal .sim-setup-footer button.danger{border-color:rgba(255,115,115,0.36);color:#ffb0b0;background:rgba(255,90,90,0.08);}
 #simSetupModal .sim-setup-empty{padding:28px;text-align:center;color:#9cabca;font-size:12px;line-height:1.5;}
+#sensingRulesModal{display:none;position:fixed;inset:0;z-index:203;align-items:center;justify-content:center;}
+#sensingRulesModal.open{display:flex;}
+#sensingRulesModal .sensing-rules-panel{width:min(620px,92vw);max-height:88vh;padding:0;overflow:hidden;background:linear-gradient(180deg,rgba(18,22,33,0.99),rgba(10,10,14,0.99));}
+#sensingRulesModal .sensing-rules-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 24px 14px;border-bottom:1px solid rgba(255,255,255,0.08);}
+#sensingRulesModal .sensing-rules-header h2{margin:0 0 5px;font-size:17px;color:#f3f6ff;}
+#sensingRulesModal .sensing-rules-header p{margin:0;color:#9cabca;font-size:12px;}
+#sensingRulesList{display:grid;gap:10px;padding:14px 18px;max-height:calc(88vh - 150px);overflow:auto;}
+.sensing-rule-card{display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,10,14,0.96);}
+.sensing-rule-card-header,.sensing-rule-actions,.sensing-rules-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+.sensing-rule-enabled{display:flex;align-items:center;gap:8px;color:#eef3ff;font-size:12px;font-weight:650;}
+.sensing-rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.sensing-rule-field{display:grid;gap:4px;color:#aeb9cd;font-size:10px;text-transform:uppercase;letter-spacing:.04em;}
+.sensing-rule-field input,.sensing-rule-field select{min-height:28px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(17,23,36,0.96);color:#e8eefb;font-size:11px;font-family:inherit;color-scheme:dark;}
+.sensing-rule-field input[type="range"]{min-height:22px;}
+.sensing-rule-field select option{background:var(--select-panel-bg);color:var(--select-text);}
+.sensing-rule-value{color:#dfe8ff;font-size:10px;text-transform:none;letter-spacing:0;}
+.sensing-rule-hue-row{display:flex;align-items:center;gap:8px;}
+.sensing-rule-hue-row input{flex:1;}
+.sensing-rule-swatch{width:20px;height:20px;border-radius:999px;border:1px solid rgba(255,255,255,0.25);box-shadow:0 0 10px rgba(0,0,0,0.35);}
+.sensing-rule-layer-list{display:grid;gap:5px;max-height:120px;overflow:auto;padding:6px;border:1px solid rgba(255,255,255,0.1);border-radius:7px;background:rgba(255,255,255,0.035);}
+.sensing-rule-layer-list label{display:flex;align-items:center;gap:7px;color:#d9e4f7;font-size:11px;text-transform:none;letter-spacing:0;}
+.sensing-rule-summary{color:#9cabca;font-size:11px;line-height:1.35;}
+.sensing-rules-footer{padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);}
+.sensing-rules-footerGroup{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#sensingRulesModal button{min-height:30px;padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;font-weight:650;cursor:pointer;}
+#sensingRulesModal button:hover{background:rgba(255,255,255,0.11);}
+#sensingRulesModal button.primary{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+#sensingRulesModal button.warn{border-color:rgba(255,194,102,0.38);color:#ffcf8a;background:rgba(255,174,66,0.08);}
+#sensingRulesModal button:disabled{opacity:.48;cursor:not-allowed;}
 @media (max-width: 760px){
   #simSetupModal .sim-setup-header{padding:18px 18px 14px;}
   #simSetupModal .sim-setup-body{padding:12px;max-height:calc(88vh - 170px);}
   #simSetupModal .sim-setup-footer{align-items:stretch;}
   #simSetupModal .sim-setup-footerGroup{width:100%;}
   #simSetupModal .sim-setup-footer button{flex:1;}
+  #sensingRulesModal .sensing-rule-grid{grid-template-columns:1fr;}
+  #sensingRulesModal .sensing-rules-footerGroup{width:100%;}
+  #sensingRulesModal .sensing-rules-footer button{flex:1;}
 }
 #jsonPanel .workspace-json-panel{display:flex;flex-direction:column;flex:0 0 auto;min-height:100%;overflow:visible;padding:0;background:transparent;border:none;border-radius:0;}
 #jsonPanel .workspace-json-chrome{display:none;}
@@ -1302,6 +1337,31 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </div>
     <input id="simSetupLoadFile" type="file" accept="application/json,.json" hidden>
     <input id="simSetupWorkspaceImportFile" type="file" accept="application/json,.json" hidden>
+  </div>
+</div>
+
+<!-- ══════════ Sensing Rules Modal ══════════ -->
+<div id="sensingRulesModal">
+  <div class="ai-modal-backdrop" id="sensingRulesBackdrop"></div>
+  <div class="ai-modal-panel sensing-rules-panel" role="dialog" aria-modal="true" aria-labelledby="sensingRulesModalTitle" aria-describedby="sensingRulesModalContext">
+    <div class="sensing-rules-header">
+      <div>
+        <h2 id="sensingRulesModalTitle">Sensing Rules</h2>
+        <p id="sensingRulesModalContext">Drawing Mode</p>
+      </div>
+      <button class="ai-modal-close" id="sensingRulesClose" type="button" aria-label="Close sensing rules">✕</button>
+    </div>
+    <div id="sensingRulesList"></div>
+    <div class="sensing-rules-footer">
+      <div class="sensing-rules-footerGroup">
+        <button id="sensingRulesAddBtn" type="button">+ Add Rule</button>
+        <button id="sensingRulesResetBtn" class="warn" type="button">Reset to Single Rule</button>
+      </div>
+      <div class="sensing-rules-footerGroup">
+        <button id="sensingRulesCancelBtn" type="button">Cancel</button>
+        <button id="sensingRulesApplyBtn" class="primary" type="button">Apply</button>
+      </div>
+    </div>
   </div>
 </div>
 
