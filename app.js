@@ -11845,6 +11845,7 @@ export class App {
     }
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
+    this._toggleBrushSections(this.activeBrush);
     this._syncSimulationUI();
     if (next && !overlayHudEnabled) this._showSimulationControlsDrawer();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');

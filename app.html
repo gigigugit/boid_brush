@@ -194,6 +194,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .section-header.closed .chevron{transform:rotate(-90deg);}
 .section-body{overflow:hidden;transition:max-height 0.3s ease;max-height:600px;border:1px solid var(--line-0);border-top:none;border-radius:0 0 10px 10px;padding:8px;background:rgba(0,0,0,0.2);margin-bottom:4px;display:grid;gap:6px;}
 .section-body.collapsed{max-height:0;padding-top:0;padding-bottom:0;border:none;margin-bottom:0;}
+#sidebar .section-body:not(.collapsed){max-height:none;}
 #simOverlaySidebar .section-body[data-sim-section-body="sceneVariables"]:not(.collapsed){max-height:none;}
 #guidesPanel .section-body:not(.collapsed){max-height:none;overflow:visible;}
 #guidesPanel{overflow-y:auto;}
