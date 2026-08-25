@@ -708,7 +708,7 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Sensing -->
-    <div class="section-header" data-brushes="boid ant" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-header" data-brushes="boid ant" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant" data-section="sensing">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>

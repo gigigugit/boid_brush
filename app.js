@@ -16417,8 +16417,7 @@ export class App {
   _toggleBrushSections(brush) {
     document.querySelectorAll('[data-brushes]').forEach(el => {
       const allowed = el.dataset.brushes.split(' ');
-      const shouldShow = allowed.includes(brush)
-        && !(el.dataset.section === 'sensing' && this.simulation.enabled && this._isMotionBrush(brush));
+      const shouldShow = allowed.includes(brush);
       el.classList.toggle('brush-hidden', !shouldShow);
     });
   }
