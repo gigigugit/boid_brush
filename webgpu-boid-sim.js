@@ -1251,7 +1251,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     if (typeof this.helper?.clearSensingSlot === 'function') {
       this.helper.clearSensingSlot(layer);
     }
-    if (!this.ready) return;
+    if (!this.ready || !this.sensingTexture) return;
     const width = Math.max(1, this._sensingTextureWidth || 1);
     const height = Math.max(1, this._sensingTextureHeight || 1);
     this.device.queue.writeTexture(
