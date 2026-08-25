@@ -12,7 +12,7 @@
 use crate::boid::*;
 use crate::forces::{self, Rng};
 use crate::noise::SimplexNoise;
-use crate::params::{AgentParams, SimParams, PARAMS_LEN};
+use crate::params::{AgentParams, SimParams, MAX_SENSING_RULES, PARAMS_LEN};
 use crate::sensing::{self, SensingMap};
 use crate::spawn::{self, SpawnShape};
 
@@ -37,8 +37,8 @@ pub struct Simulation {
     pub rng: Rng,
     /// Simplex noise for flow field.
     pub noise: SimplexNoise,
-    /// Pixel sensing map.
-    pub sensing: SensingMap,
+    /// Pixel sensing map slots. Slot 0 preserves the legacy single-map behavior.
+    pub sensing_maps: [SensingMap; MAX_SENSING_RULES],
     /// Scratch buffer for spawn shape positions.
     spawn_scratch: Vec<(f32, f32)>,
     /// Spatial grid for O(n·k) neighbor queries (built each frame when
@@ -61,7 +61,7 @@ impl Simulation {
             params_buf: vec![0.0; PARAMS_LEN],
             rng: Rng::new(seed),
             noise: SimplexNoise::new(seed as f32),
-            sensing: SensingMap::new(),
+            sensing_maps: std::array::from_fn(|_| SensingMap::new()),
             spawn_scratch: Vec::with_capacity(256),
             #[cfg(feature = "spatial-hash")]
             spatial_grid: SpatialGrid::new(max),
@@ -76,11 +76,12 @@ impl Simulation {
     pub fn resize_canvas(&mut self, width: u32, height: u32) {
         self.width = width;
         self.height = height;
-        if self.sensing.width > 0 && self.sensing.height > 0 {
-            // Preserve the existing sensing buffer resolution and data, but
-            // refresh its canvas-to-sensing scale factors for the new display size.
-            self.sensing
-                .resize(self.sensing.width, self.sensing.height, width, height);
+        for sensing in &mut self.sensing_maps {
+            if sensing.width > 0 && sensing.height > 0 {
+                // Preserve existing sensing data in each slot while refreshing
+                // canvas-to-sensing scale factors for the new display size.
+                sensing.resize(sensing.width, sensing.height, width, height);
+            }
         }
     }
 
@@ -331,7 +332,7 @@ impl Simulation {
             );
 
             // Sensing
-            sensing::apply_sensing_force(&mut self.buf, base, &agent_params, &self.sensing);
+            sensing::apply_sensing_force(&mut self.buf, base, &agent_params, &self.sensing_maps);
         }
 
         // Phase 2: Neighbor forces (cohesion, separation, alignment)

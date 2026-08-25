@@ -407,6 +407,89 @@ const SIM_SPAWN_DISTRIBUTION_MODES = ['uniform', 'density', 'noise'];
 const SIM_SENSING_MODES = ['avoid', 'attract'];
 const SIM_SENSING_CHANNELS = ['darkness', 'lightness', 'saturation', 'red', 'green', 'blue', 'alpha'];
 const SIM_SENSING_SOURCES = ['below', 'active', 'all', 'selected'];
+// Multi-rule pixel sensing: up to MAX_SENSING_RULES simultaneous directives,
+// each with its own channel, response, value range, strength and layer source.
+// Rule 0 mirrors the legacy flat sensing controls for backward compatibility.
+const MAX_SENSING_RULES = 4;
+const SENSING_RULE_CHANNELS = [...SIM_SENSING_CHANNELS, 'hue'];
+
+/** Normalize a single sensing rule object; returns null when unusable. */
+function _normalizeSensingRule(value) {
+  if (!value || typeof value !== 'object') return null;
+  const channel = SENSING_RULE_CHANNELS.includes(value.channel) ? value.channel : 'darkness';
+  const mode = value.mode === 'follow' ? 'attract' : value.mode;
+  let rangeMin = Number.isFinite(value.rangeMin) ? _clamp(value.rangeMin, 0, 1) : 0;
+  let rangeMax = Number.isFinite(value.rangeMax) ? _clamp(value.rangeMax, 0, 1) : 1;
+  if (rangeMin > rangeMax) { const t = rangeMin; rangeMin = rangeMax; rangeMax = t; }
+  return {
+    enabled: value.enabled !== false,
+    mode: SIM_SENSING_MODES.includes(mode) ? mode : 'avoid',
+    channel,
+    hueTarget: Number.isFinite(value.hueTarget) ? ((value.hueTarget % 360) + 360) % 360 : 0,
+    hueTolerance: Number.isFinite(value.hueTolerance) ? _clamp(value.hueTolerance, 1, 180) : 60,
+    rangeMin,
+    rangeMax,
+    strength: Number.isFinite(value.strength) ? _clamp(value.strength, 0, 1) : 0.5,
+    source: SIM_SENSING_SOURCES.includes(value.source) ? value.source : 'below',
+    layerIds: _normalizeSimulationSensingSourceSelection(value.layerIds),
+  };
+}
+
+/** Normalize an array of sensing rules (drops invalid entries, caps at MAX_SENSING_RULES). */
+function normalizeSensingRules(value) {
+  const rules = [];
+  for (const entry of Array.isArray(value) ? value : []) {
+    const rule = _normalizeSensingRule(entry);
+    if (rule) rules.push(rule);
+    if (rules.length >= MAX_SENSING_RULES) break;
+  }
+  return rules;
+}
+
+/** Synthesize a single sensing rule from the legacy flat fields. */
+function _sensingRuleFromFlat(flat, layerIds) {
+  return _normalizeSensingRule({
+    enabled: true,
+    mode: flat?.sensingMode,
+    channel: flat?.sensingChannel,
+    rangeMin: Number.isFinite(flat?.sensingThreshold) ? flat.sensingThreshold : 0.1,
+    rangeMax: 1,
+    strength: Number.isFinite(flat?.sensingStrength) ? flat.sensingStrength : 0.5,
+    source: flat?.sensingSource,
+    layerIds,
+  });
+}
+
+/** Write rule 0's simple fields back onto a flat params/vars object (legacy sync). */
+function _syncSensingFlatFromRule0(target, rules) {
+  const rule0 = Array.isArray(rules) ? rules[0] : null;
+  if (!target || !rule0) return target;
+  target.sensingMode = rule0.mode;
+  if (SIM_SENSING_CHANNELS.includes(rule0.channel)) target.sensingChannel = rule0.channel;
+  target.sensingStrength = rule0.strength;
+  target.sensingThreshold = rule0.rangeMin;
+  target.sensingSource = rule0.source;
+  return target;
+}
+
+/** Short human-readable summary of one sensing rule. */
+function _describeSensingRule(rule) {
+  if (!rule) return '';
+  const sign = rule.mode === 'attract' ? '⊕' : '⊖';
+  const channel = rule.channel === 'hue' ? `hue ${Math.round(rule.hueTarget)}°` : rule.channel;
+  const range = (rule.rangeMin > 0 || rule.rangeMax < 1)
+    ? ` ${rule.rangeMin.toFixed(2)}–${rule.rangeMax.toFixed(2)}`
+    : '';
+  const source = rule.source === 'selected' ? 'layers' : rule.source;
+  return `${sign}${channel}${range} (${source})`;
+}
+
+/** Summary line for a whole rules array. */
+function _describeSensingRules(rules) {
+  const active = (Array.isArray(rules) ? rules : []).filter(rule => rule && rule.enabled !== false);
+  if (!active.length) return 'No rules';
+  return `${active.length} rule${active.length === 1 ? '' : 's'}: ${active.map(_describeSensingRule).join(', ')}`;
+}
 const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const MAX_SWARM_COUNT = 2000;
@@ -668,6 +751,7 @@ function _normalizeSimulationVars(value) {
     sensingFitRadius: Number.isFinite(value?.sensingFitRadius) ? Math.max(0, value.sensingFitRadius) : undefined,
     sensingThreshold: Number.isFinite(value?.sensingThreshold) ? _clamp(value.sensingThreshold, 0, 1) : undefined,
     sensingSource: SIM_SENSING_SOURCES.includes(value?.sensingSource) ? value.sensingSource : undefined,
+    sensingRules: Array.isArray(value?.sensingRules) ? normalizeSensingRules(value.sensingRules) : undefined,
     sensingUpdateFrames: Number.isFinite(value?.sensingUpdateFrames)
       ? Math.max(1, Math.min(50, Math.round(value.sensingUpdateFrames)))
       : undefined,
@@ -1911,6 +1995,8 @@ export class App {
     this.activeLayerIdx = 0;
     this._nextLayerId = 1;
     this._sensingSourceSelection = [];
+    // Drawing-mode multi-rule sensing state (null = derive single rule from flat controls)
+    this._sensingRules = null;
     this._sensingSourcePickerAnchor = null;
     this._sensingSourcePickerPanel = null;
     this._sensingSourcePickerPointerHandler = null;
@@ -5995,6 +6081,9 @@ export class App {
       simMotionPathMode: sel('simMotionPathMode') === 'forces' ? 'forces' : 'path',
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
+    // Multi-rule sensing: rule 0 mirrors the flat controls; extra rules come
+    // from the Sensing Rules modal state.
+    this._cachedP.sensingRules = this._composeSensingRules(this._cachedP);
     return this._simulationContextOverride
       ? this._getRuntimeScopedParams(this._cachedP)
       : this._cachedP;
@@ -6042,6 +6131,11 @@ export class App {
     if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
     if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
     if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+    // Per-simulation sensing rules: explicit rules win; otherwise re-derive a
+    // single rule from the (possibly overridden) flat sensing fields.
+    next.sensingRules = Array.isArray(vars.sensingRules) && vars.sensingRules.length
+      ? normalizeSensingRules(vars.sensingRules)
+      : [_sensingRuleFromFlat(next, this._serializeSensingSourceSelection())];
     return next;
   }
 
@@ -9084,6 +9178,9 @@ export class App {
         sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
         sensingSource,
         sensingLayerIds,
+        sensingRules: Array.isArray(sessionVars.sensingRules) && sessionVars.sensingRules.length
+          ? normalizeSensingRules(sessionVars.sensingRules)
+          : null,
         unresolvedLayers: [],
         unresolvedSensingLayers: [],
       };
@@ -9579,7 +9676,8 @@ export class App {
     for (const session of sessions) {
       const row = rowsById.get(session.id);
       if (!row) continue;
-      session.vars = _normalizeSimulationVars({
+      const rowRules = normalizeSensingRules(row.sensingRules);
+      session.vars = _normalizeSimulationVars(_syncSensingFlatFromRule0({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingMode: row.sensingMode,
@@ -9590,7 +9688,8 @@ export class App {
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
-      });
+        sensingRules: rowRules.length ? rowRules : undefined,
+      }, rowRules));
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
     this.simulation.sessions = sessions;
@@ -9654,7 +9753,8 @@ export class App {
     for (const session of sessions) {
       const row = rowsById.get(session.id);
       if (!row) continue;
-      session.vars = _normalizeSimulationVars({
+      const rowRules = normalizeSensingRules(row.sensingRules);
+      session.vars = _normalizeSimulationVars(_syncSensingFlatFromRule0({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingMode: row.sensingMode,
@@ -9665,7 +9765,8 @@ export class App {
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
-      });
+        sensingRules: rowRules.length ? rowRules : undefined,
+      }, rowRules));
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
     return {
@@ -9697,6 +9798,7 @@ export class App {
       row.sensingUpdateFrames = 30;
       row.sensingSource = 'below';
       row.sensingLayerIds = [];
+      row.sensingRules = null;
       row.unresolvedLayers = [];
       row.unresolvedSensingLayers = [];
     });
@@ -9840,6 +9942,13 @@ export class App {
           sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
           sensingSource: SIM_SENSING_SOURCES.includes(sessionVars.sensingSource) ? sessionVars.sensingSource : 'below',
           sensingLayerIds: sensingMap.resolved,
+          sensingRules: Array.isArray(sessionVars.sensingRules) && sessionVars.sensingRules.length
+            ? normalizeSensingRules(sessionVars.sensingRules).map(rule => {
+                if (rule.source !== 'selected' || !rule.layerIds.length) return rule;
+                const ruleMap = this._mapImportedSimulationSetupLayerIds(rule.layerIds, normalized.importedSetupMeta?.sourceLayers);
+                return { ...rule, layerIds: ruleMap.resolved };
+              })
+            : null,
           unresolvedLayers: binding?.unresolvedLayers || [],
           unresolvedSensingLayers: sensingMap.missing,
         };
@@ -18577,6 +18686,66 @@ export class App {
   // SENSING (for boid brush)
   // ========================================================
 
+  /**
+   * Compose the effective sensing rules array for the current drawing-mode
+   * params. Rule 0 always mirrors the flat sidebar controls (mode, channel,
+   * strength, threshold→rangeMin, source); the stored rule 0 keeps only its
+   * modal-exclusive fields (rangeMax, hue target/tolerance, enabled).
+   */
+  _composeSensingRules(flat) {
+    const layerIds = this._serializeSensingSourceSelection();
+    const flatRule = _sensingRuleFromFlat(flat, layerIds);
+    const stored = normalizeSensingRules(this._sensingRules);
+    if (!stored.length) return [flatRule];
+    stored[0] = Object.assign({}, flatRule, {
+      enabled: stored[0].enabled,
+      rangeMax: stored[0].rangeMax,
+      hueTarget: stored[0].hueTarget,
+      hueTolerance: stored[0].hueTolerance,
+      channel: stored[0].channel === 'hue' ? 'hue' : flatRule.channel,
+      rangeMin: Math.min(flatRule.rangeMin, stored[0].rangeMax),
+    });
+    return stored;
+  }
+
+  /** Replace the drawing-mode sensing rules (from the Sensing Rules modal). */
+  _setSensingRules(rules) {
+    const normalized = normalizeSensingRules(rules);
+    this._sensingRules = normalized.length ? normalized : null;
+    // Keep the flat sidebar controls in sync with rule 0 so legacy readers
+    // (presets, Ant Math mirrors, leader overrides) stay coherent.
+    const rule0 = normalized[0];
+    if (rule0) {
+      const setSel = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+      const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      setSel('sensingMode', rule0.mode);
+      if (SIM_SENSING_CHANNELS.includes(rule0.channel)) setSel('sensingChannel', rule0.channel);
+      setSel('sensingSource', rule0.source);
+      setVal('sensingStrength', Math.round(rule0.strength * 100));
+      setVal('sensingThreshold', Math.round(rule0.rangeMin * 100));
+      if (rule0.source === 'selected' && rule0.layerIds.length) {
+        this._setSensingSourceSelection(rule0.layerIds, { refreshUi: true, invalidate: false });
+      }
+      this._refreshSensingLayerSourceUi?.();
+    }
+    this.invalidateParams();
+    this._refreshSensingRulesSummary();
+    this._maybeAutoSaveSession?.();
+  }
+
+  /** Update the sidebar "Edit Rules…" summary text. */
+  _refreshSensingRulesSummary() {
+    const summary = document.getElementById('sensingRulesSummary');
+    if (!summary) return;
+    const rules = this.getP().sensingRules;
+    summary.textContent = this._sensingRules ? _describeSensingRules(rules) : '1 rule (from controls above)';
+  }
+
   _serializeSensingSourceSelection() {
     const seen = new Set();
     const serialized = [];
@@ -18842,8 +19011,13 @@ export class App {
     }
   }
 
-  buildSensingData(p = this.getP()) {
-    const src = p.sensingSource;
+  /**
+   * Composite the sensing source layers into RGBA ImageData.
+   * @param {Object} p - params (used for the default sensingSource)
+   * @param {Object} [override] - per-rule source override: { source, layerIds }
+   */
+  buildSensingData(p = this.getP(), override = null) {
+    const src = override?.source || p.sensingSource;
     const w = this.W * this.DPR, h = this.H * this.DPR;
     if (src === 'active') {
       // Read directly from the active layer bitmap; the reusable offscreen
@@ -18887,7 +19061,11 @@ export class App {
         drawLayer(l);
       }
     } else if (src === 'selected') {
-      const selectedIds = new Set(this._serializeSensingSourceSelection());
+      const selectedIds = new Set(
+        Array.isArray(override?.layerIds) && override.layerIds.length
+          ? override.layerIds
+          : this._serializeSensingSourceSelection()
+      );
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
         if (!selectedIds.has(l.id)) continue;
@@ -19195,6 +19373,7 @@ export class App {
     };
     controls._symmetryState = this._serializeSymmetryState();
     controls._sensingSourceSelection = this._serializeSensingSourceSelection();
+    controls._sensingRules = Array.isArray(this._sensingRules) ? normalizeSensingRules(this._sensingRules) : null;
     controls._motionPath = this._serializeMotionPathState();
     controls._canvasTextureState = this._serializeCanvasTextureState();
     controls._stampImageState = this._serializeCustomStampImageState();
@@ -19762,6 +19941,11 @@ export class App {
       }
       if (id === '_sensingSourceSelection') {
         this._restoreSensingSourceSelection(val);
+        continue;
+      }
+      if (id === '_sensingRules') {
+        const restored = normalizeSensingRules(val);
+        this._sensingRules = restored.length ? restored : null;
         continue;
       }
       if (id === '_motionPath') {

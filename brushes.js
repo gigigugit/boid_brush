@@ -1269,9 +1269,52 @@ export class BoidBrush {
     this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
   }
 
-  /** Capture canvas luminance and upload to WASM for pixel sensing */
+  /** Capture canvas channel data and upload to the sim for pixel sensing.
+   * Rule-driven: each enabled rule gets its own sensing slot; rules sharing a
+   * layer source share a single composite/read of the canvas. */
   _uploadSensing(p) {
-    const imgData = this.app.buildSensingData(p);
+    const rules = Array.isArray(p.sensingRules) && p.sensingRules.length
+      ? p.sensingRules.slice(0, 4)
+      : null;
+    if (!rules) {
+      // Legacy single-directive path (also used by the ant pheromone pathway)
+      const imgData = this.app.buildSensingData(p);
+      const lum = this._extractSensingChannel(imgData, { channel: p.sensingChannel || 'darkness' });
+      this.sim.uploadSensing(lum.data, lum.width, lum.height);
+      this._sensingUploaded = true;
+      this._sensingSignature = this._buildSensingSignature(p);
+      return;
+    }
+    // Group rules by identical layer source so each unique source is
+    // composited and read back only once per refresh.
+    const sourceCache = new Map();
+    for (let slot = 0; slot < 4; slot++) {
+      const rule = rules[slot];
+      if (!rule || rule.enabled === false) {
+        this.sim.clearSensingSlot?.(slot);
+        continue;
+      }
+      const key = rule.source + '|' + (rule.source === 'selected' ? (rule.layerIds || []).join(',') : '');
+      let imgData = sourceCache.get(key);
+      if (!imgData) {
+        imgData = this.app.buildSensingData(p, { source: rule.source, layerIds: rule.layerIds });
+        sourceCache.set(key, imgData);
+      }
+      const lum = this._extractSensingChannel(imgData, rule);
+      if (typeof this.sim.uploadSensingSlot === 'function') {
+        this.sim.uploadSensingSlot(slot, lum.data, lum.width, lum.height);
+      } else if (slot === 0) {
+        this.sim.uploadSensing(lum.data, lum.width, lum.height);
+      }
+    }
+    this._sensingUploaded = true;
+    this._sensingSignature = this._buildSensingSignature(p);
+  }
+
+  /** Extract a single sensing channel from RGBA ImageData, downsampled to 1/4
+   * resolution. Supports the legacy channels plus 'hue' (closeness to a target
+   * hue, weighted by saturation and alpha). Returns { data, width, height }. */
+  _extractSensingChannel(imgData, rule) {
     const rgba = imgData.data;
     const w = imgData.width;
     const h = imgData.height;
@@ -1279,11 +1322,15 @@ export class BoidBrush {
     const dw = Math.max(1, w >> 2);
     const dh = Math.max(1, h >> 2);
     const lumLen = dw * dh;
-    if (!this._sensingLum || this._sensingLum.length !== lumLen) {
-      this._sensingLum = new Uint8Array(lumLen);
+    const channel = rule.channel || 'darkness';
+    const hueTarget = Number.isFinite(rule.hueTarget) ? rule.hueTarget : 0;
+    const hueTolerance = Number.isFinite(rule.hueTolerance) ? Math.max(1, rule.hueTolerance) : 60;
+    if (!this._sensingLumSlots) this._sensingLumSlots = new Map();
+    let lum = this._sensingLumSlots.get(channel);
+    if (!lum || lum.length !== lumLen) {
+      lum = new Uint8Array(lumLen);
+      this._sensingLumSlots.set(channel, lum);
     }
-    const lum = this._sensingLum;
-    const channel = p.sensingChannel || 'darkness';
     const sx = w / dw;
     const sy = h / dh;
     for (let dy = 0; dy < dh; dy++) {
@@ -1303,13 +1350,29 @@ export class BoidBrush {
           const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
           v = mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
         }
+        else if (channel === 'hue') {
+          // Closeness to a target hue, weighted by saturation (grey pixels
+          // have no meaningful hue) and alpha.
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          const delta = mx - mn;
+          if (delta === 0 || mx === 0) v = 0;
+          else {
+            let hue;
+            if (mx === r) hue = 60 * (((g - b) / delta) % 6);
+            else if (mx === g) hue = 60 * ((b - r) / delta + 2);
+            else hue = 60 * ((r - g) / delta + 4);
+            if (hue < 0) hue += 360;
+            let dist = Math.abs(hue - hueTarget);
+            if (dist > 180) dist = 360 - dist;
+            const closeness = Math.max(0, 1 - dist / hueTolerance);
+            v = Math.round(closeness * (delta / mx) * 255 * alphaScale);
+          }
+        }
         else /* 'darkness' */ v = Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
         lum[dy * dw + dx] = v;
       }
     }
-    this.sim.uploadSensing(lum, dw, dh);
-    this._sensingUploaded = true;
-    this._sensingSignature = this._buildSensingSignature(p);
+    return { data: lum, width: dw, height: dh };
   }
 
   _buildSensingSignature(p) {
@@ -1324,6 +1387,7 @@ export class BoidBrush {
       fitRadius: Number(p.sensingFitRadius || 0).toFixed(2),
       threshold: Number(p.sensingThreshold || 0).toFixed(4),
       updateFrames: Math.max(1, Math.min(50, Math.round(p.sensingUpdateFrames || 30))),
+      rules: Array.isArray(p.sensingRules) ? p.sensingRules : null,
     });
   }
 
@@ -1370,6 +1434,23 @@ export class BoidBrush {
       if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
       if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
       if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+      // Per-simulation sensing rules: explicit rules win; otherwise refresh
+      // rule 0's simple fields from the (possibly overridden) flat vars.
+      if (Array.isArray(vars.sensingRules) && vars.sensingRules.length) {
+        next.sensingRules = vars.sensingRules;
+      } else if (Array.isArray(next.sensingRules) && next.sensingRules.length) {
+        const rule0 = Object.assign({}, next.sensingRules[0], {
+          mode: next.sensingMode || 'avoid',
+          channel: next.sensingRules[0].channel === 'hue' ? 'hue' : (next.sensingChannel || 'darkness'),
+          strength: Number.isFinite(next.sensingStrength) ? next.sensingStrength : 0.5,
+          rangeMin: Math.min(
+            Number.isFinite(next.sensingThreshold) ? next.sensingThreshold : 0.1,
+            Number.isFinite(next.sensingRules[0].rangeMax) ? next.sensingRules[0].rangeMax : 1
+          ),
+          source: next.sensingSource || 'below',
+        });
+        next.sensingRules = [rule0, ...next.sensingRules.slice(1)];
+      }
     }
     next.leader = _resolveLeaderParams(next);
     return next;
@@ -3255,6 +3336,10 @@ export class AntBrush {
       sensingRadius: p.sensingRadius || 20,
       sensingFitRadius: p.sensingFitRadius || 0,
       sensingThreshold: p.sensingThreshold || 0.1,
+      // Pheromone data occupies sensing slot 0; user sensing rules are
+      // disabled for ants so the two pathways don't collide (coexistence via
+      // a reserved slot is a future enhancement).
+      sensingRules: null,
       // Ants wander more by default
       wander: p.wander,
       jitter: p.jitter,
