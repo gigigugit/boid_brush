@@ -11222,12 +11222,16 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
-        case 'simEphemeralFade': {
+        case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold': {
           const max = {
             simPointStrength: 2,
             simEdgeForce: 2,
             simPheroPaintStrength: 1,
             simEphemeralFade: 3,
+            sensingStrength: 1,
+            sensingThreshold: 1,
           }[id] ?? 2;
           return { value: raw / 100, min: 0, max, step: 0.01, digits: 2 };
         }
@@ -11242,6 +11246,8 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
         case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold':
           return displayValue * 100;
         default:
           return displayValue;
@@ -11283,7 +11289,14 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
         case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold':
           return (value / 100).toFixed(2);
+        case 'sensingRadius':
+        case 'sensingFitRadius':
+          return `${Math.round(value)}px`;
+        case 'sensingUpdateFrames':
+          return `${Math.round(value)}f`;
         case 'simBoundsMargin':
           return Math.round(value) >= SIM_NEAR_INFINITE_BOUNDS_MARGIN
             ? 'Near-infinite'
@@ -11302,6 +11315,20 @@ export class App {
         <input type="checkbox" data-sim-param="${id}" ${document.getElementById(id)?.checked ? 'checked' : ''}>
       </label>
       ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
+    // Mirrors a sidebar <select> control: options are cloned from the source
+    // element so both stay in sync through the data-sim-param wiring.
+    const simPanelSelect = ({ id, label, desc }) => {
+      const source = document.getElementById(id);
+      const options = source
+        ? Array.from(source.options).map(opt => `<option value="${_escapeHtml(opt.value)}" ${opt.value === source.value ? 'selected' : ''}>${_escapeHtml(opt.textContent)}</option>`).join('')
+        : '';
+      return `
+      <label class="sim-inspector-row" style="margin:4px 0">
+        <span>${label}</span>
+        <select class="sim-stage-select" style="max-width:150px" data-sim-param="${id}" data-sim-input-kind="select">${options}</select>
+      </label>
+      ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
+    };
     const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => {
       const numberMeta = getSimParamDisplayMeta(id, value);
       const numberMin = numberMeta.min ?? getSimParamDisplayMeta(id, min).value;
@@ -11432,8 +11459,23 @@ export class App {
       <div class="sim-inspector-note">Motion overrides affect already-running boids without forcing a respawn.</div>
       ${simVarSlider({ id: 'maxSpeed', label: 'Max Speed', min: 1, max: 30, step: 0.5, scale: 0.5, value: maxSpeedValue })}
       ${simVarSlider({ id: 'damping', label: 'Damping', min: 80, max: 100, step: 0.5, scale: 0.01, value: dampingValue })}`;
-    const boidSensingBody = `
-      <div class="sim-inspector-note">Use the sidebar Pixel Sensing controls while this session is loaded. Those drawing-mode controls are saved with the active simulation session and applied per runtime during multi-session playback.</div>`;
+    const sensingSourceValue = document.getElementById('sensingSource')?.value || 'below';
+    const sensingBody = `
+      <div class="sim-inspector-note">These mirror the sidebar Pixel Sensing controls. Changes apply immediately and are saved with the active simulation session.</div>
+      ${simPanelCheckbox({ id: 'sensingEnabled', label: 'Enable' })}
+      ${simPanelSelect({ id: 'sensingMode', label: 'Mode' })}
+      ${simPanelSelect({ id: 'sensingChannel', label: 'Channel' })}
+      ${simPanelSlider({ id: 'sensingStrength', label: 'Strength', min: 0, max: 100, value: Math.round((p.sensingStrength ?? 0.5) * 100) })}
+      ${simPanelSlider({ id: 'sensingRadius', label: 'Radius', min: 5, max: 80, value: Math.round(p.sensingRadius ?? 20) })}
+      ${simPanelSlider({ id: 'sensingFitRadius', label: 'Fit Radius', min: 0, max: 80, value: Math.round(p.sensingFitRadius ?? 0) })}
+      ${simPanelSlider({ id: 'sensingThreshold', label: 'Threshold', min: 0, max: 100, value: Math.round((p.sensingThreshold ?? 0.1) * 100) })}
+      ${simPanelSlider({ id: 'sensingUpdateFrames', label: 'Update Every', min: 1, max: 50, value: Math.round(p.sensingUpdateFrames ?? 30), desc: 'Frames between sensing refreshes for Active and All sources' })}
+      ${simPanelSelect({ id: 'sensingSource', label: 'Source' })}
+      <div class="sim-inspector-actions" style="margin-top:4px">
+        <button data-sim-sensing-pick-layers="1">${sensingSourceValue === 'selected' ? 'Edit Layers' : 'Pick Layers'}</button>
+        <button data-sim-sensing-edit-rules="1">Edit Rules…</button>
+      </div>
+      <div class="sim-inspector-note" data-sim-sensing-layer-summary="1">${_escapeHtml(`${sensingSourceValue === 'selected' ? 'Using: ' : 'Custom: '}${this._buildSensingLayerSelectionSummary()}`)}</div>`;
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
@@ -11582,9 +11624,9 @@ export class App {
           renderInspectorSubgroup('Motion', boidMotionBody),
         ])
       : '';
-    const pixelSensingSection = isBoid
-      ? renderTypeSection('pixelSensing', 'Simulation Pixel Sensing', [
-          renderInspectorSubgroup('Per-Session Sensing', boidSensingBody),
+    const pixelSensingSection = (isBoid || this.activeBrush === 'ant')
+      ? renderTypeSection('pixelSensing', 'Pixel Sensing', [
+          renderInspectorSubgroup('Sensing Controls', sensingBody),
         ])
       : '';
     const pointSection = renderTypeSection('pointSettings', 'Points', [
@@ -12161,11 +12203,16 @@ export class App {
       const paramId = el.dataset.simParam;
       const source = document.getElementById(paramId);
       const isBooleanParam = (el.type === 'checkbox') || (source?.type === 'checkbox');
+      const isSelectParam = el.tagName === 'SELECT' || source?.tagName === 'SELECT';
       const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
       const peers = () => Array.from(panel.querySelectorAll(`[data-sim-param="${paramId}"]`));
       const syncParamUI = value => {
         if (isBooleanParam) {
           peers().forEach(peer => { peer.checked = !!value; });
+          return;
+        }
+        if (isSelectParam) {
+          peers().forEach(peer => { peer.value = String(value); });
           return;
         }
         const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
@@ -12183,6 +12230,7 @@ export class App {
       };
       const initialParamValue = (() => {
         if (isBooleanParam) return !!source?.checked;
+        if (isSelectParam) return String(source?.value ?? el.value ?? '');
         const rawValue = Number(source?.value ?? el.value);
         return Number.isFinite(rawValue) ? rawValue : 0;
       })();
@@ -12193,6 +12241,13 @@ export class App {
           const nextChecked = !!el.checked;
           source.checked = nextChecked;
           syncParamUI(nextChecked);
+          source.dispatchEvent(new Event(eventName, { bubbles: true }));
+          return;
+        }
+        if (isSelectParam) {
+          const nextSelected = String(el.value);
+          source.value = nextSelected;
+          syncParamUI(nextSelected);
           source.dispatchEvent(new Event(eventName, { bubbles: true }));
           return;
         }
@@ -12241,6 +12296,12 @@ export class App {
         forward('input');
       });
       el.addEventListener('change', () => forward('change'));
+    });
+    panel.querySelectorAll('[data-sim-sensing-pick-layers]').forEach(button => {
+      button.addEventListener('click', () => this.toggleSensingSourcePicker?.(button));
+    });
+    panel.querySelectorAll('[data-sim-sensing-edit-rules]').forEach(button => {
+      button.addEventListener('click', () => this._openSensingRulesModal?.({ type: 'drawing' }));
     });
     queryAllInRoots('[data-sim-field]').forEach(el => {
       const field = el.dataset.simField;
@@ -19898,6 +19959,13 @@ export class App {
     }
     if (button) {
       button.textContent = sourceSelect?.value === 'selected' ? 'Edit Layers' : 'Pick Layers';
+    }
+    const inspectorPickBtn = document.querySelector('[data-sim-sensing-pick-layers]');
+    if (inspectorPickBtn) inspectorPickBtn.textContent = sourceSelect?.value === 'selected' ? 'Edit Layers' : 'Pick Layers';
+    const inspectorSummary = document.querySelector('[data-sim-sensing-layer-summary]');
+    if (inspectorSummary) {
+      const prefix = sourceSelect?.value === 'selected' ? 'Using: ' : 'Custom: ';
+      inspectorSummary.textContent = prefix + this._buildSensingLayerSelectionSummary();
     }
     if (this._sensingSourcePickerPanel?.classList.contains('open')) {
       this._renderSensingSourcePicker();
