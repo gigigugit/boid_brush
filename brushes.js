@@ -1331,6 +1331,12 @@ export class BoidBrush {
         this.sim.clearSensingSlot?.(slot);
         continue;
       }
+      if (rule.source === 'pheromone') {
+        // Internal ant pheromone rule: the slot's map data is uploaded by
+        // AntBrush._uploadPheromoneToSensing, not from canvas pixels. Skip
+        // without clearing so that data stays intact.
+        continue;
+      }
       const key = rule.source + '|' + (rule.source === 'selected' ? (rule.layerIds || []).join(',') : '');
       let imgData = sourceCache.get(key);
       if (!imgData) {
@@ -2956,6 +2962,10 @@ export class AntBrush {
     this._pheroH = 0;
     this._pheroData = null;  // Float32Array — continuous 0-255 values
     this._pheroFrame = 0;
+    // Pixel-sensing state (rule pipeline borrowed from BoidBrush)
+    this._sensingFrame = 0;
+    this._sensingUploaded = false;
+    this._sensingSignature = '';
     // Trail blur offscreen canvases (shared pattern from BoidBrush)
     this._blurCanvas = null;
     this._blurCtx = null;
@@ -3158,14 +3168,24 @@ export class AntBrush {
     }
   }
 
+  /** Sensing slot used for pheromone data: slot 3 (reserved) when user pixel
+   * sensing rules are active so both pathways coexist, else legacy slot 0. */
+  _pheromoneSensingSlot(p) {
+    return (p.sensingEnabled && Array.isArray(p.sensingRules) && p.sensingRules.length) ? 3 : 0;
+  }
+
   /** Upload pheromone grid to WASM sensing (same pathway as pixel sensing) */
-  _uploadPheromoneToSensing() {
+  _uploadPheromoneToSensing(slot = 0) {
     if (!this._pheroData || !this.sim) return;
     const lum = new Uint8Array(this._pheroData.length);
     for (let i = 0, len = this._pheroData.length; i < len; i++) {
       lum[i] = Math.min(MAX_PHEROMONE, Math.round(this._pheroData[i]));
     }
-    this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+    if (slot > 0 && typeof this.sim.uploadSensingSlot === 'function') {
+      this.sim.uploadSensingSlot(slot, lum, this._pheroW, this._pheroH);
+    } else {
+      this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+    }
   }
 
   paintSimulationPheromone(points, radius, intensity) {
@@ -3192,7 +3212,7 @@ export class AntBrush {
       const config = this.app._resolveSimulationPheromoneConfig(trail, p);
       this.paintSimulationPheromone(trail.points, config.radius, config.intensity);
     }
-    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing();
+    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing(this._pheromoneSensingSlot(p));
   }
 
   refreshSimulationSpawnAppearance(p = this.app.getP()) {
@@ -3413,6 +3433,10 @@ export class AntBrush {
       this.sim.clearAgents();
       this._hoverSpawned = false;
     }
+    // Stroke commit changes the canvas, so force a sensing re-upload
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
   }
 
   /**
@@ -3421,20 +3445,37 @@ export class AntBrush {
    * attract mode so ants are drawn toward deposited pheromone trails.
    */
   _buildAntParams(p) {
+    // Coexistence model: when user pixel sensing is active, user rules occupy
+    // sensing slots 0-2 and slot 3 is reserved for the internal pheromone rule
+    // (its map is uploaded by _uploadPheromoneToSensing). When user sensing is
+    // off, the legacy single-map path is used with pheromone on slot 0.
+    const pheromoneOn = !!p.antPheromoneToSensing;
+    const userSensing = !!p.sensingEnabled && Array.isArray(p.sensingRules) && p.sensingRules.length > 0;
+    let sensingRules = null;
+    let sensingEnabled = pheromoneOn;
+    if (userSensing) {
+      sensingRules = p.sensingRules.slice(0, 3);
+      while (sensingRules.length < 3) sensingRules.push({ enabled: false });
+      sensingRules.push(pheromoneOn ? {
+        enabled: true,
+        mode: 'attract',
+        source: 'pheromone',
+        strength: p.sensingStrength ?? 0.5,
+        rangeMin: p.sensingThreshold || 0.1,
+        rangeMax: 1,
+      } : { enabled: false, source: 'pheromone' });
+      sensingEnabled = true;
+    }
     return Object.assign({}, p, {
       // Ant follow signal: seek = antFollow strength toward cursor
       seek: p.antFollow,
-      // Enable sensing in attract mode for pheromone following
-      sensingEnabled: p.antPheromoneToSensing,
+      sensingEnabled,
       sensingMode: 'attract',
       sensingStrength: p.sensingStrength,
       sensingRadius: p.sensingRadius || 20,
       sensingFitRadius: p.sensingFitRadius || 0,
       sensingThreshold: p.sensingThreshold || 0.1,
-      // Pheromone data occupies sensing slot 0; user sensing rules are
-      // disabled for ants so the two pathways don't collide (coexistence via
-      // a reserved slot is a future enhancement).
-      sensingRules: null,
+      sensingRules,
       // Ants wander more by default
       wander: p.wander,
       jitter: p.jitter,
@@ -3452,17 +3493,41 @@ export class AntBrush {
       this._decayPheromones(p.antPheromoneDecay);
     }
 
+    // Build ant-specific params first: the composed sensingRules decide
+    // whether pheromone uses reserved slot 3 (coexistence) or legacy slot 0.
+    const antP = this._buildAntParams(p);
+    const multiSlot = Array.isArray(antP.sensingRules);
+
     // Upload pheromone grid as sensing data (same pathway as pixel sensing)
     this._pheroFrame++;
     if (p.antPheromoneToSensing && this._pheroData) {
       // Re-upload every 3 frames to balance performance and responsiveness
       if (this._pheroFrame % 3 === 0) {
-        this._uploadPheromoneToSensing();
+        this._uploadPheromoneToSensing(multiSlot ? 3 : 0);
       }
     }
 
+    // Upload user pixel-sensing rules (slots 0-2) with the same signature /
+    // cadence policy as BoidBrush.
+    if (multiSlot) {
+      const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(antP.sensingUpdateFrames || 30)));
+      const sensingSignature = this._buildSensingSignature(antP);
+      if (!this._sensingUploaded || this._sensingSignature !== sensingSignature) {
+        this._uploadSensing(antP);
+        this._sensingFrame = 0;
+      } else if (antP.sensingSource !== 'below') {
+        this._sensingFrame++;
+        if (this._sensingFrame >= sensingUpdateFrames) {
+          this._uploadSensing(antP);
+          this._sensingFrame = 0;
+        }
+      }
+    } else {
+      this._sensingUploaded = false;
+      this._sensingSignature = '';
+    }
+
     // Write params with ant-specific overrides and step sim
-    const antP = this._buildAntParams(p);
     const guideState = _collectSimulationGuides(this, p);
     const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
@@ -3832,8 +3897,20 @@ export class AntBrush {
     if (this.sim) this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
     if (this._pheroData) this._pheroData.fill(0);
+    // Force sensing re-upload on reactivation (the shared sim's slots may be
+    // rewritten by another brush in the meantime)
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
   }
 }
+
+// AntBrush reuses BoidBrush's rule-driven pixel-sensing pipeline. These
+// methods only touch this.app / this.sim / this._sensing* state, so borrowing
+// them keeps the two brushes behaviorally identical for user sensing rules.
+AntBrush.prototype._uploadSensing = BoidBrush.prototype._uploadSensing;
+AntBrush.prototype._extractSensingChannel = BoidBrush.prototype._extractSensingChannel;
+AntBrush.prototype._buildSensingSignature = BoidBrush.prototype._buildSensingSignature;
 
 // =============================================================================
 // BRISTLE BRUSH — Spring-physics flexible bristle simulation
