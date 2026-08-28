@@ -591,6 +591,20 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #canvasSizeModal.open{display:flex;}
 #canvasSizeModal select{background:var(--select-bg)!important;color:var(--select-text)!important;border-color:rgba(255,255,255,0.18)!important;color-scheme:dark;}
 #canvasSizeModal select option,#canvasSizeModal select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#boidColorDistModal{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;}
+#boidColorDistModal.open{display:flex;}
+#boidColorDistColumns{display:flex;gap:14px;justify-content:center;padding:8px 4px 14px;overflow-x:auto;}
+.boid-dist-col{display:flex;flex-direction:column;align-items:center;gap:8px;flex:0 0 auto;}
+.boid-dist-pct{font-size:11px;color:#ccc;font-variant-numeric:tabular-nums;}
+.boid-dist-sliderWrap{position:relative;width:30px;height:140px;}
+.boid-dist-sliderWrap input[type="range"]{position:absolute;top:50%;left:50%;width:140px;margin:0;transform:translate(-50%,-50%) rotate(-90deg);}
+.boid-dist-colorBtn{width:34px;height:24px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;cursor:pointer;}
+.boid-dist-colorBtn.active{border-color:#5b8af0;box-shadow:0 0 0 2px rgba(91,138,240,0.35);}
+.boid-dist-delBtn{padding:3px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#ccc;font-size:12px;cursor:pointer;}
+.boid-dist-delBtn:hover:not(:disabled){background:rgba(255,255,255,0.12);color:#fff;}
+.boid-dist-delBtn:disabled{opacity:0.35;cursor:default;}
+#boidColorDistAdd{padding:7px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#ccc;font-size:11px;cursor:pointer;}
+#boidColorDistAdd:hover{background:rgba(255,255,255,0.12);color:#fff;}
 #simExportModal{display:none;position:fixed;inset:0;z-index:201;align-items:center;justify-content:center;}
 #simExportModal.open{display:flex;}
 .sim-export-panel{width:min(468px,92vw);}
@@ -1370,6 +1384,21 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
     <div class="ai-modal-footer">
       <button id="canvasSizeApply" class="ai-save-btn">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Boid Color Distribution Modal ══════════ -->
+<div id="boidColorDistModal">
+  <div class="ai-modal-backdrop" id="boidColorDistBackdrop"></div>
+  <div class="ai-modal-panel" style="width:auto;min-width:320px;">
+    <button class="ai-modal-close" id="boidColorDistClose">✕</button>
+    <h2>🎨 Color Distribution</h2>
+    <p class="ai-subtitle">Assign colors to fractions of the swarm. Weights are normalized to 100%.</p>
+    <div id="boidColorDistColumns"></div>
+    <div class="ai-modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button id="boidColorDistAdd" type="button">+ Add Color</button>
+      <button id="boidColorDistDone" class="ai-save-btn" type="button">Done</button>
     </div>
   </div>
 </div>
