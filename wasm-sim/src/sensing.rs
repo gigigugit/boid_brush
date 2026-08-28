@@ -9,7 +9,7 @@
 // =============================================================================
 
 use crate::boid::*;
-use crate::params::AgentParams;
+use crate::params::{AgentParams, MAX_SENSING_RULES};
 use core::f32::consts::PI;
 
 /// Sensing buffer: single-channel luminance at (sensing_w × sensing_h).
@@ -32,6 +32,14 @@ impl SensingMap {
             scale_x: 1.0,
             scale_y: 1.0,
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.data.clear();
+        self.width = 0;
+        self.height = 0;
+        self.scale_x = 1.0;
+        self.scale_y = 1.0;
     }
 
     /// Resize the sensing buffer. Called from update_sensing_from_image.
@@ -89,8 +97,13 @@ impl SensingMap {
 
 /// Apply sensing force to a single agent. 8-point radial sample.
 #[inline]
-pub fn apply_sensing_force(buf: &mut [f32], base: usize, p: &AgentParams, map: &SensingMap) {
-    if !p.sensing_enabled || map.data.is_empty() {
+pub fn apply_sensing_force(
+    buf: &mut [f32],
+    base: usize,
+    p: &AgentParams,
+    maps: &[SensingMap; MAX_SENSING_RULES],
+) {
+    if !p.sensing_enabled {
         return;
     }
 
@@ -102,6 +115,35 @@ pub fn apply_sensing_force(buf: &mut [f32], base: usize, p: &AgentParams, map: &
     let mut fy = 0.0f32;
 
     const SAMPLES: usize = 8;
+    if p.sensing_rules.iter().any(|rule| rule.active) {
+        for (rule, map) in p.sensing_rules.iter().zip(maps.iter()) {
+            if !rule.active || map.data.is_empty() {
+                continue;
+            }
+            let sign = if rule.attract { 1.0 } else { -1.0 };
+            for i in 0..SAMPLES {
+                let a = (i as f32 / SAMPLES as f32) * PI * 2.0;
+                let dx = a.cos();
+                let dy = a.sin();
+                let sx = bx + dx * sr;
+                let sy = by + dy * sr;
+                let v = map.sample_fit(sx, sy, fit_r);
+                if v > rule.range_min && v <= rule.range_max {
+                    fx += dx * v * rule.strength * sign;
+                    fy += dy * v * rule.strength * sign;
+                }
+            }
+        }
+        let ms = p.max_speed;
+        buf[base + AX] += fx * ms;
+        buf[base + AY] += fy * ms;
+        return;
+    }
+
+    let map = &maps[0];
+    if map.data.is_empty() {
+        return;
+    }
     for i in 0..SAMPLES {
         let a = (i as f32 / SAMPLES as f32) * PI * 2.0;
         let sx = bx + a.cos() * sr;
