@@ -66,6 +66,15 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
   leaderCount: 0,
   leaderPull: 35,
 }));
+// Controls that own a dedicated localStorage key (and side-effect wiring) —
+// excluded from the generic session snapshot so the dedicated key stays the
+// single source of truth and restore can't silently desync checkbox vs behavior.
+const SELF_PERSISTED_CONTROL_IDS = new Set([
+  'alwaysShowTabs',       // bb_alwaysShowTabs
+  'autoSaveSession',      // bb_autosave (AUTOSAVE_STORAGE_KEY)
+  'perfTelemetryEnabled', // bb_perfTelemetry (PERF_TELEMETRY_KEY)
+  'perfWakeLockEnabled',  // bb_perfWakeLock (PERF_WAKE_LOCK_KEY)
+]);
 const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'alwaysShowTabs',
   'autoSaveSession',
@@ -20465,10 +20474,10 @@ export class App {
   _captureSessionControls() {
     const controls = {};
     document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
-      if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+      if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {
-      if (el.id) controls[el.id] = el.value;
+      if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.value;
     });
     controls.primaryColor = this.primaryEl.value;
     controls.secondaryColor = this.secondaryEl.value;
@@ -20875,6 +20884,7 @@ export class App {
   }
 
   saveSession() {
+    if (this._suppressSessionPersistence) return;
     try {
       this._syncActiveSimulationSessionFromDraft();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this._captureSessionControls()));
@@ -21105,9 +21115,24 @@ export class App {
       }
       const el = document.getElementById(id);
       if (!el) continue;
+      // Self-persisted settings own a dedicated localStorage key; never let a
+      // (possibly stale) session snapshot override it — the snapshot can't fire
+      // the change handlers that apply their side effects (telemetry, wake
+      // lock, tab visibility, auto-save gating).
+      if (SELF_PERSISTED_CONTROL_IDS.has(id)) continue;
       if (el.type === 'checkbox') el.checked = !!val;
-      else el.value = val;
+      else if (el.tagName === 'SELECT') {
+        // Only apply values that match an existing option. Assigning an
+        // unknown value would blank the select (selectedIndex -1), which then
+        // gets re-captured as "" — keep the current/default option instead.
+        const target = String(val);
+        if (Array.from(el.options).some(opt => opt.value === target)) el.value = target;
+      } else el.value = val;
     }
+    // Keep the sensing-source revert tracker aligned with the restored value
+    // so the next user change reports the correct previous source.
+    const sensingSourceEl = document.getElementById('sensingSource');
+    if (sensingSourceEl) sensingSourceEl.dataset.prevValue = sensingSourceEl.value || 'below';
     this._normalizeSimulationSessionBindings();
     if (this.simulation.activeSessionIndex >= 0) {
       this._applySimulationSessionToDraft(this.simulation.sessions[this.simulation.activeSessionIndex]);
@@ -21255,6 +21280,9 @@ export class App {
   async reloadAppWithCacheBust({ wipeSession = false } = {}) {
     const btn = document.getElementById('reloadAppBtn');
     if (btn) btn.disabled = true;
+    // Block any further session writes (e.g. the pagehide auto-save flush)
+    // so a wiped session can't be re-persisted on the way out.
+    if (wipeSession) this._suppressSessionPersistence = true;
     this.setStatus(wipeSession ? 'Reloading app (clearing saved data and caches)…' : 'Reloading app (clearing caches)…');
     await this._clearReloadCaches();
     this._clearReloadStorageArtifacts({ wipeSession });
