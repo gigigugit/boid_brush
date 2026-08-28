@@ -1149,13 +1149,17 @@ function _wireWorkspaceSettingsPanel(app, panel) {
       sidebarEl.addEventListener('change', onSidebarEdit);
     }
     // Flush any pending debounced auto-save before the page goes away so the
-    // last edits aren't lost to the debounce window.
-    window.addEventListener('pagehide', () => {
-      if (!autoSaveCb.checked || autoSaveTimer == null) return;
-      clearTimeout(autoSaveTimer);
-      autoSaveTimer = null;
-      app.saveSession();
-    });
+    // last edits aren't lost to the debounce window. Guarded so a panel
+    // rebuild can't accumulate duplicate window listeners.
+    if (!app._autoSavePagehideFlushWired) {
+      app._autoSavePagehideFlushWired = true;
+      window.addEventListener('pagehide', () => {
+        if (!autoSaveCb.checked || autoSaveTimer == null) return;
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+        app.saveSession();
+      });
+    }
   }
 
   app._refreshPerformanceTelemetryUI(true);
