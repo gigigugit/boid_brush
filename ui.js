@@ -987,16 +987,9 @@ export function buildSidebar(app) {
   document.getElementById('btnImportPreset')?.addEventListener('click', () => _importPreset(app));
   document.getElementById('btnExportPresets')?.addEventListener('click', () => _exportPresets(app));
 
-  const triggerSidebarAutoSave = () => {
-    const autoSaveCb = document.getElementById('autoSaveSession');
-    if (!autoSaveCb?.checked) return;
-    clearTimeout(app._sidebarAutoSaveTimer);
-    app._sidebarAutoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
-  };
-  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
-    el.addEventListener('input', triggerSidebarAutoSave);
-    el.addEventListener('change', triggerSidebarAutoSave);
-  });
+  // Sidebar auto-save is wired via delegated listeners in
+  // _wireWorkspaceSettingsPanel() so all control types share one debounced
+  // timer that is flushed on pagehide.
 
   document.getElementById('btnOpenSimulationInspector')?.addEventListener('click', () => {
     if (!app.simulation.enabled) app._toggleSimulationMode(true);
@@ -1137,12 +1130,36 @@ function _wireWorkspaceSettingsPanel(app, panel) {
     const triggerAutoSave = () => {
       if (!autoSaveCb.checked) return;
       clearTimeout(autoSaveTimer);
-      autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
+      autoSaveTimer = setTimeout(() => { autoSaveTimer = null; app.saveSession(); }, AUTOSAVE_DEBOUNCE_MS);
     };
     panel.querySelectorAll('input[type="range"], input[type="checkbox"], input[type="text"], select').forEach(el => {
       el.addEventListener('input', triggerAutoSave);
       el.addEventListener('change', triggerAutoSave);
     });
+    // Sidebar control edits are only persisted when another action (stroke,
+    // sim edit, explicit save) fires saveSession — with auto-save enabled,
+    // debounce-save them here too. Delegated so it survives rebuilds.
+    const sidebarEl = document.getElementById('sidebar');
+    if (sidebarEl) {
+      const onSidebarEdit = event => {
+        const t = event.target;
+        if (t && (t.tagName === 'SELECT' || t.tagName === 'INPUT')) triggerAutoSave();
+      };
+      sidebarEl.addEventListener('input', onSidebarEdit);
+      sidebarEl.addEventListener('change', onSidebarEdit);
+    }
+    // Flush any pending debounced auto-save before the page goes away so the
+    // last edits aren't lost to the debounce window. Guarded so a panel
+    // rebuild can't accumulate duplicate window listeners.
+    if (!app._autoSavePagehideFlushWired) {
+      app._autoSavePagehideFlushWired = true;
+      window.addEventListener('pagehide', () => {
+        if (!autoSaveCb.checked || autoSaveTimer == null) return;
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+        app.saveSession();
+      });
+    }
   }
 
   app._refreshPerformanceTelemetryUI(true);
