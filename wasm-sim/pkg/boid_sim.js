@@ -8,6 +8,14 @@ export function boid_clear_agents(handle) {
 }
 
 /**
+ * @param {number} handle
+ * @param {number} slot
+ */
+export function boid_clear_sensing_slot(handle, slot) {
+    wasm.boid_clear_sensing_slot(handle, slot);
+}
+
+/**
  * @param {number} width
  * @param {number} height
  * @param {number} max_agents
@@ -63,11 +71,31 @@ export function boid_get_sensing_buffer_ptr(handle) {
 
 /**
  * @param {number} handle
+ * @param {number} slot
+ * @returns {number}
+ */
+export function boid_get_sensing_slot_buffer_ptr(handle, slot) {
+    const ret = wasm.boid_get_sensing_slot_buffer_ptr(handle, slot);
+    return ret >>> 0;
+}
+
+/**
+ * @param {number} handle
  * @param {number} w
  * @param {number} h
  */
 export function boid_init_sensing(handle, w, h) {
     wasm.boid_init_sensing(handle, w, h);
+}
+
+/**
+ * @param {number} handle
+ * @param {number} slot
+ * @param {number} w
+ * @param {number} h
+ */
+export function boid_init_sensing_slot(handle, slot, w, h) {
+    wasm.boid_init_sensing_slot(handle, slot, w, h);
 }
 
 /**
@@ -145,10 +173,25 @@ export function boid_update_sensing(handle) {
 }
 
 /**
+ * @param {number} handle
+ * @param {number} _slot
+ */
+export function boid_update_sensing_slot(handle, _slot) {
+    wasm.boid_update_sensing_slot(handle, _slot);
+}
+
+/**
  * Clear all agents.
  */
 export function clear_agents() {
     wasm.clear_agents();
+}
+
+/**
+ * @param {number} slot
+ */
+export function clear_sensing_slot(slot) {
+    wasm.clear_sensing_slot(slot);
 }
 
 /**
@@ -303,7 +346,7 @@ export function get_params_buffer_ptr() {
 }
 
 /**
- * Params buffer length in f32 count (32).
+ * Params buffer length in f32 count.
  * @returns {number}
  */
 export function get_params_len() {
@@ -318,6 +361,16 @@ export function get_params_len() {
  */
 export function get_sensing_buffer_ptr() {
     const ret = wasm.get_sensing_buffer_ptr();
+    return ret >>> 0;
+}
+
+/**
+ * Pointer to a specific sensing slot buffer (u8 luminance data).
+ * @param {number} slot
+ * @returns {number}
+ */
+export function get_sensing_slot_buffer_ptr(slot) {
+    const ret = wasm.get_sensing_slot_buffer_ptr(slot);
     return ret >>> 0;
 }
 
@@ -343,6 +396,16 @@ export function init_sensing(w, h) {
 }
 
 /**
+ * Prepare one sensing slot for a given resolution.
+ * @param {number} slot
+ * @param {number} w
+ * @param {number} h
+ */
+export function init_sensing_slot(slot, w, h) {
+    wasm.init_sensing_slot(slot, w, h);
+}
+
+/**
  * Remove an agent by ID. Uses swap-remove (O(1), may reorder).
  * @param {number} id
  */
@@ -365,7 +428,7 @@ export function set_leader_range(start_index, end_index, leader_count) {
  * ```js
  * const paramsPtr = get_params_buffer_ptr();
  * const paramsView = new Float32Array(wasm.memory.buffer, paramsPtr, PARAMS_LEN);
- * paramsView[0] = p.seek;  // ... fill all 32 floats
+ * paramsView[0] = p.seek;  // ... fill all params
  * set_params();
  * ```
  */
@@ -464,6 +527,13 @@ export function step(dt) {
  */
 export function update_sensing() {
     wasm.update_sensing();
+}
+
+/**
+ * @param {number} _slot
+ */
+export function update_sensing_slot(_slot) {
+    wasm.update_sensing_slot(_slot);
 }
 
 function __wbg_get_imports() {

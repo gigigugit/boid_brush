@@ -3,6 +3,8 @@
 
 export function boid_clear_agents(handle: number): void;
 
+export function boid_clear_sensing_slot(handle: number, slot: number): void;
+
 export function boid_create_simulator(width: number, height: number, max_agents: number): number;
 
 export function boid_destroy_simulator(handle: number): void;
@@ -15,7 +17,11 @@ export function boid_get_params_buffer_ptr(handle: number): number;
 
 export function boid_get_sensing_buffer_ptr(handle: number): number;
 
+export function boid_get_sensing_slot_buffer_ptr(handle: number, slot: number): number;
+
 export function boid_init_sensing(handle: number, w: number, h: number): void;
+
+export function boid_init_sensing_slot(handle: number, slot: number, w: number, h: number): void;
 
 export function boid_remove_agent(handle: number, id: number): void;
 
@@ -33,10 +39,14 @@ export function boid_step(handle: number, dt: number): void;
 
 export function boid_update_sensing(handle: number): void;
 
+export function boid_update_sensing_slot(handle: number, _slot: number): void;
+
 /**
  * Clear all agents.
  */
 export function clear_agents(): void;
+
+export function clear_sensing_slot(slot: number): void;
 
 export function fluid_add_particles(handle: number, packed: Float32Array, stride: number): void;
 
@@ -81,7 +91,7 @@ export function get_agent_count(): number;
 export function get_params_buffer_ptr(): number;
 
 /**
- * Params buffer length in f32 count (32).
+ * Params buffer length in f32 count.
  */
 export function get_params_len(): number;
 
@@ -90,6 +100,11 @@ export function get_params_len(): number;
  * JS writes downsampled luminance here, then calls `update_sensing()`.
  */
 export function get_sensing_buffer_ptr(): number;
+
+/**
+ * Pointer to a specific sensing slot buffer (u8 luminance data).
+ */
+export function get_sensing_slot_buffer_ptr(slot: number): number;
 
 /**
  * Agent stride in f32 count (16).
@@ -105,6 +120,11 @@ export function get_stride(): number;
 export function init_sensing(w: number, h: number): void;
 
 /**
+ * Prepare one sensing slot for a given resolution.
+ */
+export function init_sensing_slot(slot: number, w: number, h: number): void;
+
+/**
  * Remove an agent by ID. Uses swap-remove (O(1), may reorder).
  */
 export function remove_agent(id: number): void;
@@ -117,7 +137,7 @@ export function set_leader_range(start_index: number, end_index: number, leader_
  * ```js
  * const paramsPtr = get_params_buffer_ptr();
  * const paramsView = new Float32Array(wasm.memory.buffer, paramsPtr, PARAMS_LEN);
- * paramsView[0] = p.seek;  // ... fill all 32 floats
+ * paramsView[0] = p.seek;  // ... fill all params
  * set_params();
  * ```
  */
@@ -185,6 +205,8 @@ export function step(dt: number): void;
  */
 export function update_sensing(): void;
 
+export function update_sensing_slot(_slot: number): void;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -192,8 +214,8 @@ export interface InitOutput {
     readonly boid_get_agent_buffer_ptr: (a: number) => number;
     readonly boid_get_params_buffer_ptr: (a: number) => number;
     readonly boid_get_sensing_buffer_ptr: (a: number) => number;
-    readonly boid_init_sensing: (a: number, b: number, c: number) => void;
-    readonly boid_sim_resize: (a: number, b: number, c: number) => void;
+    readonly boid_get_sensing_slot_buffer_ptr: (a: number, b: number) => number;
+    readonly boid_init_sensing_slot: (a: number, b: number, c: number, d: number) => void;
     readonly boid_spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly fluid_add_particles: (a: number, b: number, c: number, d: number) => void;
     readonly fluid_create_simulator: (a: number, b: number) => number;
@@ -205,33 +227,41 @@ export interface InitOutput {
     readonly get_params_buffer_ptr: () => number;
     readonly get_params_len: () => number;
     readonly get_sensing_buffer_ptr: () => number;
+    readonly get_sensing_slot_buffer_ptr: (a: number) => number;
     readonly get_stride: () => number;
-    readonly init_sensing: (a: number, b: number) => void;
+    readonly init_sensing_slot: (a: number, b: number, c: number) => void;
     readonly sim_init: (a: number, b: number, c: number) => void;
-    readonly sim_resize: (a: number, b: number) => void;
     readonly spawn_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly update_sensing: () => void;
-    readonly fluid_clear_particles: (a: number) => void;
-    readonly boid_set_params: (a: number) => void;
-    readonly boid_set_leader_range: (a: number, b: number, c: number, d: number) => void;
-    readonly fluid_destroy_simulator: (a: number) => void;
-    readonly boid_update_sensing: (a: number) => void;
+    readonly update_sensing_slot: (a: number) => void;
     readonly fluid_get_particle_count: (a: number) => number;
-    readonly boid_get_agent_count: (a: number) => number;
-    readonly boid_create_simulator: (a: number, b: number, c: number) => number;
-    readonly spawn_agent: (a: number, b: number) => number;
-    readonly boid_destroy_simulator: (a: number) => void;
-    readonly set_leader_range: (a: number, b: number, c: number) => void;
-    readonly set_params: () => void;
     readonly boid_remove_agent: (a: number, b: number) => void;
     readonly boid_step: (a: number, b: number) => void;
     readonly fluid_step: (a: number, b: number) => void;
+    readonly init_sensing: (a: number, b: number) => void;
+    readonly boid_get_agent_count: (a: number) => number;
+    readonly boid_init_sensing: (a: number, b: number, c: number) => void;
+    readonly boid_create_simulator: (a: number, b: number, c: number) => number;
+    readonly fluid_destroy_simulator: (a: number) => void;
+    readonly sim_resize: (a: number, b: number) => void;
+    readonly spawn_agent: (a: number, b: number) => number;
+    readonly boid_set_params: (a: number) => void;
+    readonly boid_set_leader_range: (a: number, b: number, c: number, d: number) => void;
+    readonly boid_destroy_simulator: (a: number) => void;
+    readonly fluid_clear_particles: (a: number) => void;
+    readonly boid_update_sensing: (a: number) => void;
+    readonly clear_sensing_slot: (a: number) => void;
+    readonly clear_agents: () => void;
+    readonly boid_clear_sensing_slot: (a: number, b: number) => void;
+    readonly boid_clear_agents: (a: number) => void;
+    readonly set_leader_range: (a: number, b: number, c: number) => void;
+    readonly boid_sim_resize: (a: number, b: number, c: number) => void;
+    readonly boid_spawn_agent: (a: number, b: number, c: number) => number;
     readonly remove_agent: (a: number) => void;
     readonly step: (a: number) => void;
-    readonly clear_agents: () => void;
     readonly get_agent_count: () => number;
-    readonly boid_spawn_agent: (a: number, b: number, c: number) => number;
-    readonly boid_clear_agents: (a: number) => void;
+    readonly boid_update_sensing_slot: (a: number, b: number) => void;
+    readonly set_params: () => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number) => void;

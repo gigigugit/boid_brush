@@ -39,6 +39,21 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
+// ── Force Visualization submode ─────────────────────────────────────────
+// A `simulation.mode` alternative to the default 'normal' authoring mode.
+// Scenarios describe groups (bound to existing spawn definitions), weighted
+// attractors, and routes that connect them; a separate camera policy frames
+// the result. All of it is persisted config — no runtimes, camera smoothing
+// accumulators, or resolved per-frame positions live on this state.
+const FORCE_VIZ_ATTRACTOR_TYPES = ['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'];
+const FORCE_VIZ_CAMERA_POLICIES = ['fixed', 'followBoid', 'followCentroid', 'frameGroups', 'orbit'];
+const FORCE_VIZ_CAMERA_INTERRUPTIONS = ['holdOnUserInput', 'resumeAfterDelay', 'ignoreUserInput'];
+const FORCE_VIZ_CAMERA_EXIT_BEHAVIORS = ['restoreManualView', 'retainCurrentView'];
+const FORCE_VIZ_MANUAL_INPUT_HOLD_MS = 900;
+const FORCE_VIZ_LOOKAHEAD_SCALE = 14;
+const FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS = 80;
+const FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH = 1.2;
+
 // Keep the inline JSON editor's single-key accent lightweight and deterministic.
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
 const WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
@@ -51,6 +66,15 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
   leaderCount: 0,
   leaderPull: 35,
 }));
+// Controls that own a dedicated localStorage key (and side-effect wiring) —
+// excluded from the generic session snapshot so the dedicated key stays the
+// single source of truth and restore can't silently desync checkbox vs behavior.
+const SELF_PERSISTED_CONTROL_IDS = new Set([
+  'alwaysShowTabs',       // bb_alwaysShowTabs
+  'autoSaveSession',      // bb_autosave (AUTOSAVE_STORAGE_KEY)
+  'perfTelemetryEnabled', // bb_perfTelemetry (PERF_TELEMETRY_KEY)
+  'perfWakeLockEnabled',  // bb_perfWakeLock (PERF_WAKE_LOCK_KEY)
+]);
 const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'alwaysShowTabs',
   'autoSaveSession',
@@ -408,6 +432,89 @@ const SIM_SPAWN_DISTRIBUTION_MODES = ['uniform', 'density', 'noise'];
 const SIM_SENSING_MODES = ['avoid', 'attract'];
 const SIM_SENSING_CHANNELS = ['darkness', 'lightness', 'saturation', 'red', 'green', 'blue', 'alpha'];
 const SIM_SENSING_SOURCES = ['below', 'active', 'all', 'selected'];
+// Multi-rule pixel sensing: up to MAX_SENSING_RULES simultaneous directives,
+// each with its own channel, response, value range, strength and layer source.
+// Rule 0 mirrors the legacy flat sensing controls for backward compatibility.
+const MAX_SENSING_RULES = 4;
+const SENSING_RULE_CHANNELS = [...SIM_SENSING_CHANNELS, 'hue'];
+
+/** Normalize a single sensing rule object; returns null when unusable. */
+function _normalizeSensingRule(value) {
+  if (!value || typeof value !== 'object') return null;
+  const channel = SENSING_RULE_CHANNELS.includes(value.channel) ? value.channel : 'darkness';
+  const mode = value.mode === 'follow' ? 'attract' : value.mode;
+  let rangeMin = Number.isFinite(value.rangeMin) ? _clamp(value.rangeMin, 0, 1) : 0;
+  let rangeMax = Number.isFinite(value.rangeMax) ? _clamp(value.rangeMax, 0, 1) : 1;
+  if (rangeMin > rangeMax) { const t = rangeMin; rangeMin = rangeMax; rangeMax = t; }
+  return {
+    enabled: value.enabled !== false,
+    mode: SIM_SENSING_MODES.includes(mode) ? mode : 'avoid',
+    channel,
+    hueTarget: Number.isFinite(value.hueTarget) ? ((value.hueTarget % 360) + 360) % 360 : 0,
+    hueTolerance: Number.isFinite(value.hueTolerance) ? _clamp(value.hueTolerance, 1, 180) : 60,
+    rangeMin,
+    rangeMax,
+    strength: Number.isFinite(value.strength) ? _clamp(value.strength, 0, 1) : 0.5,
+    source: SIM_SENSING_SOURCES.includes(value.source) ? value.source : 'below',
+    layerIds: _normalizeSimulationSensingSourceSelection(value.layerIds),
+  };
+}
+
+/** Normalize an array of sensing rules (drops invalid entries, caps at MAX_SENSING_RULES). */
+function normalizeSensingRules(value) {
+  const rules = [];
+  for (const entry of Array.isArray(value) ? value : []) {
+    const rule = _normalizeSensingRule(entry);
+    if (rule) rules.push(rule);
+    if (rules.length >= MAX_SENSING_RULES) break;
+  }
+  return rules;
+}
+
+/** Synthesize a single sensing rule from the legacy flat fields. */
+function _sensingRuleFromFlat(flat, layerIds) {
+  return _normalizeSensingRule({
+    enabled: true,
+    mode: flat?.sensingMode,
+    channel: flat?.sensingChannel,
+    rangeMin: Number.isFinite(flat?.sensingThreshold) ? flat.sensingThreshold : 0.1,
+    rangeMax: 1,
+    strength: Number.isFinite(flat?.sensingStrength) ? flat.sensingStrength : 0.5,
+    source: flat?.sensingSource,
+    layerIds,
+  });
+}
+
+/** Write rule 0's simple fields back onto a flat params/vars object (legacy sync). */
+function _syncSensingFlatFromRule0(target, rules) {
+  const rule0 = Array.isArray(rules) ? rules[0] : null;
+  if (!target || !rule0) return target;
+  target.sensingMode = rule0.mode;
+  if (SIM_SENSING_CHANNELS.includes(rule0.channel)) target.sensingChannel = rule0.channel;
+  target.sensingStrength = rule0.strength;
+  target.sensingThreshold = rule0.rangeMin;
+  target.sensingSource = rule0.source;
+  return target;
+}
+
+/** Short human-readable summary of one sensing rule. */
+function _describeSensingRule(rule) {
+  if (!rule) return '';
+  const sign = rule.mode === 'attract' ? '⊕' : '⊖';
+  const channel = rule.channel === 'hue' ? `hue ${Math.round(rule.hueTarget)}°` : rule.channel;
+  const range = (rule.rangeMin > 0 || rule.rangeMax < 1)
+    ? ` ${rule.rangeMin.toFixed(2)}–${rule.rangeMax.toFixed(2)}`
+    : '';
+  const source = rule.source === 'selected' ? 'layers' : rule.source;
+  return `${sign}${channel}${range} (${source})`;
+}
+
+/** Summary line for a whole rules array. */
+function _describeSensingRules(rules) {
+  const active = (Array.isArray(rules) ? rules : []).filter(rule => rule && rule.enabled !== false);
+  if (!active.length) return 'No rules';
+  return `${active.length} rule${active.length === 1 ? '' : 's'}: ${active.map(_describeSensingRule).join(', ')}`;
+}
 const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const MAX_SWARM_COUNT = 2000;
@@ -505,6 +612,16 @@ function _clamp01(v) {
 
 function _lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+/** Shortest-path angle interpolation (radians), used by the Force
+ *  Visualization camera adapter so orbit/rotation smoothing doesn't spin
+ *  the long way around when crossing the -PI/PI wrap. */
+function _lerpAngle(a, b, t) {
+  let delta = (b - a) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  else if (delta < -Math.PI) delta += Math.PI * 2;
+  return a + delta * t;
 }
 
 function _clamp(value, min, max) {
@@ -669,6 +786,7 @@ function _normalizeSimulationVars(value) {
     sensingFitRadius: Number.isFinite(value?.sensingFitRadius) ? Math.max(0, value.sensingFitRadius) : undefined,
     sensingThreshold: Number.isFinite(value?.sensingThreshold) ? _clamp(value.sensingThreshold, 0, 1) : undefined,
     sensingSource: SIM_SENSING_SOURCES.includes(value?.sensingSource) ? value.sensingSource : undefined,
+    sensingRules: Array.isArray(value?.sensingRules) ? normalizeSensingRules(value.sensingRules) : undefined,
     sensingUpdateFrames: Number.isFinite(value?.sensingUpdateFrames)
       ? Math.max(1, Math.min(50, Math.round(value.sensingUpdateFrames)))
       : undefined,
@@ -1912,10 +2030,13 @@ export class App {
     this.activeLayerIdx = 0;
     this._nextLayerId = 1;
     this._sensingSourceSelection = [];
+    // Drawing-mode multi-rule sensing state (null = derive single rule from flat controls)
+    this._sensingRules = null;
     this._sensingSourcePickerAnchor = null;
     this._sensingSourcePickerPanel = null;
     this._sensingSourcePickerPointerHandler = null;
     this._sensingSourcePickerKeyHandler = null;
+    this._sensingRulesModalState = null;
 
     // Undo/redo
     this.undoStack = [];
@@ -2052,6 +2173,11 @@ export class App {
       inspectorCollapsed: false,
       inspectorSections: {},
       editorTool: 'spawn',
+      // Submode: 'normal' (default, unchanged authoring/playback behavior) or
+      // 'forceVisualization' (scenario-driven groups/attractors/routes with a
+      // policy-driven camera). Persisted; normal mode ignores it entirely.
+      mode: 'normal',
+      forceViz: null, // populated below by _createDefaultForceVizState()
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -2080,6 +2206,15 @@ export class App {
       clipboard: null,
       nextId: 1,
     };
+    // populated in _init() after the first resize, once this.W/this.H
+    // reflect real canvas dimensions (see _createDefaultForceVizState()).
+    // Force Visualization runtime-only state — never persisted/serialized.
+    // Holds the manual view the user had before entering the submode (for
+    // the 'restoreManualView' exit behavior) and small camera bookkeeping
+    // (orbit angle accumulator, last manual pan/zoom/rotate timestamp for
+    // interruption handling).
+    this._forceVizManualViewSnapshot = null;
+    this._forceVizCameraRuntime = { lastManualInputAt: 0, orbitAngle: 0, lastElapsed: null };
     this._simulationSavedPlaybackCapture = null;
     this.motionPath = this._createDefaultMotionPathState();
     this.motionPathEditor = this._createMotionPathEditorState();
@@ -2474,6 +2609,7 @@ export class App {
   async _init() {
     this.selectionMgr = new SelectionManager(this);
     this._resizeAll();
+    this.simulation.forceViz = this._createDefaultForceVizState();
     this.compositor = new Compositor(this.compositeCanvas);
     this.compositor.resize(this.W, this.H, this.DPR);
     this._addBackgroundLayer();
@@ -6169,6 +6305,9 @@ export class App {
       simMotionPathMode: sel('simMotionPathMode') === 'forces' ? 'forces' : 'path',
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
+    // Multi-rule sensing: rule 0 mirrors the flat controls; extra rules come
+    // from the Sensing Rules modal state.
+    this._cachedP.sensingRules = this._composeSensingRules(this._cachedP);
     return this._simulationContextOverride
       ? this._getRuntimeScopedParams(this._cachedP)
       : this._cachedP;
@@ -6216,6 +6355,11 @@ export class App {
     if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
     if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
     if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+    // Per-simulation sensing rules: explicit rules win; otherwise re-derive a
+    // single rule from the (possibly overridden) flat sensing fields.
+    next.sensingRules = Array.isArray(vars.sensingRules) && vars.sensingRules.length
+      ? normalizeSensingRules(vars.sensingRules)
+      : [_sensingRuleFromFlat(next, this._serializeSensingSourceSelection())];
     return next;
   }
 
@@ -6849,6 +6993,695 @@ export class App {
     if (this.simulation.selected && !this._getSelectedSimulationEntry()) {
       this.simulation.selected = null;
     }
+    this._normalizeForceVizState();
+  }
+
+  // ========================================================
+  // FORCE VISUALIZATION SUBMODE
+  // ========================================================
+  // Scenarios are pure config: groups (bound to an existing spawn
+  // definition + optional paint layer), attractors (fixed/unreachable/
+  // moving/orbiting/path/shared), and routes that connect a group to an
+  // attractor with a weight. Everything here is persisted; per-frame
+  // resolved positions, camera smoothing bookkeeping, and agent index
+  // ranges are computed fresh each run and never saved (see
+  // _forceVizCameraRuntime and BoidBrush._spawnRangesById).
+
+  _createForceVizId(prefix) {
+    return `${prefix}-${(this.simulation.nextId++).toString(36)}`;
+  }
+
+  _createDefaultForceVizCameraConfig() {
+    return {
+      policy: 'fixed', // fixed | followBoid | followCentroid | frameGroups | orbit
+      targetGroupId: null,
+      targetBoidIndex: 0,
+      smoothing: 0.12, // 0..1 per-frame lerp factor
+      offsetX: 0,
+      offsetY: 0,
+      lookahead: 0, // 0..1 velocity lookahead factor
+      padding: 80, // px padding used by frameGroups
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      orbitRadius: 260,
+      orbitSpeed: 0.25, // radians/sec
+      interruption: 'holdOnUserInput', // holdOnUserInput | resumeAfterDelay | ignoreUserInput
+      resumeDelay: 1.5, // seconds, used by resumeAfterDelay
+      exitBehavior: 'restoreManualView', // restoreManualView | retainCurrentView
+    };
+  }
+
+  _createDefaultForceVizAttractor(overrides = {}) {
+    return {
+      id: this._createForceVizId('attractor'),
+      name: overrides.name || 'Attractor 1',
+      type: 'fixed',
+      enabled: true,
+      x: Number.isFinite(overrides.x) ? overrides.x : this.W * 0.5,
+      y: Number.isFinite(overrides.y) ? overrides.y : this.H * 0.5,
+      strength: FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH,
+      radius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS,
+      influenceRadius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2,
+      hardness: DEFAULT_SIM_HARDNESS,
+      movement: {
+        velocityX: 0,
+        velocityY: 0,
+        driftRadius: 40,
+        driftSpeed: 0.15,
+        orbitCenterX: this.W * 0.5,
+        orbitCenterY: this.H * 0.5,
+        orbitRadius: 100,
+        orbitSpeed: 0.5,
+        pathId: null,
+      },
+      sharedAttractorId: null,
+    };
+  }
+
+  _createDefaultForceVizGroup(overrides = {}) {
+    return {
+      id: this._createForceVizId('group'),
+      name: overrides.name || 'Group 1',
+      spawnId: overrides.spawnId ?? null,
+      layerId: overrides.layerId ?? null,
+    };
+  }
+
+  _createDefaultForceVizRoute(overrides = {}) {
+    return {
+      id: this._createForceVizId('route'),
+      groupId: overrides.groupId ?? null,
+      attractorId: overrides.attractorId ?? null,
+      weight: Number.isFinite(overrides.weight) ? overrides.weight : 1,
+      enabled: true,
+    };
+  }
+
+  _createDefaultForceVizScenario() {
+    const group = this._createDefaultForceVizGroup();
+    const attractor = this._createDefaultForceVizAttractor();
+    return {
+      id: this._createForceVizId('scenario'),
+      name: 'Scenario 1',
+      groups: [group],
+      attractors: [attractor],
+      routes: [this._createDefaultForceVizRoute({ groupId: group.id, attractorId: attractor.id })],
+    };
+  }
+
+  _createDefaultForceVizState() {
+    const scenario = this._createDefaultForceVizScenario();
+    return {
+      activeScenarioIndex: 0,
+      scenarios: [scenario],
+      // The UI edits one group/attractor/route at a time while the
+      // underlying model stays array-based so more can be added later.
+      ui: {
+        activeGroupId: scenario.groups[0]?.id ?? null,
+        activeAttractorId: scenario.attractors[0]?.id ?? null,
+        activeRouteId: scenario.routes[0]?.id ?? null,
+      },
+      camera: this._createDefaultForceVizCameraConfig(),
+    };
+  }
+
+  _normalizeForceVizCameraConfig(raw) {
+    const defaults = this._createDefaultForceVizCameraConfig();
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    return {
+      policy: FORCE_VIZ_CAMERA_POLICIES.includes(cfg.policy) ? cfg.policy : defaults.policy,
+      targetGroupId: typeof cfg.targetGroupId === 'string' ? cfg.targetGroupId : null,
+      targetBoidIndex: Number.isFinite(cfg.targetBoidIndex) ? Math.max(0, Math.round(cfg.targetBoidIndex)) : defaults.targetBoidIndex,
+      smoothing: Number.isFinite(cfg.smoothing) ? _clamp01(cfg.smoothing) : defaults.smoothing,
+      offsetX: Number.isFinite(cfg.offsetX) ? cfg.offsetX : defaults.offsetX,
+      offsetY: Number.isFinite(cfg.offsetY) ? cfg.offsetY : defaults.offsetY,
+      lookahead: Number.isFinite(cfg.lookahead) ? _clamp01(cfg.lookahead) : defaults.lookahead,
+      padding: Number.isFinite(cfg.padding) ? Math.max(0, cfg.padding) : defaults.padding,
+      minZoom: Number.isFinite(cfg.minZoom) ? Math.max(MIN_ZOOM, cfg.minZoom) : defaults.minZoom,
+      maxZoom: Number.isFinite(cfg.maxZoom) ? Math.min(MAX_ZOOM, cfg.maxZoom) : defaults.maxZoom,
+      orbitRadius: Number.isFinite(cfg.orbitRadius) ? Math.max(1, cfg.orbitRadius) : defaults.orbitRadius,
+      orbitSpeed: Number.isFinite(cfg.orbitSpeed) ? cfg.orbitSpeed : defaults.orbitSpeed,
+      interruption: FORCE_VIZ_CAMERA_INTERRUPTIONS.includes(cfg.interruption) ? cfg.interruption : defaults.interruption,
+      resumeDelay: Number.isFinite(cfg.resumeDelay) ? Math.max(0, cfg.resumeDelay) : defaults.resumeDelay,
+      exitBehavior: FORCE_VIZ_CAMERA_EXIT_BEHAVIORS.includes(cfg.exitBehavior) ? cfg.exitBehavior : defaults.exitBehavior,
+    };
+  }
+
+  _normalizeForceVizAttractor(raw) {
+    const defaults = this._createDefaultForceVizAttractor();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const movement = src.movement && typeof src.movement === 'object' ? src.movement : {};
+    const rawPathId = (typeof movement.pathId === 'string' || typeof movement.pathId === 'number') ? movement.pathId : null;
+    const boundPath = rawPathId == null
+      ? null
+      : this._getForceVizPathOptions().find(path => String(path.id) === String(rawPathId));
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('attractor'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
+      type: FORCE_VIZ_ATTRACTOR_TYPES.includes(src.type) ? src.type : defaults.type,
+      enabled: src.enabled !== false,
+      x: Number.isFinite(src.x) ? src.x : defaults.x,
+      y: Number.isFinite(src.y) ? src.y : defaults.y,
+      strength: Number.isFinite(src.strength) ? Math.max(0, src.strength) : defaults.strength,
+      radius: Number.isFinite(src.radius) ? Math.max(1, src.radius) : defaults.radius,
+      influenceRadius: Number.isFinite(src.influenceRadius) ? Math.max(1, src.influenceRadius) : defaults.influenceRadius,
+      hardness: Number.isFinite(src.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, src.hardness)) : defaults.hardness,
+      movement: {
+        velocityX: Number.isFinite(movement.velocityX) ? movement.velocityX : defaults.movement.velocityX,
+        velocityY: Number.isFinite(movement.velocityY) ? movement.velocityY : defaults.movement.velocityY,
+        driftRadius: Number.isFinite(movement.driftRadius) ? Math.max(0, movement.driftRadius) : defaults.movement.driftRadius,
+        driftSpeed: Number.isFinite(movement.driftSpeed) ? movement.driftSpeed : defaults.movement.driftSpeed,
+        orbitCenterX: Number.isFinite(movement.orbitCenterX) ? movement.orbitCenterX : defaults.movement.orbitCenterX,
+        orbitCenterY: Number.isFinite(movement.orbitCenterY) ? movement.orbitCenterY : defaults.movement.orbitCenterY,
+        orbitRadius: Number.isFinite(movement.orbitRadius) ? Math.max(0, movement.orbitRadius) : defaults.movement.orbitRadius,
+        orbitSpeed: Number.isFinite(movement.orbitSpeed) ? movement.orbitSpeed : defaults.movement.orbitSpeed,
+        pathId: boundPath?.id ?? rawPathId,
+      },
+      sharedAttractorId: typeof src.sharedAttractorId === 'string' ? src.sharedAttractorId : null,
+    };
+  }
+
+  _normalizeForceVizGroup(raw) {
+    const defaults = this._createDefaultForceVizGroup();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const rawSpawnId = (typeof src.spawnId === 'string' || typeof src.spawnId === 'number') ? src.spawnId : null;
+    const boundSpawn = rawSpawnId == null
+      ? null
+      : this._getForceVizSpawnOptions().find(spawn => String(spawn.id) === String(rawSpawnId));
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('group'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
+      spawnId: boundSpawn?.id ?? rawSpawnId,
+      layerId: typeof src.layerId === 'string' ? src.layerId : null,
+    };
+  }
+
+  _normalizeForceVizRoute(raw, groupIds, attractorIds) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const groupId = groupIds.has(src.groupId) ? src.groupId : null;
+    const attractorId = attractorIds.has(src.attractorId) ? src.attractorId : null;
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('route'),
+      groupId,
+      attractorId,
+      weight: Number.isFinite(src.weight) ? Math.max(0, src.weight) : 1,
+      enabled: src.enabled !== false,
+    };
+  }
+
+  _normalizeForceVizScenario(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const groups = (Array.isArray(src.groups) ? src.groups : []).map(group => this._normalizeForceVizGroup(group));
+    const attractors = (Array.isArray(src.attractors) ? src.attractors : []).map(attractor => this._normalizeForceVizAttractor(attractor));
+    if (!groups.length) groups.push(this._createDefaultForceVizGroup());
+    if (!attractors.length) attractors.push(this._createDefaultForceVizAttractor());
+    const groupIds = new Set(groups.map(group => group.id));
+    const attractorIds = new Set(attractors.map(attractor => attractor.id));
+    // Shared attractors must reference another attractor in the same scenario.
+    for (const attractor of attractors) {
+      if (attractor.type === 'shared' && (!attractor.sharedAttractorId || !attractorIds.has(attractor.sharedAttractorId) || attractor.sharedAttractorId === attractor.id)) {
+        attractor.sharedAttractorId = attractors.find(other => other.id !== attractor.id)?.id ?? null;
+      }
+    }
+    let routes = (Array.isArray(src.routes) ? src.routes : [])
+      .map(route => this._normalizeForceVizRoute(route, groupIds, attractorIds))
+      .filter(route => route.groupId && route.attractorId);
+    if (!routes.length) {
+      routes = [this._createDefaultForceVizRoute({ groupId: groups[0].id, attractorId: attractors[0].id })];
+    }
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('scenario'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : 'Scenario',
+      groups,
+      attractors,
+      routes,
+    };
+  }
+
+  /** Normalizes/migrates `simulation.forceViz` in place. Safe to call
+   *  repeatedly (constructor, after load, after workspace import) — older
+   *  saves that predate this submode simply get the default state. */
+  _normalizeForceVizState() {
+    const raw = this.simulation.forceViz;
+    const scenarios = (raw && Array.isArray(raw.scenarios) && raw.scenarios.length
+      ? raw.scenarios
+      : [this._createDefaultForceVizScenario()]
+    ).map(scenario => this._normalizeForceVizScenario(scenario));
+    const activeScenarioIndex = Number.isFinite(raw?.activeScenarioIndex)
+      ? Math.max(0, Math.min(scenarios.length - 1, Math.round(raw.activeScenarioIndex)))
+      : 0;
+    const scenario = scenarios[activeScenarioIndex];
+    const uiRaw = raw?.ui && typeof raw.ui === 'object' ? raw.ui : {};
+    const groupIds = new Set(scenario.groups.map(group => group.id));
+    const attractorIds = new Set(scenario.attractors.map(attractor => attractor.id));
+    const routeIds = new Set(scenario.routes.map(route => route.id));
+    this.simulation.forceViz = {
+      activeScenarioIndex,
+      scenarios,
+      ui: {
+        activeGroupId: groupIds.has(uiRaw.activeGroupId) ? uiRaw.activeGroupId : scenario.groups[0].id,
+        activeAttractorId: attractorIds.has(uiRaw.activeAttractorId) ? uiRaw.activeAttractorId : scenario.attractors[0].id,
+        activeRouteId: routeIds.has(uiRaw.activeRouteId) ? uiRaw.activeRouteId : scenario.routes[0].id,
+      },
+      camera: this._normalizeForceVizCameraConfig(raw?.camera),
+    };
+  }
+
+  _getActiveForceVizScenario() {
+    const fv = this.simulation.forceViz;
+    if (!fv) return null;
+    return fv.scenarios[fv.activeScenarioIndex] || fv.scenarios[0] || null;
+  }
+
+  _getForceVizGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.groups.find(group => group.id === groupId) || null;
+  }
+
+  _getForceVizAttractor(attractorId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.attractors.find(attractor => attractor.id === attractorId) || null;
+  }
+
+  _getForceVizRoutesForGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.routes.filter(route => route.groupId === groupId) || [];
+  }
+
+  /** Options for the "bind to spawn" control: existing boid spawn
+   *  definitions, not a duplicate physics/spawn config. */
+  _getForceVizSpawnOptions() {
+    const data = this._getSimulationBrushData('boid');
+    return Array.isArray(data?.spawns) ? data.spawns : [];
+  }
+
+  _getForceVizPathOptions() {
+    const data = this._getSimulationBrushData('boid');
+    return Array.isArray(data?.paths) ? data.paths : [];
+  }
+
+  _setSimulationMode(mode) {
+    const next = mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+    if (this.simulation.mode === next) return;
+    if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
+    if (next === 'forceVisualization') {
+      this._forceVizManualViewSnapshot = this._captureViewState();
+    } else {
+      this._restoreOrRetainForceVizView();
+    }
+    this.simulation.mode = next;
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    this.showToast(next === 'forceVisualization' ? 'Force Visualization mode ON' : 'Force Visualization mode OFF');
+  }
+
+  /** Applies the configured exit behavior after a run stops: restores the
+   *  manual view captured on entering the submode, or leaves the camera
+   *  wherever the run left it ('retainCurrentView'). The snapshot itself is
+   *  kept so repeated run/stop cycles within the same submode session keep
+   *  restoring to the same baseline view. */
+  _applyForceVizExitBehaviorOnStop() {
+    const cfg = this.simulation.forceViz?.camera;
+    const exitBehavior = cfg?.exitBehavior || 'restoreManualView';
+    if (exitBehavior !== 'restoreManualView' || !this._forceVizManualViewSnapshot) return;
+    const snapshot = this._forceVizManualViewSnapshot;
+    this.viewZoom = snapshot.zoom;
+    this.viewPanX = snapshot.panX;
+    this.viewPanY = snapshot.panY;
+    this.viewRotation = snapshot.rotation;
+    this._applyViewTransform();
+  }
+
+  /** Called when actually leaving Force Visualization mode (not just
+   *  stopping a run): applies the same exit behavior, then discards the
+   *  snapshot since there is no longer a submode session to return to. */
+  _restoreOrRetainForceVizView() {
+    this._applyForceVizExitBehaviorOnStop();
+    this._forceVizManualViewSnapshot = null;
+  }
+
+  _addForceVizGroup() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const group = this._createDefaultForceVizGroup({ name: `Group ${scenario.groups.length + 1}` });
+    scenario.groups.push(group);
+    this.simulation.forceViz.ui.activeGroupId = group.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return group;
+  }
+
+  _removeForceVizGroup(groupId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.groups.length <= 1) return;
+    scenario.groups = scenario.groups.filter(group => group.id !== groupId);
+    scenario.routes = scenario.routes.filter(route => route.groupId !== groupId);
+    if (!scenario.routes.length) {
+      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+    }
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveGroup(groupId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeGroupId = groupId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizGroup(groupId, patch) {
+    const group = this._getForceVizGroup(groupId);
+    if (!group) return;
+    Object.assign(group, patch);
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _addForceVizAttractor() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const attractor = this._createDefaultForceVizAttractor({ name: `Attractor ${scenario.attractors.length + 1}` });
+    scenario.attractors.push(attractor);
+    this.simulation.forceViz.ui.activeAttractorId = attractor.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return attractor;
+  }
+
+  _removeForceVizAttractor(attractorId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.attractors.length <= 1) return;
+    scenario.attractors = scenario.attractors.filter(attractor => attractor.id !== attractorId);
+    scenario.routes = scenario.routes.filter(route => route.attractorId !== attractorId);
+    for (const attractor of scenario.attractors) {
+      if (attractor.sharedAttractorId === attractorId) attractor.sharedAttractorId = null;
+    }
+    if (!scenario.routes.length) {
+      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+    }
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveAttractor(attractorId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeAttractorId = attractorId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizAttractor(attractorId, patch) {
+    const attractor = this._getForceVizAttractor(attractorId);
+    if (!attractor) return;
+    if (patch && typeof patch === 'object' && patch.movement) {
+      attractor.movement = { ...attractor.movement, ...patch.movement };
+      const { movement, ...rest } = patch;
+      Object.assign(attractor, rest);
+    } else {
+      Object.assign(attractor, patch);
+    }
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _addForceVizRoute() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const groupId = this.simulation.forceViz.ui.activeGroupId || scenario.groups[0].id;
+    const attractorId = this.simulation.forceViz.ui.activeAttractorId || scenario.attractors[0].id;
+    const route = this._createDefaultForceVizRoute({ groupId, attractorId });
+    scenario.routes.push(route);
+    this.simulation.forceViz.ui.activeRouteId = route.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return route;
+  }
+
+  _removeForceVizRoute(routeId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.routes.length <= 1) return;
+    scenario.routes = scenario.routes.filter(route => route.id !== routeId);
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveRoute(routeId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeRouteId = routeId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizRoute(routeId, patch) {
+    const scenario = this._getActiveForceVizScenario();
+    const route = scenario?.routes.find(entry => entry.id === routeId);
+    if (!route) return;
+    Object.assign(route, patch);
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _updateForceVizCamera(patch) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.camera = this._normalizeForceVizCameraConfig({ ...this.simulation.forceViz.camera, ...patch });
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  /** Live position for one attractor this frame. Reuses the same animated
+   *  path-target math as simulation guide paths for the 'path' type, so a
+   *  path attractor and a path guide behave identically. */
+  _resolveForceVizAttractorPosition(attractor, elapsed, scenario, depth = 0) {
+    if (!attractor) return null;
+    switch (attractor.type) {
+      case 'moving': {
+        const vx = attractor.movement?.velocityX || 0;
+        const vy = attractor.movement?.velocityY || 0;
+        return { x: attractor.x + vx * elapsed, y: attractor.y + vy * elapsed };
+      }
+      case 'unreachable': {
+        // Drifts continuously around its anchor so the influence falloff
+        // never fully saturates — boids chase it but never quite arrive.
+        const driftAngle = elapsed * (attractor.movement?.driftSpeed || 0);
+        const driftRadius = attractor.movement?.driftRadius || 0;
+        return {
+          x: attractor.x + Math.cos(driftAngle) * driftRadius,
+          y: attractor.y + Math.sin(driftAngle) * driftRadius,
+        };
+      }
+      case 'orbiting': {
+        const cx = attractor.movement?.orbitCenterX ?? attractor.x;
+        const cy = attractor.movement?.orbitCenterY ?? attractor.y;
+        const radius = Math.max(0, attractor.movement?.orbitRadius || 0);
+        const angle = elapsed * (attractor.movement?.orbitSpeed || 0);
+        return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+      }
+      case 'path': {
+        const pathItem = this._getForceVizPathOptions().find(entry => String(entry.id) === String(attractor.movement?.pathId));
+        if (!pathItem) return { x: attractor.x, y: attractor.y };
+        const target = this._getAnimatedSimulationPathTarget(pathItem, this.getP());
+        return target ? { x: target.x, y: target.y } : { x: attractor.x, y: attractor.y };
+      }
+      case 'shared': {
+        if (depth > 4) return { x: attractor.x, y: attractor.y };
+        const target = scenario?.attractors.find(entry => entry.id === attractor.sharedAttractorId);
+        if (!target || target.id === attractor.id) return { x: attractor.x, y: attractor.y };
+        return this._resolveForceVizAttractorPosition(target, elapsed, scenario, depth + 1);
+      }
+      case 'fixed':
+      default:
+        return { x: attractor.x, y: attractor.y };
+    }
+  }
+
+  /** Maps a Force Visualization group to the agent index range its bound
+   *  spawn produced this stroke (see BoidBrush._spawnRangesById). Returns
+   *  null when the group isn't bound or hasn't spawned yet — the route is
+   *  simply skipped for this frame rather than falling back to "everyone". */
+  _resolveForceVizGroupRange(brush, group) {
+    const ranges = brush?._spawnRangesById;
+    if (!ranges || group?.spawnId == null) return null;
+    const range = ranges.get(group.spawnId)
+      || [...ranges.entries()].find(([spawnId]) => String(spawnId) === String(group.spawnId))?.[1];
+    if (!range) return null;
+    return { start: range.startIndex, end: range.endIndex };
+  }
+
+  /** Builds the CPU-applied, group-scoped guide points routes describe.
+   *  Called from brushes.js `_collectSimulationGuides` only while
+   *  simulation.mode === 'forceVisualization'. */
+  _collectForceVizGuidePoints(brush, p) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || !scenario.routes.length) return [];
+    const elapsed = (performance.now() - this._startTime) / 1000;
+    const points = [];
+    for (const route of scenario.routes) {
+      if (route.enabled === false) continue;
+      const weight = Math.max(0, route.weight ?? 1);
+      if (weight <= 0) continue;
+      const group = this._getForceVizGroup(route.groupId, scenario);
+      const attractor = this._getForceVizAttractor(route.attractorId, scenario);
+      if (!group || !attractor || attractor.enabled === false) continue;
+      const groupRange = this._resolveForceVizGroupRange(brush, group);
+      if (!groupRange) continue;
+      const pos = this._resolveForceVizAttractorPosition(attractor, elapsed, scenario);
+      if (!pos) continue;
+      points.push({
+        x: pos.x,
+        y: pos.y,
+        strength: Math.max(0, (attractor.strength ?? 0) * weight),
+        radius: Math.max(1, attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS),
+        influenceRadius: Math.max(attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS, attractor.influenceRadius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2),
+        groupRange,
+      });
+    }
+    return points;
+  }
+
+  /** Computes the pan (viewPanX/viewPanY) that would center canvas point
+   *  (focusX, focusY) in the viewport at the given zoom/rotation, reusing
+   *  the exact same anchor math manual pan/zoom/pinch already use — the
+   *  camera adapter never introduces a second coordinate system. */
+  _computeForceVizCenteredPan(focusX, focusY, zoom, rotation) {
+    const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+    const w = areaRect?.width || this.W;
+    const h = areaRect?.height || this.H;
+    const savedZoom = this.viewZoom;
+    const savedRotation = this.viewRotation;
+    this.viewZoom = zoom;
+    this.viewRotation = rotation;
+    this._setViewPanForScreenAnchor(focusX, focusY, w / 2, h / 2);
+    const panX = this.viewPanX;
+    const panY = this.viewPanY;
+    this.viewZoom = savedZoom;
+    this.viewRotation = savedRotation;
+    return { panX, panY };
+  }
+
+  _isForceVizCameraInterrupted(cfg) {
+    if (cfg.interruption === 'ignoreUserInput') return false;
+    const runtime = this._forceVizCameraRuntime;
+    const sinceMs = performance.now() - (runtime.lastManualInputAt || 0);
+    if (cfg.interruption === 'resumeAfterDelay') {
+      return sinceMs < Math.max(0, (cfg.resumeDelay || 0) * 1000);
+    }
+    // holdOnUserInput: pause automation briefly after any manual pan/zoom/rotate.
+    return sinceMs < FORCE_VIZ_MANUAL_INPUT_HOLD_MS;
+  }
+
+  /** Resolves the desired focus point/zoom/rotation for the active camera
+   *  policy from BoidBrush's cached transient snapshot (centroid/bounds/
+   *  average velocity/candidates) — never re-scans the agent buffer here.
+   *  Returns null when the policy has nothing to frame yet (e.g. no agents
+   *  spawned) so the adapter leaves the camera exactly where it is. */
+  _resolveForceVizCameraDesired(brush, elapsed) {
+    const cfg = this.simulation.forceViz.camera;
+    const snapshot = brush?._transientSnapshot;
+    switch (cfg.policy) {
+      case 'followBoid': {
+        if (!snapshot?.count || !snapshot.candidates?.length) return null;
+        const idx = Math.max(0, Math.min(snapshot.candidates.length - 1, Math.round(cfg.targetBoidIndex || 0)));
+        const candidate = snapshot.candidates[idx];
+        return { focusX: candidate.x, focusY: candidate.y, velX: candidate.vx, velY: candidate.vy, zoom: this.viewZoom, rotation: this.viewRotation };
+      }
+      case 'followCentroid': {
+        if (!snapshot?.count) return null;
+        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: snapshot.avgVelocity.x, velY: snapshot.avgVelocity.y, zoom: this.viewZoom, rotation: this.viewRotation };
+      }
+      case 'frameGroups': {
+        if (!snapshot?.count) return null;
+        const { minX, minY, maxX, maxY } = snapshot.bounds;
+        const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+        const areaW = areaRect?.width || this.W;
+        const areaH = areaRect?.height || this.H;
+        const pad = Math.max(0, cfg.padding || 0);
+        const boundsW = Math.max(1, maxX - minX);
+        const boundsH = Math.max(1, maxY - minY);
+        const zoom = Math.max(0.01, Math.min(areaW / (boundsW + pad * 2), areaH / (boundsH + pad * 2)));
+        return { focusX: (minX + maxX) / 2, focusY: (minY + maxY) / 2, velX: 0, velY: 0, zoom, rotation: this.viewRotation };
+      }
+      case 'orbit': {
+        if (!snapshot?.count) return null;
+        const runtime = this._forceVizCameraRuntime;
+        const dt = Number.isFinite(runtime.lastElapsed) ? Math.max(0, Math.min(0.25, elapsed - runtime.lastElapsed)) : 0;
+        runtime.orbitAngle = (runtime.orbitAngle || 0) + (cfg.orbitSpeed || 0) * dt;
+        runtime.lastElapsed = elapsed;
+        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: 0, velY: 0, zoom: this.viewZoom, rotation: runtime.orbitAngle };
+      }
+      case 'fixed':
+      default:
+        return null;
+    }
+  }
+
+  /** The single adapter that turns a resolved camera policy target into
+   *  actual view state changes: applies offset/lookahead, clamps zoom,
+   *  respects interruption, smooths toward the target, and finally calls
+   *  the same _applyViewTransform() manual pan/zoom uses. Canvas
+   *  coordinates are untouched — this only moves viewZoom/viewPanX/
+   *  viewPanY/viewRotation, the same fields manual navigation uses. */
+  _applyForceVizCameraFrame(brush, elapsed) {
+    const sim = this.simulation;
+    if (!sim.enabled || sim.mode !== 'forceVisualization' || !sim.running) return;
+    if (this.activeBrush !== 'boid') return;
+    const cfg = sim.forceViz?.camera;
+    if (!cfg || this._isForceVizCameraInterrupted(cfg)) return;
+    const desired = this._resolveForceVizCameraDesired(brush, elapsed);
+    if (!desired) return;
+    const minZoom = Math.max(MIN_ZOOM, cfg.minZoom);
+    const maxZoom = Math.min(MAX_ZOOM, cfg.maxZoom);
+    const clampedZoom = Math.max(minZoom, Math.min(maxZoom, desired.zoom));
+    const lookahead = Math.max(0, cfg.lookahead || 0);
+    const focusX = desired.focusX + (desired.velX || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetX || 0);
+    const focusY = desired.focusY + (desired.velY || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetY || 0);
+    const targetRotation = Number.isFinite(desired.rotation) ? desired.rotation : this.viewRotation;
+    const target = this._computeForceVizCenteredPan(focusX, focusY, clampedZoom, targetRotation);
+    const smoothing = Math.max(0.001, Math.min(1, cfg.smoothing));
+    this.viewZoom = _lerp(this.viewZoom, clampedZoom, smoothing);
+    this.viewPanX = _lerp(this.viewPanX, target.panX, smoothing);
+    this.viewPanY = _lerp(this.viewPanY, target.panY, smoothing);
+    this.viewRotation = _lerpAngle(this.viewRotation, targetRotation, smoothing);
+    this._applyViewTransform();
+  }
+
+  /** Compact camera/status text for the HUD — the only place this reads
+   *  from is the same transient snapshot + camera config the adapter uses. */
+  _formatForceVizStatusText() {
+    const sim = this.simulation;
+    if (sim.mode !== 'forceVisualization') return '';
+    const cfg = sim.forceViz?.camera;
+    const scenario = this._getActiveForceVizScenario();
+    const routeCount = scenario?.routes.filter(route => route.enabled !== false).length || 0;
+    const policyLabel = {
+      fixed: 'Fixed',
+      followBoid: 'Follow Boid',
+      followCentroid: 'Follow Centroid',
+      frameGroups: 'Frame Groups',
+      orbit: 'Orbit',
+    }[cfg?.policy] || 'Fixed';
+    const stateLabel = sim.running ? 'Running' : (sim.paused ? 'Paused' : 'Ready');
+    return `${stateLabel} · ${routeCount} route${routeCount === 1 ? '' : 's'} · Cam: ${policyLabel} · ${Math.round(this.viewZoom * 100)}%`;
+  }
+
+  _syncForceVizUI() {
+    const select = document.getElementById('simModeSelect');
+    if (select && select.value !== this.simulation.mode) select.value = this.simulation.mode;
+    document.querySelectorAll('[data-sim-force-viz-only]').forEach(el => {
+      el.style.display = this.simulation.mode === 'forceVisualization' ? '' : 'none';
+    });
+    this._renderForceVizPanel?.();
+    this._updateForceVizStatusText();
+  }
+
+  /** Cheap per-frame text refresh, split out from _syncForceVizUI() (which
+   *  also toggles DOM visibility) so the camera-frame hook in the main RAF
+   *  loop isn't doing a querySelectorAll every frame. */
+  _updateForceVizStatusText() {
+    const status = document.getElementById('simForceVizStatus');
+    if (!status) return;
+    const text = this._formatForceVizStatusText();
+    if (status.textContent !== text) status.textContent = text;
+    const nextDisplay = text ? '' : 'none';
+    if (status.style.display !== nextDisplay) status.style.display = nextDisplay;
   }
 
   _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
@@ -7799,6 +8632,8 @@ export class App {
     if (!Number.isFinite(alpha) || alpha <= 0 || typeof drawBand !== 'function') return;
     const scratch = this._getSimulationOverlayScratchContext();
     if (!scratch?.ctx || !scratch.canvas) return;
+    scratch.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    scratch.ctx.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
     drawBand(scratch.ctx);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -8731,6 +9566,14 @@ export class App {
     document.getElementById('simHelpModal')?.classList.remove('open');
   }
 
+  _openForceVizHelp() {
+    document.getElementById('forceVizHelpModal')?.classList.add('open');
+  }
+
+  _closeForceVizHelp() {
+    document.getElementById('forceVizHelpModal')?.classList.remove('open');
+  }
+
   _toggleSimTopbarGuide() {
     this._openSimulationHelp();
   }
@@ -9258,6 +10101,9 @@ export class App {
         sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
         sensingSource,
         sensingLayerIds,
+        sensingRules: Array.isArray(sessionVars.sensingRules) && sessionVars.sensingRules.length
+          ? normalizeSensingRules(sessionVars.sensingRules)
+          : null,
         unresolvedLayers: [],
         unresolvedSensingLayers: [],
       };
@@ -9526,6 +10372,10 @@ export class App {
           <span>Every</span>
           <input type="number" min="1" max="50" step="1" data-sim-setup-future-field="sensingUpdateFrames" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingUpdateFrames) ? Math.round(row.sensingUpdateFrames) : 30}">
         </label>
+        <div class="sim-setup-rules">
+          <button type="button" data-sim-setup-rules-btn="${_escapeHtml(row.sessionId)}">Edit Rules…</button>
+          <span>${_escapeHtml(row.sensingRules ? _describeSensingRules(row.sensingRules) : '1 rule (from row controls)')}</span>
+        </div>
       </div>`;
     root.innerHTML = `
       <table class="sim-setup-table">
@@ -9656,6 +10506,13 @@ export class App {
         this._renderSimulationSetupExplorer();
       });
     });
+    root.querySelectorAll('[data-sim-setup-rules-btn]').forEach(button => {
+      button.addEventListener('click', event => {
+        const row = this._getSimulationSetupDraftRow(event.currentTarget.dataset.simSetupRulesBtn);
+        if (!row) return;
+        this._openSensingRulesModal({ type: 'simRow', row });
+      });
+    });
     root.querySelectorAll('[data-sim-setup-menu]').forEach(button => {
       button.addEventListener('click', event => {
         const rowKey = event.currentTarget.dataset.simSetupMenu;
@@ -9753,7 +10610,8 @@ export class App {
     for (const session of sessions) {
       const row = rowsById.get(session.id);
       if (!row) continue;
-      session.vars = _normalizeSimulationVars({
+      const rowRules = normalizeSensingRules(row.sensingRules);
+      session.vars = _normalizeSimulationVars(_syncSensingFlatFromRule0({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingMode: row.sensingMode,
@@ -9764,7 +10622,8 @@ export class App {
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
-      });
+        sensingRules: rowRules.length ? rowRules : undefined,
+      }, rowRules));
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
     this.simulation.sessions = sessions;
@@ -9828,7 +10687,8 @@ export class App {
     for (const session of sessions) {
       const row = rowsById.get(session.id);
       if (!row) continue;
-      session.vars = _normalizeSimulationVars({
+      const rowRules = normalizeSensingRules(row.sensingRules);
+      session.vars = _normalizeSimulationVars(_syncSensingFlatFromRule0({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingMode: row.sensingMode,
@@ -9839,7 +10699,8 @@ export class App {
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
-      });
+        sensingRules: rowRules.length ? rowRules : undefined,
+      }, rowRules));
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
     return {
@@ -9871,6 +10732,7 @@ export class App {
       row.sensingUpdateFrames = 30;
       row.sensingSource = 'below';
       row.sensingLayerIds = [];
+      row.sensingRules = null;
       row.unresolvedLayers = [];
       row.unresolvedSensingLayers = [];
     });
@@ -10014,6 +10876,13 @@ export class App {
           sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
           sensingSource: SIM_SENSING_SOURCES.includes(sessionVars.sensingSource) ? sessionVars.sensingSource : 'below',
           sensingLayerIds: sensingMap.resolved,
+          sensingRules: Array.isArray(sessionVars.sensingRules) && sessionVars.sensingRules.length
+            ? normalizeSensingRules(sessionVars.sensingRules).map(rule => {
+                if (rule.source !== 'selected' || !rule.layerIds.length) return rule;
+                const ruleMap = this._mapImportedSimulationSetupLayerIds(rule.layerIds, normalized.importedSetupMeta?.sourceLayers);
+                return { ...rule, layerIds: ruleMap.resolved };
+              })
+            : null,
           unresolvedLayers: binding?.unresolvedLayers || [],
           unresolvedSensingLayers: sensingMap.missing,
         };
@@ -10536,12 +11405,16 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
-        case 'simEphemeralFade': {
+        case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold': {
           const max = {
             simPointStrength: 2,
             simEdgeForce: 2,
             simPheroPaintStrength: 1,
             simEphemeralFade: 3,
+            sensingStrength: 1,
+            sensingThreshold: 1,
           }[id] ?? 2;
           return { value: raw / 100, min: 0, max, step: 0.01, digits: 2 };
         }
@@ -10556,6 +11429,8 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
         case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold':
           return displayValue * 100;
         default:
           return displayValue;
@@ -10597,7 +11472,14 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
         case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold':
           return (value / 100).toFixed(2);
+        case 'sensingRadius':
+        case 'sensingFitRadius':
+          return `${Math.round(value)}px`;
+        case 'sensingUpdateFrames':
+          return `${Math.round(value)}f`;
         case 'simBoundsMargin':
           return Math.round(value) >= SIM_NEAR_INFINITE_BOUNDS_MARGIN
             ? 'Near-infinite'
@@ -10616,6 +11498,20 @@ export class App {
         <input type="checkbox" data-sim-param="${id}" ${document.getElementById(id)?.checked ? 'checked' : ''}>
       </label>
       ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
+    // Mirrors a sidebar <select> control: options are cloned from the source
+    // element so both stay in sync through the data-sim-param wiring.
+    const simPanelSelect = ({ id, label, desc }) => {
+      const source = document.getElementById(id);
+      const options = source
+        ? Array.from(source.options).map(opt => `<option value="${_escapeHtml(opt.value)}" ${opt.value === source.value ? 'selected' : ''}>${_escapeHtml(opt.textContent)}</option>`).join('')
+        : '';
+      return `
+      <label class="sim-inspector-row" style="margin:4px 0">
+        <span>${label}</span>
+        <select class="sim-stage-select" style="max-width:150px" data-sim-param="${id}" data-sim-input-kind="select">${options}</select>
+      </label>
+      ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
+    };
     const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => {
       const numberMeta = getSimParamDisplayMeta(id, value);
       const numberMin = numberMeta.min ?? getSimParamDisplayMeta(id, min).value;
@@ -10746,8 +11642,23 @@ export class App {
       <div class="sim-inspector-note">Motion overrides affect already-running boids without forcing a respawn.</div>
       ${simVarSlider({ id: 'maxSpeed', label: 'Max Speed', min: 1, max: 30, step: 0.5, scale: 0.5, value: maxSpeedValue })}
       ${simVarSlider({ id: 'damping', label: 'Damping', min: 80, max: 100, step: 0.5, scale: 0.01, value: dampingValue })}`;
-    const boidSensingBody = `
-      <div class="sim-inspector-note">Use the sidebar Pixel Sensing controls while this session is loaded. Those drawing-mode controls are saved with the active simulation session and applied per runtime during multi-session playback.</div>`;
+    const sensingSourceValue = document.getElementById('sensingSource')?.value || 'below';
+    const sensingBody = `
+      <div class="sim-inspector-note">These mirror the sidebar Pixel Sensing controls. Changes apply immediately and are saved with the active simulation session.</div>
+      ${simPanelCheckbox({ id: 'sensingEnabled', label: 'Enable' })}
+      ${simPanelSelect({ id: 'sensingMode', label: 'Mode' })}
+      ${simPanelSelect({ id: 'sensingChannel', label: 'Channel' })}
+      ${simPanelSlider({ id: 'sensingStrength', label: 'Strength', min: 0, max: 100, value: Math.round((p.sensingStrength ?? 0.5) * 100) })}
+      ${simPanelSlider({ id: 'sensingRadius', label: 'Radius', min: 5, max: 80, value: Math.round(p.sensingRadius ?? 20) })}
+      ${simPanelSlider({ id: 'sensingFitRadius', label: 'Fit Radius', min: 0, max: 80, value: Math.round(p.sensingFitRadius ?? 0) })}
+      ${simPanelSlider({ id: 'sensingThreshold', label: 'Threshold', min: 0, max: 100, value: Math.round((p.sensingThreshold ?? 0.1) * 100) })}
+      ${simPanelSlider({ id: 'sensingUpdateFrames', label: 'Update Every', min: 1, max: 50, value: Math.round(p.sensingUpdateFrames ?? 30), desc: 'Frames between sensing refreshes for Active and All sources' })}
+      ${simPanelSelect({ id: 'sensingSource', label: 'Source' })}
+      <div class="sim-inspector-actions" style="margin-top:4px">
+        <button data-sim-sensing-pick-layers="1">${sensingSourceValue === 'selected' ? 'Edit Layers' : 'Pick Layers'}</button>
+        <button data-sim-sensing-edit-rules="1">Edit Rules…</button>
+      </div>
+      <div class="sim-inspector-note" data-sim-sensing-layer-summary="1">${_escapeHtml(`${sensingSourceValue === 'selected' ? 'Using: ' : 'Custom: '}${this._buildSensingLayerSelectionSummary()}`)}</div>`;
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
@@ -10896,9 +11807,9 @@ export class App {
           renderInspectorSubgroup('Motion', boidMotionBody),
         ])
       : '';
-    const pixelSensingSection = isBoid
-      ? renderTypeSection('pixelSensing', 'Simulation Pixel Sensing', [
-          renderInspectorSubgroup('Per-Session Sensing', boidSensingBody),
+    const pixelSensingSection = (isBoid || this.activeBrush === 'ant')
+      ? renderTypeSection('pixelSensing', 'Pixel Sensing', [
+          renderInspectorSubgroup('Sensing Controls', sensingBody),
         ])
       : '';
     const pointSection = renderTypeSection('pointSettings', 'Points', [
@@ -11475,11 +12386,16 @@ export class App {
       const paramId = el.dataset.simParam;
       const source = document.getElementById(paramId);
       const isBooleanParam = (el.type === 'checkbox') || (source?.type === 'checkbox');
+      const isSelectParam = el.tagName === 'SELECT' || source?.tagName === 'SELECT';
       const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
       const peers = () => Array.from(panel.querySelectorAll(`[data-sim-param="${paramId}"]`));
       const syncParamUI = value => {
         if (isBooleanParam) {
           peers().forEach(peer => { peer.checked = !!value; });
+          return;
+        }
+        if (isSelectParam) {
+          peers().forEach(peer => { peer.value = String(value); });
           return;
         }
         const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
@@ -11497,6 +12413,7 @@ export class App {
       };
       const initialParamValue = (() => {
         if (isBooleanParam) return !!source?.checked;
+        if (isSelectParam) return String(source?.value ?? el.value ?? '');
         const rawValue = Number(source?.value ?? el.value);
         return Number.isFinite(rawValue) ? rawValue : 0;
       })();
@@ -11507,6 +12424,13 @@ export class App {
           const nextChecked = !!el.checked;
           source.checked = nextChecked;
           syncParamUI(nextChecked);
+          source.dispatchEvent(new Event(eventName, { bubbles: true }));
+          return;
+        }
+        if (isSelectParam) {
+          const nextSelected = String(el.value);
+          source.value = nextSelected;
+          syncParamUI(nextSelected);
           source.dispatchEvent(new Event(eventName, { bubbles: true }));
           return;
         }
@@ -11555,6 +12479,12 @@ export class App {
         forward('input');
       });
       el.addEventListener('change', () => forward('change'));
+    });
+    panel.querySelectorAll('[data-sim-sensing-pick-layers]').forEach(button => {
+      button.addEventListener('click', () => this.toggleSensingSourcePicker?.(button));
+    });
+    panel.querySelectorAll('[data-sim-sensing-edit-rules]').forEach(button => {
+      button.addEventListener('click', () => this._openSensingRulesModal?.({ type: 'drawing' }));
     });
     queryAllInRoots('[data-sim-field]').forEach(el => {
       const field = el.dataset.simField;
@@ -11898,6 +12828,7 @@ export class App {
     }
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
+    this._toggleBrushSections(this.activeBrush);
     this._syncSimulationUI();
     if (next && !overlayHudEnabled) this._showSimulationControlsDrawer();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
@@ -11910,6 +12841,7 @@ export class App {
   }
 
   _syncSimulationUI() {
+    this._syncForceVizUI();
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
@@ -11993,6 +12925,15 @@ export class App {
     }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
+    const forceVizBtn = document.getElementById('simForceVizToggle');
+    if (forceVizBtn) {
+      const forceVizOn = this.simulation.mode === 'forceVisualization';
+      const forceVizLabel = forceVizOn ? 'Force Visualization mode on' : 'Force Visualization mode off';
+      forceVizBtn.classList.toggle('active', forceVizOn);
+      forceVizBtn.setAttribute('aria-pressed', forceVizOn ? 'true' : 'false');
+      forceVizBtn.setAttribute('aria-label', forceVizLabel);
+      forceVizBtn.title = forceVizLabel;
+    }
     const simTabActive = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]')?.classList.contains('active');
     inspectorButtons.forEach(button => button?.classList.toggle('active', !!simTabActive));
     guidesButtons.forEach(button => {
@@ -12139,6 +13080,20 @@ export class App {
         }
         this.simulation.runtimeStrokeStarts = this._collectSimulationStrokeStartSpawns(this.activeBrush, simParams);
         const launchSpawn = this.simulation.runtimeStrokeStarts[0] || spawn;
+        const bindForceVizSpawn = this.simulation.mode === 'forceVisualization'
+          && this.activeBrush === 'boid'
+          && spawn
+          && Array.isArray(this.simulation.forceViz?.scenarios);
+        if (bindForceVizSpawn) {
+          const activeScenario = this._getActiveForceVizScenario();
+          const activeRoutes = activeScenario?.routes || [];
+          const activeGroups = activeScenario?.groups || [];
+          const boundSpawnIds = new Set(activeRoutes.filter(route => route.enabled !== false).map(route => route.groupId));
+          const primaryGroup = activeGroups.find(group => boundSpawnIds.has(group.id) && group.spawnId != null)
+            || activeGroups.find(group => group.spawnId != null)
+            || null;
+          brush._primarySpawnId = primaryGroup?.spawnId ?? spawn.id ?? null;
+        }
         this._updateSimulationLeader(0, simParams);
         brush.onDown?.(launchSpawn.x, launchSpawn.y, 1);
         brush.configureSimulation?.(this._getSimulationBrushData(), simParams);
@@ -12212,6 +13167,7 @@ export class App {
     this.isDrawing = false;
     this.isTapering = false;
     this._simulationSavedPlaybackCapture = null;
+    if (wasActive && this.simulation.mode === 'forceVisualization') this._applyForceVizExitBehaviorOnStop();
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
   }
@@ -13028,18 +13984,18 @@ export class App {
         ctx.stroke();
         ctx.restore();
       }
-      ctx.fillStyle = 'rgba(18,18,22,0.55)';
+      ctx.fillStyle = 'rgba(18,18,22,0.72)';
       ctx.beginPath();
       ctx.arc(badge.x, badge.y, ui.deleteBadgeRadius, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.34)';
       ctx.lineWidth = Math.max(1, ui.scale);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
       ctx.font = `${ui.deleteBadgeFont}px Segoe UI, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('×', badge.x, badge.y + 0.5);
+      ctx.fillText('×', badge.x, badge.y + (0.5 * ui.scale));
     };
 
     const drawOverlayChip = (button, label) => {
@@ -13409,25 +14365,13 @@ export class App {
             }, 'Format');
           }
           for (const button of speedControls.deleteButtons) {
-            drawOverlayChip({ ...button, width: 20, height: 20 }, '×');
+            drawDelete('paths', 'pathSpeedPoint', { id: `speed:${button.speedPointId}` }, button.x, button.y);
           }
           for (const button of speedControls.radiusDeleteButtons) {
-            drawOverlayChip({
-              ...button,
-              width: 20,
-              height: 20,
-              strokeStyle: 'rgba(255,105,214,0.82)',
-              textStyle: 'rgba(255,222,246,0.98)',
-            }, '×');
+            drawDelete('paths', 'pathRadiusPoint', { id: `radius:${button.radiusPointId}` }, button.x, button.y);
           }
           for (const button of speedControls.strengthDeleteButtons) {
-            drawOverlayChip({
-              ...button,
-              width: 20,
-              height: 20,
-              strokeStyle: 'rgba(100,220,255,0.82)',
-              textStyle: 'rgba(196,244,255,0.98)',
-            }, '×');
+            drawDelete('paths', 'pathStrengthPoint', { id: `strength:${button.strengthPointId}` }, button.x, button.y);
           }
           const drawToggleChip = (button, active) => {
             if (!button) return;
@@ -15717,8 +16661,7 @@ export class App {
   _toggleBrushSections(brush) {
     document.querySelectorAll('[data-brushes]').forEach(el => {
       const allowed = el.dataset.brushes.split(' ');
-      const shouldShow = allowed.includes(brush)
-        && !(el.dataset.section === 'sensing' && this.simulation.enabled && this._isMotionBrush(brush));
+      const shouldShow = allowed.includes(brush);
       el.classList.toggle('brush-hidden', !shouldShow);
     });
   }
@@ -15972,6 +16915,9 @@ export class App {
       source.dispatchEvent(new Event('change', { bubbles: true }));
       this._syncSimulationUI();
     });
+    document.getElementById('simForceVizToggle')?.addEventListener('click', () => {
+      this._setSimulationMode(this.simulation.mode === 'forceVisualization' ? 'normal' : 'forceVisualization');
+    });
     document.getElementById('simSetupExplorerBtn')?.addEventListener('click', event => {
       this.toggleSimulationSessionRoutingPicker(event.currentTarget);
     });
@@ -16023,6 +16969,9 @@ export class App {
       this.simulation.hudCollapsed = !this.simulation.hudCollapsed;
       this._syncSimulationUI();
     });
+    document.getElementById('simModeSelect')?.addEventListener('change', event => {
+      this._setSimulationMode(event.target.value);
+    });
     ['simInspectorToggle', 'simDrawerInspectorToggle'].forEach(id => {
       document.getElementById(id)?.addEventListener('click', () => {
         // Toggle simulation tab visibility in right panel
@@ -16058,6 +17007,8 @@ export class App {
     });
     document.getElementById('simHelpClose')?.addEventListener('click', () => this._closeSimulationHelp());
     document.getElementById('simHelpBackdrop')?.addEventListener('click', () => this._closeSimulationHelp());
+    document.getElementById('forceVizHelpClose')?.addEventListener('click', () => this._closeForceVizHelp());
+    document.getElementById('forceVizHelpBackdrop')?.addEventListener('click', () => this._closeForceVizHelp());
     document.getElementById('simDistributePointsClose')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsBackdrop')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsCancel')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
@@ -16089,6 +17040,19 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('sensingRulesBtn')?.addEventListener('click', () => this._openSensingRulesModal({ type: 'drawing' }));
+    document.getElementById('sensingRulesClose')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesBackdrop')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesCancelBtn')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesApplyBtn')?.addEventListener('click', () => this._applySensingRulesModal());
+    document.getElementById('sensingRulesResetBtn')?.addEventListener('click', () => this._resetSensingRulesModal());
+    document.getElementById('sensingRulesAddBtn')?.addEventListener('click', () => {
+      const state = this._sensingRulesModalState;
+      if (!state || state.rules.length >= MAX_SENSING_RULES) return;
+      const last = state.rules[state.rules.length - 1] || _sensingRuleFromFlat(this.getP(), this._serializeSensingSourceSelection());
+      state.rules.push(_normalizeSensingRule({ ...last, layerIds: [...(last.layerIds || [])] }));
+      this._renderSensingRulesModal();
+    });
     document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
@@ -16179,6 +17143,15 @@ export class App {
       } catch (error) {
         console.error('Workspace import failed:', error);
         this._setSimulationSetupStatus(error?.message || 'Workspace import failed.', 'error');
+      }
+    });
+    document.addEventListener('keydown', event => {
+      const modal = document.getElementById('sensingRulesModal');
+      if (!modal?.classList.contains('open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this._closeSensingRulesModal();
       }
     });
     document.addEventListener('keydown', event => {
@@ -17182,6 +18155,7 @@ export class App {
   _onTouchMove(e) {
     if (this._pinchActive && e.touches.length === 2) {
       e.preventDefault();
+      this._forceVizCameraRuntime.lastManualInputAt = performance.now();
       const t0 = e.touches[0], t1 = e.touches[1];
       const dx = t1.clientX - t0.clientX;
       const dy = t1.clientY - t0.clientY;
@@ -17215,6 +18189,7 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
+    this._forceVizCameraRuntime.lastManualInputAt = performance.now();
     // Shift+scroll = rotate view
     if (e.shiftKey) {
       const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
@@ -17997,6 +18972,11 @@ export class App {
       brush.onFrame(elapsed);
       if (this.simulation.running && this.simulation.enabled && this.activeBrush === 'boid') {
         this._syncSimulationSavedPlaybackCapture(brush);
+        // Force Visualization camera: resolves its target from the BoidBrush
+        // transient snapshot brush.onFrame() just refreshed, then smooths
+        // view state via the same _applyViewTransform() manual nav uses.
+        this._applyForceVizCameraFrame(brush, elapsed);
+        this._updateForceVizStatusText();
       }
     } else if (!this.isDrawing && !this.simulation.running && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
@@ -18751,6 +19731,328 @@ export class App {
   // SENSING (for boid brush)
   // ========================================================
 
+  /**
+   * Compose the effective sensing rules array for the current drawing-mode
+   * params. Rule 0 always mirrors the flat sidebar controls (mode, channel,
+   * strength, threshold→rangeMin, source); the stored rule 0 keeps only its
+   * modal-exclusive fields (rangeMax, hue target/tolerance, enabled).
+   */
+  _composeSensingRules(flat) {
+    const layerIds = this._serializeSensingSourceSelection();
+    const flatRule = _sensingRuleFromFlat(flat, layerIds);
+    const stored = normalizeSensingRules(this._sensingRules);
+    if (!stored.length) return [flatRule];
+    stored[0] = Object.assign({}, flatRule, {
+      enabled: stored[0].enabled,
+      rangeMax: stored[0].rangeMax,
+      hueTarget: stored[0].hueTarget,
+      hueTolerance: stored[0].hueTolerance,
+      channel: stored[0].channel === 'hue' ? 'hue' : flatRule.channel,
+      rangeMin: Math.min(flatRule.rangeMin, stored[0].rangeMax),
+    });
+    return stored;
+  }
+
+  /** Replace the drawing-mode sensing rules (from the Sensing Rules modal). */
+  _setSensingRules(rules) {
+    const normalized = normalizeSensingRules(rules);
+    this._sensingRules = normalized.length ? normalized : null;
+    // Keep the flat sidebar controls in sync with rule 0 so legacy readers
+    // (presets, Ant Math mirrors, leader overrides) stay coherent.
+    const rule0 = normalized[0];
+    if (rule0) {
+      const setSel = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+      const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      setSel('sensingMode', rule0.mode);
+      if (SIM_SENSING_CHANNELS.includes(rule0.channel)) setSel('sensingChannel', rule0.channel);
+      setSel('sensingSource', rule0.source);
+      setVal('sensingStrength', Math.round(rule0.strength * 100));
+      setVal('sensingThreshold', Math.round(rule0.rangeMin * 100));
+      if (rule0.source === 'selected' && rule0.layerIds.length) {
+        this._setSensingSourceSelection(rule0.layerIds, { refreshUi: true, invalidate: false });
+      }
+      this._refreshSensingLayerSourceUi?.();
+    }
+    this.invalidateParams();
+    this._refreshSensingRulesSummary();
+    this._maybeAutoSaveSession?.();
+  }
+
+  /** Update the sidebar "Edit Rules…" summary text. */
+  _refreshSensingRulesSummary() {
+    const summary = document.getElementById('sensingRulesSummary');
+    if (!summary) return;
+    const rules = this.getP().sensingRules;
+    summary.textContent = this._sensingRules ? _describeSensingRules(rules) : '1 rule (from controls above)';
+  }
+
+  _openSensingRulesModal(scope = { type: 'drawing' }) {
+    const modal = document.getElementById('sensingRulesModal');
+    if (!modal) return;
+    let rules = [];
+    if (scope.type === 'simRow' && scope.row) {
+      rules = normalizeSensingRules(scope.row.sensingRules);
+      if (!rules.length) {
+        rules = [_sensingRuleFromFlat({
+          sensingMode: scope.row.sensingMode,
+          sensingChannel: scope.row.sensingChannel,
+          sensingStrength: scope.row.sensingStrength,
+          sensingThreshold: scope.row.sensingThreshold,
+          sensingSource: scope.row.sensingSource,
+        }, scope.row.sensingLayerIds)];
+      }
+    } else {
+      rules = normalizeSensingRules(this._sensingRules);
+      if (!rules.length) {
+        rules = [_sensingRuleFromFlat(this.getP(), this._serializeSensingSourceSelection())];
+      }
+      scope = { type: 'drawing' };
+    }
+    this._sensingRulesModalState = {
+      scope,
+      rules: normalizeSensingRules(rules).map(rule => ({ ...rule, layerIds: [...(rule.layerIds || [])] })),
+    };
+    this._renderSensingRulesModal();
+    modal.classList.add('open');
+    queueMicrotask(() => document.getElementById('sensingRulesAddBtn')?.focus());
+  }
+
+  _closeSensingRulesModal() {
+    document.getElementById('sensingRulesModal')?.classList.remove('open');
+    this._sensingRulesModalState = null;
+  }
+
+  _renderSensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    const list = document.getElementById('sensingRulesList');
+    if (!state || !list) return;
+    const sourceLabels = { below: 'Below', active: 'Active', all: 'All', selected: 'Selected Layers' };
+    const channelLabels = {
+      darkness: 'Darkness',
+      lightness: 'Lightness',
+      saturation: 'Saturation',
+      red: 'Red',
+      green: 'Green',
+      blue: 'Blue',
+      alpha: 'Alpha',
+      hue: 'Hue match',
+    };
+    const context = document.getElementById('sensingRulesModalContext');
+    if (context) {
+      context.textContent = state.scope.type === 'simRow'
+        ? `Simulation session ${(state.scope.row?.sessionIndex ?? 0) + 1}: ${state.scope.row?.name || 'Untitled'}`
+        : 'Drawing Mode';
+    }
+    const addBtn = document.getElementById('sensingRulesAddBtn');
+    if (addBtn) addBtn.disabled = state.rules.length >= MAX_SENSING_RULES;
+    const layerOptions = this.layers.map(layer => ({
+      id: layer.id,
+      label: layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer'),
+    }));
+    const pct = value => Math.round(_clamp(value, 0, 1) * 100);
+    list.innerHTML = state.rules.map((rule, index) => `
+      <div class="sensing-rule-card" data-sensing-rule-index="${index}">
+        <div class="sensing-rule-card-header">
+          <label class="sensing-rule-enabled">
+            <input type="checkbox" data-sensing-rule-field="enabled" ${rule.enabled ? 'checked' : ''}>
+            <span>Rule ${index + 1}</span>
+          </label>
+          <div class="sensing-rule-actions">
+            <button type="button" data-sensing-rule-action="duplicate" ${state.rules.length >= MAX_SENSING_RULES ? 'disabled' : ''}>Duplicate</button>
+            <button type="button" data-sensing-rule-action="delete" ${state.rules.length <= 1 ? 'disabled' : ''}>Delete</button>
+          </div>
+        </div>
+        <div class="sensing-rule-grid">
+          <label class="sensing-rule-field">
+            <span>Response</span>
+            <select data-sensing-rule-field="mode">
+              <option value="avoid" ${rule.mode === 'avoid' ? 'selected' : ''}>Avoid</option>
+              <option value="attract" ${rule.mode === 'attract' ? 'selected' : ''}>Attract</option>
+            </select>
+          </label>
+          <label class="sensing-rule-field">
+            <span>Channel</span>
+            <select data-sensing-rule-field="channel">
+              ${SENSING_RULE_CHANNELS.map(channel => `<option value="${_escapeHtml(channel)}" ${rule.channel === channel ? 'selected' : ''}>${_escapeHtml(channelLabels[channel] || channel)}</option>`).join('')}
+            </select>
+          </label>
+          ${rule.channel === 'hue' ? `
+            <label class="sensing-rule-field">
+              <span>Hue Target <span class="sensing-rule-value" data-sensing-rule-value="hueTarget">${Math.round(rule.hueTarget)}°</span></span>
+              <span class="sensing-rule-hue-row">
+                <input type="range" min="0" max="360" step="1" data-sensing-rule-field="hueTarget" value="${Math.round(rule.hueTarget)}">
+                <span class="sensing-rule-swatch" data-sensing-rule-swatch style="background:hsl(${Math.round(rule.hueTarget)},100%,50%);"></span>
+              </span>
+            </label>
+            <label class="sensing-rule-field">
+              <span>Hue Tolerance <span class="sensing-rule-value" data-sensing-rule-value="hueTolerance">${Math.round(rule.hueTolerance)}°</span></span>
+              <input type="range" min="1" max="180" step="1" data-sensing-rule-field="hueTolerance" value="${Math.round(rule.hueTolerance)}">
+            </label>
+          ` : ''}
+          <label class="sensing-rule-field">
+            <span>Range Min <span class="sensing-rule-value" data-sensing-rule-value="rangeMin">${rule.rangeMin.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="rangeMin" value="${pct(rule.rangeMin)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Range Max <span class="sensing-rule-value" data-sensing-rule-value="rangeMax">${rule.rangeMax.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="rangeMax" value="${pct(rule.rangeMax)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Strength <span class="sensing-rule-value" data-sensing-rule-value="strength">${rule.strength.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="strength" value="${pct(rule.strength)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Source</span>
+            <select data-sensing-rule-field="source">
+              ${SIM_SENSING_SOURCES.map(source => `<option value="${_escapeHtml(source)}" ${rule.source === source ? 'selected' : ''}>${_escapeHtml(sourceLabels[source] || source)}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${rule.source === 'selected' ? `
+          <div class="sensing-rule-field">
+            <span>Selected Layers</span>
+            <div class="sensing-rule-layer-list">
+              ${layerOptions.map(option => `
+                <label>
+                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(option.id) ? 'checked' : ''}>
+                  <span>${_escapeHtml(option.label)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+        <div class="sensing-rule-summary">${_escapeHtml(_describeSensingRule(rule))}</div>
+      </div>
+    `).join('');
+    const updateSummary = index => {
+      const card = list.querySelector(`[data-sensing-rule-index="${index}"]`);
+      const rule = state.rules[index];
+      if (!card || !rule) return;
+      const summary = card.querySelector('.sensing-rule-summary');
+      if (summary) summary.textContent = _describeSensingRule(rule);
+      card.querySelectorAll('[data-sensing-rule-value]').forEach(node => {
+        const field = node.dataset.sensingRuleValue;
+        node.textContent = field === 'hueTarget' || field === 'hueTolerance'
+          ? `${Math.round(rule[field])}°`
+          : rule[field].toFixed(2);
+      });
+      const swatch = card.querySelector('[data-sensing-rule-swatch]');
+      if (swatch) swatch.style.background = `hsl(${Math.round(rule.hueTarget)},100%,50%)`;
+    };
+    const updateField = event => {
+      const fieldEl = event.target.closest('[data-sensing-rule-field]');
+      const layerEl = event.target.closest('[data-sensing-rule-layer]');
+      if (!fieldEl && !layerEl) return;
+      const card = event.target.closest('[data-sensing-rule-index]');
+      const index = Number(card?.dataset.sensingRuleIndex);
+      const rule = state.rules[index];
+      if (!rule) return;
+      if (layerEl) {
+        const ids = new Set(rule.layerIds || []);
+        if (layerEl.checked) ids.add(layerEl.value);
+        else ids.delete(layerEl.value);
+        rule.layerIds = _normalizeSimulationSensingSourceSelection([...ids]);
+        updateSummary(index);
+        return;
+      }
+      const field = fieldEl.dataset.sensingRuleField;
+      if (field === 'enabled') rule.enabled = !!fieldEl.checked;
+      else if (field === 'mode') rule.mode = fieldEl.value === 'attract' ? 'attract' : 'avoid';
+      else if (field === 'channel') rule.channel = SENSING_RULE_CHANNELS.includes(fieldEl.value) ? fieldEl.value : 'darkness';
+      else if (field === 'source') rule.source = SIM_SENSING_SOURCES.includes(fieldEl.value) ? fieldEl.value : 'below';
+      else if (field === 'hueTarget') rule.hueTarget = _clamp(Number(fieldEl.value) || 0, 0, 360);
+      else if (field === 'hueTolerance') rule.hueTolerance = _clamp(Number(fieldEl.value) || 1, 1, 180);
+      else if (field === 'rangeMin') {
+        rule.rangeMin = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+        if (rule.rangeMin > rule.rangeMax) rule.rangeMax = rule.rangeMin;
+      } else if (field === 'rangeMax') {
+        rule.rangeMax = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+        if (rule.rangeMax < rule.rangeMin) rule.rangeMin = rule.rangeMax;
+      } else if (field === 'strength') {
+        rule.strength = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+      }
+      state.rules[index] = _normalizeSensingRule(rule);
+      if (field === 'channel' || field === 'source' || field === 'rangeMin' || field === 'rangeMax') this._renderSensingRulesModal();
+      else updateSummary(index);
+    };
+    list.oninput = event => {
+      if (event.target?.matches?.('input[type="range"]')) updateField(event);
+    };
+    list.onchange = event => {
+      if (!event.target?.matches?.('input[type="range"]')) updateField(event);
+    };
+    list.onclick = event => {
+      const button = event.target.closest('[data-sensing-rule-action]');
+      if (!button) return;
+      const card = button.closest('[data-sensing-rule-index]');
+      const index = Number(card?.dataset.sensingRuleIndex);
+      const rule = state.rules[index];
+      if (!rule) return;
+      if (button.dataset.sensingRuleAction === 'duplicate' && state.rules.length < MAX_SENSING_RULES) {
+        state.rules.splice(index + 1, 0, _normalizeSensingRule({ ...rule, layerIds: [...(rule.layerIds || [])] }));
+      } else if (button.dataset.sensingRuleAction === 'delete' && state.rules.length > 1) {
+        state.rules.splice(index, 1);
+      }
+      this._renderSensingRulesModal();
+    };
+  }
+
+  _applySensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    if (!state) return;
+    const rules = normalizeSensingRules(state.rules);
+    if (state.scope.type === 'simRow' && state.scope.row) {
+      const row = state.scope.row;
+      row.sensingRules = rules.length ? rules : null;
+      const rule0 = rules[0];
+      if (rule0) {
+        row.sensingMode = rule0.mode;
+        if (SIM_SENSING_CHANNELS.includes(rule0.channel)) row.sensingChannel = rule0.channel;
+        row.sensingStrength = rule0.strength;
+        row.sensingThreshold = rule0.rangeMin;
+        row.sensingSource = rule0.source;
+        if (rule0.source === 'selected') row.sensingLayerIds = _normalizeSimulationSensingSourceSelection(rule0.layerIds);
+      }
+      const updates = {
+        sensingRules: row.sensingRules || undefined,
+        sensingMode: row.sensingMode,
+        sensingStrength: row.sensingStrength,
+        sensingThreshold: row.sensingThreshold,
+        sensingSource: row.sensingSource,
+      };
+      if (SIM_SENSING_CHANNELS.includes(row.sensingChannel)) updates.sensingChannel = row.sensingChannel;
+      const session = this._syncSimulationSetupRowSensingVars(row, updates);
+      const sensingLayerIds = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
+      if (session) session.sensingSourceSelection = sensingLayerIds;
+      const liveSession = this.simulation.sessions?.[row.sessionIndex];
+      if (liveSession) liveSession.sensingSourceSelection = sensingLayerIds;
+      this._renderSimulationSetupExplorer();
+      this._updateSimulationSetupSummary?.();
+    } else {
+      this._setSensingRules(rules);
+    }
+    this._closeSensingRulesModal();
+  }
+
+  _resetSensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    if (!state) return;
+    if (state.scope.type === 'simRow' && state.scope.row) {
+      state.scope.row.sensingRules = null;
+      this._syncSimulationSetupRowSensingVars(state.scope.row, { sensingRules: undefined });
+      this._renderSimulationSetupExplorer();
+      this._updateSimulationSetupSummary?.();
+    } else {
+      this._setSensingRules([]);
+    }
+    this._closeSensingRulesModal();
+  }
+
   _serializeSensingSourceSelection() {
     const seen = new Set();
     const serialized = [];
@@ -18840,6 +20142,13 @@ export class App {
     }
     if (button) {
       button.textContent = sourceSelect?.value === 'selected' ? 'Edit Layers' : 'Pick Layers';
+    }
+    const inspectorPickBtn = document.querySelector('[data-sim-sensing-pick-layers]');
+    if (inspectorPickBtn) inspectorPickBtn.textContent = sourceSelect?.value === 'selected' ? 'Edit Layers' : 'Pick Layers';
+    const inspectorSummary = document.querySelector('[data-sim-sensing-layer-summary]');
+    if (inspectorSummary) {
+      const prefix = sourceSelect?.value === 'selected' ? 'Using: ' : 'Custom: ';
+      inspectorSummary.textContent = prefix + this._buildSensingLayerSelectionSummary();
     }
     if (this._sensingSourcePickerPanel?.classList.contains('open')) {
       this._renderSensingSourcePicker();
@@ -19016,8 +20325,13 @@ export class App {
     }
   }
 
-  buildSensingData(p = this.getP()) {
-    const src = p.sensingSource;
+  /**
+   * Composite the sensing source layers into RGBA ImageData.
+   * @param {Object} p - params (used for the default sensingSource)
+   * @param {Object} [override] - per-rule source override: { source, layerIds }
+   */
+  buildSensingData(p = this.getP(), override = null) {
+    const src = override?.source || p.sensingSource;
     const w = this.W * this.DPR, h = this.H * this.DPR;
     if (src === 'active') {
       // Read directly from the active layer bitmap; the reusable offscreen
@@ -19061,7 +20375,11 @@ export class App {
         drawLayer(l);
       }
     } else if (src === 'selected') {
-      const selectedIds = new Set(this._serializeSensingSourceSelection());
+      const selectedIds = new Set(
+        Array.isArray(override?.layerIds) && override.layerIds.length
+          ? override.layerIds
+          : this._serializeSensingSourceSelection()
+      );
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
         if (!selectedIds.has(l.id)) continue;
@@ -19330,10 +20648,10 @@ export class App {
   _captureSessionControls() {
     const controls = {};
     document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
-      if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+      if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {
-      if (el.id) controls[el.id] = el.value;
+      if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.value;
     });
     controls.primaryColor = this.primaryEl.value;
     controls.secondaryColor = this.secondaryEl.value;
@@ -19358,6 +20676,10 @@ export class App {
       inspectorCollapsed: this.simulation.inspectorCollapsed,
       inspectorSections: this.simulation.inspectorSections,
       editorTool: this.simulation.editorTool,
+      // 'normal' | 'forceVisualization' — config only, no runtimes/camera
+      // smoothing state. See _createDefaultForceVizState().
+      mode: this.simulation.mode,
+      forceViz: _deepClone(this.simulation.forceViz),
       brushData: this.simulation.brushData,
       nextId: this.simulation.nextId,
       vars: this.simulation.vars,
@@ -19369,6 +20691,7 @@ export class App {
     };
     controls._symmetryState = this._serializeSymmetryState();
     controls._sensingSourceSelection = this._serializeSensingSourceSelection();
+    controls._sensingRules = Array.isArray(this._sensingRules) ? normalizeSensingRules(this._sensingRules) : null;
     controls._motionPath = this._serializeMotionPathState();
     controls._canvasTextureState = this._serializeCanvasTextureState();
     controls._stampImageState = this._serializeCustomStampImageState();
@@ -19736,6 +21059,7 @@ export class App {
   }
 
   saveSession() {
+    if (this._suppressSessionPersistence) return;
     try {
       this._syncActiveSimulationSessionFromDraft();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this._captureSessionControls()));
@@ -19929,6 +21253,15 @@ export class App {
         this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(val?.savedPlayback);
         this.simulation.multiSessionEnabled = !!val?.multiSessionEnabled;
         this.simulation.multiSessionBindings = Array.isArray(val?.multiSessionBindings) ? _deepClone(val.multiSessionBindings) : [];
+        // Older saves predate the submode entirely — missing `mode`/`forceViz`
+        // falls back to 'normal' plus the default scenario via normalization.
+        this.simulation.mode = val?.mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+        this.simulation.forceViz = val?.forceViz && typeof val.forceViz === 'object' ? _deepClone(val.forceViz) : null;
+        // A persisted session owns its own manual-view baseline. Discard any
+        // runtime snapshot from the previously open workspace; _restoreSession
+        // captures the restored view after `_view` has been applied.
+        this._forceVizManualViewSnapshot = null;
+        this._normalizeForceVizState();
         continue;
       }
       if (id === '_symmetryState') {
@@ -19944,6 +21277,11 @@ export class App {
         this.invalidateParams();
         continue;
       }
+      if (id === '_sensingRules') {
+        const restored = normalizeSensingRules(val);
+        this._sensingRules = restored.length ? restored : null;
+        continue;
+      }
       if (id === '_motionPath') {
         if (val && typeof val === 'object') {
           this.motionPath = {
@@ -19957,9 +21295,24 @@ export class App {
       }
       const el = document.getElementById(id);
       if (!el) continue;
+      // Self-persisted settings own a dedicated localStorage key; never let a
+      // (possibly stale) session snapshot override it — the snapshot can't fire
+      // the change handlers that apply their side effects (telemetry, wake
+      // lock, tab visibility, auto-save gating).
+      if (SELF_PERSISTED_CONTROL_IDS.has(id)) continue;
       if (el.type === 'checkbox') el.checked = !!val;
-      else el.value = val;
+      else if (el.tagName === 'SELECT') {
+        // Only apply values that match an existing option. Assigning an
+        // unknown value would blank the select (selectedIndex -1), which then
+        // gets re-captured as "" — keep the current/default option instead.
+        const target = String(val);
+        if (Array.from(el.options).some(opt => opt.value === target)) el.value = target;
+      } else el.value = val;
     }
+    // Keep the sensing-source revert tracker aligned with the restored value
+    // so the next user change reports the correct previous source.
+    const sensingSourceEl = document.getElementById('sensingSource');
+    if (sensingSourceEl) sensingSourceEl.dataset.prevValue = sensingSourceEl.value || 'below';
     this._normalizeSimulationSessionBindings();
     if (this.simulation.activeSessionIndex >= 0) {
       this._applySimulationSessionToDraft(this.simulation.sessions[this.simulation.activeSessionIndex]);
@@ -20024,6 +21377,9 @@ export class App {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
       if (restoredView) this._applyViewState(restoredView);
+      this._forceVizManualViewSnapshot = this.simulation.mode === 'forceVisualization'
+        ? this._captureViewState()
+        : null;
       if (this.activeTool === 'transform' && !this.selectionMgr?.active) {
         this.setTool('brush');
       }
@@ -20104,6 +21460,9 @@ export class App {
   async reloadAppWithCacheBust({ wipeSession = false } = {}) {
     const btn = document.getElementById('reloadAppBtn');
     if (btn) btn.disabled = true;
+    // Block any further session writes (e.g. the pagehide auto-save flush)
+    // so a wiped session can't be re-persisted on the way out.
+    if (wipeSession) this._suppressSessionPersistence = true;
     this.setStatus(wipeSession ? 'Reloading app (clearing saved data and caches)…' : 'Reloading app (clearing caches)…');
     await this._clearReloadCaches();
     this._clearReloadStorageArtifacts({ wipeSession });

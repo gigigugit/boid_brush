@@ -31,7 +31,7 @@ mod spawn;
 
 use boid::STRIDE;
 use fluid::FluidSimulation;
-use params::PARAMS_LEN;
+use params::{MAX_SENSING_RULES, PARAMS_LEN};
 use sim::Simulation;
 use wasm_bindgen::prelude::*;
 
@@ -61,9 +61,8 @@ fn with_default_boid_sim<F, R>(f: F) -> R
 where
     F: FnOnce(&mut Simulation) -> R,
 {
-    let handle = DEFAULT_BOID_SIM_HANDLE.with(|cell| {
-        (*cell.borrow()).expect("Simulation not initialized — call init() first")
-    });
+    let handle = DEFAULT_BOID_SIM_HANDLE
+        .with(|cell| (*cell.borrow()).expect("Simulation not initialized — call init() first"));
     with_boid_sim(handle, f)
 }
 
@@ -79,6 +78,11 @@ fn create_boid_simulator(width: u32, height: u32, max_agents: u32) -> u32 {
             (sims.len() - 1) as u32
         }
     })
+}
+
+#[inline]
+fn sensing_slot(slot: u32) -> usize {
+    (slot as usize).min(MAX_SENSING_RULES - 1)
 }
 
 fn with_fluid_sim<F, R>(handle: u32, f: F) -> R
@@ -203,7 +207,7 @@ pub fn clear_agents() {
 /// ```js
 /// const paramsPtr = get_params_buffer_ptr();
 /// const paramsView = new Float32Array(wasm.memory.buffer, paramsPtr, PARAMS_LEN);
-/// paramsView[0] = p.seek;  // ... fill all 32 floats
+/// paramsView[0] = p.seek;  // ... fill all params
 /// set_params();
 /// ```
 #[wasm_bindgen]
@@ -242,7 +246,7 @@ pub fn get_stride() -> u32 {
     STRIDE as u32
 }
 
-/// Params buffer length in f32 count (32).
+/// Params buffer length in f32 count.
 #[wasm_bindgen]
 pub fn get_params_len() -> u32 {
     PARAMS_LEN as u32
@@ -252,11 +256,18 @@ pub fn get_params_len() -> u32 {
 /// JS writes downsampled luminance here, then calls `update_sensing()`.
 #[wasm_bindgen]
 pub fn get_sensing_buffer_ptr() -> *const u8 {
+    get_sensing_slot_buffer_ptr(0)
+}
+
+/// Pointer to a specific sensing slot buffer (u8 luminance data).
+#[wasm_bindgen]
+pub fn get_sensing_slot_buffer_ptr(slot: u32) -> *const u8 {
     with_default_boid_sim(|sim| {
-        if sim.sensing.data.is_empty() {
+        let map = &sim.sensing_maps[sensing_slot(slot)];
+        if map.data.is_empty() {
             std::ptr::null()
         } else {
-            sim.sensing.data.as_ptr()
+            map.data.as_ptr()
         }
     })
 }
@@ -267,8 +278,15 @@ pub fn get_sensing_buffer_ptr() -> *const u8 {
 /// - `w`, `h`: sensing map resolution (typically canvas_w/4 × canvas_h/4).
 #[wasm_bindgen]
 pub fn init_sensing(w: u32, h: u32) {
+    init_sensing_slot(0, w, h);
+}
+
+/// Prepare one sensing slot for a given resolution.
+#[wasm_bindgen]
+pub fn init_sensing_slot(slot: u32, w: u32, h: u32) {
     with_default_boid_sim(|sim| {
-        sim.sensing.resize(w, h, sim.width, sim.height);
+        let slot = sensing_slot(slot);
+        sim.sensing_maps[slot].resize(w, h, sim.width, sim.height);
     });
 }
 
@@ -276,9 +294,21 @@ pub fn init_sensing(w: u32, h: u32) {
 /// (The data was written directly into the buffer at get_sensing_buffer_ptr().)
 #[wasm_bindgen]
 pub fn update_sensing() {
+    update_sensing_slot(0);
+}
+
+#[wasm_bindgen]
+pub fn update_sensing_slot(_slot: u32) {
     // No-op: the data is already in place. This function exists as a
     // synchronization point — if we add threading later, this would
     // include a memory fence.
+}
+
+#[wasm_bindgen]
+pub fn clear_sensing_slot(slot: u32) {
+    with_default_boid_sim(|sim| {
+        sim.sensing_maps[sensing_slot(slot)].clear();
+    });
 }
 
 #[wasm_bindgen]
@@ -316,13 +346,26 @@ pub fn boid_spawn_agent(handle: u32, x: f32, y: f32) -> u32 {
 }
 
 #[wasm_bindgen]
-pub fn boid_spawn_batch(handle: u32, cx: f32, cy: f32, count: u32, shape: u32, angle: f32, jitter: f32, radius: f32) {
-    with_boid_sim(handle, |sim| sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius));
+pub fn boid_spawn_batch(
+    handle: u32,
+    cx: f32,
+    cy: f32,
+    count: u32,
+    shape: u32,
+    angle: f32,
+    jitter: f32,
+    radius: f32,
+) {
+    with_boid_sim(handle, |sim| {
+        sim.spawn_batch(cx, cy, count, shape, angle, jitter, radius)
+    });
 }
 
 #[wasm_bindgen]
 pub fn boid_set_leader_range(handle: u32, start_index: u32, end_index: u32, leader_count: u32) {
-    with_boid_sim(handle, |sim| sim.set_leader_range(start_index, end_index, leader_count));
+    with_boid_sim(handle, |sim| {
+        sim.set_leader_range(start_index, end_index, leader_count)
+    });
 }
 
 #[wasm_bindgen]
@@ -357,25 +400,49 @@ pub fn boid_get_agent_count(handle: u32) -> u32 {
 
 #[wasm_bindgen]
 pub fn boid_get_sensing_buffer_ptr(handle: u32) -> *const u8 {
+    boid_get_sensing_slot_buffer_ptr(handle, 0)
+}
+
+#[wasm_bindgen]
+pub fn boid_get_sensing_slot_buffer_ptr(handle: u32, slot: u32) -> *const u8 {
     with_boid_sim(handle, |sim| {
-        if sim.sensing.data.is_empty() {
+        let map = &sim.sensing_maps[sensing_slot(slot)];
+        if map.data.is_empty() {
             std::ptr::null()
         } else {
-            sim.sensing.data.as_ptr()
+            map.data.as_ptr()
         }
     })
 }
 
 #[wasm_bindgen]
 pub fn boid_init_sensing(handle: u32, w: u32, h: u32) {
+    boid_init_sensing_slot(handle, 0, w, h);
+}
+
+#[wasm_bindgen]
+pub fn boid_init_sensing_slot(handle: u32, slot: u32, w: u32, h: u32) {
     with_boid_sim(handle, |sim| {
-        sim.sensing.resize(w, h, sim.width, sim.height);
+        let slot = sensing_slot(slot);
+        sim.sensing_maps[slot].resize(w, h, sim.width, sim.height);
     });
 }
 
 #[wasm_bindgen]
 pub fn boid_update_sensing(handle: u32) {
+    boid_update_sensing_slot(handle, 0);
+}
+
+#[wasm_bindgen]
+pub fn boid_update_sensing_slot(handle: u32, _slot: u32) {
     with_boid_sim(handle, |_| {});
+}
+
+#[wasm_bindgen]
+pub fn boid_clear_sensing_slot(handle: u32, slot: u32) {
+    with_boid_sim(handle, |sim| {
+        sim.sensing_maps[sensing_slot(slot)].clear();
+    });
 }
 
 #[wasm_bindgen]
@@ -552,11 +619,11 @@ mod tests {
     #[test]
     fn test_sensing_force_direction() {
         let mut sim = Simulation::new(100, 100, 10);
-        sim.sensing.resize(100, 100, 100, 100);
+        sim.sensing_maps[0].resize(100, 100, 100, 100);
         // Fill right half with bright pixels
         for y in 0..100u32 {
             for x in 50..100u32 {
-                sim.sensing.data[(y * 100 + x) as usize] = 255;
+                sim.sensing_maps[0].data[(y * 100 + x) as usize] = 255;
             }
         }
         sim.params.sensing_enabled = true;
@@ -573,13 +640,66 @@ mod tests {
         sim.buf[base + boid::AY] = 0.0;
 
         let params = sim.params.params_for(false);
-        crate::sensing::apply_sensing_force(&mut sim.buf, base, &params, &sim.sensing);
+        crate::sensing::apply_sensing_force(&mut sim.buf, base, &params, &sim.sensing_maps);
 
         // Agent should be pushed LEFT (negative x) away from bright right side
         assert!(
             sim.buf[base + boid::AX] < 0.0,
             "Expected negative ax (avoid right), got {}",
             sim.buf[base + boid::AX]
+        );
+    }
+
+    #[test]
+    fn test_sensing_rules_use_slots_and_range_gates() {
+        let mut sim = Simulation::new(100, 100, 10);
+        sim.sensing_maps[0].resize(100, 100, 100, 100);
+        sim.sensing_maps[1].resize(100, 100, 100, 100);
+        // Slot 0: bright sample to the right should attract right.
+        sim.sensing_maps[0].data[(50 * 100 + 60) as usize] = 204; // 0.8
+                                                                  // Slot 1: bright sample below is outside its rule range and should not avoid.
+        sim.sensing_maps[1].data[(60 * 100 + 50) as usize] = 230; // ~0.9
+                                                                  // Slot 1: in-range sample above should avoid downward (positive y).
+        sim.sensing_maps[1].data[(40 * 100 + 50) as usize] = 128; // ~0.5
+
+        sim.params.sensing_enabled = true;
+        sim.params.sensing_radius = 10.0;
+        sim.params.sensing_fit_radius = 0.0;
+        sim.params.max_speed = 4.0;
+        sim.params.sensing_rules[0] = crate::params::SensingRule {
+            active: true,
+            attract: true,
+            strength: 1.0,
+            range_min: 0.7,
+            range_max: 0.9,
+        };
+        sim.params.sensing_rules[1] = crate::params::SensingRule {
+            active: true,
+            attract: false,
+            strength: 1.0,
+            range_min: 0.4,
+            range_max: 0.6,
+        };
+
+        sim.spawn_one(50.0, 50.0);
+        let base = 0;
+        sim.buf[base + boid::AX] = 0.0;
+        sim.buf[base + boid::AY] = 0.0;
+
+        let params = sim.params.params_for(false);
+        crate::sensing::apply_sensing_force(&mut sim.buf, base, &params, &sim.sensing_maps);
+
+        assert!(
+            sim.buf[base + boid::AX] > 0.0,
+            "slot 0 attract should pull right"
+        );
+        assert!(
+            sim.buf[base + boid::AY] > 0.0,
+            "slot 1 avoid should push away from above"
+        );
+        assert!(
+            sim.buf[base + boid::AY] < 3.0,
+            "out-of-range below sample should not add upward avoidance"
         );
     }
 

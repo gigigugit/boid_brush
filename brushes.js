@@ -55,6 +55,7 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+const FORCE_VIZ_MAX_CANDIDATES = 64; // sampled agent positions cached per frame for camera policies
 // Predefined hue anchors used to visually separate detected boid quorum groups.
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
@@ -948,10 +949,10 @@ function _textureDepositDensity(app, p, x, y) {
 function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
+  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [], forceVizPoints: [] };
   const brushName = app._getSimulationContextBrush?.() || app.activeBrush;
   const data = app._getSimulationBrushData?.(brushName) || sim.brushData[brushName];
-  if (!data) return { points: [], pathTargets: [], edges: [] };
+  if (!data) return { points: [], pathTargets: [], edges: [], forceVizPoints: [] };
   return {
     points: Array.isArray(data.points)
       ? data.points
@@ -994,6 +995,14 @@ function _collectSimulationGuides(brush, p) {
             };
           })
       : [],
+    // Force Visualization submode: per-group weighted attractor guides. Always
+    // CPU-applied (never uploaded to the GPU point-guide buffer) so each guide
+    // point can be scoped to a group's agent index range via `groupRange` —
+    // this isolates per-group routing from the global GPU guide path while
+    // reusing the exact same attract/repel push math as normal guide points.
+    forceVizPoints: (brushName === 'boid' && sim.mode === 'forceVisualization' && typeof app._collectForceVizGuidePoints === 'function')
+      ? app._collectForceVizGuidePoints(brush, p)
+      : [],
   };
 }
 
@@ -1023,7 +1032,8 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
   const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
   const edgeGuides = guideState.edges || [];
-  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
+  const forceVizPoints = guideState.forceVizPoints || [];
+  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length && !forceVizPoints.length) return false;
   const { buffer, count, stride } = read;
   const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
 
@@ -1055,6 +1065,23 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
         shaped = _pathInfluenceFalloff(d, point.radius, outerRadius);
       }
       const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85 * sign;
+      vx += (dx / d) * push;
+      vy += (dy / d) * push;
+    }
+
+    // Force Visualization route guides: same attract falloff as normal guide
+    // points, but scoped to the spawn-derived agent index range for the
+    // route's group so different groups can be routed to different weighted
+    // attractors without a separate physics path.
+    for (const point of forceVizPoints) {
+      if (point.groupRange && (i < point.groupRange.start || i >= point.groupRange.end)) continue;
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const d = Math.hypot(dx, dy);
+      const outerRadius = Math.max(point.radius || 0, point.influenceRadius || point.radius || 0);
+      if (d <= 0.0001 || d > outerRadius) continue;
+      const shaped = d <= point.radius ? (1 - d / point.radius) : _pathInfluenceFalloff(d, point.radius, outerRadius);
+      const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
     }
@@ -1209,6 +1236,16 @@ export class BoidBrush {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._debugMaxEvents = 120;
+    // Force Visualization submode support: runtime-only, never persisted.
+    // Maps a spawn definition id -> the agent index range it produced this
+    // stroke, so routes can scope guide points to one spawn group's agents.
+    this._spawnRangesById = new Map();
+    this._primarySpawnId = null;
+    // Cached per-frame transient snapshot (centroid/bounds/avg velocity/
+    // sampled candidates) consumed by camera policies without re-reading
+    // the agent buffer. Populated from the same non-blocking readAgents()
+    // call the stroke loop already performs.
+    this._transientSnapshot = { count: 0 };
     _resetSimulationSpawnAppearance(this);
   }
 
@@ -1287,9 +1324,58 @@ export class BoidBrush {
     this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
   }
 
-  /** Capture canvas luminance and upload to WASM for pixel sensing */
+  /** Capture canvas channel data and upload to the sim for pixel sensing.
+   * Rule-driven: each enabled rule gets its own sensing slot; rules sharing a
+   * layer source share a single composite/read of the canvas. */
   _uploadSensing(p) {
-    const imgData = this.app.buildSensingData(p);
+    const rules = Array.isArray(p.sensingRules) && p.sensingRules.length
+      ? p.sensingRules.slice(0, 4)
+      : null;
+    if (!rules) {
+      // Legacy single-directive path (also used by the ant pheromone pathway)
+      const imgData = this.app.buildSensingData(p);
+      const lum = this._extractSensingChannel(imgData, { channel: p.sensingChannel || 'darkness' });
+      this.sim.uploadSensing(lum.data, lum.width, lum.height);
+      this._sensingUploaded = true;
+      this._sensingSignature = this._buildSensingSignature(p);
+      return;
+    }
+    // Group rules by identical layer source so each unique source is
+    // composited and read back only once per refresh.
+    const sourceCache = new Map();
+    for (let slot = 0; slot < 4; slot++) {
+      const rule = rules[slot];
+      if (!rule || rule.enabled === false) {
+        this.sim.clearSensingSlot?.(slot);
+        continue;
+      }
+      if (rule.source === 'pheromone') {
+        // Internal ant pheromone rule: the slot's map data is uploaded by
+        // AntBrush._uploadPheromoneToSensing, not from canvas pixels. Skip
+        // without clearing so that data stays intact.
+        continue;
+      }
+      const key = rule.source + '|' + (rule.source === 'selected' ? (rule.layerIds || []).join(',') : '');
+      let imgData = sourceCache.get(key);
+      if (!imgData) {
+        imgData = this.app.buildSensingData(p, { source: rule.source, layerIds: rule.layerIds });
+        sourceCache.set(key, imgData);
+      }
+      const lum = this._extractSensingChannel(imgData, rule);
+      if (typeof this.sim.uploadSensingSlot === 'function') {
+        this.sim.uploadSensingSlot(slot, lum.data, lum.width, lum.height);
+      } else if (slot === 0) {
+        this.sim.uploadSensing(lum.data, lum.width, lum.height);
+      }
+    }
+    this._sensingUploaded = true;
+    this._sensingSignature = this._buildSensingSignature(p);
+  }
+
+  /** Extract a single sensing channel from RGBA ImageData, downsampled to 1/4
+   * resolution. Supports the legacy channels plus 'hue' (closeness to a target
+   * hue, weighted by saturation and alpha). Returns { data, width, height }. */
+  _extractSensingChannel(imgData, rule) {
     const rgba = imgData.data;
     const w = imgData.width;
     const h = imgData.height;
@@ -1297,11 +1383,15 @@ export class BoidBrush {
     const dw = Math.max(1, w >> 2);
     const dh = Math.max(1, h >> 2);
     const lumLen = dw * dh;
-    if (!this._sensingLum || this._sensingLum.length !== lumLen) {
-      this._sensingLum = new Uint8Array(lumLen);
+    const channel = rule.channel || 'darkness';
+    const hueTarget = Number.isFinite(rule.hueTarget) ? rule.hueTarget : 0;
+    const hueTolerance = Number.isFinite(rule.hueTolerance) ? Math.max(1, rule.hueTolerance) : 60;
+    if (!this._sensingLumSlots) this._sensingLumSlots = new Map();
+    let lum = this._sensingLumSlots.get(channel);
+    if (!lum || lum.length !== lumLen) {
+      lum = new Uint8Array(lumLen);
+      this._sensingLumSlots.set(channel, lum);
     }
-    const lum = this._sensingLum;
-    const channel = p.sensingChannel || 'darkness';
     const sx = w / dw;
     const sy = h / dh;
     for (let dy = 0; dy < dh; dy++) {
@@ -1321,13 +1411,29 @@ export class BoidBrush {
           const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
           v = mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
         }
+        else if (channel === 'hue') {
+          // Closeness to a target hue, weighted by saturation (grey pixels
+          // have no meaningful hue) and alpha.
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          const delta = mx - mn;
+          if (delta === 0 || mx === 0) v = 0;
+          else {
+            let hue;
+            if (mx === r) hue = 60 * (((g - b) / delta) % 6);
+            else if (mx === g) hue = 60 * ((b - r) / delta + 2);
+            else hue = 60 * ((r - g) / delta + 4);
+            if (hue < 0) hue += 360;
+            let dist = Math.abs(hue - hueTarget);
+            if (dist > 180) dist = 360 - dist;
+            const closeness = Math.max(0, 1 - dist / hueTolerance);
+            v = Math.round(closeness * (delta / mx) * 255 * alphaScale);
+          }
+        }
         else /* 'darkness' */ v = Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
         lum[dy * dw + dx] = v;
       }
     }
-    this.sim.uploadSensing(lum, dw, dh);
-    this._sensingUploaded = true;
-    this._sensingSignature = this._buildSensingSignature(p);
+    return { data: lum, width: dw, height: dh };
   }
 
   _buildSensingSignature(p) {
@@ -1342,6 +1448,7 @@ export class BoidBrush {
       fitRadius: Number(p.sensingFitRadius || 0).toFixed(2),
       threshold: Number(p.sensingThreshold || 0).toFixed(4),
       updateFrames: Math.max(1, Math.min(50, Math.round(p.sensingUpdateFrames || 30))),
+      rules: Array.isArray(p.sensingRules) ? p.sensingRules : null,
     });
   }
 
@@ -1388,6 +1495,23 @@ export class BoidBrush {
       if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
       if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
       if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+      // Per-simulation sensing rules: explicit rules win; otherwise refresh
+      // rule 0's simple fields from the (possibly overridden) flat vars.
+      if (Array.isArray(vars.sensingRules) && vars.sensingRules.length) {
+        next.sensingRules = vars.sensingRules;
+      } else if (Array.isArray(next.sensingRules) && next.sensingRules.length) {
+        const rule0 = Object.assign({}, next.sensingRules[0], {
+          mode: next.sensingMode || 'avoid',
+          channel: next.sensingRules[0].channel === 'hue' ? 'hue' : (next.sensingChannel || 'darkness'),
+          strength: Number.isFinite(next.sensingStrength) ? next.sensingStrength : 0.5,
+          rangeMin: Math.min(
+            Number.isFinite(next.sensingThreshold) ? next.sensingThreshold : 0.1,
+            Number.isFinite(next.sensingRules[0].rangeMax) ? next.sensingRules[0].rangeMax : 1
+          ),
+          source: next.sensingSource || 'below',
+        });
+        next.sensingRules = [rule0, ...next.sensingRules.slice(1)];
+      }
     }
     next.leader = _resolveLeaderParams(next);
     return next;
@@ -1424,10 +1548,20 @@ export class BoidBrush {
       color: p.color,
       opacity: p.stampOpacity,
     }, p);
+    if (this._primarySpawnId != null) this._recordSimulationSpawnRange(this._primarySpawnId, spawnInfo);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     return true;
+  }
+
+  /** Force Visualization submode: remember which agent index range a spawn
+   *  definition produced this stroke, keyed by the spawn's own id. Routes
+   *  use this to scope a weighted attractor's guide point to just the boids
+   *  from its bound group instead of applying it globally. */
+  _recordSimulationSpawnRange(spawnId, spawnInfo) {
+    if (spawnId == null || !spawnInfo) return;
+    this._spawnRangesById.set(spawnId, { startIndex: spawnInfo.startIndex, endIndex: spawnInfo.endIndex });
   }
 
   _applyLifecycleAction(action, p, x, y, pressure = 1, useHoverAngle = false) {
@@ -2013,6 +2147,8 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
+    // Fresh stroke — spawn index ranges from the previous stroke no longer apply.
+    this._spawnRangesById.clear();
     this._pushRenderDebug('pointer-down', {
       x,
       y,
@@ -2027,6 +2163,7 @@ export class BoidBrush {
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
       ? ((selectedSpawn && selectedSpawn.enabled !== false) ? selectedSpawn : (simSpawns.find(spawn => spawn.enabled !== false) || simSpawns[0]))
       : null;
+    this._primarySpawnId = simSpawn?.id ?? null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
     this._spawnOverrides = spawnConfig ? {
       count: spawnConfig.count,
@@ -2189,6 +2326,7 @@ export class BoidBrush {
       const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
       this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
       _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
+      this._recordSimulationSpawnRange(spawn.id, spawnInfo);
     }
   }
 
@@ -2527,12 +2665,53 @@ export class BoidBrush {
     this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
-    // Read agents
+    // Read agents. readAgents() itself is non-blocking: on WebGPU it returns
+    // the latest CPU mirror already updated by an async mapAsync() readback
+    // (see webgpu-boid-sim.js _applyReadyResults), so caching a transient
+    // snapshot from it here never stalls the frame loop.
     const read = this.sim.readAgents();
     if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
+    if (app.simulation?.mode === 'forceVisualization') this._updateTransientSnapshot(read);
     this._renderAgentRead(read, p, {
       forceStamp: !!app.isDrawing || !!app.simulation?.running,
     });
+  }
+
+  /** Force Visualization submode: cache centroid/bounds/average velocity and
+   *  a sampled set of agent candidates from the current agent read. Camera
+   *  policies (followBoid/followCentroid/frameGroups/orbit) consume this
+   *  cached snapshot instead of re-scanning the agent buffer themselves. */
+  _updateTransientSnapshot(read) {
+    const { buffer, count, stride } = read || {};
+    if (!count) {
+      this._transientSnapshot = { count: 0 };
+      return;
+    }
+    let sumX = 0, sumY = 0, sumVX = 0, sumVY = 0;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const candidates = [];
+    const sampleStride = Math.max(1, Math.floor(count / FORCE_VIZ_MAX_CANDIDATES));
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const x = buffer[base + AGENT_X];
+      const y = buffer[base + AGENT_Y];
+      const vx = buffer[base + AGENT_VX];
+      const vy = buffer[base + AGENT_VY];
+      sumX += x; sumY += y; sumVX += vx; sumVY += vy;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (i % sampleStride === 0) candidates.push({ x, y, vx, vy, index: i });
+    }
+    this._transientSnapshot = {
+      count,
+      centroid: { x: sumX / count, y: sumY / count },
+      avgVelocity: { x: sumVX / count, y: sumVY / count },
+      bounds: { minX, minY, maxX, maxY },
+      candidates,
+      updatedAt: performance.now(),
+    };
   }
 
   taperFrame(t, p) {
@@ -2739,6 +2918,9 @@ export class BoidBrush {
 
   deactivate() {
     this.resetSimulationPlaybackState({ compositePreview: true });
+    this._spawnRangesById.clear();
+    this._primarySpawnId = null;
+    this._transientSnapshot = { count: 0 };
   }
 
   destroy() {
@@ -2798,6 +2980,10 @@ export class AntBrush {
     this._pheroH = 0;
     this._pheroData = null;  // Float32Array — continuous 0-255 values
     this._pheroFrame = 0;
+    // Pixel-sensing state (rule pipeline borrowed from BoidBrush)
+    this._sensingFrame = 0;
+    this._sensingUploaded = false;
+    this._sensingSignature = '';
     // Trail blur offscreen canvases (shared pattern from BoidBrush)
     this._blurCanvas = null;
     this._blurCtx = null;
@@ -3000,14 +3186,24 @@ export class AntBrush {
     }
   }
 
+  /** Sensing slot used for pheromone data: slot 3 (reserved) when user pixel
+   * sensing rules are active so both pathways coexist, else legacy slot 0. */
+  _pheromoneSensingSlot(p) {
+    return (p.sensingEnabled && Array.isArray(p.sensingRules) && p.sensingRules.length) ? 3 : 0;
+  }
+
   /** Upload pheromone grid to WASM sensing (same pathway as pixel sensing) */
-  _uploadPheromoneToSensing() {
+  _uploadPheromoneToSensing(slot = 0) {
     if (!this._pheroData || !this.sim) return;
     const lum = new Uint8Array(this._pheroData.length);
     for (let i = 0, len = this._pheroData.length; i < len; i++) {
       lum[i] = Math.min(MAX_PHEROMONE, Math.round(this._pheroData[i]));
     }
-    this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+    if (slot > 0 && typeof this.sim.uploadSensingSlot === 'function') {
+      this.sim.uploadSensingSlot(slot, lum, this._pheroW, this._pheroH);
+    } else {
+      this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+    }
   }
 
   paintSimulationPheromone(points, radius, intensity) {
@@ -3034,7 +3230,7 @@ export class AntBrush {
       const config = this.app._resolveSimulationPheromoneConfig(trail, p);
       this.paintSimulationPheromone(trail.points, config.radius, config.intensity);
     }
-    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing();
+    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing(this._pheromoneSensingSlot(p));
   }
 
   refreshSimulationSpawnAppearance(p = this.app.getP()) {
@@ -3255,6 +3451,10 @@ export class AntBrush {
       this.sim.clearAgents();
       this._hoverSpawned = false;
     }
+    // Stroke commit changes the canvas, so force a sensing re-upload
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
   }
 
   /**
@@ -3263,16 +3463,37 @@ export class AntBrush {
    * attract mode so ants are drawn toward deposited pheromone trails.
    */
   _buildAntParams(p) {
+    // Coexistence model: when user pixel sensing is active, user rules occupy
+    // sensing slots 0-2 and slot 3 is reserved for the internal pheromone rule
+    // (its map is uploaded by _uploadPheromoneToSensing). When user sensing is
+    // off, the legacy single-map path is used with pheromone on slot 0.
+    const pheromoneOn = !!p.antPheromoneToSensing;
+    const userSensing = !!p.sensingEnabled && Array.isArray(p.sensingRules) && p.sensingRules.length > 0;
+    let sensingRules = null;
+    let sensingEnabled = pheromoneOn;
+    if (userSensing) {
+      sensingRules = p.sensingRules.slice(0, 3);
+      while (sensingRules.length < 3) sensingRules.push({ enabled: false });
+      sensingRules.push(pheromoneOn ? {
+        enabled: true,
+        mode: 'attract',
+        source: 'pheromone',
+        strength: p.sensingStrength ?? 0.5,
+        rangeMin: p.sensingThreshold || 0.1,
+        rangeMax: 1,
+      } : { enabled: false, source: 'pheromone' });
+      sensingEnabled = true;
+    }
     return Object.assign({}, p, {
       // Ant follow signal: seek = antFollow strength toward cursor
       seek: p.antFollow,
-      // Enable sensing in attract mode for pheromone following
-      sensingEnabled: p.antPheromoneToSensing,
+      sensingEnabled,
       sensingMode: 'attract',
       sensingStrength: p.sensingStrength,
       sensingRadius: p.sensingRadius || 20,
       sensingFitRadius: p.sensingFitRadius || 0,
       sensingThreshold: p.sensingThreshold || 0.1,
+      sensingRules,
       // Ants wander more by default
       wander: p.wander,
       jitter: p.jitter,
@@ -3290,17 +3511,41 @@ export class AntBrush {
       this._decayPheromones(p.antPheromoneDecay);
     }
 
+    // Build ant-specific params first: the composed sensingRules decide
+    // whether pheromone uses reserved slot 3 (coexistence) or legacy slot 0.
+    const antP = this._buildAntParams(p);
+    const multiSlot = Array.isArray(antP.sensingRules);
+
     // Upload pheromone grid as sensing data (same pathway as pixel sensing)
     this._pheroFrame++;
     if (p.antPheromoneToSensing && this._pheroData) {
       // Re-upload every 3 frames to balance performance and responsiveness
       if (this._pheroFrame % 3 === 0) {
-        this._uploadPheromoneToSensing();
+        this._uploadPheromoneToSensing(multiSlot ? 3 : 0);
       }
     }
 
+    // Upload user pixel-sensing rules (slots 0-2) with the same signature /
+    // cadence policy as BoidBrush.
+    if (multiSlot) {
+      const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(antP.sensingUpdateFrames || 30)));
+      const sensingSignature = this._buildSensingSignature(antP);
+      if (!this._sensingUploaded || this._sensingSignature !== sensingSignature) {
+        this._uploadSensing(antP);
+        this._sensingFrame = 0;
+      } else if (antP.sensingSource !== 'below') {
+        this._sensingFrame++;
+        if (this._sensingFrame >= sensingUpdateFrames) {
+          this._uploadSensing(antP);
+          this._sensingFrame = 0;
+        }
+      }
+    } else {
+      this._sensingUploaded = false;
+      this._sensingSignature = '';
+    }
+
     // Write params with ant-specific overrides and step sim
-    const antP = this._buildAntParams(p);
     const guideState = _collectSimulationGuides(this, p);
     const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
@@ -3670,8 +3915,20 @@ export class AntBrush {
     if (this.sim) this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
     if (this._pheroData) this._pheroData.fill(0);
+    // Force sensing re-upload on reactivation (the shared sim's slots may be
+    // rewritten by another brush in the meantime)
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
   }
 }
+
+// AntBrush reuses BoidBrush's rule-driven pixel-sensing pipeline. These
+// methods only touch this.app / this.sim / this._sensing* state, so borrowing
+// them keeps the two brushes behaviorally identical for user sensing rules.
+AntBrush.prototype._uploadSensing = BoidBrush.prototype._uploadSensing;
+AntBrush.prototype._extractSensingChannel = BoidBrush.prototype._extractSensingChannel;
+AntBrush.prototype._buildSensingSignature = BoidBrush.prototype._buildSensingSignature;
 
 // =============================================================================
 // BRISTLE BRUSH — Spring-physics flexible bristle simulation
