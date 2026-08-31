@@ -4468,7 +4468,12 @@ export class App {
         this._maybeAutoSaveSession();
       });
     }
-    this._ensureBoidColorDist();
+    const dist = this._ensureBoidColorDist();
+    if (dist.length === 1) {
+      // A single-entry distribution has no effect yet, so keep it in sync
+      // with the current primary color each time the modal opens.
+      dist[0].color = this.getColorValue('primary', '#1a1a1a');
+    }
     this._renderBoidColorDistModal();
     modal.classList.add('open');
   }
