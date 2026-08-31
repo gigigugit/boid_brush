@@ -345,6 +345,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   _docH: 1024,
   _primaryColor: '#1a1a1a',
   _secondaryColor: '#ffffff',
+  _boidColorDist: null,
   _activeBrush: 'boid',
 });
 const MAX_UNDO = 20;
@@ -2256,6 +2257,10 @@ export class App {
 
     // Color history
     this._colorHistory = [];
+
+    // Boid color distribution ([{color, weight}] managed via modal, persisted in session)
+    this._boidColorDist = null;
+    this._boidColorDistWired = false;
     this._maxColorHistory = 16;
     this._fluidInteractionState = { emitters: [], influences: [], scalarFields: [] };
     this._simulationExport = this._createSimulationExportState();
@@ -4533,6 +4538,174 @@ export class App {
     };
   }
 
+  // ── Boid color distribution modal ─────────────────────────
+  _ensureBoidColorDist() {
+    if (!Array.isArray(this._boidColorDist) || !this._boidColorDist.length) {
+      this._boidColorDist = [{ color: this.getColorValue('primary', '#1a1a1a'), weight: 1 }];
+    }
+    return this._boidColorDist;
+  }
+
+  _sanitizeBoidColorDist(value) {
+    if (!Array.isArray(value)) return null;
+    const entries = [];
+    for (const entry of value) {
+      const color = this._normalizeHexColor(entry?.color, null);
+      const weight = Number(entry?.weight);
+      if (!color || !Number.isFinite(weight) || weight <= 0) continue;
+      entries.push({ color, weight: Math.min(1, Math.max(0.01, weight)) });
+    }
+    return entries.length ? entries : null;
+  }
+
+  /** Normalized distribution for getP().colorDist — [{color, weight}] with
+   *  weights summing to 1, or null when 0/1 colors (base behavior applies). */
+  _getBoidColorDistForParams() {
+    const dist = this._sanitizeBoidColorDist(this._boidColorDist);
+    if (!dist || dist.length < 2) return null;
+    const total = dist.reduce((sum, entry) => sum + entry.weight, 0);
+    if (!(total > 0)) return null;
+    return dist.map(entry => ({ color: entry.color, weight: entry.weight / total }));
+  }
+
+  _getBoidColorDistColorTarget(index, trigger) {
+    return {
+      key: `boidColorDist:${index}`,
+      trigger,
+      label: `Boid Color ${index + 1}`,
+      getValue: () => this._boidColorDist?.[index]?.color || '#1a1a1a',
+      setValue: normalized => {
+        const entry = this._boidColorDist?.[index];
+        if (!entry) return;
+        entry.color = normalized;
+        if (trigger) {
+          trigger.style.background = normalized;
+          trigger.title = normalized.toUpperCase();
+        }
+        this.invalidateParams();
+      },
+      onCommit: () => this._maybeAutoSaveSession(),
+    };
+  }
+
+  _openBoidColorDistModal() {
+    const modal = document.getElementById('boidColorDistModal');
+    if (!modal) return;
+    if (!this._boidColorDistWired) {
+      this._boidColorDistWired = true;
+      document.getElementById('boidColorDistClose')?.addEventListener('click', () => this._closeBoidColorDistModal());
+      document.getElementById('boidColorDistBackdrop')?.addEventListener('click', () => this._closeBoidColorDistModal());
+      document.getElementById('boidColorDistDone')?.addEventListener('click', () => this._closeBoidColorDistModal());
+      document.getElementById('boidColorDistAdd')?.addEventListener('click', () => {
+        const dist = this._ensureBoidColorDist();
+        dist.push({ color: this.getColorValue('primary', '#1a1a1a'), weight: dist[dist.length - 1]?.weight || 1 });
+        this.invalidateParams();
+        this._renderBoidColorDistModal();
+        this._maybeAutoSaveSession();
+      });
+    }
+    const dist = this._ensureBoidColorDist();
+    if (dist.length === 1) {
+      // A single-entry distribution has no effect yet, so keep it in sync
+      // with the current primary color each time the modal opens.
+      dist[0].color = this.getColorValue('primary', '#1a1a1a');
+    }
+    this._renderBoidColorDistModal();
+    modal.classList.add('open');
+  }
+
+  _closeBoidColorDistModal() {
+    if (this._colorPicker.open && String(this._getColorTargetKey(this._colorPicker.target)).startsWith('boidColorDist:')) {
+      this._closeColorPicker({ recordHistory: false });
+    }
+    document.getElementById('boidColorDistModal')?.classList.remove('open');
+  }
+
+  /** Refresh percentage labels only (weights are relative; shown as weight/sum). */
+  _updateBoidColorDistLabels() {
+    const container = document.getElementById('boidColorDistColumns');
+    if (!container) return;
+    const dist = this._ensureBoidColorDist();
+    const total = dist.reduce((sum, entry) => sum + entry.weight, 0) || 1;
+    container.querySelectorAll('.boid-dist-pct').forEach((label, index) => {
+      const entry = dist[index];
+      label.textContent = entry ? `${Math.round((entry.weight / total) * 100)}%` : '';
+    });
+  }
+
+  _renderBoidColorDistModal() {
+    const container = document.getElementById('boidColorDistColumns');
+    if (!container) return;
+    const dist = this._ensureBoidColorDist();
+    container.innerHTML = '';
+    dist.forEach((entry, index) => {
+      const column = document.createElement('div');
+      column.className = 'boid-dist-col';
+
+      const pct = document.createElement('span');
+      pct.className = 'boid-dist-pct';
+      column.appendChild(pct);
+
+      const wrap = document.createElement('div');
+      wrap.className = 'boid-dist-sliderWrap';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '1';
+      slider.max = '100';
+      slider.value = String(Math.round(Math.min(1, Math.max(0.01, entry.weight)) * 100));
+      slider.setAttribute('aria-label', `Color ${index + 1} weight`);
+      slider.addEventListener('input', () => {
+        entry.weight = Math.min(1, Math.max(0.01, (+slider.value || 1) / 100));
+        this.invalidateParams();
+        this._updateBoidColorDistLabels();
+      });
+      slider.addEventListener('change', () => this._maybeAutoSaveSession());
+      wrap.appendChild(slider);
+      column.appendChild(wrap);
+
+      const colorBtn = document.createElement('button');
+      colorBtn.type = 'button';
+      colorBtn.className = 'boid-dist-colorBtn';
+      colorBtn.style.background = entry.color;
+      colorBtn.title = entry.color.toUpperCase();
+      colorBtn.setAttribute('aria-haspopup', 'dialog');
+      colorBtn.setAttribute('aria-controls', 'colorPickerPanel');
+      colorBtn.setAttribute('aria-expanded', 'false');
+      colorBtn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const target = this._getBoidColorDistColorTarget(index, colorBtn);
+        if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === this._getColorTargetKey(target)) {
+          this._closeColorPicker({ recordHistory: false });
+          return;
+        }
+        this._openColorPicker(target, colorBtn);
+      });
+      column.appendChild(colorBtn);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'boid-dist-delBtn';
+      delBtn.textContent = '🗑';
+      delBtn.title = 'Remove color';
+      delBtn.disabled = dist.length <= 1;
+      delBtn.addEventListener('click', () => {
+        if (!Array.isArray(this._boidColorDist) || this._boidColorDist.length <= 1) return;
+        if (this._colorPicker.open && String(this._getColorTargetKey(this._colorPicker.target)).startsWith('boidColorDist:')) {
+          this._closeColorPicker({ recordHistory: false });
+        }
+        this._boidColorDist.splice(index, 1);
+        this.invalidateParams();
+        this._renderBoidColorDistModal();
+        this._maybeAutoSaveSession();
+      });
+      column.appendChild(delBtn);
+
+      container.appendChild(column);
+    });
+    this._updateBoidColorDistLabels();
+  }
+
   _renderColorPickerHistory() {
     const container = document.getElementById('colorPickerHistory');
     if (!container) return;
@@ -6094,6 +6267,7 @@ export class App {
       canvasTexturePooling: (val('canvasTexturePooling') || 0) / 100,
       // Color
       color: this.primaryEl.value,
+      colorDist: this._getBoidColorDistForParams(),
       // Trail blur
       trailBlur: val('trailBlur') || 0,
       trailFlow: val('trailFlow') / 100,
@@ -20521,6 +20695,7 @@ export class App {
     controls._motionPath = this._serializeMotionPathState();
     controls._canvasTextureState = this._serializeCanvasTextureState();
     controls._stampImageState = this._serializeCustomStampImageState();
+    controls._boidColorDist = this._sanitizeBoidColorDist(this._boidColorDist);
     return controls;
   }
 
@@ -21095,6 +21270,11 @@ export class App {
       }
       if (id === '_sensingSourceSelection') {
         this._restoreSensingSourceSelection(val);
+        continue;
+      }
+      if (id === '_boidColorDist') {
+        this._boidColorDist = this._sanitizeBoidColorDist(val);
+        this.invalidateParams();
         continue;
       }
       if (id === '_sensingRules') {

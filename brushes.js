@@ -161,6 +161,24 @@ function _normalizeBrushHexColor(value, fallback = '#000000') {
   return hex.toLowerCase();
 }
 
+/** Pick an agent's base color from a normalized color distribution
+ *  ([{color, weight}] with weights summing to 1, from getP().colorDist).
+ *  A golden-ratio scramble of the agent index keeps color buckets
+ *  interleaved across the swarm while the per-color fraction of agents
+ *  still matches each weight. Deterministic per index, so an agent keeps
+ *  its color across frames. Returns fallbackColor when no distribution
+ *  is active (null / single entry), preserving existing behavior. */
+function _resolveDistributedAgentColor(colorDist, agentIndex, fallbackColor) {
+  if (!Array.isArray(colorDist) || colorDist.length < 2) return fallbackColor;
+  const t = (agentIndex * 0.6180339887498949) % 1;
+  let cumulative = 0;
+  for (const entry of colorDist) {
+    cumulative += entry.weight;
+    if (t < cumulative) return entry.color;
+  }
+  return colorDist[colorDist.length - 1].color;
+}
+
 function _resetSimulationSpawnAppearance(brush) {
   brush._agentSpawnColors = [];
   brush._agentSpawnOpacity = [];
@@ -1878,7 +1896,7 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
 
       let size = p.stampSize * sm;
       let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
@@ -2074,7 +2092,7 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
       if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
@@ -2478,7 +2496,7 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
 
       if (app.strokeFrame <= skipN) {
         this._lastStampX[i] = ax;
@@ -2775,7 +2793,7 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
 
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;

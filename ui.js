@@ -296,6 +296,7 @@ export function buildSidebar(app) {
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
       ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
+      <button id="btnBoidColorDist" style="width:100%;margin-top:6px;padding:6px;background:rgba(58,106,232,0.2);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#8ab4f8;font-size:11px;cursor:pointer;">🎨 Color Distribution</button>
     </div>
 
     <!-- Forces (boid + ant) -->
@@ -1010,6 +1011,9 @@ export function buildSidebar(app) {
   });
   document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
     app._showSimulationSetupExplorer?.(event.currentTarget);
+  });
+  document.getElementById('btnBoidColorDist')?.addEventListener('click', () => {
+    app._openBoidColorDistModal?.();
   });
   const syncSimulationDraftFromSidebar = () => app._syncSimulationSessionDraftUi?.();
   sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
