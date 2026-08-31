@@ -139,6 +139,200 @@ function fluidMidrangeRow() {
   `;
 }
 
+const PRESSURE_CURVE_DEFS = Object.freeze([
+  { id: 'pressureSizeCurve', label: 'Stamp Size', group: 'Shared Stamp', points: [[0, 0.3], [1, 1]] },
+  { id: 'pressureOpacityCurve', label: 'Stamp Opacity', group: 'Shared Stamp', points: [[0, 0.3], [1, 1]] },
+  { id: 'pressureSpawnRadiusCurve', label: 'Spawn Radius', group: 'Boid / Ant', points: [[0, 0.3], [1, 1]] },
+  { id: 'bristleSplayPressureCurve', label: 'Bristle Splay', group: 'Bristle', points: [[0, 0.5], [1, 1]] },
+  { id: 'fluid3dRadiusPressureCurve', label: 'Emitter Radius', group: '3D Fluid', points: [[0, 0.35], [1, 1]] },
+  { id: 'fluid3dCountPressureCurve', label: 'Particle Count', group: '3D Fluid', points: [[0, 0.45], [1, 1]] },
+  { id: 'fluid3dEmissionPressureCurve', label: 'Emission Strength', group: '3D Fluid', points: [[0, 0.4], [1, 1]] },
+  { id: 'fluid3dInfluencePressureCurve', label: 'Influence Strength', group: '3D Fluid', points: [[0, 0.3], [1, 1]] },
+  { id: 'lbmRadiusPressureCurve', label: 'Emitter Radius', group: 'Fluid', points: [[0, 0.35], [1, 1]] },
+  { id: 'lbmCountPressureCurve', label: 'Particle Count', group: 'Fluid', points: [[0, 0.4], [1, 1]] },
+]);
+
+function _pressureCurveMarkup() {
+  let currentGroup = '';
+  let markup = '';
+  for (const definition of PRESSURE_CURVE_DEFS) {
+    if (definition.group !== currentGroup) {
+      if (currentGroup) markup += '</div>';
+      currentGroup = definition.group;
+      markup += `<div class="pressure-curve-group"><div class="pressure-curve-group-title">${currentGroup}</div>`;
+    }
+    const serialized = JSON.stringify(definition.points);
+    markup += `
+      <div class="pressure-curve-editor" data-pressure-curve="${definition.id}" data-default-curve='${serialized}'>
+        <div class="pressure-curve-header">
+          <span class="pressure-curve-title">${definition.label}</span>
+          <button type="button" class="pressure-curve-reset" data-pressure-curve-reset>Reset</button>
+        </div>
+        <canvas class="pressure-curve-canvas" width="240" height="118" aria-label="${definition.label} pressure response curve"></canvas>
+        <div class="pressure-curve-axis"><span>Light pressure</span><span>Output</span><span>Firm pressure</span></div>
+        <input class="pressure-curve-value" type="text" id="${definition.id}" value='${serialized}' aria-label="${definition.label} pressure curve data">
+      </div>`;
+  }
+  return `${markup}</div>`;
+}
+
+function _normalizePressureCurve(value, fallback) {
+  try {
+    const source = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(source)) return fallback.map(point => [...point]);
+    const points = source
+      .map(point => [Number(point?.[0]), Number(point?.[1])])
+      .filter(point => point.every(Number.isFinite))
+      .map(([x, y]) => [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))])
+      .sort((a, b) => a[0] - b[0]);
+    if (points.length < 2) return fallback.map(point => [...point]);
+    const deduped = points.filter((point, index) => index === 0 || point[0] - points[index - 1][0] > 0.001);
+    if (deduped.length < 2) return fallback.map(point => [...point]);
+    deduped[0][0] = 0;
+    deduped[deduped.length - 1][0] = 1;
+    return deduped;
+  } catch {
+    return fallback.map(point => [...point]);
+  }
+}
+
+function _wirePressureCurveEditors(app, panel) {
+  panel.querySelectorAll('[data-pressure-curve]').forEach(editor => {
+    const canvas = editor.querySelector('.pressure-curve-canvas');
+    const input = editor.querySelector('.pressure-curve-value');
+    const fallback = JSON.parse(editor.dataset.defaultCurve);
+    let points = _normalizePressureCurve(input.value, fallback);
+    let activeIndex = -1;
+
+    const serialize = () => {
+      input.value = JSON.stringify(points.map(([x, y]) => [
+        Number(x.toFixed(4)),
+        Number(y.toFixed(4)),
+      ]));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      app.invalidateParams();
+    };
+    const draw = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const width = Math.max(180, Math.round(canvas.getBoundingClientRect().width || 240));
+      const height = 118;
+      if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      const pad = 12;
+      const graphW = width - pad * 2;
+      const graphH = height - pad * 2;
+      ctx.strokeStyle = 'rgba(255,255,255,.08)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const x = pad + graphW * i / 4;
+        const y = pad + graphH * i / 4;
+        ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, height - pad); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
+      }
+      ctx.strokeStyle = '#6d9cff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      points.forEach(([x, y], index) => {
+        const px = pad + x * graphW;
+        const py = pad + (1 - y) * graphH;
+        if (index) ctx.lineTo(px, py);
+        else ctx.moveTo(px, py);
+      });
+      ctx.stroke();
+      points.forEach(([x, y], index) => {
+        ctx.beginPath();
+        ctx.arc(pad + x * graphW, pad + (1 - y) * graphH, index === activeIndex ? 6 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = index === activeIndex ? '#fff' : '#8bb3ff';
+        ctx.fill();
+        ctx.strokeStyle = '#17233a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    };
+    const pointFromEvent = event => {
+      const rect = canvas.getBoundingClientRect();
+      const pad = 12;
+      return [
+        Math.max(0, Math.min(1, (event.clientX - rect.left - pad) / Math.max(1, rect.width - pad * 2))),
+        Math.max(0, Math.min(1, 1 - (event.clientY - rect.top - pad) / Math.max(1, rect.height - pad * 2))),
+      ];
+    };
+    canvas.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      const [x, y] = pointFromEvent(event);
+      let nearest = -1;
+      let nearestDistance = 0.075;
+      points.forEach((point, index) => {
+        const distance = Math.hypot(point[0] - x, point[1] - y);
+        if (distance < nearestDistance) {
+          nearest = index;
+          nearestDistance = distance;
+        }
+      });
+      if (nearest < 0) {
+        points.push([x, y]);
+        points.sort((a, b) => a[0] - b[0]);
+        nearest = points.findIndex(point => point[0] === x && point[1] === y);
+        serialize();
+      }
+      activeIndex = nearest;
+      canvas.setPointerCapture(event.pointerId);
+      draw();
+    });
+    canvas.addEventListener('pointermove', event => {
+      if (activeIndex < 0 || !canvas.hasPointerCapture(event.pointerId)) return;
+      const [x, y] = pointFromEvent(event);
+      const isEndpoint = activeIndex === 0 || activeIndex === points.length - 1;
+      const minX = activeIndex > 0 ? points[activeIndex - 1][0] + 0.002 : 0;
+      const maxX = activeIndex < points.length - 1 ? points[activeIndex + 1][0] - 0.002 : 1;
+      points[activeIndex] = [isEndpoint ? (activeIndex === 0 ? 0 : 1) : Math.max(minX, Math.min(maxX, x)), y];
+      serialize();
+      draw();
+    });
+    const release = event => {
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      activeIndex = -1;
+      draw();
+    };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('dblclick', event => {
+      const [x, y] = pointFromEvent(event);
+      let nearest = -1;
+      let nearestDistance = 0.075;
+      points.forEach((point, index) => {
+        const distance = Math.hypot(point[0] - x, point[1] - y);
+        if (index > 0 && index < points.length - 1 && distance < nearestDistance) {
+          nearest = index;
+          nearestDistance = distance;
+        }
+      });
+      if (nearest >= 0) {
+        points.splice(nearest, 1);
+        serialize();
+        draw();
+      }
+    });
+    editor.querySelector('[data-pressure-curve-reset]')?.addEventListener('click', () => {
+      points = fallback.map(point => [...point]);
+      serialize();
+      draw();
+    });
+    input.addEventListener('change', () => {
+      points = _normalizePressureCurve(input.value, fallback);
+      serialize();
+      draw();
+    });
+    new ResizeObserver(draw).observe(canvas);
+    draw();
+  });
+}
+
 function _updateSliderValue(target, newValue) {
   if (!target) return;
   const min = Number(target.min);
@@ -1141,6 +1335,11 @@ function _workspaceSettingsMarkup() {
         <button id="btnResetDefaults" class="reset-btn">🧼 Fresh Start</button>
       </div>
     </div>
+    <div class="section-header" data-section="stylusPressureCurves">Stylus Pressure Curves <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div class="pressure-curve-intro">Apple Pencil and stylus response. Drag points to reshape a curve, tap empty space to add a point, or double-tap an inner point to remove it. Existing pressure toggles still enable or disable each response.</div>
+      ${_pressureCurveMarkup()}
+    </div>
     <div class="section-header" data-section="simulationSettings">Simulation <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Show Selected Overlay <input type="checkbox" id="showSimulationSelectionOverlay"></label>
@@ -1153,6 +1352,7 @@ function _wireWorkspaceSettingsPanel(app, panel) {
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
+  _wirePressureCurveEditors(app, panel);
 
   const workspaceImportInput = document.createElement('input');
   workspaceImportInput.type = 'file';
