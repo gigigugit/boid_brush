@@ -7,17 +7,18 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
+import { workspaceControlBelongsToBrush } from './settings-catalog.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-26-sim-phase4-playback-export-1';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
-const WORKSPACE_SETTINGS_VERSION = 2;
+const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
 const VIEW_BOOKMARK_DEFAULT_NAME = 'View';
 const MAX_VIEW_BOOKMARK_NAME_LENGTH = 80;
@@ -3137,7 +3138,7 @@ export class App {
         key: 'workspace',
         group: 'Workspace',
         label: 'Workspace Bundle',
-        description: 'Workspace settings snapshot with session controls, presets, and autosave state. Use Save/Open Workspace File for full layer pixels.',
+        description: 'Workspace settings snapshot with session controls and autosave state. Device preset and favorite libraries are exported separately.',
         kind: 'bundle',
       },
       { key: 'brush-boid', group: 'Brush Settings', label: 'Brush: Boid', description: 'Boid brush controls, including shared boid-specific stamp and motion settings.', kind: 'brush', brush: 'boid' },
@@ -3187,16 +3188,8 @@ export class App {
   _workspaceJsonControlBrushTokens(controlId) {
     const element = document.getElementById(controlId);
     if (!element) return [];
-    const tokens = new Set();
-    let current = element;
-    while (current) {
-      const attr = current.getAttribute?.('data-brushes');
-      if (attr) {
-        for (const token of attr.split(/\s+/).map(part => part.trim()).filter(Boolean)) tokens.add(token);
-      }
-      current = current.parentElement;
-    }
-    return [...tokens];
+    const owner = element.closest('[data-brushes]');
+    return (owner?.getAttribute('data-brushes') || '').split(/\s+/).map(part => part.trim()).filter(Boolean);
   }
 
   _workspaceJsonControlSectionId(controlId) {
@@ -3207,27 +3200,18 @@ export class App {
     return sectionHeader?.dataset?.section || '';
   }
 
-  _workspaceJsonBrushSectionIds(brush) {
-    const shared = ['brushScale', 'fill', 'stamp', 'stampImage', 'canvasTexture', 'symmetry', 'taper', 'trailBlur', 'kmMix', 'impasto', 'pencilHover'];
-    const brushSections = {
-      boid: ['spawn', 'swarm', 'forces', 'quorum', 'variance', 'motion', 'leaders', 'visual', 'sensing', 'antPheromone'],
-      ant: ['spawn', 'swarm', 'forces', 'variance', 'motion', 'visual', 'sensing', 'antPheromone'],
-      bristle: ['bristleShape', 'bristlePhysics', 'bristleVariance', 'bristleVisual'],
-      simple: [],
-      eraser: [],
-      fluid: ['fluidBrush', 'fluidForces', 'fluidMidrange', 'fluidFlow', 'fluidSettling', 'fluidRendering'],
-      fluid3d: ['fluid3dBrush', 'fluid3dDynamics', 'fluid3dInteraction', 'fluid3dRendering'],
-      motionPath: ['motionPathGraph', 'motionPathRuntime'],
-    };
-    return new Set([...shared, ...(brushSections[brush] || [])]);
-  }
-
   _workspaceJsonControlBelongsToBrush(controlId, brush) {
     if (!brush) return false;
+    const element = document.getElementById(controlId);
+    const sectionBody = element?.closest('.section-body');
+    const owner = element?.closest('[data-brushes]');
     const tokens = this._workspaceJsonControlBrushTokens(controlId);
-    if (tokens.includes(brush)) return true;
     const sectionId = this._workspaceJsonControlSectionId(controlId);
-    return this._workspaceJsonBrushSectionIds(brush).has(sectionId);
+    return workspaceControlBelongsToBrush({
+      brushes: tokens,
+      section: sectionId,
+      explicitBrushOwnership: !!owner && owner !== sectionBody,
+    }, brush);
   }
 
   _workspaceJsonCanvasKeys() {
@@ -3303,7 +3287,6 @@ export class App {
     const canvasKeys = this._workspaceJsonCanvasKeys();
     const doc = {
       autosaveEnabled: !!bundle?.autosaveEnabled,
-      presets: _deepClone(bundle?.presets || {}),
     };
     for (const [key, value] of Object.entries(controls)) {
       if (key === '_simulation') continue;
@@ -3521,11 +3504,11 @@ export class App {
   _validateWorkspaceJsonEditor() {
     const { normalized, docKey } = this._readWorkspaceJsonEditorBundle();
     if (docKey === 'workspace') {
-      const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
-        ? Object.keys(normalized.presets).length
+      const presetCount = normalized.legacyPresets && typeof normalized.legacyPresets === 'object' && !Array.isArray(normalized.legacyPresets)
+        ? Object.keys(normalized.legacyPresets).length
         : 0;
       this._setWorkspaceJsonModalStatus(
-        `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+        `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} legacy preset${presetCount === 1 ? '' : 's'} for optional import.` : ''}`,
         'success',
       );
       this.showToast('✓ JSON valid');
@@ -3597,11 +3580,11 @@ export class App {
       if (quiet) {
         this._setWorkspaceJsonModalStatus('Changes applied from the JSON value editor.', 'success');
       } else if (docKey === 'workspace') {
-        const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
-          ? Object.keys(normalized.presets).length
+        const presetCount = normalized.legacyPresets && typeof normalized.legacyPresets === 'object' && !Array.isArray(normalized.legacyPresets)
+          ? Object.keys(normalized.legacyPresets).length
           : 0;
         this._setWorkspaceJsonModalStatus(
-          `Workspace JSON applied successfully.${presetCount ? ` Loaded ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+          `Workspace JSON applied successfully.${presetCount ? ` ${presetCount} embedded legacy preset${presetCount === 1 ? ' is' : 's are'} available for optional import.` : ''}`,
           'success',
         );
       } else {
@@ -16655,6 +16638,7 @@ export class App {
     this._ensureSimulationSpawns(name);
     this._syncSimulationUI();
     this._syncMotionPathUI();
+    this._refreshSettingsManagementUi?.();
     this._paramsDirty = true;
   }
 
@@ -21066,15 +21050,6 @@ export class App {
     } catch { /* quota exceeded — ignore */ }
   }
 
-  _readWorkspacePresets() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}');
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-
   _sanitizeWorkspacePresets(presets) {
     return presets && typeof presets === 'object' && !Array.isArray(presets)
       ? _deepClone(presets)
@@ -21096,7 +21071,6 @@ export class App {
       exportedAt: new Date().toISOString(),
       appBuildId: APP_BUILD_ID,
       session: this._captureSessionControls(),
-      presets: this._readWorkspacePresets(),
       autosaveEnabled: autoSaveValue,
     };
     if (includeDocument) bundle.document = this._captureWorkspaceDocumentState();
@@ -21131,9 +21105,13 @@ export class App {
       throw new Error('Invalid workspace payload');
     }
     if (bundle.format === WORKSPACE_SETTINGS_FORMAT) {
+      const workspaceVersion = bundle.version == null ? 1 : bundle.version;
+      if (!Number.isInteger(workspaceVersion) || workspaceVersion < 1 || workspaceVersion > WORKSPACE_SETTINGS_VERSION) {
+        throw new Error(`Unsupported workspace version: ${workspaceVersion}`);
+      }
       return {
         session: bundle.session,
-        presets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : {},
+        legacyPresets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : null,
         autosaveValue: bundle.autosaveEnabled === true ? '1' : '0',
         document: bundle.document && typeof bundle.document === 'object' && !Array.isArray(bundle.document)
           ? _deepClone(bundle.document)
@@ -21143,7 +21121,7 @@ export class App {
     if (Object.prototype.hasOwnProperty.call(bundle, 'session') || Object.prototype.hasOwnProperty.call(bundle, 'presets')) {
       return {
         session: bundle.session,
-        presets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : this._readWorkspacePresets(),
+        legacyPresets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : null,
         autosaveValue: bundle.autosaveEnabled === true || bundle.autosave === '1'
           ? '1'
           : (bundle.autosaveEnabled === false || bundle.autosave === '0' ? '0' : null),
@@ -21154,7 +21132,7 @@ export class App {
     }
     return {
       session: bundle,
-      presets: this._readWorkspacePresets(),
+      legacyPresets: null,
       autosaveValue: null,
       document: null,
     };
@@ -21171,7 +21149,9 @@ export class App {
       this._syncSelectionUI();
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized.session));
-    localStorage.setItem(PRESETS_KEY, JSON.stringify(this._sanitizeWorkspacePresets(normalized.presets)));
+    this._pendingLegacyWorkspacePresets = normalized.legacyPresets
+      ? this._sanitizeWorkspacePresets(normalized.legacyPresets)
+      : null;
     await this._restoreSession();
     if (normalized.document) {
       await this._restoreWorkspaceDocumentState(normalized.document);
@@ -21182,7 +21162,11 @@ export class App {
       localStorage.setItem(AUTOSAVE_STORAGE_KEY, autoSaveValue);
     } catch { /* ignore localStorage failures */ }
     if (checkbox) checkbox.checked = autoSaveValue === '1';
+    this._refreshSettingsManagementUi?.();
     this.compositeAllLayers({ forceFull: true });
+    if (this._pendingLegacyWorkspacePresets && Object.keys(this._pendingLegacyWorkspacePresets).length) {
+      this.showToast('Workspace opened · embedded legacy presets are available for explicit import');
+    }
     return true;
   }
 

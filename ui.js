@@ -1,8 +1,25 @@
+import { buildSettingsCatalog, catalogEntryApplies } from './settings-catalog.js';
+import {
+  FAVORITES_KEY,
+  LEGACY_PRESETS_KEY,
+  PRESET_FORMAT,
+  PRESET_LIBRARY_FORMAT,
+  PRESET_LIBRARY_KEY,
+  applyPresetValues,
+  capturePresetValues,
+  createPreset,
+  emptyLibrary,
+  mergeImportedEntries,
+  normalizeFavorites,
+  normalizeLibrary,
+  normalizePreset,
+} from './settings-library.js';
+
 // =============================================================================
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
 // =============================================================================
 
-export const PRESETS_KEY = 'bb_presets_v1';
+export const PRESETS_KEY = LEGACY_PRESETS_KEY;
 export const AUTOSAVE_STORAGE_KEY = 'bb_autosave';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 const MAX_SWARM_COUNT = 2000;
@@ -40,13 +57,47 @@ const BUILTIN_PRESETS = {
   '3D Fluid Crimson Swirl': { _activeBrush:'fluid3d', _primaryColor:'#ff0000', fluid3dBrushRadius:61, fluid3dEmitterCount:21, fluid3dEmissionRate:100, fluid3dEmitterStrength:100, fluid3dEmitterVelocity:100, fluid3dPressure:100, fluid3dMomentum:100, fluid3dVelocityDiffuse:100, fluid3dDrag:25, fluid3dThicknessDecay:37, fluid3dPigmentDiffusion:30, fluid3dPressureFade:11, fluid3dSettleThreshold:4, fluid3dMaxVelocity:30, fluid3dThicknessFloor:1, fluid3dOccupancyBias:29, fluid3dInfluenceStrength:51, fluid3dInfluenceRadius:105, fluid3dTerrainWeight:64, fluid3dScalarFieldInfluence:100, fluid3dOpacity:77, fluid3dOpacityScale:68, fluid3dResolutionScale:70, fluid3dPreviewScale:50, fluid3dFluidScale:85, fluid3dAdaptiveQuality:false, fluid3dShowField:false, fluid3dRenderMode:'pigment', fluid3dSpreadClamp:76, fluid3dSurfaceTension:28, fluid3dEdgeWidth:34, fluid3dEdgeDrag:24, fluid3dInjectorMode:'swirl', fluid3dInjectorMotion:84, fluid3dInjectorPigment:90, fluid3dInjectorOccupancy:68, fluid3dInjectorSwirl:62, stampOpacity:100, canvasTextureEnabled:false },
 };
 
-function loadUserPresets() {
-  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}'); }
-  catch { return {}; }
+let _settingsCatalog = new Map();
+let _favoritesState = normalizeFavorites();
+
+function loadPresetLibrary() {
+  try {
+    const current = localStorage.getItem(PRESET_LIBRARY_KEY);
+    if (current) {
+      const normalized = normalizeLibrary(JSON.parse(current), {
+        catalog: _settingsCatalog,
+        skipInvalidEntries: true,
+      });
+      if (normalized.warnings.some(warning => warning.error)) {
+        console.warn('Some saved presets could not be loaded:', normalized.warnings.filter(warning => warning.error));
+      }
+      return normalized.library;
+    }
+    const legacy = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}');
+    const normalized = normalizeLibrary(legacy, {
+      catalog: _settingsCatalog,
+      skipInvalidEntries: true,
+    });
+    if (normalized.warnings.some(warning => warning.error)) {
+      console.warn('Some legacy presets could not be migrated:', normalized.warnings.filter(warning => warning.error));
+    }
+    return normalized.library;
+  } catch {
+    return emptyLibrary();
+  }
 }
 
-function saveUserPresets(obj) {
-  localStorage.setItem(PRESETS_KEY, JSON.stringify(obj));
+function savePresetLibrary(library) {
+  localStorage.setItem(PRESET_LIBRARY_KEY, JSON.stringify(library));
+}
+
+function loadFavorites() {
+  try { return normalizeFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || 'null')); }
+  catch { return normalizeFavorites(); }
+}
+
+function saveFavorites(favorites) {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(normalizeFavorites(favorites)));
 }
 
 // ── Section toggle ──────────────────────────────────────────
@@ -229,6 +280,17 @@ function _syncLeaderOverrideUI() {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <div class="settings-navigator">
+      <input id="settingsCatalogSearch" type="search" placeholder="Search settings…" aria-label="Search settings">
+      <select id="settingsCatalogScope" aria-label="Settings scope">
+        <option value="active">Active Brush</option>
+        <option value="simulation">Simulation</option>
+        <option value="shared">Shared</option>
+        <option value="favorites">Favorites</option>
+        <option value="all">All</option>
+      </select>
+      <div id="settingsCatalogResults"></div>
+    </div>
     <div id="simBrushSessionCardHost" data-brushes="boid">
       ${renderSimulationSessionCard({
         badgeId: 'simSidebarSessionBadge',
@@ -778,12 +840,20 @@ export function buildSidebar(app) {
     <!-- Presets -->
     <div class="section-header" data-section="presets">Presets <span class="chevron">▼</span></div>
     <div class="section-body">
+      <div style="display:flex;gap:3px;margin-bottom:5px;">
+        <select id="presetLibraryScope" aria-label="Preset library scope" style="flex:1;">
+          <option value="active">Active Brush / Mode</option>
+          <option value="all">All Presets</option>
+        </select>
+        <input id="presetLibrarySearch" type="search" placeholder="Search…" aria-label="Search presets" style="min-width:0;flex:1;">
+      </div>
       <div id="builtinPresets" style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:6px;"></div>
       <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;margin-top:4px;">
-        <div style="display:flex;gap:3px;margin-bottom:4px;">
-          <button id="btnSavePreset" class="save-btn">💾 Save</button>
-          <button id="btnImportPreset">📥 Import</button>
-          <button id="btnExportPresets">📋 Export</button>
+        <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px;">
+          <button id="btnSavePreset" class="save-btn">💾 Brush</button>
+          <button id="btnSaveSimulationPreset">💾 Simulation</button>
+          <button id="btnImportPreset">📥 File</button>
+          <button id="btnExportPresets">📤 Library</button>
         </div>
         <div id="userPresets"></div>
       </div>
@@ -982,11 +1052,25 @@ export function buildSidebar(app) {
   });
 
   // ── Preset buttons ──
+  _settingsCatalog = buildSettingsCatalog(sb);
+  _favoritesState = loadFavorites();
+  _decorateFavoriteControls(app);
+  _wireSettingsCatalogSearch(app);
   _renderBuiltinPresets(app);
   _renderUserPresets(app);
-  document.getElementById('btnSavePreset')?.addEventListener('click', () => _saveNewPreset(app));
+  document.getElementById('btnSavePreset')?.addEventListener('click', () => _saveNewPreset(app, 'brush'));
+  document.getElementById('btnSaveSimulationPreset')?.addEventListener('click', () => _saveNewPreset(app, 'simulation'));
   document.getElementById('btnImportPreset')?.addEventListener('click', () => _importPreset(app));
   document.getElementById('btnExportPresets')?.addEventListener('click', () => _exportPresets(app));
+  document.getElementById('presetLibraryScope')?.addEventListener('change', () => _renderUserPresets(app));
+  document.getElementById('presetLibrarySearch')?.addEventListener('input', () => _renderUserPresets(app));
+  app._refreshSettingsManagementUi = () => {
+    _decorateFavoriteControls(app);
+    _renderBuiltinPresets(app);
+    _renderUserPresets(app);
+    _renderFavorites(app);
+    _renderSettingsCatalogResults(app);
+  };
 
   // Sidebar auto-save is wired via delegated listeners in
   // _wireWorkspaceSettingsPanel() so all control types share one debounced
@@ -1175,15 +1259,24 @@ export function buildFavoritesPanel(app) {
   panel.innerHTML = `
     <div class="section-header" data-section="favorites">Favorites <span class="chevron">▼</span></div>
     <div class="section-body">
-      <div style="display:grid;gap:8px;">
-        <div style="font-size:12px;font-weight:700;color:rgba(120,241,220,0.96);letter-spacing:0.06em;text-transform:uppercase;">Starred Controls</div>
-        <div style="line-height:1.5;color:var(--ink-1);">Favorites now has a dedicated panel shell. The next pass will add selection mode and mirrored control rows here.</div>
+      <div style="font-size:12px;font-weight:700;color:rgba(120,241,220,0.96);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:7px;">Starred Controls</div>
+      <div style="display:flex;gap:4px;margin-bottom:7px;">
+        <button id="btnImportFavorites" type="button">Import</button>
+        <button id="btnExportFavorites" type="button">Export</button>
       </div>
+      <div id="favoriteControlList"></div>
     </div>
   `;
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
+  _favoritesState = loadFavorites();
+  document.getElementById('btnImportFavorites')?.addEventListener('click', () => _importFavorites(app));
+  document.getElementById('btnExportFavorites')?.addEventListener('click', () => {
+    _downloadSettingsJson(_favoritesState, `boid-brush-favorites-${new Date().toISOString().slice(0, 10)}.json`);
+    app.showToast('Favorites exported');
+  });
+  _renderFavorites(app);
 }
 
 export function buildSettingsPanel(app) {
@@ -2062,6 +2155,7 @@ export function syncUI(app) {
     const fmt = _sliderFormats[inp.id];
     span.textContent = fmt ? fmt(+inp.value) : inp.value;
   });
+  _settingsCatalog.forEach((_, controlId) => _syncFavoriteProxies(controlId));
   // Update multiplier displays
   _syncMultDisplays();
   // Layer controls
@@ -2653,11 +2747,45 @@ function _renderBuiltinPresets(app) {
   if (!container) return;
   container.innerHTML = '';
   for (const [name, values] of Object.entries(BUILTIN_PRESETS)) {
+    const fallbackBrush = values._activeBrush || 'boid';
+    let preset;
+    try {
+      preset = normalizePreset(values, { catalog: _settingsCatalog, fallbackName: name, fallbackBrush }).preset;
+    } catch {
+      continue;
+    }
+    const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
+    const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
+    if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
+    if (search && !`${name} ${preset.scope.kind} ${preset.scope.brush}`.toLowerCase().includes(search)) continue;
     const btn = document.createElement('button');
-    btn.textContent = name;
-    btn.addEventListener('click', () => _applyPreset(app, values));
+    btn.textContent = `${name} · ${preset.scope.brush}`;
+    btn.title = `Built-in ${preset.scope.kind} preset`;
+    btn.addEventListener('click', () => _applyBuiltinPreset(app, name, values, preset.scope.brush));
     container.appendChild(btn);
   }
+}
+
+function _applyBuiltinPreset(app, name, values, brush) {
+  if (brush && brush !== app.activeBrush) app.setBrush(brush);
+  for (const [id, value] of Object.entries(values)) {
+    if (id === '_activeBrush') continue;
+    if (id === '_primaryColor') {
+      app.setColorValue?.('primary', value) ?? (app.primaryEl.value = value);
+      continue;
+    }
+    if (id === '_secondaryColor') {
+      app.setColorValue?.('secondary', value) ?? (app.secondaryEl.value = value);
+      continue;
+    }
+    const control = document.getElementById(id);
+    if (!control) continue;
+    if (control.type === 'checkbox') control.checked = !!value;
+    else control.value = String(value);
+  }
+  app.invalidateParams();
+  syncUI(app);
+  app.showToast(`Applied "${name}"`);
 }
 
 // ── User presets ────────────────────────────────────────────
@@ -2665,131 +2793,568 @@ function _renderUserPresets(app) {
   const container = document.getElementById('userPresets');
   if (!container) return;
   container.innerHTML = '';
-  const presets = loadUserPresets();
-  for (const [name, values] of Object.entries(presets)) {
+  const library = loadPresetLibrary();
+  if (app._pendingLegacyWorkspacePresets && Object.keys(app._pendingLegacyWorkspacePresets).length) {
+    const compatibility = document.createElement('button');
+    compatibility.type = 'button';
+    compatibility.style.width = '100%';
+    compatibility.style.marginBottom = '5px';
+    compatibility.textContent = `Import ${Object.keys(app._pendingLegacyWorkspacePresets).length} embedded workspace preset(s)`;
+    compatibility.addEventListener('click', () => {
+      try {
+        const candidate = normalizeLibrary(app._pendingLegacyWorkspacePresets, {
+          catalog: _settingsCatalog,
+          fallbackBrush: app.activeBrush,
+          skipInvalidEntries: true,
+        });
+        savePresetLibrary(mergeImportedEntries(loadPresetLibrary(), candidate.library));
+        app._pendingLegacyWorkspacePresets = null;
+        _renderUserPresets(app);
+        const skipped = candidate.warnings.filter(warning => warning.error).length;
+        app.showToast(`Imported ${candidate.library.entries.length} legacy workspace preset(s)${skipped ? ` · ${skipped} invalid skipped` : ''}`);
+      } catch (error) {
+        app.showToast(`Legacy preset import failed: ${error.message}`);
+      }
+    });
+    container.appendChild(compatibility);
+  }
+  const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
+  const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
+  for (const preset of library.entries) {
+    if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
+    if (search && !`${preset.name} ${preset.scope.kind} ${preset.scope.brush}`.toLowerCase().includes(search)) continue;
     const row = document.createElement('div');
     row.className = 'preset-item';
     const btn = document.createElement('button');
-    btn.textContent = name;
-    btn.addEventListener('click', () => _applyPreset(app, values));
+    btn.textContent = `${preset.name} · ${preset.scope.kind} · ${preset.scope.brush}`;
+    btn.addEventListener('click', () => _applyPreset(app, preset));
+    const more = document.createElement('button');
+    more.className = 'preset-del';
+    more.textContent = '⋯';
+    more.title = 'Rename, duplicate, or export';
+    more.addEventListener('click', () => _managePreset(app, preset.id));
     const del = document.createElement('button');
     del.className = 'preset-del';
     del.textContent = '✕';
     del.addEventListener('click', () => {
-      delete presets[name];
-      saveUserPresets(presets);
-      _renderUserPresets(app);
-      app.showToast(`Deleted "${name}"`);
+      const next = emptyLibrary(library.entries.filter(entry => entry.id !== preset.id));
+      try {
+        savePresetLibrary(next);
+        _renderUserPresets(app);
+        app.showToast(`Deleted "${preset.name}"`);
+      } catch (error) {
+        console.error('Preset deletion failed:', error);
+        app.showToast('Preset could not be deleted from this device');
+      }
     });
     row.appendChild(btn);
+    row.appendChild(more);
     row.appendChild(del);
     container.appendChild(row);
   }
+  if (!container.children.length) container.innerHTML = '<span class="slider-desc">No matching device presets.</span>';
 }
 
-function _applyPreset(app, values) {
-  for (const [id, val] of Object.entries(values)) {
-    // Handle special preset keys
-    if (id === '_primaryColor') { app.setColorValue?.('primary', val) ?? (app.primaryEl.value = val); continue; }
-    if (id === '_secondaryColor') { app.setColorValue?.('secondary', val) ?? (app.secondaryEl.value = val); continue; }
-    if (id === '_activeBrush') { app.setBrush(val); continue; }
-    if (id === '_motionPath') {
-      if (val && typeof val === 'object') {
-        app.motionPath = {
-          ...app.motionPath,
-          ...structuredClone(val),
-          editorOpen: false,
-          previousUiState: null,
-        };
-        app._normalizeMotionPathState?.();
-      }
-      continue;
-    }
-    const el = document.getElementById(id);
-    if (!el) continue;
-    if (el.type === 'checkbox') el.checked = !!val;
-    else el.value = val;
+function _applyPreset(app, preset) {
+  if (preset.scope.brush !== app.activeBrush) {
+    app.showToast(`Switch to ${preset.scope.brush} to apply this preset`);
+    return;
   }
+  const legacyMotionPath = preset.legacyAuthoredContent?.motionPath;
+  if (preset.scope.brush === 'motionPath' && legacyMotionPath && typeof legacyMotionPath === 'object') {
+    app.motionPath = {
+      ...app.motionPath,
+      ...structuredClone(legacyMotionPath),
+      editorOpen: false,
+      previousUiState: null,
+    };
+    app._normalizeMotionPathState?.();
+  }
+  const legacyColors = preset.legacyAuthoredContent?.colors;
+  if (typeof legacyColors?.primary === 'string') app.setColorValue?.('primary', legacyColors.primary);
+  if (typeof legacyColors?.secondary === 'string') app.setColorValue?.('secondary', legacyColors.secondary);
+  if (preset.scope.kind === 'simulation') {
+    if (app.simulation?.running || app.simulation?.paused) app.stopSimulation(false);
+    const authored = preset.values.authoredContent || {};
+    if (authored.brushData && app.simulation?.brushData) {
+      app.simulation.brushData[preset.scope.brush] = structuredClone(authored.brushData);
+    }
+    if (authored.vars && app.simulation) app.simulation.vars = structuredClone(authored.vars);
+    if (authored.sensingSourceSelection) app._restoreSensingSourceSelection?.(authored.sensingSourceSelection);
+    if (app.simulation) {
+      app.simulation.savedPlayback = null;
+      app.simulation.selected = null;
+      app.simulation.drawingPath = null;
+      app.simulation.drawingBlob = null;
+      app.simulation.dragTarget = null;
+    }
+    app._normalizeSimulationData?.();
+    _advanceSimulationNextId(app);
+    app._ensureSimulationSpawns?.(preset.scope.brush);
+  }
+  const result = applyPresetValues(document, _settingsCatalog, preset);
   app.invalidateParams();
   syncUI(app);
-  app.showToast('Preset applied');
+  app._renderSimulationInspector?.();
+  app._syncSimulationUI?.();
+  app.showToast(`Applied "${preset.name}"${result.dropped.length ? ` (${result.dropped.length} unavailable)` : ''}`);
 }
 
-function _captureCurrentPresetValues(app) {
-  const values = {};
-  document.querySelectorAll('#sidebar input[type="range"]').forEach(el => {
-    if (el.id) values[el.id] = +el.value;
+function _captureCurrentPreset(app, kind, name) {
+  const scope = { kind, brush: app.activeBrush };
+  const parameters = capturePresetValues(document, _settingsCatalog, scope);
+  if (kind === 'brush') return createPreset({ name, kind, brush: app.activeBrush, values: parameters });
+  const authoredContent = {
+    brushData: structuredClone(app.simulation?.brushData?.[app.activeBrush] || {}),
+    vars: structuredClone(app.simulation?.vars || {}),
+    sensingSourceSelection: structuredClone(app._serializeSensingSourceSelection?.() || []),
+  };
+  return createPreset({
+    name,
+    kind,
+    brush: app.activeBrush,
+    values: { parameters, authoredContent },
   });
-  document.querySelectorAll('#sidebar input[type="checkbox"]').forEach(el => {
-    if (el.id && el.id !== 'autoSaveSession') values[el.id] = el.checked;
-  });
-  document.querySelectorAll('#sidebar input[type="text"]').forEach(el => {
-    if (el.id) values[el.id] = el.value;
-  });
-  document.querySelectorAll('#sidebar select').forEach(el => {
-    if (el.id && el.id !== 'layerBlend') values[el.id] = el.value;
-  });
-  values._primaryColor = app.primaryEl.value;
-  values._secondaryColor = app.secondaryEl.value;
-  values._activeBrush = app.activeBrush;
-  if (app.activeBrush === 'motionPath' && app._serializeMotionPathState) {
-    values._motionPath = app._serializeMotionPathState();
+}
+
+function _advanceSimulationNextId(app) {
+  if (!app.simulation) return;
+  let maxId = Math.max(0, Math.floor(Number(app.simulation.nextId) || 1) - 1);
+  const pending = [app.simulation.brushData];
+  const seen = new Set();
+  while (pending.length) {
+    const value = pending.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Number.isFinite(Number(value.id))) maxId = Math.max(maxId, Math.floor(Number(value.id)));
+    if (Array.isArray(value)) pending.push(...value);
+    else pending.push(...Object.values(value));
   }
-  return values;
+  app.simulation.nextId = maxId + 1;
 }
 
-function _saveNewPreset(app) {
-  const name = prompt('Preset name:');
+function _saveNewPreset(app, kind = 'brush') {
+  if (kind === 'simulation' && !['boid', 'ant'].includes(app.activeBrush)) {
+    app.showToast('Simulation presets are available for Boid and Ant');
+    return;
+  }
+  const name = prompt(`${kind === 'simulation' ? 'Simulation' : 'Brush'} preset name:`);
   if (!name) return;
-  const presets = loadUserPresets();
-  if (presets[name]) {
-    if (!confirm(`Overwrite existing preset "${name}"?`)) return;
+  const library = loadPresetLibrary();
+  const preset = _captureCurrentPreset(app, kind, name);
+  const merged = mergeImportedEntries(library, emptyLibrary([preset]));
+  try {
+    savePresetLibrary(merged);
+    _renderUserPresets(app);
+    app.showToast(`Saved "${merged.entries.at(-1).name}"`);
+  } catch (error) {
+    console.error('Preset save failed:', error);
+    app.showToast('Preset could not be saved to this device');
   }
-  const values = _captureCurrentPresetValues(app);
-  presets[name] = values;
-  saveUserPresets(presets);
-  _renderUserPresets(app);
-  app.showToast(`Saved "${name}"`);
 }
 
 function _importPreset(app) {
-  const raw = prompt('Paste preset JSON:');
-  if (!raw) return;
-  try {
-    const obj = JSON.parse(raw);
-    if (typeof obj !== 'object') throw new Error('Invalid');
-    // Determine if it's a named collection or a single preset
-    const firstVal = Object.values(obj)[0];
-    if (typeof firstVal === 'object' && firstVal !== null) {
-      // Collection of presets
-      const presets = loadUserPresets();
-      Object.assign(presets, obj);
-      saveUserPresets(presets);
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const versioned = parsed?.format === PRESET_FORMAT || parsed?.format === PRESET_LIBRARY_FORMAT;
+      const candidate = normalizeLibrary(parsed, {
+        catalog: _settingsCatalog,
+        fallbackBrush: app.activeBrush,
+        skipInvalidEntries: !versioned,
+      });
+      const next = mergeImportedEntries(loadPresetLibrary(), candidate.library);
+      savePresetLibrary(next);
       _renderUserPresets(app);
-      app.showToast(`Imported ${Object.keys(obj).length} preset(s)`);
-    } else {
-      // Single preset
-      const name = prompt('Name for this preset:', 'Imported');
-      if (!name) return;
-      const presets = loadUserPresets();
-      presets[name] = obj;
-      saveUserPresets(presets);
-      _renderUserPresets(app);
-      app.showToast(`Imported "${name}"`);
+      const loss = candidate.warnings.reduce((sum, warning) => sum + warning.dropped.length, 0);
+      const skipped = candidate.warnings.filter(warning => warning.error).length;
+      const warningParts = [
+        loss ? `${loss} unsupported setting(s) skipped` : '',
+        skipped ? `${skipped} invalid preset(s) skipped` : '',
+      ].filter(Boolean);
+      app.showToast(`Imported ${candidate.library.entries.length} preset(s)${warningParts.length ? ` · ${warningParts.join(' · ')}` : ''}`);
+    } catch (error) {
+      app.showToast(`Import failed: ${error.message}`);
     }
-  } catch (e) {
-    app.showToast('Invalid JSON');
-  }
+  }, { once: true });
+  input.click();
 }
 
 function _exportPresets(app) {
-  const presets = loadUserPresets();
-  const payload = Object.keys(presets).length ? presets : _captureCurrentPresetValues(app);
-  const json = JSON.stringify(payload, null, 2);
-  navigator.clipboard.writeText(json).then(() => {
-    alert(Object.keys(presets).length ? 'Presets copied to clipboard' : 'Current settings copied to clipboard');
-  }).catch(() => {
-    prompt('Copy this JSON:', json);
+  _downloadSettingsJson(loadPresetLibrary(), `boid-brush-preset-library-${new Date().toISOString().slice(0, 10)}.json`);
+  app.showToast('Preset library exported');
+}
+
+function _managePreset(app, id) {
+  const library = loadPresetLibrary();
+  const preset = library.entries.find(entry => entry.id === id);
+  if (!preset) return;
+  const action = prompt('Preset action: rename, duplicate, or export', 'rename')?.trim().toLowerCase();
+  if (action === 'rename') {
+    const name = prompt('New preset name:', preset.name)?.trim();
+    if (!name) return;
+    const occupied = new Set(library.entries.filter(entry => entry.id !== id).map(entry => entry.name));
+    let resolved = name;
+    let n = 2;
+    while (occupied.has(resolved)) resolved = `${name} (${n++})`;
+    preset.name = resolved;
+    preset.updatedAt = new Date().toISOString();
+    try {
+      savePresetLibrary(library);
+      _renderUserPresets(app);
+    } catch (error) {
+      console.error('Preset rename failed:', error);
+      app.showToast('Preset could not be renamed on this device');
+    }
+  } else if (action === 'duplicate') {
+    const duplicate = createPreset({
+      ...preset,
+      id: undefined,
+      name: `${preset.name} Copy`,
+      kind: preset.scope.kind,
+      brush: preset.scope.brush,
+    });
+    try {
+      savePresetLibrary(mergeImportedEntries(library, emptyLibrary([duplicate])));
+      _renderUserPresets(app);
+    } catch (error) {
+      console.error('Preset duplicate failed:', error);
+      app.showToast('Preset could not be duplicated on this device');
+    }
+  } else if (action === 'export') {
+    _downloadSettingsJson(preset, `${preset.name.replace(/[^\w.-]+/g, '-') || 'preset'}.json`);
+  }
+}
+
+function _downloadSettingsJson(value, filename) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function _importFavorites(app) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const imported = normalizeFavorites(JSON.parse(await file.text()));
+      const merged = normalizeFavorites({
+        ..._favoritesState,
+        items: [..._favoritesState.items, ...imported.items],
+      });
+      saveFavorites(merged);
+      _favoritesState = merged;
+      _decorateFavoriteControls(app);
+      _renderFavorites(app);
+      _renderSettingsCatalogResults(app);
+      app.showToast(`Imported ${imported.items.length} favorite(s)`);
+    } catch (error) {
+      app.showToast(`Favorites import failed: ${error.message}`);
+    }
+  }, { once: true });
+  input.click();
+}
+
+function _favoriteIds(brush = '') {
+  return new Set(_favoritesState.items
+    .filter(item => !item.scope?.brush || !brush || item.scope.brush === brush)
+    .map(item => item.controlId));
+}
+
+function _decorateFavoriteControls(app) {
+  const favoriteIds = _favoriteIds(app.activeBrush);
+  for (const entry of _settingsCatalog.values()) {
+    if (!entry.favoriteEligible) continue;
+    const control = document.getElementById(entry.id);
+    const label = control?.closest('label');
+    const existingStar = label?.querySelector(':scope > .setting-favorite-toggle');
+    if (existingStar) {
+      const selected = favoriteIds.has(entry.id);
+      existingStar.textContent = selected ? '★' : '☆';
+      existingStar.title = selected ? 'Remove from Favorites' : 'Add to Favorites';
+      continue;
+    }
+    if (!control || !label) continue;
+    const star = document.createElement('button');
+    star.type = 'button';
+    star.className = 'setting-favorite-toggle';
+    star.textContent = favoriteIds.has(entry.id) ? '★' : '☆';
+    star.title = favoriteIds.has(entry.id) ? 'Remove from Favorites' : 'Add to Favorites';
+    star.setAttribute('aria-label', star.title);
+    star.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const previous = structuredClone(_favoritesState);
+      const favoriteScope = entry.scope.kind === 'brush'
+        ? { kind: 'brush', brush: app.activeBrush }
+        : { kind: entry.scope.kind };
+      const index = _favoritesState.items.findIndex(item =>
+        item.controlId === entry.id
+        && (item.scope?.brush || '') === (favoriteScope.brush || '')
+      );
+      if (index >= 0) _favoritesState.items.splice(index, 1);
+      else _favoritesState.items.push({
+        controlId: entry.id,
+        scope: favoriteScope,
+      });
+      try {
+        saveFavorites(_favoritesState);
+        _decorateFavoriteControls(app);
+        document.querySelectorAll('.setting-favorite-toggle').forEach(button => {
+          const target = button.closest('label')?.querySelector('input[id],select[id],textarea[id]');
+          if (!target) return;
+          const selected = _favoriteIds(app.activeBrush).has(target.id);
+          button.textContent = selected ? '★' : '☆';
+          button.title = selected ? 'Remove from Favorites' : 'Add to Favorites';
+        });
+        _renderFavorites(app);
+        _renderSettingsCatalogResults(app);
+      } catch (error) {
+        _favoritesState = previous;
+        console.error('Favorite save failed:', error);
+        app.showToast('Favorites could not be saved');
+      }
+    });
+    label.appendChild(star);
+    if (!control.dataset.favoriteSyncWired) {
+      control.dataset.favoriteSyncWired = '1';
+      const sync = () => _syncFavoriteProxies(entry.id);
+      control.addEventListener('input', sync);
+      control.addEventListener('change', sync);
+    }
+  }
+}
+
+function _syncFavoriteProxies(controlId) {
+  const source = document.getElementById(controlId);
+  if (!source) return;
+  const canonicalReadout = document.getElementById(`v_${controlId}`);
+  document.querySelectorAll(`[data-favorite-control="${controlId}"]`).forEach(proxy => {
+    if (proxy.type === 'checkbox') proxy.checked = source.checked;
+    else proxy.value = source.value;
+  });
+  document.querySelectorAll(`[data-favorite-readout="${controlId}"]`).forEach(readout => {
+    readout.textContent = canonicalReadout?.textContent || '';
+  });
+}
+
+function _renderFavorites(app) {
+  const container = document.getElementById('favoriteControlList');
+  if (!container) return;
+  container.innerHTML = '';
+  const grouped = new Map();
+  for (const item of _favoritesState.items) {
+    if (item.scope?.brush && item.scope.brush !== app.activeBrush) continue;
+    const entry = _settingsCatalog.get(item.controlId);
+    if (!entry) {
+      const row = document.createElement('div');
+      row.className = 'favorite-control-row';
+      row.textContent = `${item.controlId} · unavailable`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', () => {
+        const previous = _favoritesState;
+        const next = { ..._favoritesState, items: _favoritesState.items.filter(candidate => candidate !== item) };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+        } catch (error) {
+          _favoritesState = previous;
+          console.error('Favorite removal failed:', error);
+          app.showToast('Favorite could not be removed');
+        }
+      });
+      row.appendChild(remove);
+      container.appendChild(row);
+      continue;
+    }
+    if (!catalogEntryApplies(entry, app.activeBrush, 'favorite')) continue;
+    const key = entry.section || entry.scope.kind;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ entry, item });
+  }
+  for (const [section, favorites] of grouped) {
+    const heading = document.createElement('div');
+    heading.className = 'favorite-section-label';
+    heading.textContent = section;
+    container.appendChild(heading);
+    favorites.forEach(({ entry, item }) => {
+      const canonical = document.getElementById(entry.id);
+      if (!canonical) return;
+      const row = document.createElement('div');
+      row.className = 'favorite-control-row';
+      const setting = document.createElement('label');
+      setting.className = 'favorite-setting-proxy';
+      const text = document.createElement('span');
+      text.className = 'favorite-control-label';
+      text.textContent = entry.label;
+      const canonicalReadout = document.getElementById(`v_${entry.id}`);
+      const readout = canonicalReadout
+        && canonicalReadout.closest('label') === canonical.closest('label')
+        ? canonicalReadout.cloneNode(true)
+        : null;
+      if (readout) {
+        readout.removeAttribute('id');
+        readout.dataset.favoriteReadout = entry.id;
+      }
+      const proxy = canonical.cloneNode(true);
+      proxy.removeAttribute('id');
+      proxy.removeAttribute('data-favorite-sync-wired');
+      proxy.dataset.favoriteControl = entry.id;
+      proxy.addEventListener('input', () => {
+        if (canonical.type === 'checkbox') canonical.checked = proxy.checked;
+        else canonical.value = proxy.value;
+        canonical.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      proxy.addEventListener('change', () => {
+        if (canonical.type === 'checkbox') canonical.checked = proxy.checked;
+        else canonical.value = proxy.value;
+        canonical.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'preset-del';
+      remove.textContent = '✕';
+      remove.title = 'Remove favorite';
+      remove.addEventListener('click', event => {
+        event.preventDefault();
+        const previous = _favoritesState;
+        const next = {
+          ..._favoritesState,
+          items: _favoritesState.items.filter(item =>
+            item.controlId !== entry.id || (item.scope?.brush && item.scope.brush !== app.activeBrush)
+          ),
+        };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+          _decorateFavoriteControls(app);
+        } catch (error) {
+          _favoritesState = previous;
+          console.error('Favorite removal failed:', error);
+          app.showToast('Favorite could not be removed');
+        }
+      });
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'preset-del';
+      up.textContent = '↑';
+      up.title = 'Move favorite up';
+      up.addEventListener('click', event => {
+        event.preventDefault();
+        const index = _favoritesState.items.indexOf(item);
+        if (index <= 0) return;
+        const items = [..._favoritesState.items];
+        [items[index - 1], items[index]] = [items[index], items[index - 1]];
+        const next = { ..._favoritesState, items };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+        } catch (error) {
+          console.error('Favorite reorder failed:', error);
+          app.showToast('Favorites could not be reordered');
+        }
+      });
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'preset-del';
+      down.textContent = '↓';
+      down.title = 'Move favorite down';
+      down.addEventListener('click', event => {
+        event.preventDefault();
+        const index = _favoritesState.items.indexOf(item);
+        if (index < 0 || index >= _favoritesState.items.length - 1) return;
+        const items = [..._favoritesState.items];
+        [items[index + 1], items[index]] = [items[index], items[index + 1]];
+        const next = { ..._favoritesState, items };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+        } catch (error) {
+          console.error('Favorite reorder failed:', error);
+          app.showToast('Favorites could not be reordered');
+        }
+      });
+      setting.append(text);
+      if (readout) setting.append(readout);
+      setting.append(proxy);
+      const actions = document.createElement('span');
+      actions.className = 'favorite-control-actions';
+      actions.append(up, down, remove);
+      row.append(setting, actions);
+      container.appendChild(row);
+    });
+  }
+  if (!container.children.length) {
+    container.innerHTML = '<span class="slider-desc">Star a setting in the Brush panel. Favorites are filtered to the active brush or simulation mode.</span>';
+  }
+}
+
+function _wireSettingsCatalogSearch(app) {
+  const search = document.getElementById('settingsCatalogSearch');
+  const scope = document.getElementById('settingsCatalogScope');
+  const refresh = () => _renderSettingsCatalogResults(app);
+  search?.addEventListener('input', refresh);
+  scope?.addEventListener('change', refresh);
+  refresh();
+}
+
+function _renderSettingsCatalogResults(app) {
+  const container = document.getElementById('settingsCatalogResults');
+  if (!container) return;
+  const query = document.getElementById('settingsCatalogSearch')?.value?.trim().toLowerCase() || '';
+  const scope = document.getElementById('settingsCatalogScope')?.value || 'active';
+  const favorites = _favoriteIds(app.activeBrush);
+  container.innerHTML = '';
+  const entries = [..._settingsCatalog.values()].filter(entry => {
+    if (scope === 'active' && !catalogEntryApplies(entry, app.activeBrush, 'favorite')) return false;
+    if (scope === 'simulation' && !catalogEntryApplies(entry, app.activeBrush, 'simulation')) return false;
+    if (scope === 'shared' && entry.scope.kind !== 'shared') return false;
+    if (scope === 'favorites' && !favorites.has(entry.id)) return false;
+    return !query || `${entry.label} ${entry.description} ${entry.section} ${entry.scope.kind} ${(entry.scope.brushes || []).join(' ')}`.toLowerCase().includes(query);
+  }).slice(0, query || scope !== 'active' ? 40 : 0);
+  entries.forEach(entry => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-search-result';
+    button.textContent = `${entry.label} · ${entry.section || entry.scope.kind}`;
+    button.addEventListener('click', () => {
+      let control = document.getElementById(entry.id);
+      const isStoredSimulationControl = !!control?.closest('#simControlStore');
+      if (isStoredSimulationControl) {
+        if (!app.simulation?.enabled) app._toggleSimulationMode?.(true);
+        if (app.simulation) app.simulation.inspectorCollapsed = false;
+        app._renderSimulationInspector?.();
+        app._activateRightPanelTab?.('simulation');
+        control = document.querySelector(`#simOverlaySidebar [data-sim-param="${entry.id}"]`)
+          || document.querySelector(`#simulationControlsPanel [data-sim-param="${entry.id}"]`);
+      } else {
+        app._activateRightPanelTab?.('brush');
+      }
+      const body = control?.closest('.section-body, [data-sim-section-body]');
+      body?.classList.remove('collapsed');
+      body?.previousElementSibling?.classList.remove('closed');
+      control?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      control?.focus({ preventScroll: true });
+    });
+    container.appendChild(button);
   });
 }
 
