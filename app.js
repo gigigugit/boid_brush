@@ -1545,29 +1545,30 @@ function _parseSymmetrySizeMultipliers(value) {
     return parsed.length ? parsed : [1];
   }
 
-  function _parsePressureCurve(value, fallback) {
-    try {
-      const source = typeof value === 'string' ? JSON.parse(value) : value;
-      if (!Array.isArray(source)) return fallback;
-      const points = source
-        .map(point => [Number(point?.[0]), Number(point?.[1])])
-        .filter(point => point.every(Number.isFinite))
-        .map(([x, y]) => [_clamp01(x), _clamp01(y)])
-        .sort((a, b) => a[0] - b[0])
-        .filter((point, index, all) => index === 0 || point[0] - all[index - 1][0] > 0.001);
-      if (points.length < 2) return fallback;
-      points[0][0] = 0;
-      points[points.length - 1][0] = 1;
-      return points;
-    } catch {
-      return fallback;
-    }
-  }
   const parsed = String(value ?? '')
     .split(/[,\s;|/]+/)
     .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
     .filter(entry => Number.isFinite(entry) && entry > 0);
   return parsed.length ? parsed : [1];
+}
+
+function _parsePressureCurve(value, fallback) {
+  try {
+    const source = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(source)) return fallback;
+    const points = source
+      .map(point => [Number(point?.[0]), Number(point?.[1])])
+      .filter(point => point.every(Number.isFinite))
+      .map(([x, y]) => [_clamp01(x), _clamp01(y)])
+      .sort((a, b) => a[0] - b[0])
+      .filter((point, index, all) => index === 0 || point[0] - all[index - 1][0] > 0.001);
+    if (points.length < 2) return fallback;
+    points[0][0] = 0;
+    points[points.length - 1][0] = 1;
+    return points;
+  } catch {
+    return fallback;
+  }
 }
 
 function _buildPolylineSegments(points, closed = false) {
