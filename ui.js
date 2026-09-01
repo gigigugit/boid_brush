@@ -14,6 +14,7 @@ import {
   normalizeLibrary,
   normalizePreset,
 } from './settings-library.js';
+import { evaluatePressureCurve } from './pressure-curve.js';
 
 // =============================================================================
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
@@ -237,12 +238,14 @@ function _wirePressureCurveEditors(app, panel) {
       ctx.strokeStyle = '#6d9cff';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      points.forEach(([x, y], index) => {
+      const curveSamples = Math.max(96, Math.round(graphW));
+      for (let index = 0; index <= curveSamples; index += 1) {
+        const x = index / curveSamples;
         const px = pad + x * graphW;
-        const py = pad + (1 - y) * graphH;
+        const py = pad + (1 - evaluatePressureCurve(points, x)) * graphH;
         if (index) ctx.lineTo(px, py);
         else ctx.moveTo(px, py);
-      });
+      }
       ctx.stroke();
       points.forEach(([x, y], index) => {
         ctx.beginPath();
@@ -1337,7 +1340,7 @@ function _workspaceSettingsMarkup() {
     </div>
     <div class="section-header" data-section="stylusPressureCurves">Stylus Pressure Curves <span class="chevron">▼</span></div>
     <div class="section-body">
-      <div class="pressure-curve-intro">Apple Pencil and stylus response. Drag points to reshape a curve, tap empty space to add a point, or double-tap an inner point to remove it. Existing pressure toggles still enable or disable each response.</div>
+      <div class="pressure-curve-intro">Apple Pencil and stylus response. Drag points to reshape a smooth spline, tap empty space to add a point, or double-tap an inner point to remove it. Existing pressure toggles still enable or disable each response.</div>
       ${_pressureCurveMarkup()}
     </div>
     <div class="section-header" data-section="simulationSettings">Simulation <span class="chevron">▼</span></div>

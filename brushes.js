@@ -12,23 +12,11 @@ import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
+import { evaluatePressureCurve } from './pressure-curve.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
 
-function evaluatePressureCurve(curve, pressure, fallbackLow = 0.3) {
-  const value = Math.max(0, Math.min(1, Number.isFinite(pressure) ? pressure : 0.5));
-  if (!Array.isArray(curve) || curve.length < 2) return fallbackLow + (1 - fallbackLow) * value;
-  for (let index = 1; index < curve.length; index += 1) {
-    const previous = curve[index - 1];
-    const next = curve[index];
-    if (value > next[0]) continue;
-    const span = next[0] - previous[0];
-    const t = span > 0 ? (value - previous[0]) / span : 0;
-    return previous[1] + (next[1] - previous[1]) * Math.max(0, Math.min(1, t));
-  }
-  return curve[curve.length - 1][1];
-}
 // Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
 const MAX_SMOOTH_DAMP = 0.92;
 // Low-pass filter strength for Pencil angle changes (higher = snappier, lower = smoother)
