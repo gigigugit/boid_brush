@@ -307,6 +307,16 @@ const FACTORY_DEFAULTS = Object.freeze({
   smudgeOnly: false,
   pressureSize: true,
   pressureOpacity: true,
+  pressureSizeCurve: '[[0,0.3],[1,1]]',
+  pressureOpacityCurve: '[[0,0.3],[1,1]]',
+  pressureSpawnRadiusCurve: '[[0,0.3],[1,1]]',
+  bristleSplayPressureCurve: '[[0,0.5],[1,1]]',
+  fluid3dRadiusPressureCurve: '[[0,0.35],[1,1]]',
+  fluid3dCountPressureCurve: '[[0,0.45],[1,1]]',
+  fluid3dEmissionPressureCurve: '[[0,0.4],[1,1]]',
+  fluid3dInfluencePressureCurve: '[[0,0.3],[1,1]]',
+  lbmRadiusPressureCurve: '[[0,0.35],[1,1]]',
+  lbmCountPressureCurve: '[[0,0.4],[1,1]]',
   flatStroke: false,
   stampImageEnabled: true,
   stampImageTint: true,
@@ -1534,11 +1544,31 @@ function _parseSymmetrySizeMultipliers(value) {
       .filter(entry => Number.isFinite(entry) && entry > 0);
     return parsed.length ? parsed : [1];
   }
+
   const parsed = String(value ?? '')
     .split(/[,\s;|/]+/)
     .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
     .filter(entry => Number.isFinite(entry) && entry > 0);
   return parsed.length ? parsed : [1];
+}
+
+function _parsePressureCurve(value, fallback) {
+  try {
+    const source = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(source)) return fallback;
+    const points = source
+      .map(point => [Number(point?.[0]), Number(point?.[1])])
+      .filter(point => point.every(Number.isFinite))
+      .map(([x, y]) => [_clamp01(x), _clamp01(y)])
+      .sort((a, b) => a[0] - b[0])
+      .filter((point, index, all) => index === 0 || point[0] - all[index - 1][0] > 0.001);
+    if (points.length < 2) return fallback;
+    points[0][0] = 0;
+    points[points.length - 1][0] = 1;
+    return points;
+  } catch {
+    return fallback;
+  }
 }
 
 function _buildPolylineSegments(points, closed = false) {
@@ -6034,6 +6064,7 @@ export class App {
     };
     const chk = id => { const e = el(id); return e ? e.checked : false; };
     const sel = id => { const e = el(id); return e ? e.value : ''; };
+    const pressureCurve = (id, fallback) => _parsePressureCurve(el(id)?.value, fallback);
     const _MULT_STEPS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
     const mult = id => {
       const e = el(id + '_multIdx');
@@ -6103,6 +6134,16 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
+      pressureSizeCurve: pressureCurve('pressureSizeCurve', [[0, 0.3], [1, 1]]),
+      pressureOpacityCurve: pressureCurve('pressureOpacityCurve', [[0, 0.3], [1, 1]]),
+      pressureSpawnRadiusCurve: pressureCurve('pressureSpawnRadiusCurve', [[0, 0.3], [1, 1]]),
+      bristleSplayPressureCurve: pressureCurve('bristleSplayPressureCurve', [[0, 0.5], [1, 1]]),
+      fluid3dRadiusPressureCurve: pressureCurve('fluid3dRadiusPressureCurve', [[0, 0.35], [1, 1]]),
+      fluid3dCountPressureCurve: pressureCurve('fluid3dCountPressureCurve', [[0, 0.45], [1, 1]]),
+      fluid3dEmissionPressureCurve: pressureCurve('fluid3dEmissionPressureCurve', [[0, 0.4], [1, 1]]),
+      fluid3dInfluencePressureCurve: pressureCurve('fluid3dInfluencePressureCurve', [[0, 0.3], [1, 1]]),
+      lbmRadiusPressureCurve: pressureCurve('lbmRadiusPressureCurve', [[0, 0.35], [1, 1]]),
+      lbmCountPressureCurve: pressureCurve('lbmCountPressureCurve', [[0, 0.4], [1, 1]]),
       stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && stampImageAllowed,
       stampImageCanvas: chk('stampImageEnabled') && stampImageAllowed ? this._customStampImage?.canvas || null : null,
       stampImageTint: chk('stampImageTint'),
@@ -20631,7 +20672,7 @@ export class App {
 
   _captureSessionControls() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel input[type="text"], #settingsPanel select').forEach(el => {
       if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {
@@ -21291,7 +21332,12 @@ export class App {
         // gets re-captured as "" — keep the current/default option instead.
         const target = String(val);
         if (Array.from(el.options).some(opt => opt.value === target)) el.value = target;
-      } else el.value = val;
+      } else {
+        el.value = val;
+        if (el.classList.contains('pressure-curve-value')) {
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
     }
     // Keep the sensing-source revert tracker aligned with the restored value
     // so the next user change reports the correct previous source.

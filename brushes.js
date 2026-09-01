@@ -15,6 +15,20 @@ import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
+
+function evaluatePressureCurve(curve, pressure, fallbackLow = 0.3) {
+  const value = Math.max(0, Math.min(1, Number.isFinite(pressure) ? pressure : 0.5));
+  if (!Array.isArray(curve) || curve.length < 2) return fallbackLow + (1 - fallbackLow) * value;
+  for (let index = 1; index < curve.length; index += 1) {
+    const previous = curve[index - 1];
+    const next = curve[index];
+    if (value > next[0]) continue;
+    const span = next[0] - previous[0];
+    const t = span > 0 ? (value - previous[0]) / span : 0;
+    return previous[1] + (next[1] - previous[1]) * Math.max(0, Math.min(1, t));
+  }
+  return curve[curve.length - 1][1];
+}
 // Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
 const MAX_SMOOTH_DAMP = 0.92;
 // Low-pass filter strength for Pencil angle changes (higher = snappier, lower = smoother)
@@ -1529,7 +1543,7 @@ export class BoidBrush {
       const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
       r *= 1 + tiltFactor * 2;
     } else if (p.pressureSpawnRadius) {
-      r *= 0.3 + 0.7 * pressure;
+      r *= evaluatePressureCurve(p.pressureSpawnRadiusCurve, pressure);
     }
     const spawnInfo = this.app._spawnSimulationAgents(this.sim, {
       count: p.count,
@@ -1900,8 +1914,8 @@ export class BoidBrush {
 
       let size = p.stampSize * sm;
       let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) size *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) size *= taperCurve;
       if (taperOpacity) opacity *= taperCurve;
       opacity = Math.min(opacity, 1);
@@ -2095,8 +2109,8 @@ export class BoidBrush {
       const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) sz *= taperCurve;
       if (taperOpacity) op *= taperCurve;
       op = Math.min(op, 1);
@@ -2463,7 +2477,7 @@ export class BoidBrush {
           ctx.clearRect(0, 0, w, h);
           ctx.drawImage(this._preStrokeCanvas, 0, 0);
           let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+          if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
           ctx.globalAlpha = Math.min(masterOp, 1);
           ctx.drawImage(this._strokeCanvas, 0, 0);
           ctx.globalAlpha = 1;
@@ -2508,8 +2522,8 @@ export class BoidBrush {
 
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
-      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, app.pressure);
+      if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       op = Math.min(op, 1);
 
       let color = appearanceColor.color;
@@ -2575,7 +2589,7 @@ export class BoidBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -3075,8 +3089,8 @@ export class AntBrush {
 
       let size = p.stampSize * sm;
       let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) size *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) size *= taperCurve;
       if (taperOpacity) opacity *= taperCurve;
       opacity = Math.min(opacity, 1);
@@ -3250,7 +3264,7 @@ export class AntBrush {
       : null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
     let r = spawnConfig ? spawnConfig.radius : p.spawnRadius;
-    if (!spawnConfig && p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+    if (!spawnConfig && p.pressureSpawnRadius) r *= evaluatePressureCurve(p.pressureSpawnRadiusCurve, pressure);
     this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
     const spawnInfo = this.app._spawnSimulationAgents(this.sim, {
@@ -3375,8 +3389,8 @@ export class AntBrush {
               const appearanceColor = getAppearanceColor(appearance.color);
               let sz = p.stampSize * sm;
               let op = appearance.opacity * om;
-              if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-              if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+              if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+              if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
               op = Math.min(op, 1);
               let color = appearanceColor.color;
               if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
@@ -3413,8 +3427,8 @@ export class AntBrush {
             const appearanceColor = getAppearanceColor(appearance.color);
             let sz = p.stampSize * sm;
             let op = appearance.opacity * om;
-            if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-            if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+            if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+            if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
             op = Math.min(op, 1);
             let color = appearanceColor.color;
             if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
@@ -3586,7 +3600,7 @@ export class AntBrush {
           ctx.clearRect(0, 0, w, h);
           ctx.drawImage(this._preStrokeCanvas, 0, 0);
           let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+          if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
           ctx.globalAlpha = Math.min(masterOp, 1);
           ctx.drawImage(this._strokeCanvas, 0, 0);
           ctx.globalAlpha = 1;
@@ -3631,8 +3645,8 @@ export class AntBrush {
 
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
-      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, app.pressure);
+      if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       op = Math.min(op, 1);
 
       let color = appearanceColor.color;
@@ -3684,7 +3698,7 @@ export class AntBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -4096,7 +4110,7 @@ export class BristleBrush {
     const sinBase = Math.sin(baseAngle);
     const cosTip = Math.cos(tipAngle);
     const sinTip = Math.sin(tipAngle);
-    const pressureSplay = p.bristleSplay * (0.5 + 0.5 * this._smoothPressure);
+    const pressureSplay = p.bristleSplay * evaluatePressureCurve(p.bristleSplayPressureCurve, this._smoothPressure, 0.5);
     const splayFactor = 1 + pressureSplay;
     const fanSpread = 1 + p.bristleFan; // fanning multiplier for cross-stroke width at tips
     const baseLen = p.bristleLength * this._hoverLengthScale;
@@ -4164,7 +4178,7 @@ export class BristleBrush {
     const angle = this._baseAngle + p.bristleAngleOffset; // apply offset
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
-    const pressureSplay = p.bristleSplay * (0.5 + 0.5 * this._smoothPressure);
+    const pressureSplay = p.bristleSplay * evaluatePressureCurve(p.bristleSplayPressureCurve, this._smoothPressure, 0.5);
 
     for (let i = 0; i < this._count; i++) {
       const off = this._offsets[i];
@@ -4337,8 +4351,8 @@ export class BristleBrush {
       let op = flat
         ? Math.min(opScale * this._varOpacity[i], 1)
         : p.stampOpacity * opScale * this._varOpacity[i];
-      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) sz *= taperCurve;
       if (taperOpacity) op *= taperCurve;
       op = Math.min(op, 1);
@@ -4389,8 +4403,8 @@ export class BristleBrush {
       let op = flat
         ? Math.min(opScale * this._varOpacity[i], 1)
         : p.stampOpacity * opScale * this._varOpacity[i];
-      if (p.pressureSize) sz *= (0.3 + 0.7 * pres);
-      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pres);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pres);
+      if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pres);
       op = Math.min(op, 1);
 
       // Apply per-bristle hue variance (cached per color change)
@@ -4722,7 +4736,7 @@ export class BristleBrush {
           ctx.clearRect(0, 0, w, h);
           ctx.drawImage(this._preStrokeCanvas, 0, 0);
           let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * this._smoothPressure);
+          if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, this._smoothPressure);
           ctx.globalAlpha = Math.min(masterOp, 1);
           ctx.drawImage(this._strokeCanvas, 0, 0);
           ctx.globalAlpha = 1;
@@ -4747,7 +4761,7 @@ export class BristleBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * this._smoothPressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, this._smoothPressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -5135,9 +5149,9 @@ export class SimpleBrush {
     const instances = new StampInstanceBuffer(Math.max(16, points.length));
     for (const pt of points) {
       let sz = p.stampSize * (pt.sizeMultiplier || 1);
-      if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
       let op = p.stampOpacity;
-      if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (canvasTextureActive) {
         op *= this.app.getTextureDepositDensity?.(pt.x, pt.y, p) ?? 1;
         const edgeBreakup = this.app.getTextureEdgeBreakup?.(pt.x, pt.y, p) || 0;
@@ -5199,7 +5213,7 @@ export class SimpleBrush {
     }
     this._ensureRendererInit();
     const layer = this.app.getActiveLayer();
-    const stampSize = Math.max(1, p.pressureSize ? p.stampSize * (0.3 + 0.7 * pressure) : p.stampSize);
+    const stampSize = Math.max(1, p.pressureSize ? p.stampSize * evaluatePressureCurve(p.pressureSizeCurve, pressure) : p.stampSize);
     const renderPoints = this._expandRenderPoints(points, stampSize, p);
     const batch = this._buildSimpleBatch(renderPoints, p, pressure);
     const stampBitmap = p.stampImageCanvas || null;
@@ -5330,7 +5344,7 @@ export class SimpleBrush {
 
     const p = this.app.getP();
     let sz = p.stampSize;
-    if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+    if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
     const step = Math.max(1, p.stampSeparation > 0 ? p.stampSeparation : sz * 0.25);
 
     if (dist < step) return; // accumulate distance until next stamp
@@ -5396,7 +5410,7 @@ export class SimpleBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -5447,10 +5461,10 @@ export class SimpleBrush {
     const layer = this.app.getActiveLayer();
     const ctx = flat ? this._strokeCtx : layer.ctx;
     let sz = p.stampSize;
-    if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+    if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
     // In flat mode stamps go at full opacity; master opacity applied on composite
     let op = flat ? 1.0 : p.stampOpacity;
-    if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+    if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
     op = Math.min(op, 1);
 
     this.app.symStamp(ctx, x, y, sz, p.color, op, {
@@ -5909,11 +5923,11 @@ export class ThreeDFluidBrush {
     // consistent between the lightweight LBM brush and the new 3D fluid brush.
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const color = hexToRGB(p.color);
-    const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
-    const scaledCount = Math.max(1, Math.round(amount * (0.45 + pressure * 0.55)));
+    const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? evaluatePressureCurve(p.fluid3dRadiusPressureCurve, pressure, 0.35) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * evaluatePressureCurve(p.fluid3dCountPressureCurve, pressure, 0.45)));
     const hasStrokeDirection = !!previousPoint && profile.distance > 1e-3;
-    const totalEmitterStrength = p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6);
-    const totalInfluenceStrength = p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7);
+    const totalEmitterStrength = p.fluid3dEmissionRate * p.fluid3dEmitterStrength * evaluatePressureCurve(p.fluid3dEmissionPressureCurve, pressure, 0.4);
+    const totalInfluenceStrength = p.fluid3dInfluenceStrength * evaluatePressureCurve(p.fluid3dInfluencePressureCurve, pressure);
     const emitterStrength = totalEmitterStrength / scaledCount;
     const influenceStrength = totalInfluenceStrength / scaledCount;
     const emitters = [];
@@ -6540,8 +6554,8 @@ export class FluidBrush {
     if (!this._updateSimulator('preview', p)) return;
     p = p ?? this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
-    const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
-    const scaledCount = Math.max(1, Math.round(amount * (0.4 + pressure * 0.6)));
+    const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? evaluatePressureCurve(p.lbmRadiusPressureCurve, pressure, 0.35) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * evaluatePressureCurve(p.lbmCountPressureCurve, pressure, 0.4)));
     const particles = _makeFluidSeeds(
       x,
       y,
@@ -6722,8 +6736,8 @@ export class EraserBrush {
       const ctx = layer.ctx;
       let sz = p.stampSize;
       let op = p.stampOpacity;
-      if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-      if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       op = Math.min(op, 1);
 
       ctx.globalCompositeOperation = 'destination-out';
@@ -7042,9 +7056,9 @@ export class MotionPathBrush {
     const layer = this.app.getActiveLayer();
     if (!layer?.ctx) return;
     let baseSize = p.stampSize;
-    if (p.pressureSize) baseSize *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureSize) baseSize *= evaluatePressureCurve(p.pressureSizeCurve, this._pressure);
     let opacity = p.stampOpacity;
-    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, this._pressure);
     opacity = Math.min(opacity, 1);
     for (const point of points) {
       this.app.symStamp(layer.ctx, point.x, point.y, point.size || baseSize, p.color, opacity);
@@ -7084,10 +7098,10 @@ export class MotionPathBrush {
     if (!layer?.ctx || !segments?.length) return;
     const ctx = layer.ctx;
     let width = p.stampSize;
-    if (p.pressureSize) width *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureSize) width *= evaluatePressureCurve(p.pressureSizeCurve, this._pressure);
     width = Math.max(0.5, width);
     let opacity = p.stampOpacity;
-    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, this._pressure);
     opacity = Math.min(opacity, 1);
     const useAlphaLock = layer.alphaLock;
     const useStampImage = this.app.hasActiveStampImage?.(p);
@@ -7293,9 +7307,9 @@ export class MotionPathBrush {
     this._overlayPoints = [];
 
     let baseSize = p.stampSize;
-    if (p.pressureSize) baseSize *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureSize) baseSize *= evaluatePressureCurve(p.pressureSizeCurve, this._pressure);
     let opacity = p.stampOpacity;
-    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, this._pressure);
     opacity = Math.min(opacity, 1);
 
     if (useRibbon && this._gpuPreviewActive) {
