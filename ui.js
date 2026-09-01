@@ -289,6 +289,7 @@ function _wirePressureCurveEditors(app, panel) {
     });
     canvas.addEventListener('pointermove', event => {
       if (activeIndex < 0 || !canvas.hasPointerCapture(event.pointerId)) return;
+      event.preventDefault();
       const [x, y] = pointFromEvent(event);
       const isEndpoint = activeIndex === 0 || activeIndex === points.length - 1;
       const minX = activeIndex > 0 ? points[activeIndex - 1][0] + 0.002 : 0;
@@ -296,7 +297,7 @@ function _wirePressureCurveEditors(app, panel) {
       points[activeIndex] = [isEndpoint ? (activeIndex === 0 ? 0 : 1) : Math.max(minX, Math.min(maxX, x)), y];
       serialize();
       draw();
-    });
+    }, { passive: false });
     const release = event => {
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       activeIndex = -1;
