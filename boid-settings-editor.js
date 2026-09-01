@@ -768,14 +768,19 @@ function _bindEvents(modal) {
 
       if (p.type === 'range') {
         const valEl = modal.querySelector(`#bse_v_${p.id}`);
+        let rangeEditActive = false;
         el.addEventListener('input', () => {
+          if (!rangeEditActive) {
+            _pushUndo();
+            rangeEditActive = true;
+          }
           const v = +el.value;
           _editorState[p.id] = v;
           if (valEl) valEl.textContent = p.fmt ? p.fmt(v) : String(v);
           _markDirty();
           _schedulePreview();
         });
-        el.addEventListener('change', () => _pushUndo());
+        el.addEventListener('change', () => { rangeEditActive = false; });
       } else if (p.type === 'check') {
         el.addEventListener('change', () => {
           _pushUndo();
