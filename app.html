@@ -212,7 +212,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .pressure-curve-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .pressure-curve-title{font-size:10px;font-weight:700;color:var(--ink-0);}
 .pressure-curve-reset{padding:3px 7px!important;font-size:9px!important;}
-.pressure-curve-canvas{display:block;width:100%;height:118px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;}
+#rightPanel .pressure-curve-canvas{display:block;width:100%;height:118px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;overscroll-behavior:contain;}
 .pressure-curve-axis{display:flex;justify-content:space-between;font-size:8px;color:var(--ink-3);}
 .pressure-curve-value{display:none;}
 #sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
