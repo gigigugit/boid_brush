@@ -59,6 +59,8 @@ const FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH = 1.2;
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
 const WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
 const WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS = 250000;
+const WORKSPACE_JSON_STRUCTURED_MAX_CHARS = 60000;
+const WORKSPACE_JSON_STRUCTURED_MAX_LINES = 1600;
 const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc, field) => {
   acc[field.id] = field.defaultValue;
   acc[field.overrideId] = false;
@@ -2266,6 +2268,8 @@ export class App {
     this._fluidInteractionState = { emitters: [], influences: [], scalarFields: [] };
     this._simulationExport = this._createSimulationExportState();
     this._workspaceJsonEditorBaseDoc = null;
+    this._workspaceJsonEditorMode = 'structured';
+    this._workspaceJsonPlainModeReason = '';
     this._workspaceJsonAutoApplyTimer = null;
     this._workspaceJsonAutoApplying = false;
     this._workspaceJsonAutoApplyPending = false;
@@ -2871,6 +2875,7 @@ export class App {
   _getWorkspaceJsonModalElements() {
     return {
       panel: document.getElementById('jsonPanel'),
+      editorWrap: document.querySelector('#jsonPanel .workspace-json-editorWrap'),
       editor: document.getElementById('workspaceJsonEditor'),
       highlight: document.getElementById('workspaceJsonHighlight'),
       structuredEditor: document.getElementById('workspaceJsonStructuredEditor'),
@@ -3006,9 +3011,55 @@ export class App {
     });
   }
 
+  _isWorkspaceJsonTouchDevice() {
+    const coarsePointer = typeof window?.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const touchPoints = Number(navigator?.maxTouchPoints || 0) > 0;
+    return coarsePointer || touchPoints;
+  }
+
+  _getWorkspaceJsonRenderMode(documentValue = this._workspaceJsonEditorBaseDoc, rawText = '') {
+    const nextRawText = typeof rawText === 'string' && rawText
+      ? rawText
+      : JSON.stringify(documentValue ?? {}, null, 2);
+    let lineCount = nextRawText ? 1 : 0;
+    for (let index = 0; index < nextRawText.length; index++) {
+      if (nextRawText.charCodeAt(index) === 10) lineCount += 1;
+    }
+    const tooLarge = nextRawText.length > WORKSPACE_JSON_STRUCTURED_MAX_CHARS || lineCount > WORKSPACE_JSON_STRUCTURED_MAX_LINES;
+    if (tooLarge) return { mode: 'plain', reason: 'size', rawText: nextRawText };
+    if (this._isWorkspaceJsonTouchDevice()) return { mode: 'plain', reason: 'touch', rawText: nextRawText };
+    return { mode: 'structured', reason: '', rawText: nextRawText };
+  }
+
+  _setWorkspaceJsonRenderMode(mode, rawText = '') {
+    const { editorWrap, editor, highlight, structuredEditor } = this._getWorkspaceJsonModalElements();
+    if (!editorWrap || !editor || !highlight || !structuredEditor) return false;
+    const usePlain = mode === 'plain';
+    this._workspaceJsonEditorMode = usePlain ? 'plain' : 'structured';
+    editorWrap.classList.toggle('workspace-json-editorWrap--plain', usePlain);
+    editor.hidden = !usePlain;
+    highlight.hidden = !usePlain;
+    structuredEditor.hidden = usePlain;
+    if (usePlain) {
+      editor.value = rawText;
+      structuredEditor.innerHTML = '';
+      this._syncWorkspaceJsonHighlight();
+    } else {
+      editor.value = '';
+      highlight.textContent = '';
+    }
+    return true;
+  }
+
   _renderWorkspaceJsonStructuredEditor(documentValue = this._workspaceJsonEditorBaseDoc) {
     const { structuredEditor } = this._getWorkspaceJsonModalElements();
     if (!structuredEditor) return false;
+    const renderMode = this._getWorkspaceJsonRenderMode(documentValue);
+    this._workspaceJsonPlainModeReason = renderMode.reason;
+    if (renderMode.mode === 'plain') {
+      return this._setWorkspaceJsonRenderMode('plain', renderMode.rawText);
+    }
+    this._setWorkspaceJsonRenderMode('structured');
     structuredEditor.innerHTML = this._buildWorkspaceJsonStructuredMarkup(documentValue, { path: [], depth: 0, key: null, isLast: true });
     structuredEditor.querySelectorAll('.workspace-json-valueField').forEach(field => {
       field.size = this._workspaceJsonFieldSize(field.value || field.placeholder || '');
@@ -3017,7 +3068,17 @@ export class App {
   }
 
   _readWorkspaceJsonStructuredDocument() {
-    const { structuredEditor } = this._getWorkspaceJsonModalElements();
+    const { structuredEditor, editor } = this._getWorkspaceJsonModalElements();
+    if (this._workspaceJsonEditorMode === 'plain') {
+      if (!editor) throw new Error('Workspace JSON editor is unavailable.');
+      const rawText = String(editor.value || '');
+      if (!rawText.trim()) throw new Error('Workspace JSON editor is empty.');
+      try {
+        return JSON.parse(rawText);
+      } catch (error) {
+        throw new Error(`Invalid JSON: ${error?.message || 'Unable to parse the current document.'}`);
+      }
+    }
     if (!structuredEditor) throw new Error('Workspace JSON value editor is unavailable.');
     if (this._workspaceJsonEditorBaseDoc == null) throw new Error('Workspace JSON editor is empty.');
     const nextDocument = _deepClone(this._workspaceJsonEditorBaseDoc);
@@ -3047,6 +3108,9 @@ export class App {
   }
 
   _getWorkspaceJsonEditorText() {
+    if (this._workspaceJsonEditorMode === 'plain') {
+      return String(this._getWorkspaceJsonModalElements().editor?.value || '');
+    }
     return JSON.stringify(this._readWorkspaceJsonStructuredDocument(), null, 2);
   }
 
@@ -3087,8 +3151,33 @@ export class App {
   }
 
   _handleWorkspaceJsonValueInput(event) {
+    if (this._workspaceJsonEditorMode === 'plain') {
+      const plainEditor = this._getWorkspaceJsonModalElements().editor;
+      if (!plainEditor || event.target !== plainEditor) return;
+    } else {
+      const structuredEditor = this._getWorkspaceJsonModalElements().structuredEditor;
+      if (!structuredEditor?.contains(event.target)) return;
+    }
     const field = event.target?.closest?.('[data-json-path][data-json-type]');
-    if (!field) return;
+    if (this._workspaceJsonEditorMode !== 'plain' && !field) return;
+    if (this._workspaceJsonEditorMode === 'plain') {
+      this._syncWorkspaceJsonHighlight();
+      const { autoApplyToggle } = this._getWorkspaceJsonModalElements();
+      if (autoApplyToggle?.checked) {
+        try {
+          this._readWorkspaceJsonStructuredDocument();
+        } catch (error) {
+          this._cancelWorkspaceJsonAutoApply();
+          this._setWorkspaceJsonModalStatus(error?.message || 'Workspace JSON validation failed.', 'error');
+          return;
+        }
+        this._setWorkspaceJsonModalStatus('Draft updated. Applying changes…');
+        this._scheduleWorkspaceJsonAutoApply();
+        return;
+      }
+      this._setWorkspaceJsonModalStatus('Draft updated. Validate or Apply when ready.');
+      return;
+    }
     if (field.classList.contains('workspace-json-valueField')) {
       field.size = this._workspaceJsonFieldSize(field.value || field.placeholder || '');
     }
@@ -3111,6 +3200,7 @@ export class App {
   _syncWorkspaceJsonHighlight() {
     const { editor, highlight } = this._getWorkspaceJsonModalElements();
     if (!editor || !highlight) return;
+    if (this._workspaceJsonEditorMode !== 'plain') return;
     const raw = editor.value || '';
     const editorWrap = editor.parentElement;
     const useHighlight = raw.length <= WORKSPACE_JSON_HIGHLIGHT_MAX_CHARS;
@@ -3128,6 +3218,7 @@ export class App {
   _syncWorkspaceJsonHighlightScroll() {
     const { editor, highlight } = this._getWorkspaceJsonModalElements();
     if (!editor || !highlight) return;
+    if (this._workspaceJsonEditorMode !== 'plain') return;
     highlight.scrollTop = editor.scrollTop;
     highlight.scrollLeft = editor.scrollLeft;
   }
@@ -3352,6 +3443,13 @@ export class App {
   _setWorkspaceJsonModalStatus(message = 'Ready to edit the current workspace bundle.', level = '') {
     const { status } = this._getWorkspaceJsonModalElements();
     if (!status) return;
+    if (!message) {
+      message = this._workspaceJsonEditorMode === 'plain'
+        ? (this._workspaceJsonPlainModeReason === 'touch'
+          ? 'Loaded in text mode for faster editing on touch devices.'
+          : 'Loaded in text mode because this document is too large for the structured editor.')
+        : 'Ready to edit the current workspace bundle.';
+    }
     status.textContent = message;
     status.className = `workspace-json-status${level ? ` ${level}` : ''}`;
   }
@@ -3454,11 +3552,16 @@ export class App {
   }
 
   _showWorkspaceJsonModal() {
-    const { structuredEditor } = this._getWorkspaceJsonModalElements();
-    if (!structuredEditor) return;
+    const { structuredEditor, editor } = this._getWorkspaceJsonModalElements();
+    if (!structuredEditor || !editor) return;
     this._activateRightPanelTab('json');
     this._refreshWorkspaceJsonPanel();
     requestAnimationFrame(() => {
+      if (this._workspaceJsonEditorMode === 'plain') {
+        editor.focus();
+        editor.setSelectionRange?.(0, 0);
+        return;
+      }
       const firstField = structuredEditor.querySelector('[data-json-path][data-json-type]');
       firstField?.focus();
       firstField?.setSelectionRange?.(0, 0);
@@ -17050,6 +17153,8 @@ export class App {
     });
     document.getElementById('workspaceJsonStructuredEditor')?.addEventListener('input', event => this._handleWorkspaceJsonValueInput(event));
     document.getElementById('workspaceJsonStructuredEditor')?.addEventListener('change', event => this._handleWorkspaceJsonValueInput(event));
+    document.getElementById('workspaceJsonEditor')?.addEventListener('input', event => this._handleWorkspaceJsonValueInput(event));
+    document.getElementById('workspaceJsonEditor')?.addEventListener('scroll', () => this._syncWorkspaceJsonHighlightScroll());
     document.getElementById('workspaceJsonAutoApply')?.addEventListener('change', event => {
       if (event.target.checked) {
         this._setWorkspaceJsonModalStatus('Auto-apply enabled. Changes will apply while typing.', 'success');
