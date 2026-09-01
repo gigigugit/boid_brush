@@ -230,6 +230,8 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .section-header.closed .chevron{transform:rotate(-90deg);}
 .section-body{overflow:hidden;transition:max-height 0.3s ease;max-height:600px;border:1px solid var(--line-0);border-top:none;border-radius:0 0 10px 10px;padding:8px;background:rgba(0,0,0,0.2);margin-bottom:4px;display:grid;gap:6px;}
 .section-body.collapsed{max-height:0;padding-top:0;padding-bottom:0;border:none;margin-bottom:0;}
+#sidebar .section-body:not(.collapsed){max-height:none;}
+#settingsPanel .section-body:not(.collapsed){max-height:none;}
 #simOverlaySidebar .section-body[data-sim-section-body="sceneVariables"]:not(.collapsed){max-height:none;}
 #guidesPanel .section-body:not(.collapsed){max-height:none;overflow:visible;}
 #guidesPanel{overflow-y:auto;}
@@ -238,6 +240,17 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #sidebar label,#layersPanel label,#guidesPanel label,#favoritesPanel label,#settingsPanel label,#simulationControlsPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
 #sidebar label span,#layersPanel label span,#guidesPanel label span,#favoritesPanel label span,#settingsPanel label span,#simulationControlsPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
 .slider-desc{display:block;font-size:8px;color:var(--ink-3);margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
+.pressure-curve-intro{font-size:9px;line-height:1.4;color:var(--ink-2);padding:2px 2px 6px;}
+.pressure-curve-group{display:grid;gap:7px;padding-top:4px;border-top:1px solid var(--line-0);}
+.pressure-curve-group:first-of-type{padding-top:0;border-top:0;}
+.pressure-curve-group-title{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-c);}
+.pressure-curve-editor{display:grid;gap:5px;padding:7px;border:1px solid var(--line-0);border-radius:9px;background:rgba(255,255,255,.025);}
+.pressure-curve-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.pressure-curve-title{font-size:10px;font-weight:700;color:var(--ink-0);}
+.pressure-curve-reset{padding:3px 7px!important;font-size:9px!important;}
+#rightPanel .pressure-curve-canvas{display:block;width:100%;height:118px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;}
+.pressure-curve-axis{display:flex;justify-content:space-between;font-size:8px;color:var(--ink-3);}
+.pressure-curve-value{display:none;}
 #sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
 #sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#guidesPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
 #sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#guidesPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
@@ -307,7 +320,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
 /* Simulation HUD */
-#simHud{position:fixed;left:58px;top:calc(var(--topbar-h) + 14px);z-index:18;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
+#simHud{position:fixed;left:58px;top:calc(var(--topbar-h) + 14px);z-index:31;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
 #simHud.open{display:flex;}
 .sim-card{pointer-events:auto;background:rgba(17,20,29,0.88);backdrop-filter:blur(14px);border:1px solid var(--line-0);border-radius:12px;padding:8px;box-shadow:var(--shadow-lg);}
 #simHud .sim-card{width:100%;}
@@ -320,6 +333,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-stack{flex-direction:column;align-items:stretch;flex-wrap:nowrap;}
 .sim-pill{padding:6px 10px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.06);color:var(--ink-1);font-size:11px;font-weight:600;min-height:34px;cursor:pointer;white-space:nowrap;transition:all 140ms ease;}
 #simHud .sim-stack .sim-pill{text-align:left;width:100%;}
+.sim-mode-select{min-height:28px;padding:4px 22px 4px 8px;font-size:10px;flex:0 0 auto;-webkit-appearance:none;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--ink-1) 50%),linear-gradient(135deg,var(--ink-1) 50%,transparent 50%);background-position:calc(100% - 12px) center,calc(100% - 8px) center;background-size:4px 4px,4px 4px;background-repeat:no-repeat;}
 .sim-pill:hover{background:rgba(255,255,255,0.1);border-color:var(--line-1);color:var(--ink-0);}
 .sim-pill:disabled{opacity:0.45;cursor:not-allowed;box-shadow:none;}
 .sim-pill:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
@@ -334,10 +348,16 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
 #simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
 #simPlaybackBar #simEphemeralToggle{display:inline-flex;align-items:center;justify-content:center;flex:0 0 62px;min-width:62px;padding-inline:0;}
+#simPlaybackBar #simForceVizToggle{display:inline-flex;align-items:center;justify-content:center;flex:0 0 40px;min-width:40px;padding-inline:0;font-size:18px;line-height:1;}
 #simPlaybackBar .sim-status{padding:0 6px;white-space:nowrap;}
 .sim-playback-divider{width:1px;height:22px;background:rgba(255,255,255,0.08);}
 .sim-playback-readout{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border-radius:999px;background:rgba(6,10,18,0.9);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03);color:#dfe7f8;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .sim-playback-readout.sim-session-readout{max-width:min(32vw,260px);overflow:hidden;text-overflow:ellipsis;}
+.sim-playback-readout.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+.sim-playback-readout.muted{color:#98a6bd;}
+.sim-playback-readout.warn{background:rgba(146,54,54,0.72);border-color:rgba(225,99,99,0.35);color:#ffd6d6;}
+#simPlaybackBar .sim-routing-summary{max-width:min(46vw,420px);white-space:normal;line-height:1.3;color:#adc0e2;}
+#simPlaybackBar .sim-force-viz-status{max-width:min(42vw,360px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9fd8c4;font-variant-numeric:tabular-nums;}
 #simRecordBtn.recording{background:linear-gradient(135deg,#b83232,#e05050);border-color:rgba(224,80,80,0.52);color:#fff;box-shadow:0 0 10px rgba(224,80,80,0.32);animation:simRecordPulse 1.05s ease-in-out infinite;}
 #simPlaybackBar .sim-pill:disabled{opacity:0.38;cursor:not-allowed;box-shadow:none;}
 #simPlaybackBar .sim-pill:disabled:hover{background:rgba(255,255,255,0.06);border-color:var(--line-0);color:var(--ink-1);}
@@ -347,6 +367,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
   #simPlaybackBar.open{transform:translateY(0);}
   #simPlaybackBar .sim-pill{flex:1 1 auto;}
   #simPlaybackBar #simEphemeralToggle{flex:0 0 62px;}
+  #simPlaybackBar #simForceVizToggle{flex:0 0 40px;}
   .sim-playback-divider{display:none;}
 }
 
@@ -355,6 +376,18 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .preset-item button{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;}
 .preset-item .preset-del{flex:none;width:20px;padding:2px;text-align:center;color:var(--ink-3);}
 .preset-item .preset-del:hover{color:#f44;}
+.settings-navigator{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line-0);}
+.settings-navigator input{min-width:0;}
+.settings-navigator #settingsCatalogResults{grid-column:1/-1;display:grid;gap:2px;max-height:180px;overflow:auto;}
+.settings-search-result{width:100%;text-align:left;font-size:10px!important;}
+.setting-favorite-toggle{flex:none!important;width:20px!important;padding:1px!important;border:0!important;background:transparent!important;color:var(--favorite-accent)!important;}
+.favorite-section-label{margin:8px 0 3px;color:var(--favorite-accent);font-size:10px;font-weight:700;text-transform:uppercase;}
+.favorite-control-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;white-space:normal;}
+.favorite-setting-proxy{min-width:0;gap:6px!important;}
+.favorite-setting-proxy>.favorite-control-label{flex:1;min-width:0;text-align:left!important;color:var(--ink-1)!important;}
+.favorite-setting-proxy>input[type="range"],.favorite-setting-proxy>select{width:92px!important;}
+.favorite-setting-proxy>input[type="text"],.favorite-setting-proxy>input[type="number"],.favorite-setting-proxy>textarea{width:105px;min-width:0;box-sizing:border-box;}
+.favorite-control-actions{display:flex;align-items:center;flex:none;min-width:0!important;}
 
 /* Hide brush-specific sections */
 .brush-hidden{display:none!important;}
@@ -443,6 +476,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-stage-badge{display:inline-flex;align-items:center;min-height:18px;padding:0 7px;border-radius:999px;background:rgba(255,255,255,0.08);color:#dfe7f8;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;}
 .sim-stage-badge.active{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));color:#fff;}
 .sim-stage-badge.muted{background:rgba(255,255,255,0.05);color:#98a6bd;}
+.sim-stage-badge.warn{background:rgba(146,54,54,0.72);color:#ffd6d6;}
 .sim-stage-card-body{display:grid;gap:8px;padding:0 10px 10px;}
 .sim-stage-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
 .sim-stage-field{display:grid;gap:5px;}
@@ -562,7 +596,12 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 }
 .sim-help-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:120;}
 .sim-help-modal.open{display:flex;}
-.sim-help-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);}
+.sim-help-backdrop{position:absolute;top:0;right:0;bottom:0;left:var(--left-panel-open-w, 0px);background:rgba(0,0,0,0.72);backdrop-filter:blur(6px);}
+.force-viz-help-panel{width:min(700px,calc(100vw - var(--left-panel-open-w, 0px) - 32px));margin-left:var(--left-panel-open-w, 0px);}
+.force-viz-help-panel ol{margin:10px 0 0 18px;padding:0;display:grid;gap:8px;}
+.force-viz-help-panel li{line-height:1.55;}
+.force-viz-help-panel .sim-help-callout{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(138,180,248,0.24);background:rgba(64,99,173,0.14);}
+.force-viz-help-panel .sim-help-callout strong{color:#fff;}
 .sim-help-panel{position:relative;width:min(620px,92vw);max-height:84vh;overflow-y:auto;border-radius:16px;border:1px solid rgba(255,255,255,0.1);background:rgba(19,22,30,0.98);padding:22px;box-shadow:0 24px 70px rgba(0,0,0,0.55);color:#dbe4f6;font-size:12px;}
 .sim-help-panel h2{margin:0 0 6px;font-size:18px;color:#fff;}
 .sim-help-panel h3{margin:14px 0 6px;font-size:12px;color:#8ab4f8;text-transform:uppercase;letter-spacing:1px;}
@@ -620,6 +659,22 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 /* Modal overlays */
 #canvasSizeModal{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;}
 #canvasSizeModal.open{display:flex;}
+#canvasSizeModal select{background:var(--select-bg)!important;color:var(--select-text)!important;border-color:rgba(255,255,255,0.18)!important;color-scheme:dark;}
+#canvasSizeModal select option,#canvasSizeModal select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#boidColorDistModal{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;}
+#boidColorDistModal.open{display:flex;}
+#boidColorDistColumns{display:flex;gap:14px;justify-content:center;padding:8px 4px 14px;overflow-x:auto;}
+.boid-dist-col{display:flex;flex-direction:column;align-items:center;gap:8px;flex:0 0 auto;}
+.boid-dist-pct{font-size:11px;color:#ccc;font-variant-numeric:tabular-nums;}
+.boid-dist-sliderWrap{position:relative;width:30px;height:140px;}
+.boid-dist-sliderWrap input[type="range"]{position:absolute;top:50%;left:50%;width:140px;margin:0;transform:translate(-50%,-50%) rotate(-90deg);}
+.boid-dist-colorBtn{width:34px;height:24px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;cursor:pointer;}
+.boid-dist-colorBtn.active{border-color:#5b8af0;box-shadow:0 0 0 2px rgba(91,138,240,0.35);}
+.boid-dist-delBtn{padding:3px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#ccc;font-size:12px;cursor:pointer;}
+.boid-dist-delBtn:hover:not(:disabled){background:rgba(255,255,255,0.12);color:#fff;}
+.boid-dist-delBtn:disabled{opacity:0.35;cursor:default;}
+#boidColorDistAdd{padding:7px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#ccc;font-size:11px;cursor:pointer;}
+#boidColorDistAdd:hover{background:rgba(255,255,255,0.12);color:#fff;}
 #simExportModal{display:none;position:fixed;inset:0;z-index:201;align-items:center;justify-content:center;}
 #simExportModal.open{display:flex;}
 .sim-export-panel{width:min(468px,92vw);}
@@ -681,7 +736,11 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #simSetupModal .sim-setup-futureField{display:grid;gap:3px;color:#b8c6df;font-size:10px;line-height:1.25;}
 #simSetupModal .sim-setup-futureField span{color:#9cabca;font-size:9px;letter-spacing:.04em;text-transform:uppercase;}
 #simSetupModal .sim-setup-future{min-width:150px;color:#9cabca;font-size:10px;line-height:1.45;}
+#simSetupModal .sim-setup-rules{display:grid;gap:5px;grid-column:1/-1;padding-top:2px;}
+#simSetupModal .sim-setup-rules button{width:100%;justify-content:center;text-align:center;}
+#simSetupModal .sim-setup-rules span{color:#9cabca;font-size:10px;line-height:1.35;text-transform:none;letter-spacing:0;}
 #simSetupModal .sim-setup-status{min-height:18px;color:#adc0e2;font-size:11px;line-height:1.45;}
+#simSetupModal .sim-setup-status.success{color:#a9e6b5;}
 #simSetupModal .sim-setup-status.warn{color:#ffd08a;}
 #simSetupModal .sim-setup-status.error{color:#ff9e9e;}
 #simSetupModal .sim-setup-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);}
@@ -690,12 +749,44 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #simSetupModal .sim-setup-footer button.warn{border-color:rgba(255,194,102,0.38);color:#ffcf8a;background:rgba(255,174,66,0.08);}
 #simSetupModal .sim-setup-footer button.danger{border-color:rgba(255,115,115,0.36);color:#ffb0b0;background:rgba(255,90,90,0.08);}
 #simSetupModal .sim-setup-empty{padding:28px;text-align:center;color:#9cabca;font-size:12px;line-height:1.5;}
+#sensingRulesModal{display:none;position:fixed;inset:0;z-index:203;align-items:center;justify-content:center;}
+#sensingRulesModal.open{display:flex;}
+#sensingRulesModal .sensing-rules-panel{width:min(620px,92vw);max-height:88vh;padding:0;overflow:hidden;background:linear-gradient(180deg,rgba(18,22,33,0.99),rgba(10,10,14,0.99));}
+#sensingRulesModal .sensing-rules-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 24px 14px;border-bottom:1px solid rgba(255,255,255,0.08);}
+#sensingRulesModal .sensing-rules-header h2{margin:0 0 5px;font-size:17px;color:#f3f6ff;}
+#sensingRulesModal .sensing-rules-header p{margin:0;color:#9cabca;font-size:12px;}
+#sensingRulesList{display:grid;gap:10px;padding:14px 18px;max-height:calc(88vh - 150px);overflow:auto;}
+.sensing-rule-card{display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,10,14,0.96);}
+.sensing-rule-card-header,.sensing-rule-actions,.sensing-rules-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+.sensing-rule-enabled{display:flex;align-items:center;gap:8px;color:#eef3ff;font-size:12px;font-weight:650;}
+.sensing-rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.sensing-rule-field{display:grid;gap:4px;color:#aeb9cd;font-size:10px;text-transform:uppercase;letter-spacing:.04em;}
+.sensing-rule-field input,.sensing-rule-field select{min-height:28px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(17,23,36,0.96);color:#e8eefb;font-size:11px;font-family:inherit;color-scheme:dark;}
+.sensing-rule-field input[type="range"]{min-height:22px;}
+.sensing-rule-field select option{background:var(--select-panel-bg);color:var(--select-text);}
+.sensing-rule-value{color:#dfe8ff;font-size:10px;text-transform:none;letter-spacing:0;}
+.sensing-rule-hue-row{display:flex;align-items:center;gap:8px;}
+.sensing-rule-hue-row input{flex:1;}
+.sensing-rule-swatch{width:20px;height:20px;border-radius:999px;border:1px solid rgba(255,255,255,0.25);box-shadow:0 0 10px rgba(0,0,0,0.35);}
+.sensing-rule-layer-list{display:grid;gap:5px;max-height:120px;overflow:auto;padding:6px;border:1px solid rgba(255,255,255,0.1);border-radius:7px;background:rgba(255,255,255,0.035);}
+.sensing-rule-layer-list label{display:flex;align-items:center;gap:7px;color:#d9e4f7;font-size:11px;text-transform:none;letter-spacing:0;}
+.sensing-rule-summary{color:#9cabca;font-size:11px;line-height:1.35;}
+.sensing-rules-footer{padding:14px 18px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);}
+.sensing-rules-footerGroup{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#sensingRulesModal button{min-height:30px;padding:6px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.13);background:rgba(255,255,255,0.055);color:#e8eefb;font-size:11px;font-family:inherit;font-weight:650;cursor:pointer;}
+#sensingRulesModal button:hover{background:rgba(255,255,255,0.11);}
+#sensingRulesModal button.primary{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(117,162,255,0.55);color:#fff;}
+#sensingRulesModal button.warn{border-color:rgba(255,194,102,0.38);color:#ffcf8a;background:rgba(255,174,66,0.08);}
+#sensingRulesModal button:disabled{opacity:.48;cursor:not-allowed;}
 @media (max-width: 760px){
   #simSetupModal .sim-setup-header{padding:18px 18px 14px;}
   #simSetupModal .sim-setup-body{padding:12px;max-height:calc(88vh - 170px);}
   #simSetupModal .sim-setup-footer{align-items:stretch;}
   #simSetupModal .sim-setup-footerGroup{width:100%;}
   #simSetupModal .sim-setup-footer button{flex:1;}
+  #sensingRulesModal .sensing-rule-grid{grid-template-columns:1fr;}
+  #sensingRulesModal .sensing-rules-footerGroup{width:100%;}
+  #sensingRulesModal .sensing-rules-footer button{flex:1;}
 }
 #jsonPanel .workspace-json-panel{display:flex;flex-direction:column;flex:0 0 auto;min-height:100%;overflow:visible;padding:0;background:transparent;border:none;border-radius:0;}
 #jsonPanel .workspace-json-chrome{display:none;}
@@ -985,6 +1076,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <div class="sim-card">
     <div class="sim-hud-header">
       <div class="sim-label">Simulation</div>
+      <select class="sim-pill sim-mode-select" id="simModeSelect" title="Simulation submode" aria-label="Simulation submode">
+        <option value="normal">Normal</option>
+        <option value="forceVisualization">Force Visualization</option>
+      </select>
       <button class="sim-pill sim-hud-toggle" id="simHudCollapseBtn" type="button" aria-controls="simHudBody" aria-expanded="true">Collapse</button>
     </div>
     <div class="sim-hud-body" id="simHudBody">
@@ -1030,12 +1125,16 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       </svg>
     </span>
   </button>
+  <button class="sim-pill" id="simForceVizToggle" type="button" aria-pressed="false" aria-label="Force Visualization mode off" title="Force Visualization mode off">彡</button>
   <span class="sim-playback-divider" aria-hidden="true"></span>
   <span class="sim-playback-readout" id="simFrameCounter">Frame 0000</span>
+  <span class="sim-playback-readout muted" id="simPlaybackReadyBadge">No saved playback</span>
   <span class="sim-playback-divider" aria-hidden="true"></span>
   <button class="sim-pill" id="simRecordBtn" type="button">⏺ Record</button>
   <button class="sim-pill" id="simExportBtn" type="button">Export</button>
   <span class="sim-status" id="simStatus">Ready</span>
+  <span class="sim-status sim-routing-summary" id="simRoutingSummary"></span>
+  <span class="sim-status sim-force-viz-status" id="simForceVizStatus" style="display:none;"></span>
 </div>
 
 <!-- Left Edge Sliders -->
@@ -1144,6 +1243,34 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <div id="antMathPanel"></div>
 
 <!-- ══════════ Simulation Help Pop-up ══════════ -->
+<div id="forceVizHelpModal" class="sim-help-modal">
+  <div class="sim-help-backdrop" id="forceVizHelpBackdrop"></div>
+  <div class="sim-help-panel force-viz-help-panel" role="dialog" aria-modal="false" aria-labelledby="forceVizHelpTitle" aria-describedby="forceVizHelpIntro">
+    <button class="sim-help-close" id="forceVizHelpClose" aria-label="Close force visualization help">✕</button>
+    <h2 id="forceVizHelpTitle">How to start Force Visualization mode</h2>
+    <p id="forceVizHelpIntro">Use this mode to set up small boid groups and route them toward named attractors. Follow these steps exactly if you want a clear first example.</p>
+    <h3>Example goal</h3>
+    <p>Create one boid group that keeps chasing an <strong>unreachable</strong> attractor, so you can immediately see the flock pursuing a target that keeps drifting away.</p>
+    <h3>Step-by-step</h3>
+    <ol>
+      <li>Choose the <strong>Boid</strong> brush from the brush picker, then click <strong>◎ Simulation</strong> in the top bar to enter simulation mode.</li>
+      <li>Open the <strong>left simulation panel</strong> if it is hidden. Make sure the simulation is in <strong>Force Visualization</strong> mode before editing the controls in this section.</li>
+      <li>In the <strong>Group</strong> block, leave the first group selected. Set <strong>Bound Spawn</strong> to a spawn you already placed on the canvas. If you do not have one yet, use the <strong>Spawn</strong> tool, click on the canvas once, and then return here.</li>
+      <li>In the <strong>Attractor</strong> block, keep one attractor selected and set <strong>Type</strong> to <strong>Unreachable</strong>.</li>
+      <li>Set the attractor <strong>X</strong> and <strong>Y</strong> near the area where you want the flock to travel. Start with a point somewhere away from the spawn so the movement is easy to read.</li>
+      <li>Raise <strong>Strength</strong> enough that the boids clearly care about the target, then make <strong>Influence Radius</strong> large enough to cover the route from the spawn toward the attractor.</li>
+      <li>Increase <strong>Drift Radius</strong> so the attractor keeps sliding around its anchor point, and give it a moderate <strong>Drift Speed</strong>. This is what makes it feel unreachable instead of static.</li>
+      <li>Open the <strong>Routes</strong> block and confirm there is a route from your group to this attractor. If there is more than one route, make sure the active group points to the unreachable attractor you just configured.</li>
+      <li>Leave the route <strong>Enabled</strong> and keep its <strong>Weight</strong> above zero. If the route weight is too low, the boids may appear to ignore the attractor.</li>
+      <li>Press <strong>▶ Run</strong>. Watch whether the flock leaves the spawn and curves toward the moving target. If nothing moves, first check that the spawn is enabled and that the route still points to the selected attractor.</li>
+      <li>Fine-tune the behavior: increase <strong>Drift Radius</strong> if the flock catches up too easily, increase <strong>Strength</strong> if they hesitate, or increase <strong>Influence Radius</strong> if they never seem to notice the target.</li>
+    </ol>
+    <div class="sim-help-callout">
+      <strong>Quick troubleshooting:</strong> if the boids stay still, the most common causes are no spawn assigned to the group, the route pointing at the wrong attractor, the route being disabled, or the simulation not actually running.
+    </div>
+  </div>
+</div>
+
 <div id="simHelpModal" class="sim-help-modal">
   <div class="sim-help-backdrop" id="simHelpBackdrop"></div>
   <div class="sim-help-panel" role="dialog" aria-modal="true" aria-labelledby="simHelpTitle" aria-describedby="simHelpIntro">
@@ -1331,6 +1458,31 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   </div>
 </div>
 
+<!-- ══════════ Sensing Rules Modal ══════════ -->
+<div id="sensingRulesModal">
+  <div class="ai-modal-backdrop" id="sensingRulesBackdrop"></div>
+  <div class="ai-modal-panel sensing-rules-panel" role="dialog" aria-modal="true" aria-labelledby="sensingRulesModalTitle" aria-describedby="sensingRulesModalContext">
+    <div class="sensing-rules-header">
+      <div>
+        <h2 id="sensingRulesModalTitle">Sensing Rules</h2>
+        <p id="sensingRulesModalContext">Drawing Mode</p>
+      </div>
+      <button class="ai-modal-close" id="sensingRulesClose" type="button" aria-label="Close sensing rules">✕</button>
+    </div>
+    <div id="sensingRulesList"></div>
+    <div class="sensing-rules-footer">
+      <div class="sensing-rules-footerGroup">
+        <button id="sensingRulesAddBtn" type="button">+ Add Rule</button>
+        <button id="sensingRulesResetBtn" class="warn" type="button">Reset to Single Rule</button>
+      </div>
+      <div class="sensing-rules-footerGroup">
+        <button id="sensingRulesCancelBtn" type="button">Cancel</button>
+        <button id="sensingRulesApplyBtn" class="primary" type="button">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 
 <!-- ══════════ Status Bar ══════════ -->
 <div id="status">Ready</div>
@@ -1437,6 +1589,21 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <!-- Footer -->
     <div class="cs-footer">
       <button id="canvasSizeApply" class="cs-apply-btn">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Boid Color Distribution Modal ══════════ -->
+<div id="boidColorDistModal">
+  <div class="ai-modal-backdrop" id="boidColorDistBackdrop"></div>
+  <div class="ai-modal-panel" style="width:auto;min-width:320px;">
+    <button class="ai-modal-close" id="boidColorDistClose">✕</button>
+    <h2>🎨 Color Distribution</h2>
+    <p class="ai-subtitle">Assign colors to fractions of the swarm. Weights are normalized to 100%.</p>
+    <div id="boidColorDistColumns"></div>
+    <div class="ai-modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button id="boidColorDistAdd" type="button">+ Add Color</button>
+      <button id="boidColorDistDone" class="ai-save-btn" type="button">Done</button>
     </div>
   </div>
 </div>

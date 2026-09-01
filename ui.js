@@ -1,8 +1,26 @@
+import { buildSettingsCatalog, catalogEntryApplies } from './settings-catalog.js';
+import {
+  FAVORITES_KEY,
+  LEGACY_PRESETS_KEY,
+  PRESET_FORMAT,
+  PRESET_LIBRARY_FORMAT,
+  PRESET_LIBRARY_KEY,
+  applyPresetValues,
+  capturePresetValues,
+  createPreset,
+  emptyLibrary,
+  mergeImportedEntries,
+  normalizeFavorites,
+  normalizeLibrary,
+  normalizePreset,
+} from './settings-library.js';
+import { evaluatePressureCurve } from './pressure-curve.js';
+
 // =============================================================================
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
 // =============================================================================
 
-export const PRESETS_KEY = 'bb_presets_v1';
+export const PRESETS_KEY = LEGACY_PRESETS_KEY;
 export const AUTOSAVE_STORAGE_KEY = 'bb_autosave';
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 const MAX_SWARM_COUNT = 2000;
@@ -40,13 +58,47 @@ const BUILTIN_PRESETS = {
   '3D Fluid Crimson Swirl': { _activeBrush:'fluid3d', _primaryColor:'#ff0000', fluid3dBrushRadius:61, fluid3dEmitterCount:21, fluid3dEmissionRate:100, fluid3dEmitterStrength:100, fluid3dEmitterVelocity:100, fluid3dPressure:100, fluid3dMomentum:100, fluid3dVelocityDiffuse:100, fluid3dDrag:25, fluid3dThicknessDecay:37, fluid3dPigmentDiffusion:30, fluid3dPressureFade:11, fluid3dSettleThreshold:4, fluid3dMaxVelocity:30, fluid3dThicknessFloor:1, fluid3dOccupancyBias:29, fluid3dInfluenceStrength:51, fluid3dInfluenceRadius:105, fluid3dTerrainWeight:64, fluid3dScalarFieldInfluence:100, fluid3dOpacity:77, fluid3dOpacityScale:68, fluid3dResolutionScale:70, fluid3dPreviewScale:50, fluid3dFluidScale:85, fluid3dAdaptiveQuality:false, fluid3dShowField:false, fluid3dRenderMode:'pigment', fluid3dSpreadClamp:76, fluid3dSurfaceTension:28, fluid3dEdgeWidth:34, fluid3dEdgeDrag:24, fluid3dInjectorMode:'swirl', fluid3dInjectorMotion:84, fluid3dInjectorPigment:90, fluid3dInjectorOccupancy:68, fluid3dInjectorSwirl:62, stampOpacity:100, canvasTextureEnabled:false },
 };
 
-function loadUserPresets() {
-  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}'); }
-  catch { return {}; }
+let _settingsCatalog = new Map();
+let _favoritesState = normalizeFavorites();
+
+function loadPresetLibrary() {
+  try {
+    const current = localStorage.getItem(PRESET_LIBRARY_KEY);
+    if (current) {
+      const normalized = normalizeLibrary(JSON.parse(current), {
+        catalog: _settingsCatalog,
+        skipInvalidEntries: true,
+      });
+      if (normalized.warnings.some(warning => warning.error)) {
+        console.warn('Some saved presets could not be loaded:', normalized.warnings.filter(warning => warning.error));
+      }
+      return normalized.library;
+    }
+    const legacy = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}');
+    const normalized = normalizeLibrary(legacy, {
+      catalog: _settingsCatalog,
+      skipInvalidEntries: true,
+    });
+    if (normalized.warnings.some(warning => warning.error)) {
+      console.warn('Some legacy presets could not be migrated:', normalized.warnings.filter(warning => warning.error));
+    }
+    return normalized.library;
+  } catch {
+    return emptyLibrary();
+  }
 }
 
-function saveUserPresets(obj) {
-  localStorage.setItem(PRESETS_KEY, JSON.stringify(obj));
+function savePresetLibrary(library) {
+  localStorage.setItem(PRESET_LIBRARY_KEY, JSON.stringify(library));
+}
+
+function loadFavorites() {
+  try { return normalizeFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || 'null')); }
+  catch { return normalizeFavorites(); }
+}
+
+function saveFavorites(favorites) {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(normalizeFavorites(favorites)));
 }
 
 // ── Section toggle ──────────────────────────────────────────
@@ -86,6 +138,203 @@ function fluidMidrangeRow() {
     </div>
     <span class="slider-desc">Bias Time Step, Motion Slowdown, Stop Threshold, and Viscosity together first, then fine-tune the raw sliders below.</span>
   `;
+}
+
+const PRESSURE_CURVE_DEFS = Object.freeze([
+  { id: 'pressureSizeCurve', label: 'Stamp Size', group: 'Shared Stamp', points: [[0, 0.3], [1, 1]] },
+  { id: 'pressureOpacityCurve', label: 'Stamp Opacity', group: 'Shared Stamp', points: [[0, 0.3], [1, 1]] },
+  { id: 'pressureSpawnRadiusCurve', label: 'Spawn Radius', group: 'Boid / Ant', points: [[0, 0.3], [1, 1]] },
+  { id: 'bristleSplayPressureCurve', label: 'Bristle Splay', group: 'Bristle', points: [[0, 0.5], [1, 1]] },
+  { id: 'fluid3dRadiusPressureCurve', label: 'Emitter Radius', group: '3D Fluid', points: [[0, 0.35], [1, 1]] },
+  { id: 'fluid3dCountPressureCurve', label: 'Particle Count', group: '3D Fluid', points: [[0, 0.45], [1, 1]] },
+  { id: 'fluid3dEmissionPressureCurve', label: 'Emission Strength', group: '3D Fluid', points: [[0, 0.4], [1, 1]] },
+  { id: 'fluid3dInfluencePressureCurve', label: 'Influence Strength', group: '3D Fluid', points: [[0, 0.3], [1, 1]] },
+  { id: 'lbmRadiusPressureCurve', label: 'Emitter Radius', group: 'Fluid', points: [[0, 0.35], [1, 1]] },
+  { id: 'lbmCountPressureCurve', label: 'Particle Count', group: 'Fluid', points: [[0, 0.4], [1, 1]] },
+]);
+
+function _pressureCurveMarkup() {
+  let currentGroup = '';
+  let markup = '';
+  for (const definition of PRESSURE_CURVE_DEFS) {
+    if (definition.group !== currentGroup) {
+      if (currentGroup) markup += '</div>';
+      currentGroup = definition.group;
+      markup += `<div class="pressure-curve-group"><div class="pressure-curve-group-title">${currentGroup}</div>`;
+    }
+    const serialized = JSON.stringify(definition.points);
+    markup += `
+      <div class="pressure-curve-editor" data-pressure-curve="${definition.id}" data-default-curve='${serialized}'>
+        <div class="pressure-curve-header">
+          <span class="pressure-curve-title">${definition.label}</span>
+          <button type="button" class="pressure-curve-reset" data-pressure-curve-reset>Reset</button>
+        </div>
+        <canvas class="pressure-curve-canvas" width="240" height="118" aria-label="${definition.label} pressure response curve"></canvas>
+        <div class="pressure-curve-axis"><span>Light pressure</span><span>Output</span><span>Firm pressure</span></div>
+        <input class="pressure-curve-value" type="text" id="${definition.id}" value='${serialized}' aria-label="${definition.label} pressure curve data">
+      </div>`;
+  }
+  return `${markup}</div>`;
+}
+
+function _normalizePressureCurve(value, fallback) {
+  try {
+    const source = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(source)) return fallback.map(point => [...point]);
+    const points = source
+      .map(point => [Number(point?.[0]), Number(point?.[1])])
+      .filter(point => point.every(Number.isFinite))
+      .map(([x, y]) => [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))])
+      .sort((a, b) => a[0] - b[0]);
+    if (points.length < 2) return fallback.map(point => [...point]);
+    const deduped = points.filter((point, index) => index === 0 || point[0] - points[index - 1][0] > 0.001);
+    if (deduped.length < 2) return fallback.map(point => [...point]);
+    deduped[0][0] = 0;
+    deduped[deduped.length - 1][0] = 1;
+    return deduped;
+  } catch {
+    return fallback.map(point => [...point]);
+  }
+}
+
+function _wirePressureCurveEditors(app, panel) {
+  panel.querySelectorAll('[data-pressure-curve]').forEach(editor => {
+    const canvas = editor.querySelector('.pressure-curve-canvas');
+    const input = editor.querySelector('.pressure-curve-value');
+    const fallback = JSON.parse(editor.dataset.defaultCurve);
+    let points = _normalizePressureCurve(input.value, fallback);
+    let activeIndex = -1;
+
+    const serialize = () => {
+      input.value = JSON.stringify(points.map(([x, y]) => [
+        Number(x.toFixed(4)),
+        Number(y.toFixed(4)),
+      ]));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      app.invalidateParams();
+    };
+    const draw = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const width = Math.max(180, Math.round(canvas.getBoundingClientRect().width || 240));
+      const height = 118;
+      if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      const pad = 12;
+      const graphW = width - pad * 2;
+      const graphH = height - pad * 2;
+      ctx.strokeStyle = 'rgba(255,255,255,.08)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const x = pad + graphW * i / 4;
+        const y = pad + graphH * i / 4;
+        ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, height - pad); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
+      }
+      ctx.strokeStyle = '#6d9cff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const curveSamples = Math.max(96, Math.round(graphW));
+      for (let index = 0; index <= curveSamples; index += 1) {
+        const x = index / curveSamples;
+        const px = pad + x * graphW;
+        const py = pad + (1 - evaluatePressureCurve(points, x)) * graphH;
+        if (index) ctx.lineTo(px, py);
+        else ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+      points.forEach(([x, y], index) => {
+        ctx.beginPath();
+        ctx.arc(pad + x * graphW, pad + (1 - y) * graphH, index === activeIndex ? 6 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = index === activeIndex ? '#fff' : '#8bb3ff';
+        ctx.fill();
+        ctx.strokeStyle = '#17233a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    };
+    const pointFromEvent = event => {
+      const rect = canvas.getBoundingClientRect();
+      const pad = 12;
+      return [
+        Math.max(0, Math.min(1, (event.clientX - rect.left - pad) / Math.max(1, rect.width - pad * 2))),
+        Math.max(0, Math.min(1, 1 - (event.clientY - rect.top - pad) / Math.max(1, rect.height - pad * 2))),
+      ];
+    };
+    canvas.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      const [x, y] = pointFromEvent(event);
+      let nearest = -1;
+      let nearestDistance = 0.075;
+      points.forEach((point, index) => {
+        const distance = Math.hypot(point[0] - x, point[1] - y);
+        if (distance < nearestDistance) {
+          nearest = index;
+          nearestDistance = distance;
+        }
+      });
+      if (nearest < 0) {
+        points.push([x, y]);
+        points.sort((a, b) => a[0] - b[0]);
+        nearest = points.findIndex(point => point[0] === x && point[1] === y);
+        serialize();
+      }
+      activeIndex = nearest;
+      canvas.setPointerCapture(event.pointerId);
+      draw();
+    });
+    canvas.addEventListener('pointermove', event => {
+      if (activeIndex < 0 || !canvas.hasPointerCapture(event.pointerId)) return;
+      event.preventDefault();
+      const [x, y] = pointFromEvent(event);
+      const isEndpoint = activeIndex === 0 || activeIndex === points.length - 1;
+      const minX = activeIndex > 0 ? points[activeIndex - 1][0] + 0.002 : 0;
+      const maxX = activeIndex < points.length - 1 ? points[activeIndex + 1][0] - 0.002 : 1;
+      points[activeIndex] = [isEndpoint ? (activeIndex === 0 ? 0 : 1) : Math.max(minX, Math.min(maxX, x)), y];
+      serialize();
+      draw();
+    }, { passive: false });
+    const release = event => {
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      activeIndex = -1;
+      draw();
+    };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('dblclick', event => {
+      const [x, y] = pointFromEvent(event);
+      let nearest = -1;
+      let nearestDistance = 0.075;
+      points.forEach((point, index) => {
+        const distance = Math.hypot(point[0] - x, point[1] - y);
+        if (index > 0 && index < points.length - 1 && distance < nearestDistance) {
+          nearest = index;
+          nearestDistance = distance;
+        }
+      });
+      if (nearest >= 0) {
+        points.splice(nearest, 1);
+        serialize();
+        draw();
+      }
+    });
+    editor.querySelector('[data-pressure-curve-reset]')?.addEventListener('click', () => {
+      points = fallback.map(point => [...point]);
+      serialize();
+      draw();
+    });
+    input.addEventListener('change', () => {
+      points = _normalizePressureCurve(input.value, fallback);
+      serialize();
+      draw();
+    });
+    new ResizeObserver(draw).observe(canvas);
+    draw();
+  });
 }
 
 function _updateSliderValue(target, newValue) {
@@ -172,6 +421,7 @@ export const LEADER_OVERRIDE_FIELDS = Object.freeze([
   { key: 'sensingMode', sourceId: 'sensingMode', id: 'leaderSensingMode', overrideId: 'leaderOverrideSensingMode', type: 'select', label: 'Sensing Mode', defaultValue: 'avoid', options: [{ value: 'avoid', label: 'Avoid' }, { value: 'attract', label: 'Attract' }], readControl: ({ sel }) => sel('leaderSensingMode') || 'avoid' },
   { key: 'sensingStrength', sourceId: 'sensingStrength', id: 'leaderSensingStrength', overrideId: 'leaderOverrideSensingStrength', type: 'range', label: 'Sensing Strength', min: 0, max: 100, defaultValue: 50, readControl: ({ val }) => val('leaderSensingStrength') / 100 },
   { key: 'sensingRadius', sourceId: 'sensingRadius', id: 'leaderSensingRadius', overrideId: 'leaderOverrideSensingRadius', type: 'range', label: 'Sensing Radius', min: 0, max: 200, defaultValue: 20, readControl: ({ val }) => val('leaderSensingRadius') },
+  { key: 'sensingFitRadius', sourceId: 'sensingFitRadius', id: 'leaderSensingFitRadius', overrideId: 'leaderOverrideSensingFitRadius', type: 'range', label: 'Sensing Fit Radius', min: 0, max: 200, defaultValue: 0, readControl: ({ val }) => val('leaderSensingFitRadius') },
   { key: 'sensingThreshold', sourceId: 'sensingThreshold', id: 'leaderSensingThreshold', overrideId: 'leaderOverrideSensingThreshold', type: 'range', label: 'Sensing Threshold', min: 0, max: 100, defaultValue: 10, readControl: ({ val }) => val('leaderSensingThreshold') / 100 },
   { key: 'neighborRadius', sourceId: 'am_neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
   { key: 'separationRadius', sourceId: 'am_separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
@@ -228,6 +478,17 @@ function _syncLeaderOverrideUI() {
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = `
+    <div class="settings-navigator">
+      <input id="settingsCatalogSearch" type="search" placeholder="Search settings…" aria-label="Search settings">
+      <select id="settingsCatalogScope" aria-label="Settings scope">
+        <option value="active">Active Brush</option>
+        <option value="simulation">Simulation</option>
+        <option value="shared">Shared</option>
+        <option value="favorites">Favorites</option>
+        <option value="all">All</option>
+      </select>
+      <div id="settingsCatalogResults"></div>
+    </div>
     <div id="simBrushSessionCardHost" data-brushes="boid">
       ${renderSimulationSessionCard({
         badgeId: 'simSidebarSessionBadge',
@@ -296,6 +557,7 @@ export function buildSidebar(app) {
     <div class="section-body" data-brushes="boid ant">
       ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
       <button id="btnBoidAgentEditor" data-brushes="boid" style="width:100%;margin-top:4px;padding:6px;background:rgba(58,106,232,0.2);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#8ab4f8;font-size:11px;cursor:pointer;">🧬 Agent Settings Editor</button>
+      <button id="btnBoidColorDist" style="width:100%;margin-top:6px;padding:6px;background:rgba(58,106,232,0.2);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#8ab4f8;font-size:11px;cursor:pointer;">🎨 Color Distribution</button>
     </div>
 
     <!-- Forces (boid + ant) -->
@@ -708,19 +970,24 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Sensing -->
-    <div class="section-header" data-section="sensing">Drawing Mode Pixel Sensing <span class="chevron">▼</span></div>
-    <div class="section-body" data-section="sensing">
+    <div class="section-header" data-brushes="boid ant" data-section="sensing">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body" data-brushes="boid ant" data-section="sensing">
       <label>Enable <input type="checkbox" id="sensingEnabled"></label>
       <label>Mode <select id="sensingMode"><option value="avoid">Avoid</option><option value="attract">Attract</option></select></label>
       <label>Channel <select id="sensingChannel"><option value="darkness">Darkness</option><option value="lightness">Lightness</option><option value="saturation">Saturation</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option><option value="alpha">Alpha</option></select></label>
       ${sliderRow('sensingStrength', 'Strength', 0, 100, 50, v => (v/100).toFixed(2))}
       ${sliderRow('sensingRadius', 'Radius', 5, 80, 20)}
+      ${sliderRow('sensingFitRadius', 'Fit Radius', 0, 80, 0)}
       ${sliderRow('sensingThreshold', 'Threshold', 0, 100, 10, v => (v/100).toFixed(2))}
       ${sliderRow('sensingUpdateFrames', 'Update Every', 1, 50, 30, v => `${Math.round(v)}f`, 'Frames between sensing refreshes for Active and All sources')}
       <label>Source <select id="sensingSource"><option value="below">Below</option><option value="all">All</option><option value="active">Active</option><option value="selected">Selected Layers</option></select></label>
       <div style="display:flex;gap:6px;align-items:flex-start;">
         <button id="sensingSourceLayersBtn" type="button" style="flex:0 0 auto;padding:6px 10px;background:rgba(58,106,232,0.18);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#dce6ff;font-size:11px;cursor:pointer;">Pick Layers</button>
         <span id="sensingSourceLayersSummary" class="slider-desc" style="margin:0;flex:1;min-width:0;">Custom: No custom sources selected</span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;">
+        <button id="sensingRulesBtn" type="button" style="flex:0 0 auto;padding:6px 10px;background:rgba(58,106,232,0.18);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#dce6ff;font-size:11px;cursor:pointer;">Edit Rules…</button>
+        <span id="sensingRulesSummary" class="slider-desc" style="margin:0;flex:1;min-width:0;">1 rule (from controls above)</span>
       </div>
     </div>
 
@@ -772,12 +1039,20 @@ export function buildSidebar(app) {
     <!-- Presets -->
     <div class="section-header" data-section="presets">Presets <span class="chevron">▼</span></div>
     <div class="section-body">
+      <div style="display:flex;gap:3px;margin-bottom:5px;">
+        <select id="presetLibraryScope" aria-label="Preset library scope" style="flex:1;">
+          <option value="active">Active Brush / Mode</option>
+          <option value="all">All Presets</option>
+        </select>
+        <input id="presetLibrarySearch" type="search" placeholder="Search…" aria-label="Search presets" style="min-width:0;flex:1;">
+      </div>
       <div id="builtinPresets" style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:6px;"></div>
       <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;margin-top:4px;">
-        <div style="display:flex;gap:3px;margin-bottom:4px;">
-          <button id="btnSavePreset" class="save-btn">💾 Save</button>
-          <button id="btnImportPreset">📥 Import</button>
-          <button id="btnExportPresets">📋 Export</button>
+        <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px;">
+          <button id="btnSavePreset" class="save-btn">💾 Brush</button>
+          <button id="btnSaveSimulationPreset">💾 Simulation</button>
+          <button id="btnImportPreset">📥 File</button>
+          <button id="btnExportPresets">📤 Library</button>
         </div>
         <div id="userPresets"></div>
       </div>
@@ -976,22 +1251,29 @@ export function buildSidebar(app) {
   });
 
   // ── Preset buttons ──
+  _settingsCatalog = buildSettingsCatalog(sb);
+  _favoritesState = loadFavorites();
+  _decorateFavoriteControls(app);
+  _wireSettingsCatalogSearch(app);
   _renderBuiltinPresets(app);
   _renderUserPresets(app);
-  document.getElementById('btnSavePreset')?.addEventListener('click', () => _saveNewPreset(app));
+  document.getElementById('btnSavePreset')?.addEventListener('click', () => _saveNewPreset(app, 'brush'));
+  document.getElementById('btnSaveSimulationPreset')?.addEventListener('click', () => _saveNewPreset(app, 'simulation'));
   document.getElementById('btnImportPreset')?.addEventListener('click', () => _importPreset(app));
   document.getElementById('btnExportPresets')?.addEventListener('click', () => _exportPresets(app));
-
-  const triggerSidebarAutoSave = () => {
-    const autoSaveCb = document.getElementById('autoSaveSession');
-    if (!autoSaveCb?.checked) return;
-    clearTimeout(app._sidebarAutoSaveTimer);
-    app._sidebarAutoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
+  document.getElementById('presetLibraryScope')?.addEventListener('change', () => _renderUserPresets(app));
+  document.getElementById('presetLibrarySearch')?.addEventListener('input', () => _renderUserPresets(app));
+  app._refreshSettingsManagementUi = () => {
+    _decorateFavoriteControls(app);
+    _renderBuiltinPresets(app);
+    _renderUserPresets(app);
+    _renderFavorites(app);
+    _renderSettingsCatalogResults(app);
   };
-  sb.querySelectorAll('input[type="range"], input[type="checkbox"], select').forEach(el => {
-    el.addEventListener('input', triggerSidebarAutoSave);
-    el.addEventListener('change', triggerSidebarAutoSave);
-  });
+
+  // Sidebar auto-save is wired via delegated listeners in
+  // _wireWorkspaceSettingsPanel() so all control types share one debounced
+  // timer that is flushed on pagehide.
 
   document.getElementById('btnOpenSimulationInspector')?.addEventListener('click', () => {
     if (!app.simulation.enabled) app._toggleSimulationMode(true);
@@ -1012,6 +1294,9 @@ export function buildSidebar(app) {
   });
   document.getElementById('btnOpenSimulationSetup')?.addEventListener('click', event => {
     app._showSimulationSetupExplorer?.(event.currentTarget);
+  });
+  document.getElementById('btnBoidColorDist')?.addEventListener('click', () => {
+    app._openBoidColorDistModal?.();
   });
   const syncSimulationDraftFromSidebar = () => app._syncSimulationSessionDraftUi?.();
   sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
@@ -1060,6 +1345,11 @@ function _workspaceSettingsMarkup() {
         <button id="btnResetDefaults" class="reset-btn">🧼 Fresh Start</button>
       </div>
     </div>
+    <div class="section-header" data-section="stylusPressureCurves">Stylus Pressure Curves <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <div class="pressure-curve-intro">Apple Pencil and stylus response. Drag points to reshape a smooth spline, tap empty space to add a point, or double-tap an inner point to remove it. Existing pressure toggles still enable or disable each response.</div>
+      ${_pressureCurveMarkup()}
+    </div>
     <div class="section-header" data-section="simulationSettings">Simulation <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Show Selected Overlay <input type="checkbox" id="showSimulationSelectionOverlay"></label>
@@ -1072,6 +1362,7 @@ function _wireWorkspaceSettingsPanel(app, panel) {
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
+  _wirePressureCurveEditors(app, panel);
 
   const workspaceImportInput = document.createElement('input');
   workspaceImportInput.type = 'file';
@@ -1137,12 +1428,36 @@ function _wireWorkspaceSettingsPanel(app, panel) {
     const triggerAutoSave = () => {
       if (!autoSaveCb.checked) return;
       clearTimeout(autoSaveTimer);
-      autoSaveTimer = setTimeout(() => app.saveSession(), AUTOSAVE_DEBOUNCE_MS);
+      autoSaveTimer = setTimeout(() => { autoSaveTimer = null; app.saveSession(); }, AUTOSAVE_DEBOUNCE_MS);
     };
     panel.querySelectorAll('input[type="range"], input[type="checkbox"], input[type="text"], select').forEach(el => {
       el.addEventListener('input', triggerAutoSave);
       el.addEventListener('change', triggerAutoSave);
     });
+    // Sidebar control edits are only persisted when another action (stroke,
+    // sim edit, explicit save) fires saveSession — with auto-save enabled,
+    // debounce-save them here too. Delegated so it survives rebuilds.
+    const sidebarEl = document.getElementById('sidebar');
+    if (sidebarEl) {
+      const onSidebarEdit = event => {
+        const t = event.target;
+        if (t && (t.tagName === 'SELECT' || t.tagName === 'INPUT')) triggerAutoSave();
+      };
+      sidebarEl.addEventListener('input', onSidebarEdit);
+      sidebarEl.addEventListener('change', onSidebarEdit);
+    }
+    // Flush any pending debounced auto-save before the page goes away so the
+    // last edits aren't lost to the debounce window. Guarded so a panel
+    // rebuild can't accumulate duplicate window listeners.
+    if (!app._autoSavePagehideFlushWired) {
+      app._autoSavePagehideFlushWired = true;
+      window.addEventListener('pagehide', () => {
+        if (!autoSaveCb.checked || autoSaveTimer == null) return;
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+        app.saveSession();
+      });
+    }
   }
 
   app._refreshPerformanceTelemetryUI(true);
@@ -1154,15 +1469,24 @@ export function buildFavoritesPanel(app) {
   panel.innerHTML = `
     <div class="section-header" data-section="favorites">Favorites <span class="chevron">▼</span></div>
     <div class="section-body">
-      <div style="display:grid;gap:8px;">
-        <div style="font-size:12px;font-weight:700;color:rgba(120,241,220,0.96);letter-spacing:0.06em;text-transform:uppercase;">Starred Controls</div>
-        <div style="line-height:1.5;color:var(--ink-1);">Favorites now has a dedicated panel shell. The next pass will add selection mode and mirrored control rows here.</div>
+      <div style="font-size:12px;font-weight:700;color:rgba(120,241,220,0.96);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:7px;">Starred Controls</div>
+      <div style="display:flex;gap:4px;margin-bottom:7px;">
+        <button id="btnImportFavorites" type="button">Import</button>
+        <button id="btnExportFavorites" type="button">Export</button>
       </div>
+      <div id="favoriteControlList"></div>
     </div>
   `;
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
+  _favoritesState = loadFavorites();
+  document.getElementById('btnImportFavorites')?.addEventListener('click', () => _importFavorites(app));
+  document.getElementById('btnExportFavorites')?.addEventListener('click', () => {
+    _downloadSettingsJson(_favoritesState, `boid-brush-favorites-${new Date().toISOString().slice(0, 10)}.json`);
+    app.showToast('Favorites exported');
+  });
+  _renderFavorites(app);
 }
 
 export function buildSettingsPanel(app) {
@@ -1209,6 +1533,7 @@ export function buildSimulationControlsPanel(app) {
           <button class="sim-pill active" id="simDrawerInspectorToggle">Settings</button>
         </div>
         <div id="simTreePanel" class="sim-tree-panel"></div>
+        <div id="simForceVizPanel" class="sim-tree-panel" style="display:none;"></div>
       </div>
     </div>
   `;
@@ -1503,6 +1828,255 @@ export function buildSimulationControlsPanel(app) {
   app._renderSimulationTreePanel = renderTree;
   renderTree();
 
+  // ── Force Visualization submode panel ───────────────────────────────────
+  // Renders inside the same simulationControlsPanel shell as the tree panel,
+  // gated to visible only while simulation.mode === 'forceVisualization'.
+  // Every control here maps 1:1 to app.js force-viz state mutators — no
+  // control re-implements boid physics, it only edits routing/camera config.
+  const fvPanel = panel.querySelector('#simForceVizPanel');
+  const fvOption = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+
+  const renderForceViz = () => {
+    if (!fvPanel) return;
+    const sim = app.simulation;
+    const isForceViz = sim?.mode === 'forceVisualization';
+    fvPanel.style.display = isForceViz ? '' : 'none';
+    if (!isForceViz) return;
+    const scenario = app._getActiveForceVizScenario?.();
+    if (!scenario) { fvPanel.innerHTML = ''; return; }
+    const fv = sim.forceViz;
+    const activeGroup = scenario.groups.find(g => g.id === fv.ui.activeGroupId) || scenario.groups[0];
+    const activeAttractor = scenario.attractors.find(a => a.id === fv.ui.activeAttractorId) || scenario.attractors[0];
+    const cam = fv.camera;
+    const spawns = app._getForceVizSpawnOptions?.() || [];
+    const paths = app._getForceVizPathOptions?.() || [];
+    const layers = app._getSimulationTargetLayers?.() || [];
+
+    const groupOptions = scenario.groups.map((g, i) => fvOption(g.id, g.name || `Group ${i + 1}`, g.id === activeGroup?.id)).join('');
+    const attractorOptions = scenario.attractors.map((a, i) => fvOption(a.id, a.name || `Attractor ${i + 1}`, a.id === activeAttractor?.id)).join('');
+    const spawnOptions = ['<option value="">— Unbound —</option>', ...spawns.map((s, i) => fvOption(String(s.id), `Spawn ${i + 1}${s.enabled === false ? ' (disabled)' : ''}`, String(activeGroup?.spawnId) === String(s.id)))].join('');
+    const layerOptions = ['<option value="">— Active layer —</option>', ...layers.map(l => fvOption(l.id, l.name || 'Layer', activeGroup?.layerId === l.id))].join('');
+    const pathOptions = ['<option value="">— No path —</option>', ...paths.map((pth, i) => fvOption(String(pth.id), `Path ${i + 1}`, String(activeAttractor?.movement?.pathId) === String(pth.id)))].join('');
+    const otherAttractors = scenario.attractors.filter(a => a.id !== activeAttractor?.id);
+    const sharedOptions = otherAttractors.map(a => fvOption(a.id, a.name, activeAttractor?.sharedAttractorId === a.id)).join('');
+
+    const routeRows = scenario.routes.map(route => {
+      const routeGroupOptions = scenario.groups.map(g => fvOption(g.id, g.name, g.id === route.groupId)).join('');
+      const routeAttractorOptions = scenario.attractors.map(a => fvOption(a.id, a.name, a.id === route.attractorId)).join('');
+      return `
+        <div class="sim-tree-node" style="flex-direction:column;align-items:stretch;gap:4px;" data-fv-route-row="${route.id}">
+          <div class="sim-row" style="gap:4px;">
+            <select data-fv-route-group="${route.id}" style="flex:1;min-width:0;">${routeGroupOptions}</select>
+            <span style="color:#7d8594;">→</span>
+            <select data-fv-route-attractor="${route.id}" style="flex:1;min-width:0;">${routeAttractorOptions}</select>
+          </div>
+          <label style="margin:0;">Weight <span id="v_fvRouteWeight_${route.id}">${(route.weight ?? 1).toFixed(2)}</span>
+            <input type="range" id="fvRouteWeight_${route.id}" min="0" max="300" value="${Math.round(Math.max(0, Math.min(3, route.weight ?? 1)) * 100)}" data-fv-route-weight="${route.id}">
+          </label>
+          <div class="sim-row" style="justify-content:space-between;">
+            <label style="margin:0;display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" data-fv-route-enabled="${route.id}" ${route.enabled !== false ? 'checked' : ''}> Enabled</label>
+            <button type="button" class="sim-pill warn" data-fv-route-remove="${route.id}" ${scenario.routes.length <= 1 ? 'disabled' : ''}>Remove</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    const cameraPolicy = cam.policy;
+    const showFor = (...policies) => policies.includes(cameraPolicy) ? '' : 'display:none;';
+
+    fvPanel.innerHTML = `
+      <div class="sim-tree-group">
+        <div class="sim-row" style="justify-content:flex-end;margin:0 0 6px;">
+          <button type="button" class="sim-pill" id="fvHelpBtn">How to start this mode</button>
+        </div>
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Group</span></div>
+        <div class="sim-row" style="gap:6px;">
+          <select id="fvGroupSelect" style="flex:1;min-width:0;">${groupOptions}</select>
+          <button type="button" class="sim-pill" id="fvGroupAdd">+ Group</button>
+          <button type="button" class="sim-pill warn" id="fvGroupRemove" ${scenario.groups.length <= 1 ? 'disabled' : ''}>Remove</button>
+        </div>
+        <label>Bound Spawn<select id="fvGroupSpawn">${spawnOptions}</select></label>
+        <span class="slider-desc">Groups reference an existing spawn definition — no separate spawn config is created here.</span>
+        <label>Paint Layer<select id="fvGroupLayer">${layerOptions}</select></label>
+      </div>
+
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Attractor</span></div>
+        <div class="sim-row" style="gap:6px;">
+          <select id="fvAttractorSelect" style="flex:1;min-width:0;">${attractorOptions}</select>
+          <button type="button" class="sim-pill" id="fvAttractorAdd">+ Attractor</button>
+          <button type="button" class="sim-pill warn" id="fvAttractorRemove" ${scenario.attractors.length <= 1 ? 'disabled' : ''}>Remove</button>
+        </div>
+        <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" id="fvAttractorEnabled" ${activeAttractor.enabled !== false ? 'checked' : ''}> Enabled</label>
+        <label>Type<select id="fvAttractorType">
+          ${['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'].map(t => fvOption(t, t[0].toUpperCase() + t.slice(1), t === activeAttractor.type)).join('')}
+        </select></label>
+        <div class="sim-row" style="gap:6px;">
+          <label style="flex:1;">X<input type="number" id="fvAttractorX" value="${Math.round(activeAttractor.x)}"></label>
+          <label style="flex:1;">Y<input type="number" id="fvAttractorY" value="${Math.round(activeAttractor.y)}"></label>
+        </div>
+        ${nudgeSliderRow('fvAttractorStrength', 'Strength', 0, 500, Math.round(activeAttractor.strength * 100), v => (v / 100).toFixed(2), 'Pull applied to routed boids, scaled by the route weight')}
+        ${nudgeSliderRow('fvAttractorRadius', 'Radius', 1, 800, Math.round(activeAttractor.radius), v => v + 'px', 'Full-strength radius (same falloff as a normal attract guide point)')}
+        ${nudgeSliderRow('fvAttractorInfluenceRadius', 'Influence Radius', 1, 1600, Math.round(activeAttractor.influenceRadius), v => v + 'px', 'Outer radius where pull fades to zero')}
+        <div data-fv-attractor-type-panel="moving" style="${activeAttractor.type === 'moving' ? '' : 'display:none;'}">
+          <div class="sim-row" style="gap:6px;">
+            <label style="flex:1;">Vel X<input type="number" id="fvMoveVX" value="${activeAttractor.movement.velocityX}"></label>
+            <label style="flex:1;">Vel Y<input type="number" id="fvMoveVY" value="${activeAttractor.movement.velocityY}"></label>
+          </div>
+        </div>
+        <div data-fv-attractor-type-panel="unreachable" style="${activeAttractor.type === 'unreachable' ? '' : 'display:none;'}">
+          ${nudgeSliderRow('fvDriftRadius', 'Drift Radius', 0, 400, Math.round(activeAttractor.movement.driftRadius), v => v + 'px', 'How far it drifts from its anchor — never fully caught')}
+          ${nudgeSliderRow('fvDriftSpeed', 'Drift Speed', 0, 200, Math.round(activeAttractor.movement.driftSpeed * 100), v => (v / 100).toFixed(2), 'Drift cycle speed (radians/sec)')}
+        </div>
+        <div data-fv-attractor-type-panel="orbiting" style="${activeAttractor.type === 'orbiting' ? '' : 'display:none;'}">
+          <div class="sim-row" style="gap:6px;">
+            <label style="flex:1;">Orbit Center X<input type="number" id="fvOrbitCX" value="${Math.round(activeAttractor.movement.orbitCenterX)}"></label>
+            <label style="flex:1;">Orbit Center Y<input type="number" id="fvOrbitCY" value="${Math.round(activeAttractor.movement.orbitCenterY)}"></label>
+          </div>
+          ${nudgeSliderRow('fvOrbitRadius', 'Orbit Radius', 0, 800, Math.round(activeAttractor.movement.orbitRadius), v => v + 'px')}
+          ${nudgeSliderRow('fvOrbitSpeed', 'Orbit Speed', -300, 300, Math.round(activeAttractor.movement.orbitSpeed * 100), v => (v / 100).toFixed(2), 'Radians/sec, negative reverses direction')}
+        </div>
+        <div data-fv-attractor-type-panel="path" style="${activeAttractor.type === 'path' ? '' : 'display:none;'}">
+          <label>Guide Path<select id="fvAttractorPath">${pathOptions}</select></label>
+          <span class="slider-desc">Reuses the same animated guide path used for path guides.</span>
+        </div>
+        <div data-fv-attractor-type-panel="shared" style="${activeAttractor.type === 'shared' ? '' : 'display:none;'}">
+          <label>Mirrors Attractor<select id="fvAttractorShared">${sharedOptions || '<option value="">— No other attractors —</option>'}</select></label>
+          <span class="slider-desc">Position always matches the target attractor — useful for multiple groups converging on one shared target.</span>
+        </div>
+      </div>
+
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Routes</span><span class="sim-stage-badge muted">${scenario.routes.length}</span></div>
+        <div class="sim-tree-list">${routeRows}</div>
+        <button type="button" class="sim-pill" id="fvRouteAdd">+ Route</button>
+      </div>
+
+      <div class="sim-tree-group">
+        <div class="sim-tree-groupHeader"><span class="sim-tree-groupTitle">Camera</span></div>
+        <label>Policy<select id="fvCameraPolicy">
+          ${[
+            ['fixed', 'Fixed (manual)'],
+            ['followBoid', 'Follow Boid'],
+            ['followCentroid', 'Follow Centroid'],
+            ['frameGroups', 'Frame Groups'],
+            ['orbit', 'Orbit'],
+          ].map(([value, label]) => fvOption(value, label, value === cameraPolicy)).join('')}
+        </select></label>
+        <div style="${showFor('followBoid')}">
+          ${nudgeSliderRow('fvCamBoidIndex', 'Boid Sample Index', 0, 63, cam.targetBoidIndex || 0, v => String(v), 'Index into the sampled candidate list, not the raw agent count')}
+        </div>
+        <div style="${showFor('frameGroups')}">
+          ${nudgeSliderRow('fvCamPadding', 'Framing Padding', 0, 400, Math.round(cam.padding), v => v + 'px')}
+        </div>
+        <div style="${showFor('orbit')}">
+          ${nudgeSliderRow('fvCamOrbitSpeed', 'Orbit Speed', -300, 300, Math.round(cam.orbitSpeed * 100), v => (v / 100).toFixed(2), 'Camera rotation speed (radians/sec)')}
+        </div>
+        ${nudgeSliderRow('fvCamSmoothing', 'Smoothing', 1, 100, Math.round(cam.smoothing * 100), v => (v / 100).toFixed(2), 'Per-frame lerp factor toward the resolved camera target')}
+        ${nudgeSliderRow('fvCamLookahead', 'Lookahead', 0, 100, Math.round(cam.lookahead * 100), v => (v / 100).toFixed(2), 'Shifts focus ahead using the tracked average velocity')}
+        <div class="sim-row" style="gap:6px;">
+          <label style="flex:1;">Offset X<input type="number" id="fvCamOffsetX" value="${Math.round(cam.offsetX)}"></label>
+          <label style="flex:1;">Offset Y<input type="number" id="fvCamOffsetY" value="${Math.round(cam.offsetY)}"></label>
+        </div>
+        <div class="sim-row" style="gap:6px;">
+          <label style="flex:1;">Min Zoom<input type="number" step="0.05" id="fvCamMinZoom" value="${cam.minZoom.toFixed(2)}"></label>
+          <label style="flex:1;">Max Zoom<input type="number" step="0.05" id="fvCamMaxZoom" value="${cam.maxZoom.toFixed(2)}"></label>
+        </div>
+        <label>Interruption<select id="fvCamInterruption">
+          ${[
+            ['holdOnUserInput', 'Hold on user input'],
+            ['resumeAfterDelay', 'Resume after delay'],
+            ['ignoreUserInput', 'Ignore user input'],
+          ].map(([value, label]) => fvOption(value, label, value === cam.interruption)).join('')}
+        </select></label>
+        <div style="${cam.interruption === 'resumeAfterDelay' ? '' : 'display:none;'}">
+          ${nudgeSliderRow('fvCamResumeDelay', 'Resume Delay', 0, 100, Math.round(cam.resumeDelay * 10), v => (v / 10).toFixed(1) + 's')}
+        </div>
+        <label>On Stop / Exit<select id="fvCamExitBehavior">
+          ${[
+            ['restoreManualView', 'Restore manual view'],
+            ['retainCurrentView', 'Retain current view'],
+          ].map(([value, label]) => fvOption(value, label, value === cam.exitBehavior)).join('')}
+        </select></label>
+      </div>
+    `;
+
+    fvPanel.querySelector('#fvHelpBtn')?.addEventListener('click', () => app._openForceVizHelp?.());
+    fvPanel.querySelector('#fvGroupSelect')?.addEventListener('change', e => app._setForceVizActiveGroup(e.target.value));
+    fvPanel.querySelector('#fvGroupAdd')?.addEventListener('click', () => app._addForceVizGroup());
+    fvPanel.querySelector('#fvGroupRemove')?.addEventListener('click', () => app._removeForceVizGroup(activeGroup.id));
+    fvPanel.querySelector('#fvGroupSpawn')?.addEventListener('change', e => {
+      const spawn = spawns.find(candidate => String(candidate.id) === e.target.value);
+      app._updateForceVizGroup(activeGroup.id, { spawnId: spawn?.id ?? null });
+    });
+    fvPanel.querySelector('#fvGroupLayer')?.addEventListener('change', e => app._updateForceVizGroup(activeGroup.id, { layerId: e.target.value || null }));
+
+    fvPanel.querySelector('#fvAttractorSelect')?.addEventListener('change', e => app._setForceVizActiveAttractor(e.target.value));
+    fvPanel.querySelector('#fvAttractorAdd')?.addEventListener('click', () => app._addForceVizAttractor());
+    fvPanel.querySelector('#fvAttractorRemove')?.addEventListener('click', () => app._removeForceVizAttractor(activeAttractor.id));
+    fvPanel.querySelector('#fvAttractorEnabled')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { enabled: !!e.target.checked }));
+    fvPanel.querySelector('#fvAttractorType')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { type: e.target.value }));
+    fvPanel.querySelector('#fvAttractorX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { x: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { y: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorStrength')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { strength: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvAttractorRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { radius: +e.target.value }));
+    fvPanel.querySelector('#fvAttractorInfluenceRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { influenceRadius: +e.target.value }));
+    fvPanel.querySelector('#fvMoveVX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { velocityX: +e.target.value } }));
+    fvPanel.querySelector('#fvMoveVY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { velocityY: +e.target.value } }));
+    fvPanel.querySelector('#fvDriftRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { driftRadius: +e.target.value } }));
+    fvPanel.querySelector('#fvDriftSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { driftSpeed: +e.target.value / 100 } }));
+    fvPanel.querySelector('#fvOrbitCX')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterX: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitCY')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitCenterY: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitRadius')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitRadius: +e.target.value } }));
+    fvPanel.querySelector('#fvOrbitSpeed')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { movement: { orbitSpeed: +e.target.value / 100 } }));
+    fvPanel.querySelector('#fvAttractorPath')?.addEventListener('change', e => {
+      const pathItem = paths.find(candidate => String(candidate.id) === e.target.value);
+      app._updateForceVizAttractor(activeAttractor.id, { movement: { pathId: pathItem?.id ?? null } });
+    });
+    fvPanel.querySelector('#fvAttractorShared')?.addEventListener('change', e => app._updateForceVizAttractor(activeAttractor.id, { sharedAttractorId: e.target.value || null }));
+
+    fvPanel.querySelector('#fvRouteAdd')?.addEventListener('click', () => app._addForceVizRoute());
+    scenario.routes.forEach(route => {
+      fvPanel.querySelector(`[data-fv-route-group="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { groupId: e.target.value }));
+      fvPanel.querySelector(`[data-fv-route-attractor="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { attractorId: e.target.value }));
+      fvPanel.querySelector(`[data-fv-route-weight="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { weight: +e.target.value / 100 }));
+      fvPanel.querySelector(`[data-fv-route-enabled="${route.id}"]`)?.addEventListener('change', e => app._updateForceVizRoute(route.id, { enabled: !!e.target.checked }));
+      fvPanel.querySelector(`[data-fv-route-remove="${route.id}"]`)?.addEventListener('click', () => app._removeForceVizRoute(route.id));
+    });
+
+    fvPanel.querySelector('#fvCameraPolicy')?.addEventListener('change', e => app._updateForceVizCamera({ policy: e.target.value }));
+    fvPanel.querySelector('#fvCamBoidIndex')?.addEventListener('change', e => app._updateForceVizCamera({ targetBoidIndex: +e.target.value }));
+    fvPanel.querySelector('#fvCamPadding')?.addEventListener('change', e => app._updateForceVizCamera({ padding: +e.target.value }));
+    fvPanel.querySelector('#fvCamOrbitSpeed')?.addEventListener('change', e => app._updateForceVizCamera({ orbitSpeed: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamSmoothing')?.addEventListener('change', e => app._updateForceVizCamera({ smoothing: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamLookahead')?.addEventListener('change', e => app._updateForceVizCamera({ lookahead: +e.target.value / 100 }));
+    fvPanel.querySelector('#fvCamOffsetX')?.addEventListener('change', e => app._updateForceVizCamera({ offsetX: +e.target.value }));
+    fvPanel.querySelector('#fvCamOffsetY')?.addEventListener('change', e => app._updateForceVizCamera({ offsetY: +e.target.value }));
+    fvPanel.querySelector('#fvCamMinZoom')?.addEventListener('change', e => app._updateForceVizCamera({ minZoom: +e.target.value }));
+    fvPanel.querySelector('#fvCamMaxZoom')?.addEventListener('change', e => app._updateForceVizCamera({ maxZoom: +e.target.value }));
+    fvPanel.querySelector('#fvCamInterruption')?.addEventListener('change', e => app._updateForceVizCamera({ interruption: e.target.value }));
+    fvPanel.querySelector('#fvCamResumeDelay')?.addEventListener('change', e => app._updateForceVizCamera({ resumeDelay: +e.target.value / 10 }));
+    fvPanel.querySelector('#fvCamExitBehavior')?.addEventListener('change', e => app._updateForceVizCamera({ exitBehavior: e.target.value }));
+
+    // Live readout feedback while dragging, without rebuilding the panel
+    // mid-drag (which would drop the pointer capture on the range input).
+    // The formatted value + full re-render still happens on 'change' above.
+    fvPanel.querySelectorAll('input[type="range"]').forEach(inp => {
+      const span = fvPanel.querySelector('#v_' + inp.id);
+      if (!span) return;
+      inp.addEventListener('input', () => { span.textContent = inp.value; });
+    });
+    // nudgeSliderRow() ships +/- buttons but only buildSidebar() wires them
+    // globally for #sidebar; wire the copies rendered in this panel too.
+    fvPanel.querySelectorAll('.slider-nudge-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = fvPanel.querySelector('#' + btn.dataset.target);
+        _nudgeRangeValue(target, Number(btn.dataset.delta) || 0);
+      });
+    });
+  };
+  app._renderForceVizPanel = renderForceViz;
+  renderForceViz();
+
   panel.querySelectorAll('.section-header').forEach(h => {
     h.addEventListener('click', () => toggleSection(h));
   });
@@ -1791,6 +2365,7 @@ export function syncUI(app) {
     const fmt = _sliderFormats[inp.id];
     span.textContent = fmt ? fmt(+inp.value) : inp.value;
   });
+  _settingsCatalog.forEach((_, controlId) => _syncFavoriteProxies(controlId));
   // Update multiplier displays
   _syncMultDisplays();
   // Layer controls
@@ -1810,6 +2385,7 @@ export function syncUI(app) {
   _syncLeaderOverrideUI();
   _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
+  app._refreshSensingRulesSummary?.();
   app._syncMotionPathUI?.();
 }
 
@@ -2381,11 +2957,45 @@ function _renderBuiltinPresets(app) {
   if (!container) return;
   container.innerHTML = '';
   for (const [name, values] of Object.entries(BUILTIN_PRESETS)) {
+    const fallbackBrush = values._activeBrush || 'boid';
+    let preset;
+    try {
+      preset = normalizePreset(values, { catalog: _settingsCatalog, fallbackName: name, fallbackBrush }).preset;
+    } catch {
+      continue;
+    }
+    const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
+    const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
+    if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
+    if (search && !`${name} ${preset.scope.kind} ${preset.scope.brush}`.toLowerCase().includes(search)) continue;
     const btn = document.createElement('button');
-    btn.textContent = name;
-    btn.addEventListener('click', () => _applyPreset(app, values));
+    btn.textContent = `${name} · ${preset.scope.brush}`;
+    btn.title = `Built-in ${preset.scope.kind} preset`;
+    btn.addEventListener('click', () => _applyBuiltinPreset(app, name, values, preset.scope.brush));
     container.appendChild(btn);
   }
+}
+
+function _applyBuiltinPreset(app, name, values, brush) {
+  if (brush && brush !== app.activeBrush) app.setBrush(brush);
+  for (const [id, value] of Object.entries(values)) {
+    if (id === '_activeBrush') continue;
+    if (id === '_primaryColor') {
+      app.setColorValue?.('primary', value) ?? (app.primaryEl.value = value);
+      continue;
+    }
+    if (id === '_secondaryColor') {
+      app.setColorValue?.('secondary', value) ?? (app.secondaryEl.value = value);
+      continue;
+    }
+    const control = document.getElementById(id);
+    if (!control) continue;
+    if (control.type === 'checkbox') control.checked = !!value;
+    else control.value = String(value);
+  }
+  app.invalidateParams();
+  syncUI(app);
+  app.showToast(`Applied "${name}"`);
 }
 
 // ── User presets ────────────────────────────────────────────
@@ -2393,131 +3003,568 @@ function _renderUserPresets(app) {
   const container = document.getElementById('userPresets');
   if (!container) return;
   container.innerHTML = '';
-  const presets = loadUserPresets();
-  for (const [name, values] of Object.entries(presets)) {
+  const library = loadPresetLibrary();
+  if (app._pendingLegacyWorkspacePresets && Object.keys(app._pendingLegacyWorkspacePresets).length) {
+    const compatibility = document.createElement('button');
+    compatibility.type = 'button';
+    compatibility.style.width = '100%';
+    compatibility.style.marginBottom = '5px';
+    compatibility.textContent = `Import ${Object.keys(app._pendingLegacyWorkspacePresets).length} embedded workspace preset(s)`;
+    compatibility.addEventListener('click', () => {
+      try {
+        const candidate = normalizeLibrary(app._pendingLegacyWorkspacePresets, {
+          catalog: _settingsCatalog,
+          fallbackBrush: app.activeBrush,
+          skipInvalidEntries: true,
+        });
+        savePresetLibrary(mergeImportedEntries(loadPresetLibrary(), candidate.library));
+        app._pendingLegacyWorkspacePresets = null;
+        _renderUserPresets(app);
+        const skipped = candidate.warnings.filter(warning => warning.error).length;
+        app.showToast(`Imported ${candidate.library.entries.length} legacy workspace preset(s)${skipped ? ` · ${skipped} invalid skipped` : ''}`);
+      } catch (error) {
+        app.showToast(`Legacy preset import failed: ${error.message}`);
+      }
+    });
+    container.appendChild(compatibility);
+  }
+  const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
+  const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
+  for (const preset of library.entries) {
+    if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
+    if (search && !`${preset.name} ${preset.scope.kind} ${preset.scope.brush}`.toLowerCase().includes(search)) continue;
     const row = document.createElement('div');
     row.className = 'preset-item';
     const btn = document.createElement('button');
-    btn.textContent = name;
-    btn.addEventListener('click', () => _applyPreset(app, values));
+    btn.textContent = `${preset.name} · ${preset.scope.kind} · ${preset.scope.brush}`;
+    btn.addEventListener('click', () => _applyPreset(app, preset));
+    const more = document.createElement('button');
+    more.className = 'preset-del';
+    more.textContent = '⋯';
+    more.title = 'Rename, duplicate, or export';
+    more.addEventListener('click', () => _managePreset(app, preset.id));
     const del = document.createElement('button');
     del.className = 'preset-del';
     del.textContent = '✕';
     del.addEventListener('click', () => {
-      delete presets[name];
-      saveUserPresets(presets);
-      _renderUserPresets(app);
-      app.showToast(`Deleted "${name}"`);
+      const next = emptyLibrary(library.entries.filter(entry => entry.id !== preset.id));
+      try {
+        savePresetLibrary(next);
+        _renderUserPresets(app);
+        app.showToast(`Deleted "${preset.name}"`);
+      } catch (error) {
+        console.error('Preset deletion failed:', error);
+        app.showToast('Preset could not be deleted from this device');
+      }
     });
     row.appendChild(btn);
+    row.appendChild(more);
     row.appendChild(del);
     container.appendChild(row);
   }
+  if (!container.children.length) container.innerHTML = '<span class="slider-desc">No matching device presets.</span>';
 }
 
-function _applyPreset(app, values) {
-  for (const [id, val] of Object.entries(values)) {
-    // Handle special preset keys
-    if (id === '_primaryColor') { app.setColorValue?.('primary', val) ?? (app.primaryEl.value = val); continue; }
-    if (id === '_secondaryColor') { app.setColorValue?.('secondary', val) ?? (app.secondaryEl.value = val); continue; }
-    if (id === '_activeBrush') { app.setBrush(val); continue; }
-    if (id === '_motionPath') {
-      if (val && typeof val === 'object') {
-        app.motionPath = {
-          ...app.motionPath,
-          ...structuredClone(val),
-          editorOpen: false,
-          previousUiState: null,
-        };
-        app._normalizeMotionPathState?.();
-      }
-      continue;
-    }
-    const el = document.getElementById(id);
-    if (!el) continue;
-    if (el.type === 'checkbox') el.checked = !!val;
-    else el.value = val;
+function _applyPreset(app, preset) {
+  if (preset.scope.brush !== app.activeBrush) {
+    app.showToast(`Switch to ${preset.scope.brush} to apply this preset`);
+    return;
   }
+  const legacyMotionPath = preset.legacyAuthoredContent?.motionPath;
+  if (preset.scope.brush === 'motionPath' && legacyMotionPath && typeof legacyMotionPath === 'object') {
+    app.motionPath = {
+      ...app.motionPath,
+      ...structuredClone(legacyMotionPath),
+      editorOpen: false,
+      previousUiState: null,
+    };
+    app._normalizeMotionPathState?.();
+  }
+  const legacyColors = preset.legacyAuthoredContent?.colors;
+  if (typeof legacyColors?.primary === 'string') app.setColorValue?.('primary', legacyColors.primary);
+  if (typeof legacyColors?.secondary === 'string') app.setColorValue?.('secondary', legacyColors.secondary);
+  if (preset.scope.kind === 'simulation') {
+    if (app.simulation?.running || app.simulation?.paused) app.stopSimulation(false);
+    const authored = preset.values.authoredContent || {};
+    if (authored.brushData && app.simulation?.brushData) {
+      app.simulation.brushData[preset.scope.brush] = structuredClone(authored.brushData);
+    }
+    if (authored.vars && app.simulation) app.simulation.vars = structuredClone(authored.vars);
+    if (authored.sensingSourceSelection) app._restoreSensingSourceSelection?.(authored.sensingSourceSelection);
+    if (app.simulation) {
+      app.simulation.savedPlayback = null;
+      app.simulation.selected = null;
+      app.simulation.drawingPath = null;
+      app.simulation.drawingBlob = null;
+      app.simulation.dragTarget = null;
+    }
+    app._normalizeSimulationData?.();
+    _advanceSimulationNextId(app);
+    app._ensureSimulationSpawns?.(preset.scope.brush);
+  }
+  const result = applyPresetValues(document, _settingsCatalog, preset);
   app.invalidateParams();
   syncUI(app);
-  app.showToast('Preset applied');
+  app._renderSimulationInspector?.();
+  app._syncSimulationUI?.();
+  app.showToast(`Applied "${preset.name}"${result.dropped.length ? ` (${result.dropped.length} unavailable)` : ''}`);
 }
 
-function _captureCurrentPresetValues(app) {
-  const values = {};
-  document.querySelectorAll('#sidebar input[type="range"]').forEach(el => {
-    if (el.id) values[el.id] = +el.value;
+function _captureCurrentPreset(app, kind, name) {
+  const scope = { kind, brush: app.activeBrush };
+  const parameters = capturePresetValues(document, _settingsCatalog, scope);
+  if (kind === 'brush') return createPreset({ name, kind, brush: app.activeBrush, values: parameters });
+  const authoredContent = {
+    brushData: structuredClone(app.simulation?.brushData?.[app.activeBrush] || {}),
+    vars: structuredClone(app.simulation?.vars || {}),
+    sensingSourceSelection: structuredClone(app._serializeSensingSourceSelection?.() || []),
+  };
+  return createPreset({
+    name,
+    kind,
+    brush: app.activeBrush,
+    values: { parameters, authoredContent },
   });
-  document.querySelectorAll('#sidebar input[type="checkbox"]').forEach(el => {
-    if (el.id && el.id !== 'autoSaveSession') values[el.id] = el.checked;
-  });
-  document.querySelectorAll('#sidebar input[type="text"]').forEach(el => {
-    if (el.id) values[el.id] = el.value;
-  });
-  document.querySelectorAll('#sidebar select').forEach(el => {
-    if (el.id && el.id !== 'layerBlend') values[el.id] = el.value;
-  });
-  values._primaryColor = app.primaryEl.value;
-  values._secondaryColor = app.secondaryEl.value;
-  values._activeBrush = app.activeBrush;
-  if (app.activeBrush === 'motionPath' && app._serializeMotionPathState) {
-    values._motionPath = app._serializeMotionPathState();
+}
+
+function _advanceSimulationNextId(app) {
+  if (!app.simulation) return;
+  let maxId = Math.max(0, Math.floor(Number(app.simulation.nextId) || 1) - 1);
+  const pending = [app.simulation.brushData];
+  const seen = new Set();
+  while (pending.length) {
+    const value = pending.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Number.isFinite(Number(value.id))) maxId = Math.max(maxId, Math.floor(Number(value.id)));
+    if (Array.isArray(value)) pending.push(...value);
+    else pending.push(...Object.values(value));
   }
-  return values;
+  app.simulation.nextId = maxId + 1;
 }
 
-function _saveNewPreset(app) {
-  const name = prompt('Preset name:');
+function _saveNewPreset(app, kind = 'brush') {
+  if (kind === 'simulation' && !['boid', 'ant'].includes(app.activeBrush)) {
+    app.showToast('Simulation presets are available for Boid and Ant');
+    return;
+  }
+  const name = prompt(`${kind === 'simulation' ? 'Simulation' : 'Brush'} preset name:`);
   if (!name) return;
-  const presets = loadUserPresets();
-  if (presets[name]) {
-    if (!confirm(`Overwrite existing preset "${name}"?`)) return;
+  const library = loadPresetLibrary();
+  const preset = _captureCurrentPreset(app, kind, name);
+  const merged = mergeImportedEntries(library, emptyLibrary([preset]));
+  try {
+    savePresetLibrary(merged);
+    _renderUserPresets(app);
+    app.showToast(`Saved "${merged.entries.at(-1).name}"`);
+  } catch (error) {
+    console.error('Preset save failed:', error);
+    app.showToast('Preset could not be saved to this device');
   }
-  const values = _captureCurrentPresetValues(app);
-  presets[name] = values;
-  saveUserPresets(presets);
-  _renderUserPresets(app);
-  app.showToast(`Saved "${name}"`);
 }
 
 function _importPreset(app) {
-  const raw = prompt('Paste preset JSON:');
-  if (!raw) return;
-  try {
-    const obj = JSON.parse(raw);
-    if (typeof obj !== 'object') throw new Error('Invalid');
-    // Determine if it's a named collection or a single preset
-    const firstVal = Object.values(obj)[0];
-    if (typeof firstVal === 'object' && firstVal !== null) {
-      // Collection of presets
-      const presets = loadUserPresets();
-      Object.assign(presets, obj);
-      saveUserPresets(presets);
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const versioned = parsed?.format === PRESET_FORMAT || parsed?.format === PRESET_LIBRARY_FORMAT;
+      const candidate = normalizeLibrary(parsed, {
+        catalog: _settingsCatalog,
+        fallbackBrush: app.activeBrush,
+        skipInvalidEntries: !versioned,
+      });
+      const next = mergeImportedEntries(loadPresetLibrary(), candidate.library);
+      savePresetLibrary(next);
       _renderUserPresets(app);
-      app.showToast(`Imported ${Object.keys(obj).length} preset(s)`);
-    } else {
-      // Single preset
-      const name = prompt('Name for this preset:', 'Imported');
-      if (!name) return;
-      const presets = loadUserPresets();
-      presets[name] = obj;
-      saveUserPresets(presets);
-      _renderUserPresets(app);
-      app.showToast(`Imported "${name}"`);
+      const loss = candidate.warnings.reduce((sum, warning) => sum + warning.dropped.length, 0);
+      const skipped = candidate.warnings.filter(warning => warning.error).length;
+      const warningParts = [
+        loss ? `${loss} unsupported setting(s) skipped` : '',
+        skipped ? `${skipped} invalid preset(s) skipped` : '',
+      ].filter(Boolean);
+      app.showToast(`Imported ${candidate.library.entries.length} preset(s)${warningParts.length ? ` · ${warningParts.join(' · ')}` : ''}`);
+    } catch (error) {
+      app.showToast(`Import failed: ${error.message}`);
     }
-  } catch (e) {
-    app.showToast('Invalid JSON');
-  }
+  }, { once: true });
+  input.click();
 }
 
 function _exportPresets(app) {
-  const presets = loadUserPresets();
-  const payload = Object.keys(presets).length ? presets : _captureCurrentPresetValues(app);
-  const json = JSON.stringify(payload, null, 2);
-  navigator.clipboard.writeText(json).then(() => {
-    alert(Object.keys(presets).length ? 'Presets copied to clipboard' : 'Current settings copied to clipboard');
-  }).catch(() => {
-    prompt('Copy this JSON:', json);
+  _downloadSettingsJson(loadPresetLibrary(), `boid-brush-preset-library-${new Date().toISOString().slice(0, 10)}.json`);
+  app.showToast('Preset library exported');
+}
+
+function _managePreset(app, id) {
+  const library = loadPresetLibrary();
+  const preset = library.entries.find(entry => entry.id === id);
+  if (!preset) return;
+  const action = prompt('Preset action: rename, duplicate, or export', 'rename')?.trim().toLowerCase();
+  if (action === 'rename') {
+    const name = prompt('New preset name:', preset.name)?.trim();
+    if (!name) return;
+    const occupied = new Set(library.entries.filter(entry => entry.id !== id).map(entry => entry.name));
+    let resolved = name;
+    let n = 2;
+    while (occupied.has(resolved)) resolved = `${name} (${n++})`;
+    preset.name = resolved;
+    preset.updatedAt = new Date().toISOString();
+    try {
+      savePresetLibrary(library);
+      _renderUserPresets(app);
+    } catch (error) {
+      console.error('Preset rename failed:', error);
+      app.showToast('Preset could not be renamed on this device');
+    }
+  } else if (action === 'duplicate') {
+    const duplicate = createPreset({
+      ...preset,
+      id: undefined,
+      name: `${preset.name} Copy`,
+      kind: preset.scope.kind,
+      brush: preset.scope.brush,
+    });
+    try {
+      savePresetLibrary(mergeImportedEntries(library, emptyLibrary([duplicate])));
+      _renderUserPresets(app);
+    } catch (error) {
+      console.error('Preset duplicate failed:', error);
+      app.showToast('Preset could not be duplicated on this device');
+    }
+  } else if (action === 'export') {
+    _downloadSettingsJson(preset, `${preset.name.replace(/[^\w.-]+/g, '-') || 'preset'}.json`);
+  }
+}
+
+function _downloadSettingsJson(value, filename) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function _importFavorites(app) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const imported = normalizeFavorites(JSON.parse(await file.text()));
+      const merged = normalizeFavorites({
+        ..._favoritesState,
+        items: [..._favoritesState.items, ...imported.items],
+      });
+      saveFavorites(merged);
+      _favoritesState = merged;
+      _decorateFavoriteControls(app);
+      _renderFavorites(app);
+      _renderSettingsCatalogResults(app);
+      app.showToast(`Imported ${imported.items.length} favorite(s)`);
+    } catch (error) {
+      app.showToast(`Favorites import failed: ${error.message}`);
+    }
+  }, { once: true });
+  input.click();
+}
+
+function _favoriteIds(brush = '') {
+  return new Set(_favoritesState.items
+    .filter(item => !item.scope?.brush || !brush || item.scope.brush === brush)
+    .map(item => item.controlId));
+}
+
+function _decorateFavoriteControls(app) {
+  const favoriteIds = _favoriteIds(app.activeBrush);
+  for (const entry of _settingsCatalog.values()) {
+    if (!entry.favoriteEligible) continue;
+    const control = document.getElementById(entry.id);
+    const label = control?.closest('label');
+    const existingStar = label?.querySelector(':scope > .setting-favorite-toggle');
+    if (existingStar) {
+      const selected = favoriteIds.has(entry.id);
+      existingStar.textContent = selected ? '★' : '☆';
+      existingStar.title = selected ? 'Remove from Favorites' : 'Add to Favorites';
+      continue;
+    }
+    if (!control || !label) continue;
+    const star = document.createElement('button');
+    star.type = 'button';
+    star.className = 'setting-favorite-toggle';
+    star.textContent = favoriteIds.has(entry.id) ? '★' : '☆';
+    star.title = favoriteIds.has(entry.id) ? 'Remove from Favorites' : 'Add to Favorites';
+    star.setAttribute('aria-label', star.title);
+    star.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const previous = structuredClone(_favoritesState);
+      const favoriteScope = entry.scope.kind === 'brush'
+        ? { kind: 'brush', brush: app.activeBrush }
+        : { kind: entry.scope.kind };
+      const index = _favoritesState.items.findIndex(item =>
+        item.controlId === entry.id
+        && (item.scope?.brush || '') === (favoriteScope.brush || '')
+      );
+      if (index >= 0) _favoritesState.items.splice(index, 1);
+      else _favoritesState.items.push({
+        controlId: entry.id,
+        scope: favoriteScope,
+      });
+      try {
+        saveFavorites(_favoritesState);
+        _decorateFavoriteControls(app);
+        document.querySelectorAll('.setting-favorite-toggle').forEach(button => {
+          const target = button.closest('label')?.querySelector('input[id],select[id],textarea[id]');
+          if (!target) return;
+          const selected = _favoriteIds(app.activeBrush).has(target.id);
+          button.textContent = selected ? '★' : '☆';
+          button.title = selected ? 'Remove from Favorites' : 'Add to Favorites';
+        });
+        _renderFavorites(app);
+        _renderSettingsCatalogResults(app);
+      } catch (error) {
+        _favoritesState = previous;
+        console.error('Favorite save failed:', error);
+        app.showToast('Favorites could not be saved');
+      }
+    });
+    label.appendChild(star);
+    if (!control.dataset.favoriteSyncWired) {
+      control.dataset.favoriteSyncWired = '1';
+      const sync = () => _syncFavoriteProxies(entry.id);
+      control.addEventListener('input', sync);
+      control.addEventListener('change', sync);
+    }
+  }
+}
+
+function _syncFavoriteProxies(controlId) {
+  const source = document.getElementById(controlId);
+  if (!source) return;
+  const canonicalReadout = document.getElementById(`v_${controlId}`);
+  document.querySelectorAll(`[data-favorite-control="${controlId}"]`).forEach(proxy => {
+    if (proxy.type === 'checkbox') proxy.checked = source.checked;
+    else proxy.value = source.value;
+  });
+  document.querySelectorAll(`[data-favorite-readout="${controlId}"]`).forEach(readout => {
+    readout.textContent = canonicalReadout?.textContent || '';
+  });
+}
+
+function _renderFavorites(app) {
+  const container = document.getElementById('favoriteControlList');
+  if (!container) return;
+  container.innerHTML = '';
+  const grouped = new Map();
+  for (const item of _favoritesState.items) {
+    if (item.scope?.brush && item.scope.brush !== app.activeBrush) continue;
+    const entry = _settingsCatalog.get(item.controlId);
+    if (!entry) {
+      const row = document.createElement('div');
+      row.className = 'favorite-control-row';
+      row.textContent = `${item.controlId} · unavailable`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', () => {
+        const previous = _favoritesState;
+        const next = { ..._favoritesState, items: _favoritesState.items.filter(candidate => candidate !== item) };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+        } catch (error) {
+          _favoritesState = previous;
+          console.error('Favorite removal failed:', error);
+          app.showToast('Favorite could not be removed');
+        }
+      });
+      row.appendChild(remove);
+      container.appendChild(row);
+      continue;
+    }
+    if (!catalogEntryApplies(entry, app.activeBrush, 'favorite')) continue;
+    const key = entry.section || entry.scope.kind;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ entry, item });
+  }
+  for (const [section, favorites] of grouped) {
+    const heading = document.createElement('div');
+    heading.className = 'favorite-section-label';
+    heading.textContent = section;
+    container.appendChild(heading);
+    favorites.forEach(({ entry, item }) => {
+      const canonical = document.getElementById(entry.id);
+      if (!canonical) return;
+      const row = document.createElement('div');
+      row.className = 'favorite-control-row';
+      const setting = document.createElement('label');
+      setting.className = 'favorite-setting-proxy';
+      const text = document.createElement('span');
+      text.className = 'favorite-control-label';
+      text.textContent = entry.label;
+      const canonicalReadout = document.getElementById(`v_${entry.id}`);
+      const readout = canonicalReadout
+        && canonicalReadout.closest('label') === canonical.closest('label')
+        ? canonicalReadout.cloneNode(true)
+        : null;
+      if (readout) {
+        readout.removeAttribute('id');
+        readout.dataset.favoriteReadout = entry.id;
+      }
+      const proxy = canonical.cloneNode(true);
+      proxy.removeAttribute('id');
+      proxy.removeAttribute('data-favorite-sync-wired');
+      proxy.dataset.favoriteControl = entry.id;
+      proxy.addEventListener('input', () => {
+        if (canonical.type === 'checkbox') canonical.checked = proxy.checked;
+        else canonical.value = proxy.value;
+        canonical.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      proxy.addEventListener('change', () => {
+        if (canonical.type === 'checkbox') canonical.checked = proxy.checked;
+        else canonical.value = proxy.value;
+        canonical.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'preset-del';
+      remove.textContent = '✕';
+      remove.title = 'Remove favorite';
+      remove.addEventListener('click', event => {
+        event.preventDefault();
+        const previous = _favoritesState;
+        const next = {
+          ..._favoritesState,
+          items: _favoritesState.items.filter(item =>
+            item.controlId !== entry.id || (item.scope?.brush && item.scope.brush !== app.activeBrush)
+          ),
+        };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+          _decorateFavoriteControls(app);
+        } catch (error) {
+          _favoritesState = previous;
+          console.error('Favorite removal failed:', error);
+          app.showToast('Favorite could not be removed');
+        }
+      });
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'preset-del';
+      up.textContent = '↑';
+      up.title = 'Move favorite up';
+      up.addEventListener('click', event => {
+        event.preventDefault();
+        const index = _favoritesState.items.indexOf(item);
+        if (index <= 0) return;
+        const items = [..._favoritesState.items];
+        [items[index - 1], items[index]] = [items[index], items[index - 1]];
+        const next = { ..._favoritesState, items };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+        } catch (error) {
+          console.error('Favorite reorder failed:', error);
+          app.showToast('Favorites could not be reordered');
+        }
+      });
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'preset-del';
+      down.textContent = '↓';
+      down.title = 'Move favorite down';
+      down.addEventListener('click', event => {
+        event.preventDefault();
+        const index = _favoritesState.items.indexOf(item);
+        if (index < 0 || index >= _favoritesState.items.length - 1) return;
+        const items = [..._favoritesState.items];
+        [items[index + 1], items[index]] = [items[index], items[index + 1]];
+        const next = { ..._favoritesState, items };
+        try {
+          saveFavorites(next);
+          _favoritesState = next;
+          _renderFavorites(app);
+        } catch (error) {
+          console.error('Favorite reorder failed:', error);
+          app.showToast('Favorites could not be reordered');
+        }
+      });
+      setting.append(text);
+      if (readout) setting.append(readout);
+      setting.append(proxy);
+      const actions = document.createElement('span');
+      actions.className = 'favorite-control-actions';
+      actions.append(up, down, remove);
+      row.append(setting, actions);
+      container.appendChild(row);
+    });
+  }
+  if (!container.children.length) {
+    container.innerHTML = '<span class="slider-desc">Star a setting in the Brush panel. Favorites are filtered to the active brush or simulation mode.</span>';
+  }
+}
+
+function _wireSettingsCatalogSearch(app) {
+  const search = document.getElementById('settingsCatalogSearch');
+  const scope = document.getElementById('settingsCatalogScope');
+  const refresh = () => _renderSettingsCatalogResults(app);
+  search?.addEventListener('input', refresh);
+  scope?.addEventListener('change', refresh);
+  refresh();
+}
+
+function _renderSettingsCatalogResults(app) {
+  const container = document.getElementById('settingsCatalogResults');
+  if (!container) return;
+  const query = document.getElementById('settingsCatalogSearch')?.value?.trim().toLowerCase() || '';
+  const scope = document.getElementById('settingsCatalogScope')?.value || 'active';
+  const favorites = _favoriteIds(app.activeBrush);
+  container.innerHTML = '';
+  const entries = [..._settingsCatalog.values()].filter(entry => {
+    if (scope === 'active' && !catalogEntryApplies(entry, app.activeBrush, 'favorite')) return false;
+    if (scope === 'simulation' && !catalogEntryApplies(entry, app.activeBrush, 'simulation')) return false;
+    if (scope === 'shared' && entry.scope.kind !== 'shared') return false;
+    if (scope === 'favorites' && !favorites.has(entry.id)) return false;
+    return !query || `${entry.label} ${entry.description} ${entry.section} ${entry.scope.kind} ${(entry.scope.brushes || []).join(' ')}`.toLowerCase().includes(query);
+  }).slice(0, query || scope !== 'active' ? 40 : 0);
+  entries.forEach(entry => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-search-result';
+    button.textContent = `${entry.label} · ${entry.section || entry.scope.kind}`;
+    button.addEventListener('click', () => {
+      let control = document.getElementById(entry.id);
+      const isStoredSimulationControl = !!control?.closest('#simControlStore');
+      if (isStoredSimulationControl) {
+        if (!app.simulation?.enabled) app._toggleSimulationMode?.(true);
+        if (app.simulation) app.simulation.inspectorCollapsed = false;
+        app._renderSimulationInspector?.();
+        app._activateRightPanelTab?.('simulation');
+        control = document.querySelector(`#simOverlaySidebar [data-sim-param="${entry.id}"]`)
+          || document.querySelector(`#simulationControlsPanel [data-sim-param="${entry.id}"]`);
+      } else {
+        app._activateRightPanelTab?.('brush');
+      }
+      const body = control?.closest('.section-body, [data-sim-section-body]');
+      body?.classList.remove('collapsed');
+      body?.previousElementSibling?.classList.remove('closed');
+      control?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      control?.focus({ preventScroll: true });
+    });
+    container.appendChild(button);
   });
 }
 

@@ -1,7 +1,8 @@
 import { BoidSim } from './wasm-bridge.js';
 
 const AGENT_STRIDE = 23;
-const PARAMS_LEN = 67;
+const MAX_SENSING_RULES = 4;
+const PARAMS_LEN = 89;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
 const STAGING_BUFFER_COUNT = 2;
@@ -76,6 +77,26 @@ function fillParamsArray(target, p, targetX, targetY, time) {
   target[64] = p.leader?.satVar ?? 0;
   target[65] = p.leader?.litVar ?? 0;
   target[66] = p.leader?.simBoundsMargin ?? -1;
+  target[67] = p.sensingFitRadius ?? 0;
+  target[68] = p.leader?.sensingFitRadius ?? (p.sensingFitRadius ?? 0);
+  const rules = Array.isArray(p.sensingRules) && p.sensingEnabled ? p.sensingRules : null;
+  for (let i = 0; i < MAX_SENSING_RULES; i++) {
+    const base = 69 + i * 5;
+    const rule = rules?.[i];
+    if (rule && rule.enabled !== false) {
+      target[base + 0] = 1;
+      target[base + 1] = rule.mode === 'attract' ? 1 : 0;
+      target[base + 2] = rule.strength ?? 0.5;
+      target[base + 3] = rule.rangeMin ?? 0;
+      target[base + 4] = rule.rangeMax ?? 1;
+    } else {
+      target[base + 0] = 0;
+      target[base + 1] = 0;
+      target[base + 2] = 0;
+      target[base + 3] = 0;
+      target[base + 4] = 0;
+    }
+  }
 }
 
 function packMeta(agentCount, width, height) {
@@ -287,11 +308,11 @@ export class WebGPUBoidSim {
       this.sensingTexture.destroy();
     }
     this.sensingTexture = this.device.createTexture({
-      size: { width: safeWidth, height: safeHeight, depthOrArrayLayers: 1 },
+      size: { width: safeWidth, height: safeHeight, depthOrArrayLayers: MAX_SENSING_RULES },
       format: 'r8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    this.sensingTextureView = this.sensingTexture.createView();
+    this.sensingTextureView = this.sensingTexture.createView({ dimension: '2d-array' });
     this._sensingTextureWidth = safeWidth;
     this._sensingTextureHeight = safeHeight;
     if (this.pipeline) {
@@ -360,7 +381,7 @@ struct GuideMeta {
 @group(0) @binding(4) var<storage, read> pointGuides : array<PointGuide, ${MAX_GPU_SIM_POINT_GUIDES}>;
 @group(0) @binding(5) var<storage, read> pathTargets : array<PathTarget, ${MAX_GPU_SIM_PATH_TARGETS}>;
 @group(0) @binding(6) var<uniform> guideMeta : GuideMeta;
-@group(0) @binding(7) var sensingTex : texture_2d<f32>;
+@group(0) @binding(7) var sensingTex : texture_2d_array<f32>;
 @group(0) @binding(8) var<storage, read> quorumMembers : array<u32>;
 
 fn agentIndex(agent : u32, field : u32) -> u32 {
@@ -379,7 +400,7 @@ fn hash2(p : vec2f) -> f32 {
   return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453123);
 }
 
-fn sampleSensing(canvasPos : vec2f) -> f32 {
+fn sampleSensing(canvasPos : vec2f, layer : u32) -> f32 {
   if (simMeta.width <= 0.0 || simMeta.height <= 0.0) {
     return 0.0;
   }
@@ -392,7 +413,25 @@ fn sampleSensing(canvasPos : vec2f) -> f32 {
   if (sensingX < 0 || sensingY < 0 || sensingX >= i32(dims.x) || sensingY >= i32(dims.y)) {
     return 0.0;
   }
-  return textureLoad(sensingTex, vec2i(sensingX, sensingY), 0).r;
+  return textureLoad(sensingTex, vec2i(sensingX, sensingY), i32(layer), 0).r;
+}
+
+// Return the minimum sensing value across the center sample plus an 8-point
+// ring at fitRadius; this enforces that a whole local stamp-fit area passes
+// threshold instead of only a single sensing pixel.
+fn sampleSensingFit(canvasPos : vec2f, fitRadius : f32, layer : u32) -> f32 {
+  let fitSampleCount = 8u;
+  var minSample = sampleSensing(canvasPos, layer);
+  if (fitRadius <= 0.0) {
+    return minSample;
+  }
+  for (var fitIndex = 0u; fitIndex < fitSampleCount; fitIndex = fitIndex + 1u) {
+    let angle = (f32(fitIndex) / f32(fitSampleCount)) * TAU;
+    let fitDir = vec2f(cos(angle), sin(angle));
+    let ringSample = sampleSensing(canvasPos + fitDir * fitRadius, layer);
+    minSample = min(minSample, ringSample);
+  }
+  return minSample;
 }
 
 fn valueNoise(p : vec2f) -> f32 {
@@ -463,6 +502,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let sensingStrength = select(params.values[18], params.values[54], isLeader);
   let sensingRadius = select(params.values[19], params.values[55], isLeader);
   let sensingThreshold = select(params.values[20], params.values[56], isLeader);
+  let sensingFitRadius = max(select(params.values[67], params.values[68], isLeader), 0.0);
   let goalPos = vec2f(params.values[21], params.values[22]);
   let time = params.values[23];
   let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
@@ -524,13 +564,39 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     ay = ay + sin(angle) * flowField * agentMaxSpeed;
   }
 
-  if (sensingEnabled && sensingStrength != 0.0 && sensingRadius > 0.0) {
+  let sensingRulesActive = params.values[69] > 0.5 || params.values[74] > 0.5 || params.values[79] > 0.5 || params.values[84] > 0.5;
+  if (sensingEnabled && sensingRulesActive && sensingRadius > 0.0) {
+    var sensingFx = 0.0;
+    var sensingFy = 0.0;
+    for (var ruleIndex = 0u; ruleIndex < ${MAX_SENSING_RULES}u; ruleIndex = ruleIndex + 1u) {
+      let ruleBase = 69u + ruleIndex * 5u;
+      if (params.values[ruleBase] <= 0.5) {
+        continue;
+      }
+      let ruleAttract = params.values[ruleBase + 1u] > 0.5;
+      let ruleStrength = params.values[ruleBase + 2u];
+      let ruleRangeMin = params.values[ruleBase + 3u];
+      let ruleRangeMax = params.values[ruleBase + 4u];
+      let ruleSign = select(-1.0, 1.0, ruleAttract);
+      for (var senseIndex = 0u; senseIndex < 8u; senseIndex = senseIndex + 1u) {
+        let angle = (f32(senseIndex) / 8.0) * TAU;
+        let senseDir = vec2f(cos(angle), sin(angle));
+        let senseSample = sampleSensingFit(vec2f(xi, yi) + senseDir * sensingRadius, sensingFitRadius, ruleIndex);
+        if (senseSample > ruleRangeMin && senseSample <= ruleRangeMax) {
+          sensingFx = sensingFx + senseDir.x * senseSample * ruleStrength * ruleSign;
+          sensingFy = sensingFy + senseDir.y * senseSample * ruleStrength * ruleSign;
+        }
+      }
+    }
+    ax = ax + sensingFx * agentMaxSpeed;
+    ay = ay + sensingFy * agentMaxSpeed;
+  } else if (sensingEnabled && sensingStrength != 0.0 && sensingRadius > 0.0) {
     var sensingFx = 0.0;
     var sensingFy = 0.0;
     for (var senseIndex = 0u; senseIndex < 8u; senseIndex = senseIndex + 1u) {
       let angle = (f32(senseIndex) / 8.0) * TAU;
       let senseDir = vec2f(cos(angle), sin(angle));
-      let senseSample = sampleSensing(vec2f(xi, yi) + senseDir * sensingRadius);
+      let senseSample = sampleSensingFit(vec2f(xi, yi) + senseDir * sensingRadius, sensingFitRadius, 0u);
       if (senseSample > sensingThreshold) {
         let signedSample = select(-senseSample, senseSample, sensingAttract);
         sensingFx = sensingFx + senseDir.x * signedSample;
@@ -1150,20 +1216,55 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
 
   uploadSensing(luminance, w, h) {
-    this.helper.uploadSensing(luminance, w, h);
+    this.uploadSensingSlot(0, luminance, w, h);
+  }
+
+  uploadSensingSlot(slot, luminance, w, h) {
+    const layer = Math.max(0, Math.min(MAX_SENSING_RULES - 1, Math.floor(slot || 0)));
+    if (layer === 0) {
+      this.helper?.uploadSensing?.(luminance, w, h);
+    } else if (typeof this.helper?.uploadSensingSlot === 'function') {
+      this.helper.uploadSensingSlot(layer, luminance, w, h);
+    }
     if (!this.ready) return;
     this._ensureSensingTexture(w, h);
+    const safeWidth = Math.max(1, Math.floor(w || 0));
+    const safeHeight = Math.max(1, Math.floor(h || 0));
     this.device.queue.writeTexture(
-      { texture: this.sensingTexture },
+      { texture: this.sensingTexture, origin: { x: 0, y: 0, z: layer } },
       luminance,
       {
         offset: 0,
-        bytesPerRow: Math.max(1, Math.floor(w || 0)),
-        rowsPerImage: Math.max(1, Math.floor(h || 0)),
+        bytesPerRow: safeWidth,
+        rowsPerImage: safeHeight,
       },
       {
-        width: Math.max(1, Math.floor(w || 0)),
-        height: Math.max(1, Math.floor(h || 0)),
+        width: safeWidth,
+        height: safeHeight,
+        depthOrArrayLayers: 1,
+      },
+    );
+  }
+
+  clearSensingSlot(slot) {
+    const layer = Math.max(0, Math.min(MAX_SENSING_RULES - 1, Math.floor(slot || 0)));
+    if (typeof this.helper?.clearSensingSlot === 'function') {
+      this.helper.clearSensingSlot(layer);
+    }
+    if (!this.ready || !this.sensingTexture) return;
+    const width = Math.max(1, this._sensingTextureWidth || 1);
+    const height = Math.max(1, this._sensingTextureHeight || 1);
+    this.device.queue.writeTexture(
+      { texture: this.sensingTexture, origin: { x: 0, y: 0, z: layer } },
+      new Uint8Array(width * height),
+      {
+        offset: 0,
+        bytesPerRow: width,
+        rowsPerImage: height,
+      },
+      {
+        width,
+        height,
         depthOrArrayLayers: 1,
       },
     );

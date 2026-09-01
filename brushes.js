@@ -12,9 +12,11 @@ import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
+import { evaluatePressureCurve } from './pressure-curve.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
+
 // Max EMA damping: smoothing=1 → alpha = 1 - MAX_SMOOTH_DAMP ≈ 0.08
 const MAX_SMOOTH_DAMP = 0.92;
 // Low-pass filter strength for Pencil angle changes (higher = snappier, lower = smoother)
@@ -55,6 +57,7 @@ const AGENT_X = 0;
 const AGENT_Y = 1;
 const AGENT_VX = 2;
 const AGENT_VY = 3;
+const FORCE_VIZ_MAX_CANDIDATES = 64; // sampled agent positions cached per frame for camera policies
 // Predefined hue anchors used to visually separate detected boid quorum groups.
 const BOID_GROUP_HUES = [18, 42, 78, 132, 188, 228, 276, 318];
 const BOID_GROUP_COLOR_SATURATION = 85;
@@ -158,6 +161,24 @@ function _normalizeBrushHexColor(value, fallback = '#000000') {
     hex = `#${hex.slice(1).split('').map(ch => ch + ch).join('')}`;
   }
   return hex.toLowerCase();
+}
+
+/** Pick an agent's base color from a normalized color distribution
+ *  ([{color, weight}] with weights summing to 1, from getP().colorDist).
+ *  A golden-ratio scramble of the agent index keeps color buckets
+ *  interleaved across the swarm while the per-color fraction of agents
+ *  still matches each weight. Deterministic per index, so an agent keeps
+ *  its color across frames. Returns fallbackColor when no distribution
+ *  is active (null / single entry), preserving existing behavior. */
+function _resolveDistributedAgentColor(colorDist, agentIndex, fallbackColor) {
+  if (!Array.isArray(colorDist) || colorDist.length < 2) return fallbackColor;
+  const t = (agentIndex * 0.6180339887498949) % 1;
+  let cumulative = 0;
+  for (const entry of colorDist) {
+    cumulative += entry.weight;
+    if (t < cumulative) return entry.color;
+  }
+  return colorDist[colorDist.length - 1].color;
 }
 
 function _resetSimulationSpawnAppearance(brush) {
@@ -930,10 +951,10 @@ function _textureDepositDensity(app, p, x, y) {
 function _collectSimulationGuides(brush, p) {
   const app = brush.app;
   const sim = app.simulation;
-  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [] };
+  if (!sim?.enabled) return { points: [], pathTargets: [], edges: [], forceVizPoints: [] };
   const brushName = app._getSimulationContextBrush?.() || app.activeBrush;
   const data = app._getSimulationBrushData?.(brushName) || sim.brushData[brushName];
-  if (!data) return { points: [], pathTargets: [], edges: [] };
+  if (!data) return { points: [], pathTargets: [], edges: [], forceVizPoints: [] };
   return {
     points: Array.isArray(data.points)
       ? data.points
@@ -976,6 +997,14 @@ function _collectSimulationGuides(brush, p) {
             };
           })
       : [],
+    // Force Visualization submode: per-group weighted attractor guides. Always
+    // CPU-applied (never uploaded to the GPU point-guide buffer) so each guide
+    // point can be scoped to a group's agent index range via `groupRange` —
+    // this isolates per-group routing from the global GPU guide path while
+    // reusing the exact same attract/repel push math as normal guide points.
+    forceVizPoints: (brushName === 'boid' && sim.mode === 'forceVisualization' && typeof app._collectForceVizGuidePoints === 'function')
+      ? app._collectForceVizGuidePoints(brush, p)
+      : [],
   };
 }
 
@@ -1005,7 +1034,8 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
   const pointGuides = gpuSupport.points ? [] : (guideState.points || []);
   const animatedPathTargets = gpuSupport.pathTargets ? [] : (guideState.pathTargets || []);
   const edgeGuides = guideState.edges || [];
-  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length) return false;
+  const forceVizPoints = guideState.forceVizPoints || [];
+  if (!pointGuides.length && !animatedPathTargets.length && !edgeGuides.length && !forceVizPoints.length) return false;
   const { buffer, count, stride } = read;
   const guideSpeedScale = Math.max(1, p.maxSpeed || 0);
 
@@ -1037,6 +1067,23 @@ function _applySimulationGuides(brush, p, read, guideState = _collectSimulationG
         shaped = _pathInfluenceFalloff(d, point.radius, outerRadius);
       }
       const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85 * sign;
+      vx += (dx / d) * push;
+      vy += (dy / d) * push;
+    }
+
+    // Force Visualization route guides: same attract falloff as normal guide
+    // points, but scoped to the spawn-derived agent index range for the
+    // route's group so different groups can be routed to different weighted
+    // attractors without a separate physics path.
+    for (const point of forceVizPoints) {
+      if (point.groupRange && (i < point.groupRange.start || i >= point.groupRange.end)) continue;
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const d = Math.hypot(dx, dy);
+      const outerRadius = Math.max(point.radius || 0, point.influenceRadius || point.radius || 0);
+      if (d <= 0.0001 || d > outerRadius) continue;
+      const shaped = d <= point.radius ? (1 - d / point.radius) : _pathInfluenceFalloff(d, point.radius, outerRadius);
+      const push = point.strength * p.simSpeed * guideSpeedScale * shaped * 0.85;
       vx += (dx / d) * push;
       vy += (dy / d) * push;
     }
@@ -1106,7 +1153,7 @@ async function _createMotionSim(app, maxAgents = SHARED_MOTION_SIM_MAX_AGENTS, o
   const height = app.H || 600;
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     try {
-      return WebGPUBoidSim.create(width, height, maxAgents, undefined, options);
+      return await WebGPUBoidSim.create(width, height, maxAgents, undefined, options);
     } catch (error) {
       console.warn('WebGPU boid sim unavailable — falling back to WASM.', error);
     }
@@ -1116,6 +1163,36 @@ async function _createMotionSim(app, maxAgents = SHARED_MOTION_SIM_MAX_AGENTS, o
 
 async function _createSharedMotionSim(app) {
   return _createMotionSim(app, SHARED_MOTION_SIM_MAX_AGENTS);
+}
+
+async function _acquireSharedMotionSim(app) {
+  if (app.sharedMotionSim) return app.sharedMotionSim;
+  if (!app.sharedMotionSimPromise) {
+    const epoch = app.sharedMotionSimEpoch ?? 0;
+    const request = (async () => {
+      try {
+        const sim = await _createSharedMotionSim(app);
+        if ((app.sharedMotionSimEpoch ?? 0) !== epoch) {
+          sim?.destroy?.();
+          return _acquireSharedMotionSim(app);
+        }
+        app.sharedMotionSim = sim;
+        return sim;
+      } catch (error) {
+        if ((app.sharedMotionSimEpoch ?? 0) !== epoch) {
+          return _acquireSharedMotionSim(app);
+        }
+        app.sharedMotionSim = null;
+        throw error;
+      } finally {
+        if (app.sharedMotionSimPromise === request) {
+          app.sharedMotionSimPromise = null;
+        }
+      }
+    })();
+    app.sharedMotionSimPromise = request;
+  }
+  return app.sharedMotionSimPromise;
 }
 
 export class BoidBrush {
@@ -1161,6 +1238,16 @@ export class BoidBrush {
     this._debugEvents = [];
     this._debugSeq = 0;
     this._debugMaxEvents = 120;
+    // Force Visualization submode support: runtime-only, never persisted.
+    // Maps a spawn definition id -> the agent index range it produced this
+    // stroke, so routes can scope guide points to one spawn group's agents.
+    this._spawnRangesById = new Map();
+    this._primarySpawnId = null;
+    // Cached per-frame transient snapshot (centroid/bounds/avg velocity/
+    // sampled candidates) consumed by camera policies without re-reading
+    // the agent buffer. Populated from the same non-blocking readAgents()
+    // call the stroke loop already performs.
+    this._transientSnapshot = { count: 0 };
     _resetSimulationSpawnAppearance(this);
   }
 
@@ -1189,7 +1276,9 @@ export class BoidBrush {
       this._ready = false;
       this.sim = null;
       this._usingSharedSim = false;
+      this.app.sharedMotionSimEpoch = (this.app.sharedMotionSimEpoch ?? 0) + 1;
       this.app.sharedMotionSim = null;
+      this.app.sharedMotionSimPromise = null;
       this._resetInterpolationState();
       this._boidsSpawned = false;
       this._hoverSpawned = false;
@@ -1215,7 +1304,7 @@ export class BoidBrush {
     this._patchRendererChain();
     try {
       this.sim = useShared
-        ? await _createSharedMotionSim(this.app)
+        ? await _acquireSharedMotionSim(this.app)
         : await _createMotionSim(this.app, undefined, gpuOptions);
       this._usingSharedSim = !!useShared;
       if (useShared) this.app.sharedMotionSim = this.sim;
@@ -1237,9 +1326,58 @@ export class BoidBrush {
     this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
   }
 
-  /** Capture canvas luminance and upload to WASM for pixel sensing */
+  /** Capture canvas channel data and upload to the sim for pixel sensing.
+   * Rule-driven: each enabled rule gets its own sensing slot; rules sharing a
+   * layer source share a single composite/read of the canvas. */
   _uploadSensing(p) {
-    const imgData = this.app.buildSensingData(p);
+    const rules = Array.isArray(p.sensingRules) && p.sensingRules.length
+      ? p.sensingRules.slice(0, 4)
+      : null;
+    if (!rules) {
+      // Legacy single-directive path (also used by the ant pheromone pathway)
+      const imgData = this.app.buildSensingData(p);
+      const lum = this._extractSensingChannel(imgData, { channel: p.sensingChannel || 'darkness' });
+      this.sim.uploadSensing(lum.data, lum.width, lum.height);
+      this._sensingUploaded = true;
+      this._sensingSignature = this._buildSensingSignature(p);
+      return;
+    }
+    // Group rules by identical layer source so each unique source is
+    // composited and read back only once per refresh.
+    const sourceCache = new Map();
+    for (let slot = 0; slot < 4; slot++) {
+      const rule = rules[slot];
+      if (!rule || rule.enabled === false) {
+        this.sim.clearSensingSlot?.(slot);
+        continue;
+      }
+      if (rule.source === 'pheromone') {
+        // Internal ant pheromone rule: the slot's map data is uploaded by
+        // AntBrush._uploadPheromoneToSensing, not from canvas pixels. Skip
+        // without clearing so that data stays intact.
+        continue;
+      }
+      const key = rule.source + '|' + (rule.source === 'selected' ? (rule.layerIds || []).join(',') : '');
+      let imgData = sourceCache.get(key);
+      if (!imgData) {
+        imgData = this.app.buildSensingData(p, { source: rule.source, layerIds: rule.layerIds });
+        sourceCache.set(key, imgData);
+      }
+      const lum = this._extractSensingChannel(imgData, rule);
+      if (typeof this.sim.uploadSensingSlot === 'function') {
+        this.sim.uploadSensingSlot(slot, lum.data, lum.width, lum.height);
+      } else if (slot === 0) {
+        this.sim.uploadSensing(lum.data, lum.width, lum.height);
+      }
+    }
+    this._sensingUploaded = true;
+    this._sensingSignature = this._buildSensingSignature(p);
+  }
+
+  /** Extract a single sensing channel from RGBA ImageData, downsampled to 1/4
+   * resolution. Supports the legacy channels plus 'hue' (closeness to a target
+   * hue, weighted by saturation and alpha). Returns { data, width, height }. */
+  _extractSensingChannel(imgData, rule) {
     const rgba = imgData.data;
     const w = imgData.width;
     const h = imgData.height;
@@ -1247,11 +1385,15 @@ export class BoidBrush {
     const dw = Math.max(1, w >> 2);
     const dh = Math.max(1, h >> 2);
     const lumLen = dw * dh;
-    if (!this._sensingLum || this._sensingLum.length !== lumLen) {
-      this._sensingLum = new Uint8Array(lumLen);
+    const channel = rule.channel || 'darkness';
+    const hueTarget = Number.isFinite(rule.hueTarget) ? rule.hueTarget : 0;
+    const hueTolerance = Number.isFinite(rule.hueTolerance) ? Math.max(1, rule.hueTolerance) : 60;
+    if (!this._sensingLumSlots) this._sensingLumSlots = new Map();
+    let lum = this._sensingLumSlots.get(channel);
+    if (!lum || lum.length !== lumLen) {
+      lum = new Uint8Array(lumLen);
+      this._sensingLumSlots.set(channel, lum);
     }
-    const lum = this._sensingLum;
-    const channel = p.sensingChannel || 'darkness';
     const sx = w / dw;
     const sy = h / dh;
     for (let dy = 0; dy < dh; dy++) {
@@ -1271,13 +1413,29 @@ export class BoidBrush {
           const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
           v = mx === 0 ? 0 : Math.round((((mx - mn) / mx) * 255) * alphaScale);
         }
+        else if (channel === 'hue') {
+          // Closeness to a target hue, weighted by saturation (grey pixels
+          // have no meaningful hue) and alpha.
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          const delta = mx - mn;
+          if (delta === 0 || mx === 0) v = 0;
+          else {
+            let hue;
+            if (mx === r) hue = 60 * (((g - b) / delta) % 6);
+            else if (mx === g) hue = 60 * ((b - r) / delta + 2);
+            else hue = 60 * ((r - g) / delta + 4);
+            if (hue < 0) hue += 360;
+            let dist = Math.abs(hue - hueTarget);
+            if (dist > 180) dist = 360 - dist;
+            const closeness = Math.max(0, 1 - dist / hueTolerance);
+            v = Math.round(closeness * (delta / mx) * 255 * alphaScale);
+          }
+        }
         else /* 'darkness' */ v = Math.round((255 - Math.round(0.299 * r + 0.587 * g + 0.114 * b)) * alphaScale);
         lum[dy * dw + dx] = v;
       }
     }
-    this.sim.uploadSensing(lum, dw, dh);
-    this._sensingUploaded = true;
-    this._sensingSignature = this._buildSensingSignature(p);
+    return { data: lum, width: dw, height: dh };
   }
 
   _buildSensingSignature(p) {
@@ -1289,8 +1447,10 @@ export class BoidBrush {
       mode: p.sensingMode || 'avoid',
       strength: Number(p.sensingStrength || 0).toFixed(4),
       radius: Number(p.sensingRadius || 0).toFixed(2),
+      fitRadius: Number(p.sensingFitRadius || 0).toFixed(2),
       threshold: Number(p.sensingThreshold || 0).toFixed(4),
       updateFrames: Math.max(1, Math.min(50, Math.round(p.sensingUpdateFrames || 30))),
+      rules: Array.isArray(p.sensingRules) ? p.sensingRules : null,
     });
   }
 
@@ -1333,9 +1493,27 @@ export class BoidBrush {
       if (typeof vars.sensingChannel === 'string') next.sensingChannel = vars.sensingChannel;
       if (Number.isFinite(vars.sensingStrength)) next.sensingStrength = vars.sensingStrength;
       if (Number.isFinite(vars.sensingRadius)) next.sensingRadius = vars.sensingRadius;
+      if (Number.isFinite(vars.sensingFitRadius)) next.sensingFitRadius = vars.sensingFitRadius;
       if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
       if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
       if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+      // Per-simulation sensing rules: explicit rules win; otherwise refresh
+      // rule 0's simple fields from the (possibly overridden) flat vars.
+      if (Array.isArray(vars.sensingRules) && vars.sensingRules.length) {
+        next.sensingRules = vars.sensingRules;
+      } else if (Array.isArray(next.sensingRules) && next.sensingRules.length) {
+        const rule0 = Object.assign({}, next.sensingRules[0], {
+          mode: next.sensingMode || 'avoid',
+          channel: next.sensingRules[0].channel === 'hue' ? 'hue' : (next.sensingChannel || 'darkness'),
+          strength: Number.isFinite(next.sensingStrength) ? next.sensingStrength : 0.5,
+          rangeMin: Math.min(
+            Number.isFinite(next.sensingThreshold) ? next.sensingThreshold : 0.1,
+            Number.isFinite(next.sensingRules[0].rangeMax) ? next.sensingRules[0].rangeMax : 1
+          ),
+          source: next.sensingSource || 'below',
+        });
+        next.sensingRules = [rule0, ...next.sensingRules.slice(1)];
+      }
     }
     next.leader = _resolveLeaderParams(next);
     return next;
@@ -1353,7 +1531,7 @@ export class BoidBrush {
       const tiltFactor = hasTilt ? (1 - alt / (Math.PI / 2)) : 0;
       r *= 1 + tiltFactor * 2;
     } else if (p.pressureSpawnRadius) {
-      r *= 0.3 + 0.7 * pressure;
+      r *= evaluatePressureCurve(p.pressureSpawnRadiusCurve, pressure);
     }
     const spawnInfo = this.app._spawnSimulationAgents(this.sim, {
       count: p.count,
@@ -1372,10 +1550,20 @@ export class BoidBrush {
       color: p.color,
       opacity: p.stampOpacity,
     }, p);
+    if (this._primarySpawnId != null) this._recordSimulationSpawnRange(this._primarySpawnId, spawnInfo);
     this._boidsSpawned = true;
     this._lastSpawnX = x;
     this._lastSpawnY = y;
     return true;
+  }
+
+  /** Force Visualization submode: remember which agent index range a spawn
+   *  definition produced this stroke, keyed by the spawn's own id. Routes
+   *  use this to scope a weighted attractor's guide point to just the boids
+   *  from its bound group instead of applying it globally. */
+  _recordSimulationSpawnRange(spawnId, spawnInfo) {
+    if (spawnId == null || !spawnInfo) return;
+    this._spawnRangesById.set(spawnId, { startIndex: spawnInfo.startIndex, endIndex: spawnInfo.endIndex });
   }
 
   _applyLifecycleAction(action, p, x, y, pressure = 1, useHoverAngle = false) {
@@ -1710,12 +1898,12 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
 
       let size = p.stampSize * sm;
       let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) size *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) size *= taperCurve;
       if (taperOpacity) opacity *= taperCurve;
       opacity = Math.min(opacity, 1);
@@ -1906,11 +2094,11 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) sz *= taperCurve;
       if (taperOpacity) op *= taperCurve;
       op = Math.min(op, 1);
@@ -1961,6 +2149,8 @@ export class BoidBrush {
     if (!this._ready) return;
     const p = this.app.getP();
     if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
+    // Fresh stroke — spawn index ranges from the previous stroke no longer apply.
+    this._spawnRangesById.clear();
     this._pushRenderDebug('pointer-down', {
       x,
       y,
@@ -1975,6 +2165,7 @@ export class BoidBrush {
     const simSpawn = this.app.simulation?.enabled && this.app.activeBrush === 'boid'
       ? ((selectedSpawn && selectedSpawn.enabled !== false) ? selectedSpawn : (simSpawns.find(spawn => spawn.enabled !== false) || simSpawns[0]))
       : null;
+    this._primarySpawnId = simSpawn?.id ?? null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
     this._spawnOverrides = spawnConfig ? {
       count: spawnConfig.count,
@@ -2137,6 +2328,7 @@ export class BoidBrush {
       const spawnInfo = this.app._spawnSimulationAgents(this.sim, config, spawn.x, spawn.y);
       this.sim.setLeaderRange?.(spawnInfo.startIndex, spawnInfo.endIndex, p.leader?.count ?? p.leaderConfig?.count ?? 0);
       _setSimulationSpawnAppearanceRange(this, spawnInfo, config, p);
+      this._recordSimulationSpawnRange(spawn.id, spawnInfo);
     }
   }
 
@@ -2147,6 +2339,299 @@ export class BoidBrush {
 
   refreshSimulationSpawnAppearance(p = this.app.getP()) {
     this.ensureSimulationSpawnAppearance(p);
+  }
+
+  _seedSpawnAppearanceForSavedPlayback(agentCount, p = this.app.getP()) {
+    const spawns = this.app._ensureSimulationSpawns('boid').filter(spawn => spawn?.enabled !== false);
+    if (!spawns.length || agentCount <= 0) {
+      this._agentSpawnColors = [];
+      this._agentSpawnOpacity = [];
+      return;
+    }
+    const nextColors = [];
+    const nextOpacity = [];
+    let cursor = 0;
+    for (const spawn of spawns) {
+      const config = this.app._resolveSimulationSpawnConfig(spawn, p);
+      const color = _normalizeBrushHexColor(config?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+      const opacity = Number.isFinite(config?.opacity)
+        ? Math.max(0, Math.min(1, config.opacity))
+        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+      const expectedCount = Math.max(0, Math.round(config?.count || 0));
+      for (let offset = 0; offset < expectedCount && cursor < agentCount; offset++, cursor++) {
+        nextColors[cursor] = color;
+        nextOpacity[cursor] = opacity;
+      }
+      if (cursor >= agentCount) break;
+    }
+    if (cursor < agentCount) {
+      const fallback = this.app._resolveSimulationSpawnConfig(spawns[0], p);
+      const color = _normalizeBrushHexColor(fallback?.color, _normalizeBrushHexColor(p?.color, '#000000'));
+      const opacity = Number.isFinite(fallback?.opacity)
+        ? Math.max(0, Math.min(1, fallback.opacity))
+        : (Number.isFinite(p?.stampOpacity) ? Math.max(0, Math.min(1, p.stampOpacity)) : 1);
+      for (; cursor < agentCount; cursor++) {
+        nextColors[cursor] = color;
+        nextOpacity[cursor] = opacity;
+      }
+    }
+    this._agentSpawnColors = nextColors;
+    this._agentSpawnOpacity = nextOpacity;
+  }
+
+  prepareSavedPlayback(savedPlayback, p = this.app.getP()) {
+    this.resetSimulationPlaybackState({ compositePreview: false });
+    this._flatActive = false;
+    this._spawnOverrides = null;
+    this._seedSpawnAppearanceForSavedPlayback(savedPlayback?.agentCount || 0, p);
+  }
+
+  captureSavedPlaybackFrame() {
+    if (!this._ready || !this.sim) return null;
+    const { buffer, count, stride } = this.sim.readAgents();
+    if (!count) return null;
+    const positions = new Array(count * 2);
+    const appearance = new Array(count * 5);
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const posBase = i * 2;
+      const appearanceBase = i * 5;
+      positions[posBase] = buffer[base + 0];
+      positions[posBase + 1] = buffer[base + 1];
+      appearance[appearanceBase] = buffer[base + 8];
+      appearance[appearanceBase + 1] = buffer[base + 9];
+      appearance[appearanceBase + 2] = buffer[base + 20];
+      appearance[appearanceBase + 3] = buffer[base + 21];
+      appearance[appearanceBase + 4] = buffer[base + 22];
+    }
+    return { count, positions, appearance };
+  }
+
+  _buildAgentBufferFromSavedFrame(savedPlayback, frameIndex) {
+    const frame = savedPlayback?.frames?.[frameIndex];
+    const agentCount = Math.max(0, Math.round(savedPlayback?.agentCount || 0));
+    if (!frame?.positions?.length || !savedPlayback?.appearance?.length || agentCount <= 0) return null;
+    const stride = 23;
+    const size = agentCount * stride;
+    if (!this._savedPlaybackReadBuffer || this._savedPlaybackReadBuffer.length !== size) {
+      this._savedPlaybackReadBuffer = new Float32Array(size);
+    } else {
+      this._savedPlaybackReadBuffer.fill(0);
+    }
+    const buffer = this._savedPlaybackReadBuffer;
+    for (let i = 0; i < agentCount; i++) {
+      const base = i * stride;
+      const posBase = i * 2;
+      const appearanceBase = i * 5;
+      buffer[base + 0] = frame.positions[posBase];
+      buffer[base + 1] = frame.positions[posBase + 1];
+      buffer[base + 8] = savedPlayback.appearance[appearanceBase];
+      buffer[base + 9] = savedPlayback.appearance[appearanceBase + 1];
+      buffer[base + 20] = savedPlayback.appearance[appearanceBase + 2];
+      buffer[base + 21] = savedPlayback.appearance[appearanceBase + 3];
+      buffer[base + 22] = savedPlayback.appearance[appearanceBase + 4];
+    }
+    return { buffer, count: agentCount, stride };
+  }
+
+  _renderAgentRead(read, p, { forceStamp = false } = {}) {
+    const { buffer, count, stride } = read;
+    if (count === 0) return;
+    const app = this.app;
+    const layer = app.getActiveLayer();
+    const flat = this._flatActive;
+    const stampCtx = flat ? this._strokeCtx : layer.ctx;
+    const skipN = p.skipStamps || 0;
+    app.strokeFrame++;
+    const batchSupport = this._getBatchRendererSupport(p, flat);
+    if (batchSupport.ok) {
+      const batch = this._buildRenderBatch(read, p, {
+        flat,
+        pressure: app.pressure,
+        interpolate: true,
+        applySkip: skipN > 0,
+        forceStamp,
+      });
+      if (batch.count === 0) {
+        this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
+        return;
+      }
+      if (this._renderBatchToTarget(stampCtx, batch, p, { allowAlphaLock: !flat })) {
+        if (flat) {
+          const w = layer.canvas.width, h = layer.canvas.height;
+          const ctx = layer.ctx;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(this._preStrokeCanvas, 0, 0);
+          let masterOp = p.stampOpacity;
+          if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
+          ctx.globalAlpha = Math.min(masterOp, 1);
+          ctx.drawImage(this._strokeCanvas, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        layer.dirty = true;
+        app.compositeAllLayers();
+        return;
+      }
+    }
+    this._setRenderBackend('legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
+    const colorCache = new Map();
+    const getAppearanceColor = color => {
+      const key = _normalizeBrushHexColor(color, '#000000');
+      let cached = colorCache.get(key);
+      if (!cached) {
+        cached = { hsl: hexToHSL(key), color: key };
+        colorCache.set(key, cached);
+      }
+      return cached;
+    };
+
+    for (let i = 0; i < count; i++) {
+      const base = i * stride;
+      const ax = buffer[base + 0];
+      const ay = buffer[base + 1];
+      const sm = buffer[base + 8];
+      const om = buffer[base + 9];
+      const agentHue = buffer[base + 20];
+      const agentSat = buffer[base + 21];
+      const agentLit = buffer[base + 22];
+      const appearance = _getSimulationSpawnAppearance(this, i, p);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
+
+      if (app.strokeFrame <= skipN) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+        continue;
+      }
+
+      let sz = p.stampSize * sm;
+      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, app.pressure);
+      if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
+      op = Math.min(op, 1);
+
+      let color = appearanceColor.color;
+      if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
+        const [bh, bs, bl] = appearanceColor.hsl;
+        color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
+      }
+
+      const step = p.stampSeparation > 0
+        ? p.stampSeparation
+        : Math.max(1, sz * 0.25);
+      const prevX = this._lastSpacingX[i];
+      const prevY = this._lastSpacingY[i];
+
+      let advanceAnchor = true;
+      if (prevX !== undefined) {
+        const dx = ax - prevX;
+        const dy = ay - prevY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < step) {
+          if (!forceStamp && !app.isDrawing && !app.simulation?.running) continue;
+          app.symStamp(stampCtx, ax, ay, sz, color, op);
+          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+            _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
+          }
+          this._lastStampX[i] = ax;
+          this._lastStampY[i] = ay;
+          advanceAnchor = false;
+          continue;
+        }
+
+        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
+        for (let j = 1; j <= n; j++) {
+          const t = j / n;
+          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
+          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+            _stampToBlurAccum(this._blurStrokeCtx, app, prevX + dx * t, prevY + dy * t, sz, color, op);
+          }
+        }
+      } else {
+        app.symStamp(stampCtx, ax, ay, sz, color, op);
+        if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
+          _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
+        }
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+      }
+
+      if (advanceAnchor) {
+        this._lastStampX[i] = ax;
+        this._lastStampY[i] = ay;
+        this._lastSpacingX[i] = ax;
+        this._lastSpacingY[i] = ay;
+      }
+    }
+
+    if (flat) {
+      const w = layer.canvas.width, h = layer.canvas.height;
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(this._preStrokeCanvas, 0, 0);
+      let masterOp = p.stampOpacity;
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
+      ctx.globalAlpha = Math.min(masterOp, 1);
+      ctx.drawImage(this._strokeCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    if (p.trailBlur > 0 && !flat) {
+      const lw = layer.canvas.width, lh = layer.canvas.height;
+      if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
+        this._blurCanvas = document.createElement('canvas');
+        this._blurCanvas.width = lw;
+        this._blurCanvas.height = lh;
+        this._blurCtx = this._blurCanvas.getContext('2d');
+        this._blurTmpCanvas = document.createElement('canvas');
+        this._blurTmpCanvas.width = lw;
+        this._blurTmpCanvas.height = lh;
+        this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
+      }
+      if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== lw || this._blurStrokeCanvas.height !== lh) {
+        this._blurStrokeCanvas = document.createElement('canvas');
+        this._blurStrokeCanvas.width = lw;
+        this._blurStrokeCanvas.height = lh;
+        this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
+        this._blurStrokeCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
+      }
+      this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurCtx.clearRect(0, 0, lw, lh);
+      this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
+      if (p.trailFlow > 0 && p.canvasTextureEnabled) {
+        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
+      }
+      this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this._blurTmpCtx.clearRect(0, 0, lw, lh);
+      this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
+      this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
+      this._blurTmpCtx.filter = 'none';
+      layer.ctx.save();
+      layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layer.ctx.globalAlpha = 0.18;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.drawImage(this._blurTmpCanvas, 0, 0);
+      layer.ctx.globalAlpha = 1;
+      layer.ctx.globalCompositeOperation = 'source-over';
+      layer.ctx.restore();
+    }
+
+    layer.dirty = true;
+    app.compositeAllLayers();
+  }
+
+  renderSavedPlaybackFrame(savedPlayback, frameIndex, p = this.app.getP()) {
+    const read = this._buildAgentBufferFromSavedFrame(savedPlayback, frameIndex);
+    if (!read) return;
+    this._renderAgentRead(read, p, { forceStamp: true });
   }
 
   onFrame(elapsed) {
@@ -2182,224 +2667,53 @@ export class BoidBrush {
     this.sim.writeParams(simP, app.leaderX, app.leaderY, elapsed);
     this.sim.step(1 / 60);
 
-    // Read agents
+    // Read agents. readAgents() itself is non-blocking: on WebGPU it returns
+    // the latest CPU mirror already updated by an async mapAsync() readback
+    // (see webgpu-boid-sim.js _applyReadyResults), so caching a transient
+    // snapshot from it here never stalls the frame loop.
     const read = this.sim.readAgents();
     if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
-    const { buffer, count, stride } = read;
-    if (count === 0) return;
+    if (app.simulation?.mode === 'forceVisualization') this._updateTransientSnapshot(read);
+    this._renderAgentRead(read, p, {
+      forceStamp: !!app.isDrawing || !!app.simulation?.running,
+    });
+  }
 
-    // Stamp each agent
-    const layer = app.getActiveLayer();
-    const flat = this._flatActive;
-    const stampCtx = flat ? this._strokeCtx : layer.ctx;
-    const skipN = p.skipStamps || 0;
-    app.strokeFrame++;
-    const batchSupport = this._getBatchRendererSupport(p, flat);
-    if (batchSupport.ok) {
-      const batch = this._buildRenderBatch(read, p, {
-        flat,
-        pressure: app.pressure,
-        interpolate: true,
-        applySkip: skipN > 0,
-        // Ensure active draw mode never drops to "no visible stamps" when
-        // per-frame boid movement stays below spacing thresholds.
-        forceStamp: !!app.isDrawing || !!app.simulation?.running,
-      });
-      if (batch.count === 0) {
-        this._setRenderBackend(this.renderer.getPreferredBatchRendererKind({ stampBitmap: p.stampImageCanvas || null }));
-        return;
-      }
-      if (this._renderBatchToTarget(stampCtx, batch, p, { allowAlphaLock: !flat })) {
-        if (flat) {
-          const w = layer.canvas.width, h = layer.canvas.height;
-          const ctx = layer.ctx;
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.clearRect(0, 0, w, h);
-          ctx.drawImage(this._preStrokeCanvas, 0, 0);
-          let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
-          ctx.globalAlpha = Math.min(masterOp, 1);
-          ctx.drawImage(this._strokeCanvas, 0, 0);
-          ctx.globalAlpha = 1;
-          ctx.restore();
-        }
-        layer.dirty = true;
-        app.compositeAllLayers();
-        return;
-      }
+  /** Force Visualization submode: cache centroid/bounds/average velocity and
+   *  a sampled set of agent candidates from the current agent read. Camera
+   *  policies (followBoid/followCentroid/frameGroups/orbit) consume this
+   *  cached snapshot instead of re-scanning the agent buffer themselves. */
+  _updateTransientSnapshot(read) {
+    const { buffer, count, stride } = read || {};
+    if (!count) {
+      this._transientSnapshot = { count: 0 };
+      return;
     }
-    this._setRenderBackend('legacy', batchSupport.ok ? (this.renderer.legacyReason || this._renderLegacyReason) : batchSupport.reason);
-    const colorCache = new Map();
-    const getAppearanceColor = color => {
-      const key = _normalizeBrushHexColor(color, '#000000');
-      let cached = colorCache.get(key);
-      if (!cached) {
-        cached = { hsl: hexToHSL(key), color: key };
-        colorCache.set(key, cached);
-      }
-      return cached;
-    };
-
+    let sumX = 0, sumY = 0, sumVX = 0, sumVY = 0;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const candidates = [];
+    const sampleStride = Math.max(1, Math.floor(count / FORCE_VIZ_MAX_CANDIDATES));
     for (let i = 0; i < count; i++) {
       const base = i * stride;
-      const ax = buffer[base + 0]; // x
-      const ay = buffer[base + 1]; // y
-      const sm = buffer[base + 8]; // size multiplier
-      const om = buffer[base + 9]; // opacity multiplier
-      const agentHue = buffer[base + 20]; // hue offset (degrees)
-      const agentSat = buffer[base + 21]; // saturation offset
-      const agentLit = buffer[base + 22]; // lightness offset
-      const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
-
-      // Skip first N stamps (lead-in) — track position but don't stamp
-      if (app.strokeFrame <= skipN) {
-        this._lastStampX[i] = ax;
-        this._lastStampY[i] = ay;
-        this._lastSpacingX[i] = ax;
-        this._lastSpacingY[i] = ay;
-        continue;
-      }
-
-      // Compute size and opacity (needed for spacing calculation)
-      let sz = p.stampSize * sm;
-      // In flat mode, stamps go at full agent opacity; master opacity applied on composite
-      let op = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
-      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
-      op = Math.min(op, 1);
-
-      // Per-agent color modification
-      let color = appearanceColor.color;
-      if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
-        const [bh, bs, bl] = appearanceColor.hsl;
-        color = hslToCSS(bh + agentHue, bs + agentSat, bl + agentLit);
-      }
-
-      // Interpolation: fill gaps between previous and current position
-      const step = p.stampSeparation > 0
-        ? p.stampSeparation
-        : Math.max(1, sz * 0.25);
-      const prevX = this._lastSpacingX[i];
-      const prevY = this._lastSpacingY[i];
-
-      let advanceAnchor = true;
-      if (prevX !== undefined) {
-        const dx = ax - prevX;
-        const dy = ay - prevY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < step) {
-          // Keep draw mode responsive: when movement is below spacing, still
-          // emit one stamp per frame (matching batch forceStamp behavior).
-          if (!app.isDrawing && !app.simulation?.running) continue;
-          app.symStamp(stampCtx, ax, ay, sz, color, op);
-          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
-            _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
-          }
-          this._lastStampX[i] = ax;
-          this._lastStampY[i] = ay;
-          // Keep the spacing anchor at the last spacing-qualified stamp so
-          // slow motion can accumulate into future gap-fill stamps instead of
-          // resetting to one stamp per agent on every frame.
-          advanceAnchor = false;
-          continue;
-        }
-
-        const n = Math.min(Math.max(1, Math.ceil(dist / step)), 256);
-        for (let j = 1; j <= n; j++) {
-          const t = j / n;
-          app.symStamp(stampCtx, prevX + dx * t, prevY + dy * t, sz, color, op);
-          if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
-            _stampToBlurAccum(this._blurStrokeCtx, app, prevX + dx * t, prevY + dy * t, sz, color, op);
-          }
-        }
-      } else {
-        // First stamp for this agent
-        app.symStamp(stampCtx, ax, ay, sz, color, op);
-        if (p.trailBlur > 0 && !flat && this._blurStrokeCtx) {
-          _stampToBlurAccum(this._blurStrokeCtx, app, ax, ay, sz, color, op);
-        }
-        this._lastStampX[i] = ax;
-        this._lastStampY[i] = ay;
-      }
-
-      if (advanceAnchor) {
-        this._lastStampX[i] = ax;
-        this._lastStampY[i] = ay;
-        this._lastSpacingX[i] = ax;
-        this._lastSpacingY[i] = ay;
-      }
+      const x = buffer[base + AGENT_X];
+      const y = buffer[base + AGENT_Y];
+      const vx = buffer[base + AGENT_VX];
+      const vy = buffer[base + AGENT_VY];
+      sumX += x; sumY += y; sumVX += vx; sumVY += vy;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (i % sampleStride === 0) candidates.push({ x, y, vx, vy, index: i });
     }
-
-    // Flat-stroke compositing: restore snapshot, overlay stroke at stampOpacity
-    if (flat) {
-      const w = layer.canvas.width, h = layer.canvas.height;
-      const ctx = layer.ctx;
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(this._preStrokeCanvas, 0, 0);
-      let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
-      ctx.globalAlpha = Math.min(masterOp, 1);
-      ctx.drawImage(this._strokeCanvas, 0, 0);
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
-
-    // Trail blur: diffuse freshly stamped paint outward like wet ink.
-    // Source: _blurStrokeCanvas (current stroke only), not the full layer —
-    // this prevents the blur from re-processing paint from previous strokes.
-    if (p.trailBlur > 0 && !flat) {
-      const lw = layer.canvas.width, lh = layer.canvas.height;
-      // Create/resize offscreen blur canvases and the per-stroke accumulation canvas
-      if (!this._blurCanvas || this._blurCanvas.width !== lw || this._blurCanvas.height !== lh) {
-        this._blurCanvas = document.createElement('canvas');
-        this._blurCanvas.width = lw;
-        this._blurCanvas.height = lh;
-        this._blurCtx = this._blurCanvas.getContext('2d');
-        this._blurTmpCanvas = document.createElement('canvas');
-        this._blurTmpCanvas.width = lw;
-        this._blurTmpCanvas.height = lh;
-        this._blurTmpCtx = this._blurTmpCanvas.getContext('2d');
-      }
-      if (!this._blurStrokeCanvas || this._blurStrokeCanvas.width !== lw || this._blurStrokeCanvas.height !== lh) {
-        this._blurStrokeCanvas = document.createElement('canvas');
-        this._blurStrokeCanvas.width = lw;
-        this._blurStrokeCanvas.height = lh;
-        this._blurStrokeCtx = this._blurStrokeCanvas.getContext('2d');
-        // Apply DPR transform so plain arc() calls use CSS coordinates
-        this._blurStrokeCtx.setTransform(app.DPR, 0, 0, app.DPR, 0, 0);
-      }
-      // Copy current stroke accumulation into blur canvas
-      this._blurCtx.setTransform(1, 0, 0, 1, 0, 0);
-      this._blurCtx.clearRect(0, 0, lw, lh);
-      this._blurCtx.drawImage(this._blurStrokeCanvas, 0, 0);
-      // Texture flow: shift blur paint toward lower-height texture areas
-      if (p.trailFlow > 0 && p.canvasTextureEnabled) {
-        _applyTextureFlow(this._blurCtx, this._blurCanvas, app, p.trailFlow, p);
-      }
-      // Apply CSS blur via tmp canvas
-      this._blurTmpCtx.setTransform(1, 0, 0, 1, 0, 0);
-      this._blurTmpCtx.clearRect(0, 0, lw, lh);
-      this._blurTmpCtx.filter = `blur(${p.trailBlur * app.DPR}px)`;
-      this._blurTmpCtx.drawImage(this._blurCanvas, 0, 0);
-      this._blurTmpCtx.filter = 'none';
-      // Composite blurred result back onto layer with low opacity for soft diffusion halo
-      layer.ctx.save();
-      layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
-      layer.ctx.globalAlpha = 0.18;
-      layer.ctx.globalCompositeOperation = 'source-over';
-      layer.ctx.drawImage(this._blurTmpCanvas, 0, 0);
-      layer.ctx.globalAlpha = 1;
-      layer.ctx.globalCompositeOperation = 'source-over';
-      layer.ctx.restore();
-    }
-
-    layer.dirty = true;
-    app.compositeAllLayers();
+    this._transientSnapshot = {
+      count,
+      centroid: { x: sumX / count, y: sumY / count },
+      avgVelocity: { x: sumVX / count, y: sumVY / count },
+      bounds: { minX, minY, maxX, maxY },
+      candidates,
+      updatedAt: performance.now(),
+    };
   }
 
   taperFrame(t, p) {
@@ -2481,7 +2795,7 @@ export class BoidBrush {
       const agentSat = buffer[base + 21];
       const agentLit = buffer[base + 22];
       const appearance = _getSimulationSpawnAppearance(this, i, p);
-      const appearanceColor = getAppearanceColor(appearance.color);
+      const appearanceColor = getAppearanceColor(_resolveDistributedAgentColor(p.colorDist, i, appearance.color));
 
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
@@ -2606,6 +2920,9 @@ export class BoidBrush {
 
   deactivate() {
     this.resetSimulationPlaybackState({ compositePreview: true });
+    this._spawnRangesById.clear();
+    this._primarySpawnId = null;
+    this._transientSnapshot = { count: 0 };
   }
 
   destroy() {
@@ -2665,6 +2982,10 @@ export class AntBrush {
     this._pheroH = 0;
     this._pheroData = null;  // Float32Array — continuous 0-255 values
     this._pheroFrame = 0;
+    // Pixel-sensing state (rule pipeline borrowed from BoidBrush)
+    this._sensingFrame = 0;
+    this._sensingUploaded = false;
+    this._sensingSignature = '';
     // Trail blur offscreen canvases (shared pattern from BoidBrush)
     this._blurCanvas = null;
     this._blurCtx = null;
@@ -2710,7 +3031,7 @@ export class AntBrush {
       return this.sim;
     }
     try {
-      this.sim = await _createSharedMotionSim(this.app);
+      this.sim = await _acquireSharedMotionSim(this.app);
       this.app.sharedMotionSim = this.sim;
       this._ready = true;
     } catch (e) {
@@ -2756,8 +3077,8 @@ export class AntBrush {
 
       let size = p.stampSize * sm;
       let opacity = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (!taperSize && p.pressureSize) size *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) size *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) size *= taperCurve;
       if (taperOpacity) opacity *= taperCurve;
       opacity = Math.min(opacity, 1);
@@ -2867,14 +3188,24 @@ export class AntBrush {
     }
   }
 
+  /** Sensing slot used for pheromone data: slot 3 (reserved) when user pixel
+   * sensing rules are active so both pathways coexist, else legacy slot 0. */
+  _pheromoneSensingSlot(p) {
+    return (p.sensingEnabled && Array.isArray(p.sensingRules) && p.sensingRules.length) ? 3 : 0;
+  }
+
   /** Upload pheromone grid to WASM sensing (same pathway as pixel sensing) */
-  _uploadPheromoneToSensing() {
+  _uploadPheromoneToSensing(slot = 0) {
     if (!this._pheroData || !this.sim) return;
     const lum = new Uint8Array(this._pheroData.length);
     for (let i = 0, len = this._pheroData.length; i < len; i++) {
       lum[i] = Math.min(MAX_PHEROMONE, Math.round(this._pheroData[i]));
     }
-    this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+    if (slot > 0 && typeof this.sim.uploadSensingSlot === 'function') {
+      this.sim.uploadSensingSlot(slot, lum, this._pheroW, this._pheroH);
+    } else {
+      this.sim.uploadSensing(lum, this._pheroW, this._pheroH);
+    }
   }
 
   paintSimulationPheromone(points, radius, intensity) {
@@ -2901,7 +3232,7 @@ export class AntBrush {
       const config = this.app._resolveSimulationPheromoneConfig(trail, p);
       this.paintSimulationPheromone(trail.points, config.radius, config.intensity);
     }
-    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing();
+    if (p.antPheromoneToSensing && this._pheroData) this._uploadPheromoneToSensing(this._pheromoneSensingSlot(p));
   }
 
   refreshSimulationSpawnAppearance(p = this.app.getP()) {
@@ -2921,7 +3252,7 @@ export class AntBrush {
       : null;
     const spawnConfig = simSpawn ? this.app._resolveSimulationSpawnConfig(simSpawn, p) : null;
     let r = spawnConfig ? spawnConfig.radius : p.spawnRadius;
-    if (!spawnConfig && p.pressureSpawnRadius) r *= (0.3 + 0.7 * pressure);
+    if (!spawnConfig && p.pressureSpawnRadius) r *= evaluatePressureCurve(p.pressureSpawnRadiusCurve, pressure);
     this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
     const spawnInfo = this.app._spawnSimulationAgents(this.sim, {
@@ -3046,8 +3377,8 @@ export class AntBrush {
               const appearanceColor = getAppearanceColor(appearance.color);
               let sz = p.stampSize * sm;
               let op = appearance.opacity * om;
-              if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-              if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+              if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+              if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
               op = Math.min(op, 1);
               let color = appearanceColor.color;
               if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
@@ -3084,8 +3415,8 @@ export class AntBrush {
             const appearanceColor = getAppearanceColor(appearance.color);
             let sz = p.stampSize * sm;
             let op = appearance.opacity * om;
-            if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-            if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+            if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+            if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
             op = Math.min(op, 1);
             let color = appearanceColor.color;
             if (agentHue !== 0 || agentSat !== 0 || agentLit !== 0) {
@@ -3122,6 +3453,10 @@ export class AntBrush {
       this.sim.clearAgents();
       this._hoverSpawned = false;
     }
+    // Stroke commit changes the canvas, so force a sensing re-upload
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
   }
 
   /**
@@ -3130,15 +3465,37 @@ export class AntBrush {
    * attract mode so ants are drawn toward deposited pheromone trails.
    */
   _buildAntParams(p) {
+    // Coexistence model: when user pixel sensing is active, user rules occupy
+    // sensing slots 0-2 and slot 3 is reserved for the internal pheromone rule
+    // (its map is uploaded by _uploadPheromoneToSensing). When user sensing is
+    // off, the legacy single-map path is used with pheromone on slot 0.
+    const pheromoneOn = !!p.antPheromoneToSensing;
+    const userSensing = !!p.sensingEnabled && Array.isArray(p.sensingRules) && p.sensingRules.length > 0;
+    let sensingRules = null;
+    let sensingEnabled = pheromoneOn;
+    if (userSensing) {
+      sensingRules = p.sensingRules.slice(0, 3);
+      while (sensingRules.length < 3) sensingRules.push({ enabled: false });
+      sensingRules.push(pheromoneOn ? {
+        enabled: true,
+        mode: 'attract',
+        source: 'pheromone',
+        strength: p.sensingStrength ?? 0.5,
+        rangeMin: p.sensingThreshold || 0.1,
+        rangeMax: 1,
+      } : { enabled: false, source: 'pheromone' });
+      sensingEnabled = true;
+    }
     return Object.assign({}, p, {
       // Ant follow signal: seek = antFollow strength toward cursor
       seek: p.antFollow,
-      // Enable sensing in attract mode for pheromone following
-      sensingEnabled: p.antPheromoneToSensing,
+      sensingEnabled,
       sensingMode: 'attract',
       sensingStrength: p.sensingStrength,
       sensingRadius: p.sensingRadius || 20,
+      sensingFitRadius: p.sensingFitRadius || 0,
       sensingThreshold: p.sensingThreshold || 0.1,
+      sensingRules,
       // Ants wander more by default
       wander: p.wander,
       jitter: p.jitter,
@@ -3156,17 +3513,41 @@ export class AntBrush {
       this._decayPheromones(p.antPheromoneDecay);
     }
 
+    // Build ant-specific params first: the composed sensingRules decide
+    // whether pheromone uses reserved slot 3 (coexistence) or legacy slot 0.
+    const antP = this._buildAntParams(p);
+    const multiSlot = Array.isArray(antP.sensingRules);
+
     // Upload pheromone grid as sensing data (same pathway as pixel sensing)
     this._pheroFrame++;
     if (p.antPheromoneToSensing && this._pheroData) {
       // Re-upload every 3 frames to balance performance and responsiveness
       if (this._pheroFrame % 3 === 0) {
-        this._uploadPheromoneToSensing();
+        this._uploadPheromoneToSensing(multiSlot ? 3 : 0);
       }
     }
 
+    // Upload user pixel-sensing rules (slots 0-2) with the same signature /
+    // cadence policy as BoidBrush.
+    if (multiSlot) {
+      const sensingUpdateFrames = Math.max(1, Math.min(50, Math.round(antP.sensingUpdateFrames || 30)));
+      const sensingSignature = this._buildSensingSignature(antP);
+      if (!this._sensingUploaded || this._sensingSignature !== sensingSignature) {
+        this._uploadSensing(antP);
+        this._sensingFrame = 0;
+      } else if (antP.sensingSource !== 'below') {
+        this._sensingFrame++;
+        if (this._sensingFrame >= sensingUpdateFrames) {
+          this._uploadSensing(antP);
+          this._sensingFrame = 0;
+        }
+      }
+    } else {
+      this._sensingUploaded = false;
+      this._sensingSignature = '';
+    }
+
     // Write params with ant-specific overrides and step sim
-    const antP = this._buildAntParams(p);
     const guideState = _collectSimulationGuides(this, p);
     const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
     this.sim.writeParams(antP, app.leaderX, app.leaderY, elapsed);
@@ -3207,7 +3588,7 @@ export class AntBrush {
           ctx.clearRect(0, 0, w, h);
           ctx.drawImage(this._preStrokeCanvas, 0, 0);
           let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+          if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
           ctx.globalAlpha = Math.min(masterOp, 1);
           ctx.drawImage(this._strokeCanvas, 0, 0);
           ctx.globalAlpha = 1;
@@ -3252,8 +3633,8 @@ export class AntBrush {
 
       let sz = p.stampSize * sm;
       let op = flat ? Math.min(om, 1) : appearance.opacity * om;
-      if (p.pressureSize) sz *= (0.3 + 0.7 * app.pressure);
-      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, app.pressure);
+      if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       op = Math.min(op, 1);
 
       let color = appearanceColor.color;
@@ -3305,7 +3686,7 @@ export class AntBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -3536,8 +3917,20 @@ export class AntBrush {
     if (this.sim) this.sim.clearAgents();
     _resetSimulationSpawnAppearance(this);
     if (this._pheroData) this._pheroData.fill(0);
+    // Force sensing re-upload on reactivation (the shared sim's slots may be
+    // rewritten by another brush in the meantime)
+    this._sensingUploaded = false;
+    this._sensingFrame = 0;
+    this._sensingSignature = '';
   }
 }
+
+// AntBrush reuses BoidBrush's rule-driven pixel-sensing pipeline. These
+// methods only touch this.app / this.sim / this._sensing* state, so borrowing
+// them keeps the two brushes behaviorally identical for user sensing rules.
+AntBrush.prototype._uploadSensing = BoidBrush.prototype._uploadSensing;
+AntBrush.prototype._extractSensingChannel = BoidBrush.prototype._extractSensingChannel;
+AntBrush.prototype._buildSensingSignature = BoidBrush.prototype._buildSensingSignature;
 
 // =============================================================================
 // BRISTLE BRUSH — Spring-physics flexible bristle simulation
@@ -3705,7 +4098,7 @@ export class BristleBrush {
     const sinBase = Math.sin(baseAngle);
     const cosTip = Math.cos(tipAngle);
     const sinTip = Math.sin(tipAngle);
-    const pressureSplay = p.bristleSplay * (0.5 + 0.5 * this._smoothPressure);
+    const pressureSplay = p.bristleSplay * evaluatePressureCurve(p.bristleSplayPressureCurve, this._smoothPressure, 0.5);
     const splayFactor = 1 + pressureSplay;
     const fanSpread = 1 + p.bristleFan; // fanning multiplier for cross-stroke width at tips
     const baseLen = p.bristleLength * this._hoverLengthScale;
@@ -3773,7 +4166,7 @@ export class BristleBrush {
     const angle = this._baseAngle + p.bristleAngleOffset; // apply offset
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
-    const pressureSplay = p.bristleSplay * (0.5 + 0.5 * this._smoothPressure);
+    const pressureSplay = p.bristleSplay * evaluatePressureCurve(p.bristleSplayPressureCurve, this._smoothPressure, 0.5);
 
     for (let i = 0; i < this._count; i++) {
       const off = this._offsets[i];
@@ -3946,8 +4339,8 @@ export class BristleBrush {
       let op = flat
         ? Math.min(opScale * this._varOpacity[i], 1)
         : p.stampOpacity * opScale * this._varOpacity[i];
-      if (!taperSize && p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-      if (!flat && !taperOpacity && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (!taperSize && p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (!flat && !taperOpacity && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (taperSize) sz *= taperCurve;
       if (taperOpacity) op *= taperCurve;
       op = Math.min(op, 1);
@@ -3998,8 +4391,8 @@ export class BristleBrush {
       let op = flat
         ? Math.min(opScale * this._varOpacity[i], 1)
         : p.stampOpacity * opScale * this._varOpacity[i];
-      if (p.pressureSize) sz *= (0.3 + 0.7 * pres);
-      if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pres);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pres);
+      if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pres);
       op = Math.min(op, 1);
 
       // Apply per-bristle hue variance (cached per color change)
@@ -4331,7 +4724,7 @@ export class BristleBrush {
           ctx.clearRect(0, 0, w, h);
           ctx.drawImage(this._preStrokeCanvas, 0, 0);
           let masterOp = p.stampOpacity;
-          if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * this._smoothPressure);
+          if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, this._smoothPressure);
           ctx.globalAlpha = Math.min(masterOp, 1);
           ctx.drawImage(this._strokeCanvas, 0, 0);
           ctx.globalAlpha = 1;
@@ -4356,7 +4749,7 @@ export class BristleBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * this._smoothPressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, this._smoothPressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -4744,9 +5137,9 @@ export class SimpleBrush {
     const instances = new StampInstanceBuffer(Math.max(16, points.length));
     for (const pt of points) {
       let sz = p.stampSize * (pt.sizeMultiplier || 1);
-      if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
       let op = p.stampOpacity;
-      if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       if (canvasTextureActive) {
         op *= this.app.getTextureDepositDensity?.(pt.x, pt.y, p) ?? 1;
         const edgeBreakup = this.app.getTextureEdgeBreakup?.(pt.x, pt.y, p) || 0;
@@ -4808,7 +5201,7 @@ export class SimpleBrush {
     }
     this._ensureRendererInit();
     const layer = this.app.getActiveLayer();
-    const stampSize = Math.max(1, p.pressureSize ? p.stampSize * (0.3 + 0.7 * pressure) : p.stampSize);
+    const stampSize = Math.max(1, p.pressureSize ? p.stampSize * evaluatePressureCurve(p.pressureSizeCurve, pressure) : p.stampSize);
     const renderPoints = this._expandRenderPoints(points, stampSize, p);
     const batch = this._buildSimpleBatch(renderPoints, p, pressure);
     const stampBitmap = p.stampImageCanvas || null;
@@ -4939,7 +5332,7 @@ export class SimpleBrush {
 
     const p = this.app.getP();
     let sz = p.stampSize;
-    if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+    if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
     const step = Math.max(1, p.stampSeparation > 0 ? p.stampSeparation : sz * 0.25);
 
     if (dist < step) return; // accumulate distance until next stamp
@@ -5005,7 +5398,7 @@ export class SimpleBrush {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(this._preStrokeCanvas, 0, 0);
       let masterOp = p.stampOpacity;
-      if (p.pressureOpacity) masterOp *= (0.3 + 0.7 * app.pressure);
+      if (p.pressureOpacity) masterOp *= evaluatePressureCurve(p.pressureOpacityCurve, app.pressure);
       ctx.globalAlpha = Math.min(masterOp, 1);
       ctx.drawImage(this._strokeCanvas, 0, 0);
       ctx.globalAlpha = 1;
@@ -5056,10 +5449,10 @@ export class SimpleBrush {
     const layer = this.app.getActiveLayer();
     const ctx = flat ? this._strokeCtx : layer.ctx;
     let sz = p.stampSize;
-    if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
+    if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
     // In flat mode stamps go at full opacity; master opacity applied on composite
     let op = flat ? 1.0 : p.stampOpacity;
-    if (!flat && p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+    if (!flat && p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
     op = Math.min(op, 1);
 
     this.app.symStamp(ctx, x, y, sz, p.color, op, {
@@ -5518,11 +5911,11 @@ export class ThreeDFluidBrush {
     // consistent between the lightweight LBM brush and the new 3D fluid brush.
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
     const color = hexToRGB(p.color);
-    const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
-    const scaledCount = Math.max(1, Math.round(amount * (0.45 + pressure * 0.55)));
+    const scaledRadius = p.fluid3dBrushRadius * (p.pressureSize ? evaluatePressureCurve(p.fluid3dRadiusPressureCurve, pressure, 0.35) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * evaluatePressureCurve(p.fluid3dCountPressureCurve, pressure, 0.45)));
     const hasStrokeDirection = !!previousPoint && profile.distance > 1e-3;
-    const totalEmitterStrength = p.fluid3dEmissionRate * p.fluid3dEmitterStrength * (0.4 + pressure * 0.6);
-    const totalInfluenceStrength = p.fluid3dInfluenceStrength * (0.3 + pressure * 0.7);
+    const totalEmitterStrength = p.fluid3dEmissionRate * p.fluid3dEmitterStrength * evaluatePressureCurve(p.fluid3dEmissionPressureCurve, pressure, 0.4);
+    const totalInfluenceStrength = p.fluid3dInfluenceStrength * evaluatePressureCurve(p.fluid3dInfluencePressureCurve, pressure);
     const emitterStrength = totalEmitterStrength / scaledCount;
     const influenceStrength = totalInfluenceStrength / scaledCount;
     const emitters = [];
@@ -6149,8 +6542,8 @@ export class FluidBrush {
     if (!this._updateSimulator('preview', p)) return;
     p = p ?? this.app.getP();
     const profile = _makeFluidSpawnProfile(x, y, previousPoint);
-    const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? (0.35 + pressure * 0.65) : 1);
-    const scaledCount = Math.max(1, Math.round(amount * (0.4 + pressure * 0.6)));
+    const scaledBrushRadius = p.lbmBrushRadius * (p.pressureSize ? evaluatePressureCurve(p.lbmRadiusPressureCurve, pressure, 0.35) : 1);
+    const scaledCount = Math.max(1, Math.round(amount * evaluatePressureCurve(p.lbmCountPressureCurve, pressure, 0.4)));
     const particles = _makeFluidSeeds(
       x,
       y,
@@ -6331,8 +6724,8 @@ export class EraserBrush {
       const ctx = layer.ctx;
       let sz = p.stampSize;
       let op = p.stampOpacity;
-      if (p.pressureSize) sz *= (0.3 + 0.7 * pressure);
-      if (p.pressureOpacity) op *= (0.3 + 0.7 * pressure);
+      if (p.pressureSize) sz *= evaluatePressureCurve(p.pressureSizeCurve, pressure);
+      if (p.pressureOpacity) op *= evaluatePressureCurve(p.pressureOpacityCurve, pressure);
       op = Math.min(op, 1);
 
       ctx.globalCompositeOperation = 'destination-out';
@@ -6651,9 +7044,9 @@ export class MotionPathBrush {
     const layer = this.app.getActiveLayer();
     if (!layer?.ctx) return;
     let baseSize = p.stampSize;
-    if (p.pressureSize) baseSize *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureSize) baseSize *= evaluatePressureCurve(p.pressureSizeCurve, this._pressure);
     let opacity = p.stampOpacity;
-    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, this._pressure);
     opacity = Math.min(opacity, 1);
     for (const point of points) {
       this.app.symStamp(layer.ctx, point.x, point.y, point.size || baseSize, p.color, opacity);
@@ -6693,10 +7086,10 @@ export class MotionPathBrush {
     if (!layer?.ctx || !segments?.length) return;
     const ctx = layer.ctx;
     let width = p.stampSize;
-    if (p.pressureSize) width *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureSize) width *= evaluatePressureCurve(p.pressureSizeCurve, this._pressure);
     width = Math.max(0.5, width);
     let opacity = p.stampOpacity;
-    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, this._pressure);
     opacity = Math.min(opacity, 1);
     const useAlphaLock = layer.alphaLock;
     const useStampImage = this.app.hasActiveStampImage?.(p);
@@ -6902,9 +7295,9 @@ export class MotionPathBrush {
     this._overlayPoints = [];
 
     let baseSize = p.stampSize;
-    if (p.pressureSize) baseSize *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureSize) baseSize *= evaluatePressureCurve(p.pressureSizeCurve, this._pressure);
     let opacity = p.stampOpacity;
-    if (p.pressureOpacity) opacity *= (0.3 + 0.7 * this._pressure);
+    if (p.pressureOpacity) opacity *= evaluatePressureCurve(p.pressureOpacityCurve, this._pressure);
     opacity = Math.min(opacity, 1);
 
     if (useRibbon && this._gpuPreviewActive) {

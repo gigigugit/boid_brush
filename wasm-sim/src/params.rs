@@ -4,7 +4,30 @@
 
 use core::f32::consts::PI;
 
-pub const PARAMS_LEN: usize = 66;
+pub const MAX_SENSING_RULES: usize = 4;
+pub const PARAMS_LEN: usize = 88;
+const LEGACY_PARAMS_LEN: usize = 68;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SensingRule {
+    pub active: bool,
+    pub attract: bool,
+    pub strength: f32,
+    pub range_min: f32,
+    pub range_max: f32,
+}
+
+impl Default for SensingRule {
+    fn default() -> Self {
+        Self {
+            active: false,
+            attract: false,
+            strength: 0.5,
+            range_min: 0.0,
+            range_max: 1.0,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct AgentParams {
@@ -28,7 +51,9 @@ pub struct AgentParams {
     pub sensing_attract: bool,
     pub sensing_strength: f32,
     pub sensing_radius: f32,
+    pub sensing_fit_radius: f32,
     pub sensing_threshold: f32,
+    pub sensing_rules: [SensingRule; MAX_SENSING_RULES],
     pub neighbor_radius: f32,
     pub separation_radius: f32,
     pub size_var: f32,
@@ -63,6 +88,7 @@ pub struct SimParams {
     pub sensing_attract: bool,
     pub sensing_strength: f32,
     pub sensing_radius: f32,
+    pub sensing_fit_radius: f32,
     pub sensing_threshold: f32,
     pub target_x: f32,
     pub target_y: f32,
@@ -98,7 +124,9 @@ pub struct SimParams {
     pub leader_sensing_attract: bool,
     pub leader_sensing_strength: f32,
     pub leader_sensing_radius: f32,
+    pub leader_sensing_fit_radius: f32,
     pub leader_sensing_threshold: f32,
+    pub sensing_rules: [SensingRule; MAX_SENSING_RULES],
     pub leader_neighbor_radius: f32,
     pub leader_separation_radius: f32,
     pub leader_size_var: f32,
@@ -134,6 +162,7 @@ impl Default for SimParams {
             sensing_attract: false,
             sensing_strength: 0.5,
             sensing_radius: 20.0,
+            sensing_fit_radius: 0.0,
             sensing_threshold: 0.1,
             target_x: 0.0,
             target_y: 0.0,
@@ -169,7 +198,9 @@ impl Default for SimParams {
             leader_sensing_attract: false,
             leader_sensing_strength: 0.5,
             leader_sensing_radius: 20.0,
+            leader_sensing_fit_radius: 0.0,
             leader_sensing_threshold: 0.1,
+            sensing_rules: [SensingRule::default(); MAX_SENSING_RULES],
             leader_neighbor_radius: 80.0,
             leader_separation_radius: 25.0,
             leader_size_var: 0.0,
@@ -185,6 +216,25 @@ impl Default for SimParams {
 }
 
 impl SimParams {
+    /// Safely read a float parameter, reject non-finite values, clamp to
+    /// non-negative, and fall back to `default` when missing/invalid.
+    #[inline]
+    fn read_nonnegative(raw: &[f32], index: usize, default: f32) -> f32 {
+        raw.get(index)
+            .copied()
+            .filter(|value| value.is_finite())
+            .map(|value| value.max(0.0))
+            .unwrap_or(default)
+    }
+
+    #[inline]
+    fn read_finite(raw: &[f32], index: usize, default: f32) -> f32 {
+        raw.get(index)
+            .copied()
+            .filter(|value| value.is_finite())
+            .unwrap_or(default)
+    }
+
     fn leader_params(&self) -> AgentParams {
         AgentParams {
             seek: self.leader_seek,
@@ -207,7 +257,9 @@ impl SimParams {
             sensing_attract: self.leader_sensing_attract,
             sensing_strength: self.leader_sensing_strength,
             sensing_radius: self.leader_sensing_radius,
+            sensing_fit_radius: self.leader_sensing_fit_radius,
             sensing_threshold: self.leader_sensing_threshold,
+            sensing_rules: self.sensing_rules,
             neighbor_radius: self.leader_neighbor_radius,
             separation_radius: self.leader_separation_radius,
             size_var: self.leader_size_var,
@@ -243,7 +295,9 @@ impl SimParams {
             sensing_attract: self.sensing_attract,
             sensing_strength: self.sensing_strength,
             sensing_radius: self.sensing_radius,
+            sensing_fit_radius: self.sensing_fit_radius,
             sensing_threshold: self.sensing_threshold,
+            sensing_rules: self.sensing_rules,
             neighbor_radius: self.neighbor_radius,
             separation_radius: self.separation_radius,
             size_var: self.size_var,
@@ -274,7 +328,8 @@ impl SimParams {
     }
 
     pub fn from_raw(raw: &[f32]) -> Self {
-        assert!(raw.len() >= PARAMS_LEN);
+        assert!(raw.len() >= LEGACY_PARAMS_LEN);
+        let sensing_rules = Self::read_sensing_rules(raw);
         Self {
             seek: raw[0],
             cohesion: raw[1],
@@ -342,6 +397,30 @@ impl SimParams {
             leader_sat_var: raw[63],
             leader_lit_var: raw[64],
             leader_boundary_margin: raw[65],
+            sensing_fit_radius: Self::read_nonnegative(raw, 66, 0.0),
+            leader_sensing_fit_radius: Self::read_nonnegative(raw, 67, 0.0),
+            sensing_rules,
         }
+    }
+
+    fn read_sensing_rules(raw: &[f32]) -> [SensingRule; MAX_SENSING_RULES] {
+        let mut rules = [SensingRule::default(); MAX_SENSING_RULES];
+        if raw.len() < PARAMS_LEN {
+            return rules;
+        }
+
+        for (i, rule) in rules.iter_mut().enumerate() {
+            let base = LEGACY_PARAMS_LEN + i * 5;
+            let range_min = Self::read_finite(raw, base + 3, 0.0).clamp(0.0, 1.0);
+            let range_max = Self::read_finite(raw, base + 4, 1.0).clamp(0.0, 1.0);
+            *rule = SensingRule {
+                active: raw[base] > 0.5,
+                attract: raw[base + 1] > 0.5,
+                strength: Self::read_finite(raw, base + 2, 0.5),
+                range_min: range_min.min(range_max),
+                range_max: range_min.max(range_max),
+            };
+        }
+        rules
     }
 }

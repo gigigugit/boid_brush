@@ -7,18 +7,19 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, PRESETS_KEY, AUTOSAVE_STORAGE_KEY } from './ui.js';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, AUTOSAVE_STORAGE_KEY } from './ui.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 import { openBoidSettingsEditor } from './boid-settings-editor.js';
+import { workspaceControlBelongsToBrush } from './settings-catalog.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-05-26-sim-phase4-playback-export-1';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
-const WORKSPACE_SETTINGS_VERSION = 2;
+const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
 const VIEW_BOOKMARK_DEFAULT_NAME = 'View';
 const MAX_VIEW_BOOKMARK_NAME_LENGTH = 80;
@@ -28,6 +29,10 @@ const VIEW_BOOKMARK_ACTIVE_PAN_EPSILON = 48;
 const VIEW_BOOKMARK_ACTIVE_ROTATION_EPSILON = Math.PI / 90;
 const SIM_SETUP_FORMAT = 'boid-brush-simulation-setup';
 const SIM_SETUP_VERSION = 1;
+const SIM_SAVED_PLAYBACK_FORMAT = 'boid-brush-saved-playback';
+const SIM_SAVED_PLAYBACK_VERSION = 1;
+const SIM_SAVED_PLAYBACK_CAPTURE_INTERVAL = 2;
+const SIM_SAVED_PLAYBACK_MAX_FRAMES = 240;
 const SIM_EXPORT_TIMESLICE_MS = 250;
 const SIM_EXPORT_FFMPEG_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
 const SIM_EXPORT_FFMPEG_UTIL_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
@@ -36,6 +41,21 @@ const SIM_EPHEMERAL_ALPHA_SNAP_INTERVAL_FRAMES = 6;
 const SIM_EPHEMERAL_ALPHA_SNAP_THRESHOLD = 5;
 const SIM_EPHEMERAL_ALPHA_SNAP_VISIBLE_STEPS = 3;
 const SIM_NEAR_INFINITE_BOUNDS_MARGIN = 100000;
+// ── Force Visualization submode ─────────────────────────────────────────
+// A `simulation.mode` alternative to the default 'normal' authoring mode.
+// Scenarios describe groups (bound to existing spawn definitions), weighted
+// attractors, and routes that connect them; a separate camera policy frames
+// the result. All of it is persisted config — no runtimes, camera smoothing
+// accumulators, or resolved per-frame positions live on this state.
+const FORCE_VIZ_ATTRACTOR_TYPES = ['fixed', 'unreachable', 'moving', 'orbiting', 'path', 'shared'];
+const FORCE_VIZ_CAMERA_POLICIES = ['fixed', 'followBoid', 'followCentroid', 'frameGroups', 'orbit'];
+const FORCE_VIZ_CAMERA_INTERRUPTIONS = ['holdOnUserInput', 'resumeAfterDelay', 'ignoreUserInput'];
+const FORCE_VIZ_CAMERA_EXIT_BEHAVIORS = ['restoreManualView', 'retainCurrentView'];
+const FORCE_VIZ_MANUAL_INPUT_HOLD_MS = 900;
+const FORCE_VIZ_LOOKAHEAD_SCALE = 14;
+const FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS = 80;
+const FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH = 1.2;
+
 // Keep the inline JSON editor's single-key accent lightweight and deterministic.
 const WORKSPACE_JSON_HIGHLIGHT_KEY = 'a';
 const WORKSPACE_JSON_HIGHLIGHT_KEY_REGEX = new RegExp(`"${WORKSPACE_JSON_HIGHLIGHT_KEY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"(?=\\s*:)`, 'g');
@@ -48,6 +68,15 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
   leaderCount: 0,
   leaderPull: 35,
 }));
+// Controls that own a dedicated localStorage key (and side-effect wiring) —
+// excluded from the generic session snapshot so the dedicated key stays the
+// single source of truth and restore can't silently desync checkbox vs behavior.
+const SELF_PERSISTED_CONTROL_IDS = new Set([
+  'alwaysShowTabs',       // bb_alwaysShowTabs
+  'autoSaveSession',      // bb_autosave (AUTOSAVE_STORAGE_KEY)
+  'perfTelemetryEnabled', // bb_perfTelemetry (PERF_TELEMETRY_KEY)
+  'perfWakeLockEnabled',  // bb_perfWakeLock (PERF_WAKE_LOCK_KEY)
+]);
 const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'alwaysShowTabs',
   'autoSaveSession',
@@ -242,6 +271,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   taperCurve: 100,
   sensingStrength: 50,
   sensingRadius: 20,
+  sensingFitRadius: 0,
   sensingThreshold: 10,
   sensingUpdateFrames: 30,
   antFollow: 40,
@@ -278,6 +308,16 @@ const FACTORY_DEFAULTS = Object.freeze({
   smudgeOnly: false,
   pressureSize: true,
   pressureOpacity: true,
+  pressureSizeCurve: '[[0,0.3],[1,1]]',
+  pressureOpacityCurve: '[[0,0.3],[1,1]]',
+  pressureSpawnRadiusCurve: '[[0,0.3],[1,1]]',
+  bristleSplayPressureCurve: '[[0,0.5],[1,1]]',
+  fluid3dRadiusPressureCurve: '[[0,0.35],[1,1]]',
+  fluid3dCountPressureCurve: '[[0,0.45],[1,1]]',
+  fluid3dEmissionPressureCurve: '[[0,0.4],[1,1]]',
+  fluid3dInfluencePressureCurve: '[[0,0.3],[1,1]]',
+  lbmRadiusPressureCurve: '[[0,0.35],[1,1]]',
+  lbmCountPressureCurve: '[[0,0.4],[1,1]]',
   flatStroke: false,
   stampImageEnabled: true,
   stampImageTint: true,
@@ -317,6 +357,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   _docH: 1024,
   _primaryColor: '#1a1a1a',
   _secondaryColor: '#ffffff',
+  _boidColorDist: null,
   _activeBrush: 'boid',
 });
 const MAX_UNDO = 20;
@@ -403,6 +444,89 @@ const SIM_SPAWN_DISTRIBUTION_MODES = ['uniform', 'density', 'noise'];
 const SIM_SENSING_MODES = ['avoid', 'attract'];
 const SIM_SENSING_CHANNELS = ['darkness', 'lightness', 'saturation', 'red', 'green', 'blue', 'alpha'];
 const SIM_SENSING_SOURCES = ['below', 'active', 'all', 'selected'];
+// Multi-rule pixel sensing: up to MAX_SENSING_RULES simultaneous directives,
+// each with its own channel, response, value range, strength and layer source.
+// Rule 0 mirrors the legacy flat sensing controls for backward compatibility.
+const MAX_SENSING_RULES = 4;
+const SENSING_RULE_CHANNELS = [...SIM_SENSING_CHANNELS, 'hue'];
+
+/** Normalize a single sensing rule object; returns null when unusable. */
+function _normalizeSensingRule(value) {
+  if (!value || typeof value !== 'object') return null;
+  const channel = SENSING_RULE_CHANNELS.includes(value.channel) ? value.channel : 'darkness';
+  const mode = value.mode === 'follow' ? 'attract' : value.mode;
+  let rangeMin = Number.isFinite(value.rangeMin) ? _clamp(value.rangeMin, 0, 1) : 0;
+  let rangeMax = Number.isFinite(value.rangeMax) ? _clamp(value.rangeMax, 0, 1) : 1;
+  if (rangeMin > rangeMax) { const t = rangeMin; rangeMin = rangeMax; rangeMax = t; }
+  return {
+    enabled: value.enabled !== false,
+    mode: SIM_SENSING_MODES.includes(mode) ? mode : 'avoid',
+    channel,
+    hueTarget: Number.isFinite(value.hueTarget) ? ((value.hueTarget % 360) + 360) % 360 : 0,
+    hueTolerance: Number.isFinite(value.hueTolerance) ? _clamp(value.hueTolerance, 1, 180) : 60,
+    rangeMin,
+    rangeMax,
+    strength: Number.isFinite(value.strength) ? _clamp(value.strength, 0, 1) : 0.5,
+    source: SIM_SENSING_SOURCES.includes(value.source) ? value.source : 'below',
+    layerIds: _normalizeSimulationSensingSourceSelection(value.layerIds),
+  };
+}
+
+/** Normalize an array of sensing rules (drops invalid entries, caps at MAX_SENSING_RULES). */
+function normalizeSensingRules(value) {
+  const rules = [];
+  for (const entry of Array.isArray(value) ? value : []) {
+    const rule = _normalizeSensingRule(entry);
+    if (rule) rules.push(rule);
+    if (rules.length >= MAX_SENSING_RULES) break;
+  }
+  return rules;
+}
+
+/** Synthesize a single sensing rule from the legacy flat fields. */
+function _sensingRuleFromFlat(flat, layerIds) {
+  return _normalizeSensingRule({
+    enabled: true,
+    mode: flat?.sensingMode,
+    channel: flat?.sensingChannel,
+    rangeMin: Number.isFinite(flat?.sensingThreshold) ? flat.sensingThreshold : 0.1,
+    rangeMax: 1,
+    strength: Number.isFinite(flat?.sensingStrength) ? flat.sensingStrength : 0.5,
+    source: flat?.sensingSource,
+    layerIds,
+  });
+}
+
+/** Write rule 0's simple fields back onto a flat params/vars object (legacy sync). */
+function _syncSensingFlatFromRule0(target, rules) {
+  const rule0 = Array.isArray(rules) ? rules[0] : null;
+  if (!target || !rule0) return target;
+  target.sensingMode = rule0.mode;
+  if (SIM_SENSING_CHANNELS.includes(rule0.channel)) target.sensingChannel = rule0.channel;
+  target.sensingStrength = rule0.strength;
+  target.sensingThreshold = rule0.rangeMin;
+  target.sensingSource = rule0.source;
+  return target;
+}
+
+/** Short human-readable summary of one sensing rule. */
+function _describeSensingRule(rule) {
+  if (!rule) return '';
+  const sign = rule.mode === 'attract' ? '⊕' : '⊖';
+  const channel = rule.channel === 'hue' ? `hue ${Math.round(rule.hueTarget)}°` : rule.channel;
+  const range = (rule.rangeMin > 0 || rule.rangeMax < 1)
+    ? ` ${rule.rangeMin.toFixed(2)}–${rule.rangeMax.toFixed(2)}`
+    : '';
+  const source = rule.source === 'selected' ? 'layers' : rule.source;
+  return `${sign}${channel}${range} (${source})`;
+}
+
+/** Summary line for a whole rules array. */
+function _describeSensingRules(rules) {
+  const active = (Array.isArray(rules) ? rules : []).filter(rule => rule && rule.enabled !== false);
+  if (!active.length) return 'No rules';
+  return `${active.length} rule${active.length === 1 ? '' : 's'}: ${active.map(_describeSensingRule).join(', ')}`;
+}
 const DEFAULT_SIM_HARDNESS = 0.1;
 const MAX_SIM_HARDNESS = 10;
 const MAX_SWARM_COUNT = 2000;
@@ -502,6 +626,16 @@ function _lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+/** Shortest-path angle interpolation (radians), used by the Force
+ *  Visualization camera adapter so orbit/rotation smoothing doesn't spin
+ *  the long way around when crossing the -PI/PI wrap. */
+function _lerpAngle(a, b, t) {
+  let delta = (b - a) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  else if (delta < -Math.PI) delta += Math.PI * 2;
+  return a + delta * t;
+}
+
 function _clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -589,6 +723,64 @@ function _sanitizeSimulationSessionData(value) {
   return next;
 }
 
+function _normalizeSimulationSavedPlaybackNumericArray(values, {
+  minLength = 0,
+  maxLength = Infinity,
+  evenLength = false,
+} = {}) {
+  if (!Array.isArray(values)) return null;
+  const next = [];
+  for (const value of values) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    next.push(n);
+    if (next.length > maxLength) break;
+  }
+  if (next.length < minLength) return null;
+  if (evenLength && (next.length % 2) !== 0) return null;
+  return next;
+}
+
+function _normalizeSimulationSavedPlayback(value) {
+  if (!_isPlainObject(value)) return null;
+  if (value.format !== SIM_SAVED_PLAYBACK_FORMAT) return null;
+  const frameRate = Number(value.frameRate);
+  const capturedAt = Number(value.capturedAt);
+  const agentCount = Math.max(0, Math.round(Number(value.agentCount) || 0));
+  const captureInterval = Math.max(1, Math.round(Number(value.captureInterval) || 1));
+  const appearance = _normalizeSimulationSavedPlaybackNumericArray(value.appearance, {
+    minLength: agentCount * 5,
+    maxLength: agentCount * 5,
+  });
+  if (agentCount > 0 && !appearance) return null;
+  const rawFrames = Array.isArray(value.frames) ? value.frames.slice(0, SIM_SAVED_PLAYBACK_MAX_FRAMES) : [];
+  const frames = [];
+  for (const entry of rawFrames) {
+    const positions = _normalizeSimulationSavedPlaybackNumericArray(entry?.positions, {
+      minLength: agentCount * 2,
+      maxLength: agentCount * 2,
+      evenLength: true,
+    });
+    if (!positions) continue;
+    frames.push({ positions });
+  }
+  if (!frames.length) return null;
+  return {
+    format: SIM_SAVED_PLAYBACK_FORMAT,
+    version: SIM_SAVED_PLAYBACK_VERSION,
+    signature: typeof value.signature === 'string' ? value.signature : '',
+    frameRate: Number.isFinite(frameRate) ? Math.max(1, Math.round(frameRate)) : 60,
+    captureInterval,
+    capturedAt: Number.isFinite(capturedAt) ? capturedAt : 0,
+    width: Math.max(1, Math.round(Number(value.width) || 1)),
+    height: Math.max(1, Math.round(Number(value.height) || 1)),
+    agentCount,
+    appearance: appearance || [],
+    frames,
+    truncated: value.truncated === true,
+  };
+}
+
 function _normalizeSimulationVars(value) {
   const sensingMode = value?.sensingMode === 'follow' ? 'attract' : value?.sensingMode;
   return {
@@ -603,8 +795,10 @@ function _normalizeSimulationVars(value) {
     sensingChannel: SIM_SENSING_CHANNELS.includes(value?.sensingChannel) ? value.sensingChannel : undefined,
     sensingStrength: Number.isFinite(value?.sensingStrength) ? _clamp(value.sensingStrength, 0, 1) : undefined,
     sensingRadius: Number.isFinite(value?.sensingRadius) ? Math.max(0, value.sensingRadius) : undefined,
+    sensingFitRadius: Number.isFinite(value?.sensingFitRadius) ? Math.max(0, value.sensingFitRadius) : undefined,
     sensingThreshold: Number.isFinite(value?.sensingThreshold) ? _clamp(value.sensingThreshold, 0, 1) : undefined,
     sensingSource: SIM_SENSING_SOURCES.includes(value?.sensingSource) ? value.sensingSource : undefined,
+    sensingRules: Array.isArray(value?.sensingRules) ? normalizeSensingRules(value.sensingRules) : undefined,
     sensingUpdateFrames: Number.isFinite(value?.sensingUpdateFrames)
       ? Math.max(1, Math.min(50, Math.round(value.sensingUpdateFrames)))
       : undefined,
@@ -1351,11 +1545,31 @@ function _parseSymmetrySizeMultipliers(value) {
       .filter(entry => Number.isFinite(entry) && entry > 0);
     return parsed.length ? parsed : [1];
   }
+
   const parsed = String(value ?? '')
     .split(/[,\s;|/]+/)
     .map(entry => Number.parseFloat(entry.replace(/×/g, '').trim()))
     .filter(entry => Number.isFinite(entry) && entry > 0);
   return parsed.length ? parsed : [1];
+}
+
+function _parsePressureCurve(value, fallback) {
+  try {
+    const source = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(source)) return fallback;
+    const points = source
+      .map(point => [Number(point?.[0]), Number(point?.[1])])
+      .filter(point => point.every(Number.isFinite))
+      .map(([x, y]) => [_clamp01(x), _clamp01(y)])
+      .sort((a, b) => a[0] - b[0])
+      .filter((point, index, all) => index === 0 || point[0] - all[index - 1][0] > 0.001);
+    if (points.length < 2) return fallback;
+    points[0][0] = 0;
+    points[points.length - 1][0] = 1;
+    return points;
+  } catch {
+    return fallback;
+  }
 }
 
 function _buildPolylineSegments(points, closed = false) {
@@ -1848,10 +2062,13 @@ export class App {
     this.activeLayerIdx = 0;
     this._nextLayerId = 1;
     this._sensingSourceSelection = [];
+    // Drawing-mode multi-rule sensing state (null = derive single rule from flat controls)
+    this._sensingRules = null;
     this._sensingSourcePickerAnchor = null;
     this._sensingSourcePickerPanel = null;
     this._sensingSourcePickerPointerHandler = null;
     this._sensingSourcePickerKeyHandler = null;
+    this._sensingRulesModalState = null;
 
     // Undo/redo
     this.undoStack = [];
@@ -1863,6 +2080,8 @@ export class App {
     // Brush engines
     this.brushes = {};
     this.sharedMotionSim = null;
+    this.sharedMotionSimPromise = null;
+    this.sharedMotionSimEpoch = 0;
     this.activeBrush = 'boid';
 
     // Drawing state
@@ -1986,6 +2205,11 @@ export class App {
       inspectorCollapsed: false,
       inspectorSections: {},
       editorTool: 'spawn',
+      // Submode: 'normal' (default, unchanged authoring/playback behavior) or
+      // 'forceVisualization' (scenario-driven groups/attractors/routes with a
+      // policy-driven camera). Persisted; normal mode ignores it entirely.
+      mode: 'normal',
+      forceViz: null, // populated below by _createDefaultForceVizState()
       brushData: {
         boid: { spawns: [], points: [], paths: [] },
         ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
@@ -1997,6 +2221,7 @@ export class App {
       // Named saved simulation sessions.
       sessions: [],
       activeSessionIndex: -1,
+      savedPlayback: null,
       multiSessionEnabled: false,
       multiSessionBindings: [],
       runtimeSessions: [],
@@ -2013,6 +2238,16 @@ export class App {
       clipboard: null,
       nextId: 1,
     };
+    // populated in _init() after the first resize, once this.W/this.H
+    // reflect real canvas dimensions (see _createDefaultForceVizState()).
+    // Force Visualization runtime-only state — never persisted/serialized.
+    // Holds the manual view the user had before entering the submode (for
+    // the 'restoreManualView' exit behavior) and small camera bookkeeping
+    // (orbit angle accumulator, last manual pan/zoom/rotate timestamp for
+    // interruption handling).
+    this._forceVizManualViewSnapshot = null;
+    this._forceVizCameraRuntime = { lastManualInputAt: 0, orbitAngle: 0, lastElapsed: null };
+    this._simulationSavedPlaybackCapture = null;
     this.motionPath = this._createDefaultMotionPathState();
     this.motionPathEditor = this._createMotionPathEditorState();
     this._simFormatMenuUi = {
@@ -2054,6 +2289,10 @@ export class App {
 
     // Color history
     this._colorHistory = [];
+
+    // Boid color distribution ([{color, weight}] managed via modal, persisted in session)
+    this._boidColorDist = null;
+    this._boidColorDistWired = false;
     this._maxColorHistory = 16;
     this._fluidInteractionState = { emitters: [], influences: [], scalarFields: [] };
     this._simulationExport = this._createSimulationExportState();
@@ -2402,6 +2641,7 @@ export class App {
   async _init() {
     this.selectionMgr = new SelectionManager(this);
     this._resizeAll();
+    this.simulation.forceViz = this._createDefaultForceVizState();
     this.compositor = new Compositor(this.compositeCanvas);
     this.compositor.resize(this.W, this.H, this.DPR);
     this._addBackgroundLayer();
@@ -2419,12 +2659,6 @@ export class App {
     this.brushes.simple = new SimpleBrush(this);
     this.brushes.eraser = new EraserBrush(this);
 
-    // Init WASM-backed brushes
-    await this.brushes.boid.init();
-    await this.brushes.ant.init();
-    await this.brushes.fluid.init();
-    await this.brushes.fluid3d.init();
-
     // Sidebar UI
     buildSidebar(this);
     buildFavoritesPanel(this);
@@ -2439,7 +2673,28 @@ export class App {
     this._bindEvents();
     this._initTopbarOverflow();
 
-    // Restore session
+    // Make the canvas and controls interactive before optional brush engines
+    // finish probing GPU/WASM backends.
+    this._fillBackgroundLayer();
+    this.compositeAllLayers();
+    this._frameLoop();
+
+    // Init WASM/GPU-backed brushes without blocking the first interactive frame.
+    const brushInitEntries = [
+      ['boid', this.brushes.boid.init()],
+      ['ant', this.brushes.ant.init()],
+      ['fluid', this.brushes.fluid.init()],
+      ['fluid3d', this.brushes.fluid3d.init()],
+    ];
+    const brushInitResults = await Promise.allSettled(brushInitEntries.map(([, promise]) => promise));
+    for (let index = 0; index < brushInitResults.length; index += 1) {
+      const result = brushInitResults[index];
+      if (result.status !== 'rejected') continue;
+      console.error(`Brush engine init failed during startup (${brushInitEntries[index][0]}):`, result.reason);
+    }
+
+    // Re-composite after session restore because restoring layers/view state may
+    // replace the document we drew above for the first interactive frame.
     await this._ensureBuiltinCanvasTexture();
     await this._restoreSession();
     this._syncColorPickerUi();
@@ -2451,11 +2706,6 @@ export class App {
 
     // Composite & start loop
     this.compositeAllLayers();
-    this._frameLoop();
-    requestAnimationFrame(() => {
-      this._fillBackgroundLayer();
-      this.compositeAllLayers();
-    });
 
     this._announceBuildLoad();
     this.setStatus('Ready');
@@ -2923,7 +3173,7 @@ export class App {
         key: 'workspace',
         group: 'Workspace',
         label: 'Workspace Bundle',
-        description: 'Workspace settings snapshot with session controls, presets, and autosave state. Use Save/Open Workspace File for full layer pixels.',
+        description: 'Workspace settings snapshot with session controls and autosave state. Device preset and favorite libraries are exported separately.',
         kind: 'bundle',
       },
       { key: 'brush-boid', group: 'Brush Settings', label: 'Brush: Boid', description: 'Boid brush controls, including shared boid-specific stamp and motion settings.', kind: 'brush', brush: 'boid' },
@@ -2973,16 +3223,8 @@ export class App {
   _workspaceJsonControlBrushTokens(controlId) {
     const element = document.getElementById(controlId);
     if (!element) return [];
-    const tokens = new Set();
-    let current = element;
-    while (current) {
-      const attr = current.getAttribute?.('data-brushes');
-      if (attr) {
-        for (const token of attr.split(/\s+/).map(part => part.trim()).filter(Boolean)) tokens.add(token);
-      }
-      current = current.parentElement;
-    }
-    return [...tokens];
+    const owner = element.closest('[data-brushes]');
+    return (owner?.getAttribute('data-brushes') || '').split(/\s+/).map(part => part.trim()).filter(Boolean);
   }
 
   _workspaceJsonControlSectionId(controlId) {
@@ -2993,27 +3235,18 @@ export class App {
     return sectionHeader?.dataset?.section || '';
   }
 
-  _workspaceJsonBrushSectionIds(brush) {
-    const shared = ['brushScale', 'fill', 'stamp', 'stampImage', 'canvasTexture', 'symmetry', 'taper', 'trailBlur', 'kmMix', 'impasto', 'pencilHover'];
-    const brushSections = {
-      boid: ['spawn', 'swarm', 'forces', 'quorum', 'variance', 'motion', 'leaders', 'visual', 'sensing', 'antPheromone'],
-      ant: ['spawn', 'swarm', 'forces', 'variance', 'motion', 'visual', 'sensing', 'antPheromone'],
-      bristle: ['bristleShape', 'bristlePhysics', 'bristleVariance', 'bristleVisual'],
-      simple: [],
-      eraser: [],
-      fluid: ['fluidBrush', 'fluidForces', 'fluidMidrange', 'fluidFlow', 'fluidSettling', 'fluidRendering'],
-      fluid3d: ['fluid3dBrush', 'fluid3dDynamics', 'fluid3dInteraction', 'fluid3dRendering'],
-      motionPath: ['motionPathGraph', 'motionPathRuntime'],
-    };
-    return new Set([...shared, ...(brushSections[brush] || [])]);
-  }
-
   _workspaceJsonControlBelongsToBrush(controlId, brush) {
     if (!brush) return false;
+    const element = document.getElementById(controlId);
+    const sectionBody = element?.closest('.section-body');
+    const owner = element?.closest('[data-brushes]');
     const tokens = this._workspaceJsonControlBrushTokens(controlId);
-    if (tokens.includes(brush)) return true;
     const sectionId = this._workspaceJsonControlSectionId(controlId);
-    return this._workspaceJsonBrushSectionIds(brush).has(sectionId);
+    return workspaceControlBelongsToBrush({
+      brushes: tokens,
+      section: sectionId,
+      explicitBrushOwnership: !!owner && owner !== sectionBody,
+    }, brush);
   }
 
   _workspaceJsonCanvasKeys() {
@@ -3089,7 +3322,6 @@ export class App {
     const canvasKeys = this._workspaceJsonCanvasKeys();
     const doc = {
       autosaveEnabled: !!bundle?.autosaveEnabled,
-      presets: _deepClone(bundle?.presets || {}),
     };
     for (const [key, value] of Object.entries(controls)) {
       if (key === '_simulation') continue;
@@ -3307,11 +3539,11 @@ export class App {
   _validateWorkspaceJsonEditor() {
     const { normalized, docKey } = this._readWorkspaceJsonEditorBundle();
     if (docKey === 'workspace') {
-      const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
-        ? Object.keys(normalized.presets).length
+      const presetCount = normalized.legacyPresets && typeof normalized.legacyPresets === 'object' && !Array.isArray(normalized.legacyPresets)
+        ? Object.keys(normalized.legacyPresets).length
         : 0;
       this._setWorkspaceJsonModalStatus(
-        `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+        `Workspace JSON is valid. Ready to apply.${presetCount ? ` Includes ${presetCount} legacy preset${presetCount === 1 ? '' : 's'} for optional import.` : ''}`,
         'success',
       );
       this.showToast('✓ JSON valid');
@@ -3383,11 +3615,11 @@ export class App {
       if (quiet) {
         this._setWorkspaceJsonModalStatus('Changes applied from the JSON value editor.', 'success');
       } else if (docKey === 'workspace') {
-        const presetCount = normalized.presets && typeof normalized.presets === 'object' && !Array.isArray(normalized.presets)
-          ? Object.keys(normalized.presets).length
+        const presetCount = normalized.legacyPresets && typeof normalized.legacyPresets === 'object' && !Array.isArray(normalized.legacyPresets)
+          ? Object.keys(normalized.legacyPresets).length
           : 0;
         this._setWorkspaceJsonModalStatus(
-          `Workspace JSON applied successfully.${presetCount ? ` Loaded ${presetCount} preset${presetCount === 1 ? '' : 's'}.` : ''}`,
+          `Workspace JSON applied successfully.${presetCount ? ` ${presetCount} embedded legacy preset${presetCount === 1 ? ' is' : 's are'} available for optional import.` : ''}`,
           'success',
         );
       } else {
@@ -3789,6 +4021,7 @@ export class App {
   resetSimulationPlayback() {
     void this._stopSimulationRecording({ announce: false });
     this.stopSimulation(false);
+    this._simulationSavedPlaybackCapture = null;
     this.simulation.frameCount = 0;
     this.simulation.pathDistance = 0;
     for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
@@ -4399,6 +4632,174 @@ export class App {
       },
       onCommit: () => input.dispatchEvent(new Event('change', { bubbles: true })),
     };
+  }
+
+  // ── Boid color distribution modal ─────────────────────────
+  _ensureBoidColorDist() {
+    if (!Array.isArray(this._boidColorDist) || !this._boidColorDist.length) {
+      this._boidColorDist = [{ color: this.getColorValue('primary', '#1a1a1a'), weight: 1 }];
+    }
+    return this._boidColorDist;
+  }
+
+  _sanitizeBoidColorDist(value) {
+    if (!Array.isArray(value)) return null;
+    const entries = [];
+    for (const entry of value) {
+      const color = this._normalizeHexColor(entry?.color, null);
+      const weight = Number(entry?.weight);
+      if (!color || !Number.isFinite(weight) || weight <= 0) continue;
+      entries.push({ color, weight: Math.min(1, Math.max(0.01, weight)) });
+    }
+    return entries.length ? entries : null;
+  }
+
+  /** Normalized distribution for getP().colorDist — [{color, weight}] with
+   *  weights summing to 1, or null when 0/1 colors (base behavior applies). */
+  _getBoidColorDistForParams() {
+    const dist = this._sanitizeBoidColorDist(this._boidColorDist);
+    if (!dist || dist.length < 2) return null;
+    const total = dist.reduce((sum, entry) => sum + entry.weight, 0);
+    if (!(total > 0)) return null;
+    return dist.map(entry => ({ color: entry.color, weight: entry.weight / total }));
+  }
+
+  _getBoidColorDistColorTarget(index, trigger) {
+    return {
+      key: `boidColorDist:${index}`,
+      trigger,
+      label: `Boid Color ${index + 1}`,
+      getValue: () => this._boidColorDist?.[index]?.color || '#1a1a1a',
+      setValue: normalized => {
+        const entry = this._boidColorDist?.[index];
+        if (!entry) return;
+        entry.color = normalized;
+        if (trigger) {
+          trigger.style.background = normalized;
+          trigger.title = normalized.toUpperCase();
+        }
+        this.invalidateParams();
+      },
+      onCommit: () => this._maybeAutoSaveSession(),
+    };
+  }
+
+  _openBoidColorDistModal() {
+    const modal = document.getElementById('boidColorDistModal');
+    if (!modal) return;
+    if (!this._boidColorDistWired) {
+      this._boidColorDistWired = true;
+      document.getElementById('boidColorDistClose')?.addEventListener('click', () => this._closeBoidColorDistModal());
+      document.getElementById('boidColorDistBackdrop')?.addEventListener('click', () => this._closeBoidColorDistModal());
+      document.getElementById('boidColorDistDone')?.addEventListener('click', () => this._closeBoidColorDistModal());
+      document.getElementById('boidColorDistAdd')?.addEventListener('click', () => {
+        const dist = this._ensureBoidColorDist();
+        dist.push({ color: this.getColorValue('primary', '#1a1a1a'), weight: dist[dist.length - 1]?.weight || 1 });
+        this.invalidateParams();
+        this._renderBoidColorDistModal();
+        this._maybeAutoSaveSession();
+      });
+    }
+    const dist = this._ensureBoidColorDist();
+    if (dist.length === 1) {
+      // A single-entry distribution has no effect yet, so keep it in sync
+      // with the current primary color each time the modal opens.
+      dist[0].color = this.getColorValue('primary', '#1a1a1a');
+    }
+    this._renderBoidColorDistModal();
+    modal.classList.add('open');
+  }
+
+  _closeBoidColorDistModal() {
+    if (this._colorPicker.open && String(this._getColorTargetKey(this._colorPicker.target)).startsWith('boidColorDist:')) {
+      this._closeColorPicker({ recordHistory: false });
+    }
+    document.getElementById('boidColorDistModal')?.classList.remove('open');
+  }
+
+  /** Refresh percentage labels only (weights are relative; shown as weight/sum). */
+  _updateBoidColorDistLabels() {
+    const container = document.getElementById('boidColorDistColumns');
+    if (!container) return;
+    const dist = this._ensureBoidColorDist();
+    const total = dist.reduce((sum, entry) => sum + entry.weight, 0) || 1;
+    container.querySelectorAll('.boid-dist-pct').forEach((label, index) => {
+      const entry = dist[index];
+      label.textContent = entry ? `${Math.round((entry.weight / total) * 100)}%` : '';
+    });
+  }
+
+  _renderBoidColorDistModal() {
+    const container = document.getElementById('boidColorDistColumns');
+    if (!container) return;
+    const dist = this._ensureBoidColorDist();
+    container.innerHTML = '';
+    dist.forEach((entry, index) => {
+      const column = document.createElement('div');
+      column.className = 'boid-dist-col';
+
+      const pct = document.createElement('span');
+      pct.className = 'boid-dist-pct';
+      column.appendChild(pct);
+
+      const wrap = document.createElement('div');
+      wrap.className = 'boid-dist-sliderWrap';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '1';
+      slider.max = '100';
+      slider.value = String(Math.round(Math.min(1, Math.max(0.01, entry.weight)) * 100));
+      slider.setAttribute('aria-label', `Color ${index + 1} weight`);
+      slider.addEventListener('input', () => {
+        entry.weight = Math.min(1, Math.max(0.01, (+slider.value || 1) / 100));
+        this.invalidateParams();
+        this._updateBoidColorDistLabels();
+      });
+      slider.addEventListener('change', () => this._maybeAutoSaveSession());
+      wrap.appendChild(slider);
+      column.appendChild(wrap);
+
+      const colorBtn = document.createElement('button');
+      colorBtn.type = 'button';
+      colorBtn.className = 'boid-dist-colorBtn';
+      colorBtn.style.background = entry.color;
+      colorBtn.title = entry.color.toUpperCase();
+      colorBtn.setAttribute('aria-haspopup', 'dialog');
+      colorBtn.setAttribute('aria-controls', 'colorPickerPanel');
+      colorBtn.setAttribute('aria-expanded', 'false');
+      colorBtn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const target = this._getBoidColorDistColorTarget(index, colorBtn);
+        if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === this._getColorTargetKey(target)) {
+          this._closeColorPicker({ recordHistory: false });
+          return;
+        }
+        this._openColorPicker(target, colorBtn);
+      });
+      column.appendChild(colorBtn);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'boid-dist-delBtn';
+      delBtn.textContent = '🗑';
+      delBtn.title = 'Remove color';
+      delBtn.disabled = dist.length <= 1;
+      delBtn.addEventListener('click', () => {
+        if (!Array.isArray(this._boidColorDist) || this._boidColorDist.length <= 1) return;
+        if (this._colorPicker.open && String(this._getColorTargetKey(this._colorPicker.target)).startsWith('boidColorDist:')) {
+          this._closeColorPicker({ recordHistory: false });
+        }
+        this._boidColorDist.splice(index, 1);
+        this.invalidateParams();
+        this._renderBoidColorDistModal();
+        this._maybeAutoSaveSession();
+      });
+      column.appendChild(delBtn);
+
+      container.appendChild(column);
+    });
+    this._updateBoidColorDistLabels();
   }
 
   _renderColorPickerHistory() {
@@ -5746,6 +6147,7 @@ export class App {
     };
     const chk = id => { const e = el(id); return e ? e.checked : false; };
     const sel = id => { const e = el(id); return e ? e.value : ''; };
+    const pressureCurve = (id, fallback) => _parsePressureCurve(el(id)?.value, fallback);
     const _MULT_STEPS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
     const mult = id => {
       const e = el(id + '_multIdx');
@@ -5815,6 +6217,16 @@ export class App {
       skipStamps: val('skipStamps'),
       pressureSize: chk('pressureSize'),
       pressureOpacity: chk('pressureOpacity'),
+      pressureSizeCurve: pressureCurve('pressureSizeCurve', [[0, 0.3], [1, 1]]),
+      pressureOpacityCurve: pressureCurve('pressureOpacityCurve', [[0, 0.3], [1, 1]]),
+      pressureSpawnRadiusCurve: pressureCurve('pressureSpawnRadiusCurve', [[0, 0.3], [1, 1]]),
+      bristleSplayPressureCurve: pressureCurve('bristleSplayPressureCurve', [[0, 0.5], [1, 1]]),
+      fluid3dRadiusPressureCurve: pressureCurve('fluid3dRadiusPressureCurve', [[0, 0.35], [1, 1]]),
+      fluid3dCountPressureCurve: pressureCurve('fluid3dCountPressureCurve', [[0, 0.45], [1, 1]]),
+      fluid3dEmissionPressureCurve: pressureCurve('fluid3dEmissionPressureCurve', [[0, 0.4], [1, 1]]),
+      fluid3dInfluencePressureCurve: pressureCurve('fluid3dInfluencePressureCurve', [[0, 0.3], [1, 1]]),
+      lbmRadiusPressureCurve: pressureCurve('lbmRadiusPressureCurve', [[0, 0.35], [1, 1]]),
+      lbmCountPressureCurve: pressureCurve('lbmCountPressureCurve', [[0, 0.4], [1, 1]]),
       stampImageEnabled: chk('stampImageEnabled') && !!this._customStampImage?.canvas && stampImageAllowed,
       stampImageCanvas: chk('stampImageEnabled') && stampImageAllowed ? this._customStampImage?.canvas || null : null,
       stampImageTint: chk('stampImageTint'),
@@ -5849,6 +6261,7 @@ export class App {
       sensingChannel: sel('sensingChannel') || 'darkness',
       sensingStrength: val('sensingStrength') / 100,
       sensingRadius: val('sensingRadius'),
+      sensingFitRadius: val('sensingFitRadius'),
       sensingThreshold: val('sensingThreshold') / 100,
       sensingUpdateFrames: Math.max(1, Math.min(50, Math.round(val('sensingUpdateFrames') || 30))),
       sensingSource: sel('sensingSource') || 'below',
@@ -5961,6 +6374,7 @@ export class App {
       canvasTexturePooling: (val('canvasTexturePooling') || 0) / 100,
       // Color
       color: this.primaryEl.value,
+      colorDist: this._getBoidColorDistForParams(),
       // Trail blur
       trailBlur: val('trailBlur') || 0,
       trailFlow: val('trailFlow') / 100,
@@ -5998,6 +6412,9 @@ export class App {
       simMotionPathMode: sel('simMotionPathMode') === 'forces' ? 'forces' : 'path',
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
+    // Multi-rule sensing: rule 0 mirrors the flat controls; extra rules come
+    // from the Sensing Rules modal state.
+    this._cachedP.sensingRules = this._composeSensingRules(this._cachedP);
     return this._simulationContextOverride
       ? this._getRuntimeScopedParams(this._cachedP)
       : this._cachedP;
@@ -6041,9 +6458,15 @@ export class App {
     if (typeof vars.sensingChannel === 'string') next.sensingChannel = vars.sensingChannel;
     if (Number.isFinite(vars.sensingStrength)) next.sensingStrength = vars.sensingStrength;
     if (Number.isFinite(vars.sensingRadius)) next.sensingRadius = vars.sensingRadius;
+    if (Number.isFinite(vars.sensingFitRadius)) next.sensingFitRadius = vars.sensingFitRadius;
     if (Number.isFinite(vars.sensingThreshold)) next.sensingThreshold = vars.sensingThreshold;
     if (typeof vars.sensingSource === 'string') next.sensingSource = vars.sensingSource;
     if (Number.isFinite(vars.sensingUpdateFrames)) next.sensingUpdateFrames = vars.sensingUpdateFrames;
+    // Per-simulation sensing rules: explicit rules win; otherwise re-derive a
+    // single rule from the (possibly overridden) flat sensing fields.
+    next.sensingRules = Array.isArray(vars.sensingRules) && vars.sensingRules.length
+      ? normalizeSensingRules(vars.sensingRules)
+      : [_sensingRuleFromFlat(next, this._serializeSensingSourceSelection())];
     return next;
   }
 
@@ -6247,6 +6670,7 @@ export class App {
       : null;
     const name = session?.name?.trim() || 'Unsaved Draft';
     const isSaved = !!session;
+    const savedPlaybackStatus = this._getSimulationSavedPlaybackStatus(session);
     return {
       activeIndex,
       session,
@@ -6261,10 +6685,179 @@ export class App {
         ? `Editing saved session "${name}". Guide edits and simulation-mode defaults update this session until you load another one or start a new draft.`
         : 'Editing an unsaved draft session. Save it to reuse the current simulation defaults, guides, and sensing routes later.',
       playbackLabel: `Session ${name}`,
+      playbackSummary: savedPlaybackStatus.summary,
+      playbackBadge: savedPlaybackStatus.badge,
+      playbackReady: savedPlaybackStatus.ready,
       setupLabel: isSaved ? `Editing saved session: ${name}` : 'Editing unsaved draft session.',
       modeSummary: 'The brush sidebar stays wired to the selected simulation draft or saved session.',
       routingSummary: this._buildSimulationSessionRoutingSummary(),
     };
+  }
+
+  _buildSimulationSavedPlaybackSignature(session = {}) {
+    // Saved playback is only reusable when the authored session state still
+    // matches the run that produced the cached frames, so hash the guide data,
+    // runtime overrides, and sensing selection into a stable signature.
+    const brushData = _sanitizeSimulationSessionData(session.brushData);
+    const controlState = _sanitizeSimulationSessionData(session.controlState);
+    const paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot);
+    return JSON.stringify({
+      brushData: _isPlainObject(brushData) ? brushData : {},
+      vars: _normalizeSimulationVars(session.vars),
+      controlState: _isPlainObject(controlState) ? controlState : {},
+      paramSnapshot: _isPlainObject(paramSnapshot) ? paramSnapshot : {},
+      sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+    });
+  }
+
+  _getSimulationSavedPlaybackStatus(session = null) {
+    const playback = _normalizeSimulationSavedPlayback(session ? session.savedPlayback : this.simulation.savedPlayback);
+    if (!playback) {
+      return {
+        ready: false,
+        badge: 'No saved playback',
+        summary: 'No saved playback captured yet. Run a boid simulation to cache frames for stacked multi-session playback.',
+        playback: null,
+      };
+    }
+    const signature = this._buildSimulationSavedPlaybackSignature(session || {
+      brushData: this.simulation.brushData,
+      vars: this.simulation.vars,
+      controlState: this._captureSimulationSessionControlState(),
+      paramSnapshot: this._captureSimulationSessionParamSnapshot(),
+      sensingSourceSelection: this._serializeSensingSourceSelection(),
+    });
+    const ready = !!playback.signature && playback.signature === signature;
+    const frameCount = playback.frames?.length || 0;
+    return ready
+      ? {
+          ready: true,
+          badge: `Saved playback · ${frameCount} frames`,
+          summary: `Saved playback is ready (${frameCount} frames). Multi-session playback will reuse it instead of recomputing this boid session live.`,
+          playback,
+        }
+      : {
+          ready: false,
+          badge: 'Saved playback outdated',
+          summary: 'Saved playback exists but no longer matches the current session settings. Re-run the session to refresh it.',
+          playback,
+        };
+  }
+
+  _getSimulationSavedPlaybackBadgeTone(status) {
+    if (status?.ready) return 'active';
+    return status?.playback ? 'warn' : 'muted';
+  }
+
+  _getSimulationPlaybackBarSummary(context) {
+    if (this._shouldUseMultiSessionPlayback()) {
+      const diagnostics = this._getMultiSessionRouteDiagnostics();
+      if (diagnostics.blockReason) return diagnostics.blockReason;
+      return `Run ready · ${context.routingSummary}`;
+    }
+    return context.playbackSummary;
+  }
+
+  _buildSimulationRunToastMessage(runtimes = [], routeCount = 0) {
+    const total = runtimes.length;
+    if (!total) return 'Simulation running';
+    const savedCount = runtimes.filter(runtime => !!runtime?.savedPlayback).length;
+    const liveCount = Math.max(0, total - savedCount);
+    const parts = [`${total} session${total === 1 ? '' : 's'}`];
+    if (routeCount > 0) parts.push(`${routeCount} route${routeCount === 1 ? '' : 's'}`);
+    if (savedCount && liveCount) {
+      parts.push(`${savedCount} saved`);
+      parts.push(`${liveCount} live`);
+    } else if (savedCount) {
+      parts.push(`${savedCount} saved playback`);
+    } else if (liveCount) {
+      parts.push(`${liveCount} live`);
+    }
+    return `Simulation running (${parts.join(', ')})`;
+  }
+
+  _getSimulationSavedPlaybackForRuntime(session) {
+    const status = this._getSimulationSavedPlaybackStatus(session);
+    return status.ready ? status.playback : null;
+  }
+
+  _beginSimulationSavedPlaybackCapture() {
+    this._simulationSavedPlaybackCapture = {
+      signature: this._buildSimulationSavedPlaybackSignature({
+        brushData: this.simulation.brushData,
+        vars: this.simulation.vars,
+        controlState: this._captureSimulationSessionControlState(),
+        paramSnapshot: this._captureSimulationSessionParamSnapshot(),
+        sensingSourceSelection: this._serializeSensingSourceSelection(),
+      }),
+      format: SIM_SAVED_PLAYBACK_FORMAT,
+      version: SIM_SAVED_PLAYBACK_VERSION,
+      frameRate: 60,
+      captureInterval: SIM_SAVED_PLAYBACK_CAPTURE_INTERVAL,
+      capturedAt: Date.now(),
+      width: this.W,
+      height: this.H,
+      agentCount: 0,
+      appearance: null,
+      frames: [],
+      truncated: false,
+    };
+  }
+
+  _syncSimulationSavedPlaybackCapture(brush) {
+    if (!brush?.captureSavedPlaybackFrame) return;
+    if (!this._simulationSavedPlaybackCapture) this._beginSimulationSavedPlaybackCapture();
+    const capture = this._simulationSavedPlaybackCapture;
+    if (!capture || (this.simulation.frameCount % capture.captureInterval) !== 0) return;
+    if (capture.frames.length >= SIM_SAVED_PLAYBACK_MAX_FRAMES) {
+      capture.truncated = true;
+      if (!this.simulation.savedPlayback && capture.appearance && capture.frames.length) {
+        this.simulation.savedPlayback = _deepClone({
+          ...capture,
+          appearance: capture.appearance,
+          frames: capture.frames,
+        });
+      }
+      return;
+    }
+    const frame = brush.captureSavedPlaybackFrame();
+    if (!frame || frame.count <= 0 || !frame.positions?.length) return;
+    if (!capture.agentCount) {
+      capture.agentCount = frame.count;
+      capture.appearance = frame.appearance;
+    }
+    if (frame.count !== capture.agentCount || !capture.appearance) {
+      capture.truncated = true;
+      return;
+    }
+    capture.frames.push({ positions: frame.positions });
+    this.simulation.savedPlayback = _normalizeSimulationSavedPlayback({
+      ...capture,
+      appearance: capture.appearance,
+      frames: capture.frames,
+    });
+  }
+
+  _getSavedPlaybackRuntimeStats() {
+    let total = 0;
+    let completed = 0;
+    for (const runtime of this.simulation.runtimeSessions || []) {
+      if (!runtime?.savedPlayback) continue;
+      total++;
+      if (runtime.playbackComplete) completed++;
+    }
+    return { total, completed };
+  }
+
+  _pauseSimulationAtSavedPlaybackEnd() {
+    const savedStats = this._getSavedPlaybackRuntimeStats();
+    this.simulation.running = false;
+    this.simulation.paused = true;
+    this.isDrawing = false;
+    this._syncSimulationUI();
+    this.showToast(savedStats.total > 0
+      ? `Saved playback complete — paused at end (${savedStats.completed}/${savedStats.total} sessions)`
+      : 'Saved playback complete — paused at end');
   }
 
   _syncSimulationSessionContextUi() {
@@ -6507,6 +7100,695 @@ export class App {
     if (this.simulation.selected && !this._getSelectedSimulationEntry()) {
       this.simulation.selected = null;
     }
+    this._normalizeForceVizState();
+  }
+
+  // ========================================================
+  // FORCE VISUALIZATION SUBMODE
+  // ========================================================
+  // Scenarios are pure config: groups (bound to an existing spawn
+  // definition + optional paint layer), attractors (fixed/unreachable/
+  // moving/orbiting/path/shared), and routes that connect a group to an
+  // attractor with a weight. Everything here is persisted; per-frame
+  // resolved positions, camera smoothing bookkeeping, and agent index
+  // ranges are computed fresh each run and never saved (see
+  // _forceVizCameraRuntime and BoidBrush._spawnRangesById).
+
+  _createForceVizId(prefix) {
+    return `${prefix}-${(this.simulation.nextId++).toString(36)}`;
+  }
+
+  _createDefaultForceVizCameraConfig() {
+    return {
+      policy: 'fixed', // fixed | followBoid | followCentroid | frameGroups | orbit
+      targetGroupId: null,
+      targetBoidIndex: 0,
+      smoothing: 0.12, // 0..1 per-frame lerp factor
+      offsetX: 0,
+      offsetY: 0,
+      lookahead: 0, // 0..1 velocity lookahead factor
+      padding: 80, // px padding used by frameGroups
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      orbitRadius: 260,
+      orbitSpeed: 0.25, // radians/sec
+      interruption: 'holdOnUserInput', // holdOnUserInput | resumeAfterDelay | ignoreUserInput
+      resumeDelay: 1.5, // seconds, used by resumeAfterDelay
+      exitBehavior: 'restoreManualView', // restoreManualView | retainCurrentView
+    };
+  }
+
+  _createDefaultForceVizAttractor(overrides = {}) {
+    return {
+      id: this._createForceVizId('attractor'),
+      name: overrides.name || 'Attractor 1',
+      type: 'fixed',
+      enabled: true,
+      x: Number.isFinite(overrides.x) ? overrides.x : this.W * 0.5,
+      y: Number.isFinite(overrides.y) ? overrides.y : this.H * 0.5,
+      strength: FORCE_VIZ_DEFAULT_ATTRACTOR_STRENGTH,
+      radius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS,
+      influenceRadius: FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2,
+      hardness: DEFAULT_SIM_HARDNESS,
+      movement: {
+        velocityX: 0,
+        velocityY: 0,
+        driftRadius: 40,
+        driftSpeed: 0.15,
+        orbitCenterX: this.W * 0.5,
+        orbitCenterY: this.H * 0.5,
+        orbitRadius: 100,
+        orbitSpeed: 0.5,
+        pathId: null,
+      },
+      sharedAttractorId: null,
+    };
+  }
+
+  _createDefaultForceVizGroup(overrides = {}) {
+    return {
+      id: this._createForceVizId('group'),
+      name: overrides.name || 'Group 1',
+      spawnId: overrides.spawnId ?? null,
+      layerId: overrides.layerId ?? null,
+    };
+  }
+
+  _createDefaultForceVizRoute(overrides = {}) {
+    return {
+      id: this._createForceVizId('route'),
+      groupId: overrides.groupId ?? null,
+      attractorId: overrides.attractorId ?? null,
+      weight: Number.isFinite(overrides.weight) ? overrides.weight : 1,
+      enabled: true,
+    };
+  }
+
+  _createDefaultForceVizScenario() {
+    const group = this._createDefaultForceVizGroup();
+    const attractor = this._createDefaultForceVizAttractor();
+    return {
+      id: this._createForceVizId('scenario'),
+      name: 'Scenario 1',
+      groups: [group],
+      attractors: [attractor],
+      routes: [this._createDefaultForceVizRoute({ groupId: group.id, attractorId: attractor.id })],
+    };
+  }
+
+  _createDefaultForceVizState() {
+    const scenario = this._createDefaultForceVizScenario();
+    return {
+      activeScenarioIndex: 0,
+      scenarios: [scenario],
+      // The UI edits one group/attractor/route at a time while the
+      // underlying model stays array-based so more can be added later.
+      ui: {
+        activeGroupId: scenario.groups[0]?.id ?? null,
+        activeAttractorId: scenario.attractors[0]?.id ?? null,
+        activeRouteId: scenario.routes[0]?.id ?? null,
+      },
+      camera: this._createDefaultForceVizCameraConfig(),
+    };
+  }
+
+  _normalizeForceVizCameraConfig(raw) {
+    const defaults = this._createDefaultForceVizCameraConfig();
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    return {
+      policy: FORCE_VIZ_CAMERA_POLICIES.includes(cfg.policy) ? cfg.policy : defaults.policy,
+      targetGroupId: typeof cfg.targetGroupId === 'string' ? cfg.targetGroupId : null,
+      targetBoidIndex: Number.isFinite(cfg.targetBoidIndex) ? Math.max(0, Math.round(cfg.targetBoidIndex)) : defaults.targetBoidIndex,
+      smoothing: Number.isFinite(cfg.smoothing) ? _clamp01(cfg.smoothing) : defaults.smoothing,
+      offsetX: Number.isFinite(cfg.offsetX) ? cfg.offsetX : defaults.offsetX,
+      offsetY: Number.isFinite(cfg.offsetY) ? cfg.offsetY : defaults.offsetY,
+      lookahead: Number.isFinite(cfg.lookahead) ? _clamp01(cfg.lookahead) : defaults.lookahead,
+      padding: Number.isFinite(cfg.padding) ? Math.max(0, cfg.padding) : defaults.padding,
+      minZoom: Number.isFinite(cfg.minZoom) ? Math.max(MIN_ZOOM, cfg.minZoom) : defaults.minZoom,
+      maxZoom: Number.isFinite(cfg.maxZoom) ? Math.min(MAX_ZOOM, cfg.maxZoom) : defaults.maxZoom,
+      orbitRadius: Number.isFinite(cfg.orbitRadius) ? Math.max(1, cfg.orbitRadius) : defaults.orbitRadius,
+      orbitSpeed: Number.isFinite(cfg.orbitSpeed) ? cfg.orbitSpeed : defaults.orbitSpeed,
+      interruption: FORCE_VIZ_CAMERA_INTERRUPTIONS.includes(cfg.interruption) ? cfg.interruption : defaults.interruption,
+      resumeDelay: Number.isFinite(cfg.resumeDelay) ? Math.max(0, cfg.resumeDelay) : defaults.resumeDelay,
+      exitBehavior: FORCE_VIZ_CAMERA_EXIT_BEHAVIORS.includes(cfg.exitBehavior) ? cfg.exitBehavior : defaults.exitBehavior,
+    };
+  }
+
+  _normalizeForceVizAttractor(raw) {
+    const defaults = this._createDefaultForceVizAttractor();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const movement = src.movement && typeof src.movement === 'object' ? src.movement : {};
+    const rawPathId = (typeof movement.pathId === 'string' || typeof movement.pathId === 'number') ? movement.pathId : null;
+    const boundPath = rawPathId == null
+      ? null
+      : this._getForceVizPathOptions().find(path => String(path.id) === String(rawPathId));
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('attractor'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
+      type: FORCE_VIZ_ATTRACTOR_TYPES.includes(src.type) ? src.type : defaults.type,
+      enabled: src.enabled !== false,
+      x: Number.isFinite(src.x) ? src.x : defaults.x,
+      y: Number.isFinite(src.y) ? src.y : defaults.y,
+      strength: Number.isFinite(src.strength) ? Math.max(0, src.strength) : defaults.strength,
+      radius: Number.isFinite(src.radius) ? Math.max(1, src.radius) : defaults.radius,
+      influenceRadius: Number.isFinite(src.influenceRadius) ? Math.max(1, src.influenceRadius) : defaults.influenceRadius,
+      hardness: Number.isFinite(src.hardness) ? Math.max(DEFAULT_SIM_HARDNESS, Math.min(MAX_SIM_HARDNESS, src.hardness)) : defaults.hardness,
+      movement: {
+        velocityX: Number.isFinite(movement.velocityX) ? movement.velocityX : defaults.movement.velocityX,
+        velocityY: Number.isFinite(movement.velocityY) ? movement.velocityY : defaults.movement.velocityY,
+        driftRadius: Number.isFinite(movement.driftRadius) ? Math.max(0, movement.driftRadius) : defaults.movement.driftRadius,
+        driftSpeed: Number.isFinite(movement.driftSpeed) ? movement.driftSpeed : defaults.movement.driftSpeed,
+        orbitCenterX: Number.isFinite(movement.orbitCenterX) ? movement.orbitCenterX : defaults.movement.orbitCenterX,
+        orbitCenterY: Number.isFinite(movement.orbitCenterY) ? movement.orbitCenterY : defaults.movement.orbitCenterY,
+        orbitRadius: Number.isFinite(movement.orbitRadius) ? Math.max(0, movement.orbitRadius) : defaults.movement.orbitRadius,
+        orbitSpeed: Number.isFinite(movement.orbitSpeed) ? movement.orbitSpeed : defaults.movement.orbitSpeed,
+        pathId: boundPath?.id ?? rawPathId,
+      },
+      sharedAttractorId: typeof src.sharedAttractorId === 'string' ? src.sharedAttractorId : null,
+    };
+  }
+
+  _normalizeForceVizGroup(raw) {
+    const defaults = this._createDefaultForceVizGroup();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const rawSpawnId = (typeof src.spawnId === 'string' || typeof src.spawnId === 'number') ? src.spawnId : null;
+    const boundSpawn = rawSpawnId == null
+      ? null
+      : this._getForceVizSpawnOptions().find(spawn => String(spawn.id) === String(rawSpawnId));
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('group'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : defaults.name,
+      spawnId: boundSpawn?.id ?? rawSpawnId,
+      layerId: typeof src.layerId === 'string' ? src.layerId : null,
+    };
+  }
+
+  _normalizeForceVizRoute(raw, groupIds, attractorIds) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const groupId = groupIds.has(src.groupId) ? src.groupId : null;
+    const attractorId = attractorIds.has(src.attractorId) ? src.attractorId : null;
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('route'),
+      groupId,
+      attractorId,
+      weight: Number.isFinite(src.weight) ? Math.max(0, src.weight) : 1,
+      enabled: src.enabled !== false,
+    };
+  }
+
+  _normalizeForceVizScenario(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const groups = (Array.isArray(src.groups) ? src.groups : []).map(group => this._normalizeForceVizGroup(group));
+    const attractors = (Array.isArray(src.attractors) ? src.attractors : []).map(attractor => this._normalizeForceVizAttractor(attractor));
+    if (!groups.length) groups.push(this._createDefaultForceVizGroup());
+    if (!attractors.length) attractors.push(this._createDefaultForceVizAttractor());
+    const groupIds = new Set(groups.map(group => group.id));
+    const attractorIds = new Set(attractors.map(attractor => attractor.id));
+    // Shared attractors must reference another attractor in the same scenario.
+    for (const attractor of attractors) {
+      if (attractor.type === 'shared' && (!attractor.sharedAttractorId || !attractorIds.has(attractor.sharedAttractorId) || attractor.sharedAttractorId === attractor.id)) {
+        attractor.sharedAttractorId = attractors.find(other => other.id !== attractor.id)?.id ?? null;
+      }
+    }
+    let routes = (Array.isArray(src.routes) ? src.routes : [])
+      .map(route => this._normalizeForceVizRoute(route, groupIds, attractorIds))
+      .filter(route => route.groupId && route.attractorId);
+    if (!routes.length) {
+      routes = [this._createDefaultForceVizRoute({ groupId: groups[0].id, attractorId: attractors[0].id })];
+    }
+    return {
+      id: typeof src.id === 'string' && src.id ? src.id : this._createForceVizId('scenario'),
+      name: typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, 60) : 'Scenario',
+      groups,
+      attractors,
+      routes,
+    };
+  }
+
+  /** Normalizes/migrates `simulation.forceViz` in place. Safe to call
+   *  repeatedly (constructor, after load, after workspace import) — older
+   *  saves that predate this submode simply get the default state. */
+  _normalizeForceVizState() {
+    const raw = this.simulation.forceViz;
+    const scenarios = (raw && Array.isArray(raw.scenarios) && raw.scenarios.length
+      ? raw.scenarios
+      : [this._createDefaultForceVizScenario()]
+    ).map(scenario => this._normalizeForceVizScenario(scenario));
+    const activeScenarioIndex = Number.isFinite(raw?.activeScenarioIndex)
+      ? Math.max(0, Math.min(scenarios.length - 1, Math.round(raw.activeScenarioIndex)))
+      : 0;
+    const scenario = scenarios[activeScenarioIndex];
+    const uiRaw = raw?.ui && typeof raw.ui === 'object' ? raw.ui : {};
+    const groupIds = new Set(scenario.groups.map(group => group.id));
+    const attractorIds = new Set(scenario.attractors.map(attractor => attractor.id));
+    const routeIds = new Set(scenario.routes.map(route => route.id));
+    this.simulation.forceViz = {
+      activeScenarioIndex,
+      scenarios,
+      ui: {
+        activeGroupId: groupIds.has(uiRaw.activeGroupId) ? uiRaw.activeGroupId : scenario.groups[0].id,
+        activeAttractorId: attractorIds.has(uiRaw.activeAttractorId) ? uiRaw.activeAttractorId : scenario.attractors[0].id,
+        activeRouteId: routeIds.has(uiRaw.activeRouteId) ? uiRaw.activeRouteId : scenario.routes[0].id,
+      },
+      camera: this._normalizeForceVizCameraConfig(raw?.camera),
+    };
+  }
+
+  _getActiveForceVizScenario() {
+    const fv = this.simulation.forceViz;
+    if (!fv) return null;
+    return fv.scenarios[fv.activeScenarioIndex] || fv.scenarios[0] || null;
+  }
+
+  _getForceVizGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.groups.find(group => group.id === groupId) || null;
+  }
+
+  _getForceVizAttractor(attractorId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.attractors.find(attractor => attractor.id === attractorId) || null;
+  }
+
+  _getForceVizRoutesForGroup(groupId, scenario = this._getActiveForceVizScenario()) {
+    return scenario?.routes.filter(route => route.groupId === groupId) || [];
+  }
+
+  /** Options for the "bind to spawn" control: existing boid spawn
+   *  definitions, not a duplicate physics/spawn config. */
+  _getForceVizSpawnOptions() {
+    const data = this._getSimulationBrushData('boid');
+    return Array.isArray(data?.spawns) ? data.spawns : [];
+  }
+
+  _getForceVizPathOptions() {
+    const data = this._getSimulationBrushData('boid');
+    return Array.isArray(data?.paths) ? data.paths : [];
+  }
+
+  _setSimulationMode(mode) {
+    const next = mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+    if (this.simulation.mode === next) return;
+    if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
+    if (next === 'forceVisualization') {
+      this._forceVizManualViewSnapshot = this._captureViewState();
+    } else {
+      this._restoreOrRetainForceVizView();
+    }
+    this.simulation.mode = next;
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    this.showToast(next === 'forceVisualization' ? 'Force Visualization mode ON' : 'Force Visualization mode OFF');
+  }
+
+  /** Applies the configured exit behavior after a run stops: restores the
+   *  manual view captured on entering the submode, or leaves the camera
+   *  wherever the run left it ('retainCurrentView'). The snapshot itself is
+   *  kept so repeated run/stop cycles within the same submode session keep
+   *  restoring to the same baseline view. */
+  _applyForceVizExitBehaviorOnStop() {
+    const cfg = this.simulation.forceViz?.camera;
+    const exitBehavior = cfg?.exitBehavior || 'restoreManualView';
+    if (exitBehavior !== 'restoreManualView' || !this._forceVizManualViewSnapshot) return;
+    const snapshot = this._forceVizManualViewSnapshot;
+    this.viewZoom = snapshot.zoom;
+    this.viewPanX = snapshot.panX;
+    this.viewPanY = snapshot.panY;
+    this.viewRotation = snapshot.rotation;
+    this._applyViewTransform();
+  }
+
+  /** Called when actually leaving Force Visualization mode (not just
+   *  stopping a run): applies the same exit behavior, then discards the
+   *  snapshot since there is no longer a submode session to return to. */
+  _restoreOrRetainForceVizView() {
+    this._applyForceVizExitBehaviorOnStop();
+    this._forceVizManualViewSnapshot = null;
+  }
+
+  _addForceVizGroup() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const group = this._createDefaultForceVizGroup({ name: `Group ${scenario.groups.length + 1}` });
+    scenario.groups.push(group);
+    this.simulation.forceViz.ui.activeGroupId = group.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return group;
+  }
+
+  _removeForceVizGroup(groupId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.groups.length <= 1) return;
+    scenario.groups = scenario.groups.filter(group => group.id !== groupId);
+    scenario.routes = scenario.routes.filter(route => route.groupId !== groupId);
+    if (!scenario.routes.length) {
+      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+    }
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveGroup(groupId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeGroupId = groupId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizGroup(groupId, patch) {
+    const group = this._getForceVizGroup(groupId);
+    if (!group) return;
+    Object.assign(group, patch);
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _addForceVizAttractor() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const attractor = this._createDefaultForceVizAttractor({ name: `Attractor ${scenario.attractors.length + 1}` });
+    scenario.attractors.push(attractor);
+    this.simulation.forceViz.ui.activeAttractorId = attractor.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return attractor;
+  }
+
+  _removeForceVizAttractor(attractorId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.attractors.length <= 1) return;
+    scenario.attractors = scenario.attractors.filter(attractor => attractor.id !== attractorId);
+    scenario.routes = scenario.routes.filter(route => route.attractorId !== attractorId);
+    for (const attractor of scenario.attractors) {
+      if (attractor.sharedAttractorId === attractorId) attractor.sharedAttractorId = null;
+    }
+    if (!scenario.routes.length) {
+      scenario.routes.push(this._createDefaultForceVizRoute({ groupId: scenario.groups[0].id, attractorId: scenario.attractors[0].id }));
+    }
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveAttractor(attractorId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeAttractorId = attractorId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizAttractor(attractorId, patch) {
+    const attractor = this._getForceVizAttractor(attractorId);
+    if (!attractor) return;
+    if (patch && typeof patch === 'object' && patch.movement) {
+      attractor.movement = { ...attractor.movement, ...patch.movement };
+      const { movement, ...rest } = patch;
+      Object.assign(attractor, rest);
+    } else {
+      Object.assign(attractor, patch);
+    }
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _addForceVizRoute() {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario) return null;
+    const groupId = this.simulation.forceViz.ui.activeGroupId || scenario.groups[0].id;
+    const attractorId = this.simulation.forceViz.ui.activeAttractorId || scenario.attractors[0].id;
+    const route = this._createDefaultForceVizRoute({ groupId, attractorId });
+    scenario.routes.push(route);
+    this.simulation.forceViz.ui.activeRouteId = route.id;
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+    return route;
+  }
+
+  _removeForceVizRoute(routeId) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || scenario.routes.length <= 1) return;
+    scenario.routes = scenario.routes.filter(route => route.id !== routeId);
+    this._normalizeForceVizState();
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _setForceVizActiveRoute(routeId) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.ui.activeRouteId = routeId;
+    this._syncSimulationUI();
+  }
+
+  _updateForceVizRoute(routeId, patch) {
+    const scenario = this._getActiveForceVizScenario();
+    const route = scenario?.routes.find(entry => entry.id === routeId);
+    if (!route) return;
+    Object.assign(route, patch);
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  _updateForceVizCamera(patch) {
+    if (!this.simulation.forceViz) return;
+    this.simulation.forceViz.camera = this._normalizeForceVizCameraConfig({ ...this.simulation.forceViz.camera, ...patch });
+    this._syncSimulationUI();
+    this._maybeAutoSaveSession?.();
+  }
+
+  /** Live position for one attractor this frame. Reuses the same animated
+   *  path-target math as simulation guide paths for the 'path' type, so a
+   *  path attractor and a path guide behave identically. */
+  _resolveForceVizAttractorPosition(attractor, elapsed, scenario, depth = 0) {
+    if (!attractor) return null;
+    switch (attractor.type) {
+      case 'moving': {
+        const vx = attractor.movement?.velocityX || 0;
+        const vy = attractor.movement?.velocityY || 0;
+        return { x: attractor.x + vx * elapsed, y: attractor.y + vy * elapsed };
+      }
+      case 'unreachable': {
+        // Drifts continuously around its anchor so the influence falloff
+        // never fully saturates — boids chase it but never quite arrive.
+        const driftAngle = elapsed * (attractor.movement?.driftSpeed || 0);
+        const driftRadius = attractor.movement?.driftRadius || 0;
+        return {
+          x: attractor.x + Math.cos(driftAngle) * driftRadius,
+          y: attractor.y + Math.sin(driftAngle) * driftRadius,
+        };
+      }
+      case 'orbiting': {
+        const cx = attractor.movement?.orbitCenterX ?? attractor.x;
+        const cy = attractor.movement?.orbitCenterY ?? attractor.y;
+        const radius = Math.max(0, attractor.movement?.orbitRadius || 0);
+        const angle = elapsed * (attractor.movement?.orbitSpeed || 0);
+        return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+      }
+      case 'path': {
+        const pathItem = this._getForceVizPathOptions().find(entry => String(entry.id) === String(attractor.movement?.pathId));
+        if (!pathItem) return { x: attractor.x, y: attractor.y };
+        const target = this._getAnimatedSimulationPathTarget(pathItem, this.getP());
+        return target ? { x: target.x, y: target.y } : { x: attractor.x, y: attractor.y };
+      }
+      case 'shared': {
+        if (depth > 4) return { x: attractor.x, y: attractor.y };
+        const target = scenario?.attractors.find(entry => entry.id === attractor.sharedAttractorId);
+        if (!target || target.id === attractor.id) return { x: attractor.x, y: attractor.y };
+        return this._resolveForceVizAttractorPosition(target, elapsed, scenario, depth + 1);
+      }
+      case 'fixed':
+      default:
+        return { x: attractor.x, y: attractor.y };
+    }
+  }
+
+  /** Maps a Force Visualization group to the agent index range its bound
+   *  spawn produced this stroke (see BoidBrush._spawnRangesById). Returns
+   *  null when the group isn't bound or hasn't spawned yet — the route is
+   *  simply skipped for this frame rather than falling back to "everyone". */
+  _resolveForceVizGroupRange(brush, group) {
+    const ranges = brush?._spawnRangesById;
+    if (!ranges || group?.spawnId == null) return null;
+    const range = ranges.get(group.spawnId)
+      || [...ranges.entries()].find(([spawnId]) => String(spawnId) === String(group.spawnId))?.[1];
+    if (!range) return null;
+    return { start: range.startIndex, end: range.endIndex };
+  }
+
+  /** Builds the CPU-applied, group-scoped guide points routes describe.
+   *  Called from brushes.js `_collectSimulationGuides` only while
+   *  simulation.mode === 'forceVisualization'. */
+  _collectForceVizGuidePoints(brush, p) {
+    const scenario = this._getActiveForceVizScenario();
+    if (!scenario || !scenario.routes.length) return [];
+    const elapsed = (performance.now() - this._startTime) / 1000;
+    const points = [];
+    for (const route of scenario.routes) {
+      if (route.enabled === false) continue;
+      const weight = Math.max(0, route.weight ?? 1);
+      if (weight <= 0) continue;
+      const group = this._getForceVizGroup(route.groupId, scenario);
+      const attractor = this._getForceVizAttractor(route.attractorId, scenario);
+      if (!group || !attractor || attractor.enabled === false) continue;
+      const groupRange = this._resolveForceVizGroupRange(brush, group);
+      if (!groupRange) continue;
+      const pos = this._resolveForceVizAttractorPosition(attractor, elapsed, scenario);
+      if (!pos) continue;
+      points.push({
+        x: pos.x,
+        y: pos.y,
+        strength: Math.max(0, (attractor.strength ?? 0) * weight),
+        radius: Math.max(1, attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS),
+        influenceRadius: Math.max(attractor.radius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS, attractor.influenceRadius ?? FORCE_VIZ_DEFAULT_ATTRACTOR_RADIUS * 2),
+        groupRange,
+      });
+    }
+    return points;
+  }
+
+  /** Computes the pan (viewPanX/viewPanY) that would center canvas point
+   *  (focusX, focusY) in the viewport at the given zoom/rotation, reusing
+   *  the exact same anchor math manual pan/zoom/pinch already use — the
+   *  camera adapter never introduces a second coordinate system. */
+  _computeForceVizCenteredPan(focusX, focusY, zoom, rotation) {
+    const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+    const w = areaRect?.width || this.W;
+    const h = areaRect?.height || this.H;
+    const savedZoom = this.viewZoom;
+    const savedRotation = this.viewRotation;
+    this.viewZoom = zoom;
+    this.viewRotation = rotation;
+    this._setViewPanForScreenAnchor(focusX, focusY, w / 2, h / 2);
+    const panX = this.viewPanX;
+    const panY = this.viewPanY;
+    this.viewZoom = savedZoom;
+    this.viewRotation = savedRotation;
+    return { panX, panY };
+  }
+
+  _isForceVizCameraInterrupted(cfg) {
+    if (cfg.interruption === 'ignoreUserInput') return false;
+    const runtime = this._forceVizCameraRuntime;
+    const sinceMs = performance.now() - (runtime.lastManualInputAt || 0);
+    if (cfg.interruption === 'resumeAfterDelay') {
+      return sinceMs < Math.max(0, (cfg.resumeDelay || 0) * 1000);
+    }
+    // holdOnUserInput: pause automation briefly after any manual pan/zoom/rotate.
+    return sinceMs < FORCE_VIZ_MANUAL_INPUT_HOLD_MS;
+  }
+
+  /** Resolves the desired focus point/zoom/rotation for the active camera
+   *  policy from BoidBrush's cached transient snapshot (centroid/bounds/
+   *  average velocity/candidates) — never re-scans the agent buffer here.
+   *  Returns null when the policy has nothing to frame yet (e.g. no agents
+   *  spawned) so the adapter leaves the camera exactly where it is. */
+  _resolveForceVizCameraDesired(brush, elapsed) {
+    const cfg = this.simulation.forceViz.camera;
+    const snapshot = brush?._transientSnapshot;
+    switch (cfg.policy) {
+      case 'followBoid': {
+        if (!snapshot?.count || !snapshot.candidates?.length) return null;
+        const idx = Math.max(0, Math.min(snapshot.candidates.length - 1, Math.round(cfg.targetBoidIndex || 0)));
+        const candidate = snapshot.candidates[idx];
+        return { focusX: candidate.x, focusY: candidate.y, velX: candidate.vx, velY: candidate.vy, zoom: this.viewZoom, rotation: this.viewRotation };
+      }
+      case 'followCentroid': {
+        if (!snapshot?.count) return null;
+        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: snapshot.avgVelocity.x, velY: snapshot.avgVelocity.y, zoom: this.viewZoom, rotation: this.viewRotation };
+      }
+      case 'frameGroups': {
+        if (!snapshot?.count) return null;
+        const { minX, minY, maxX, maxY } = snapshot.bounds;
+        const areaRect = document.getElementById('canvasArea')?.getBoundingClientRect();
+        const areaW = areaRect?.width || this.W;
+        const areaH = areaRect?.height || this.H;
+        const pad = Math.max(0, cfg.padding || 0);
+        const boundsW = Math.max(1, maxX - minX);
+        const boundsH = Math.max(1, maxY - minY);
+        const zoom = Math.max(0.01, Math.min(areaW / (boundsW + pad * 2), areaH / (boundsH + pad * 2)));
+        return { focusX: (minX + maxX) / 2, focusY: (minY + maxY) / 2, velX: 0, velY: 0, zoom, rotation: this.viewRotation };
+      }
+      case 'orbit': {
+        if (!snapshot?.count) return null;
+        const runtime = this._forceVizCameraRuntime;
+        const dt = Number.isFinite(runtime.lastElapsed) ? Math.max(0, Math.min(0.25, elapsed - runtime.lastElapsed)) : 0;
+        runtime.orbitAngle = (runtime.orbitAngle || 0) + (cfg.orbitSpeed || 0) * dt;
+        runtime.lastElapsed = elapsed;
+        return { focusX: snapshot.centroid.x, focusY: snapshot.centroid.y, velX: 0, velY: 0, zoom: this.viewZoom, rotation: runtime.orbitAngle };
+      }
+      case 'fixed':
+      default:
+        return null;
+    }
+  }
+
+  /** The single adapter that turns a resolved camera policy target into
+   *  actual view state changes: applies offset/lookahead, clamps zoom,
+   *  respects interruption, smooths toward the target, and finally calls
+   *  the same _applyViewTransform() manual pan/zoom uses. Canvas
+   *  coordinates are untouched — this only moves viewZoom/viewPanX/
+   *  viewPanY/viewRotation, the same fields manual navigation uses. */
+  _applyForceVizCameraFrame(brush, elapsed) {
+    const sim = this.simulation;
+    if (!sim.enabled || sim.mode !== 'forceVisualization' || !sim.running) return;
+    if (this.activeBrush !== 'boid') return;
+    const cfg = sim.forceViz?.camera;
+    if (!cfg || this._isForceVizCameraInterrupted(cfg)) return;
+    const desired = this._resolveForceVizCameraDesired(brush, elapsed);
+    if (!desired) return;
+    const minZoom = Math.max(MIN_ZOOM, cfg.minZoom);
+    const maxZoom = Math.min(MAX_ZOOM, cfg.maxZoom);
+    const clampedZoom = Math.max(minZoom, Math.min(maxZoom, desired.zoom));
+    const lookahead = Math.max(0, cfg.lookahead || 0);
+    const focusX = desired.focusX + (desired.velX || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetX || 0);
+    const focusY = desired.focusY + (desired.velY || 0) * lookahead * FORCE_VIZ_LOOKAHEAD_SCALE + (cfg.offsetY || 0);
+    const targetRotation = Number.isFinite(desired.rotation) ? desired.rotation : this.viewRotation;
+    const target = this._computeForceVizCenteredPan(focusX, focusY, clampedZoom, targetRotation);
+    const smoothing = Math.max(0.001, Math.min(1, cfg.smoothing));
+    this.viewZoom = _lerp(this.viewZoom, clampedZoom, smoothing);
+    this.viewPanX = _lerp(this.viewPanX, target.panX, smoothing);
+    this.viewPanY = _lerp(this.viewPanY, target.panY, smoothing);
+    this.viewRotation = _lerpAngle(this.viewRotation, targetRotation, smoothing);
+    this._applyViewTransform();
+  }
+
+  /** Compact camera/status text for the HUD — the only place this reads
+   *  from is the same transient snapshot + camera config the adapter uses. */
+  _formatForceVizStatusText() {
+    const sim = this.simulation;
+    if (sim.mode !== 'forceVisualization') return '';
+    const cfg = sim.forceViz?.camera;
+    const scenario = this._getActiveForceVizScenario();
+    const routeCount = scenario?.routes.filter(route => route.enabled !== false).length || 0;
+    const policyLabel = {
+      fixed: 'Fixed',
+      followBoid: 'Follow Boid',
+      followCentroid: 'Follow Centroid',
+      frameGroups: 'Frame Groups',
+      orbit: 'Orbit',
+    }[cfg?.policy] || 'Fixed';
+    const stateLabel = sim.running ? 'Running' : (sim.paused ? 'Paused' : 'Ready');
+    return `${stateLabel} · ${routeCount} route${routeCount === 1 ? '' : 's'} · Cam: ${policyLabel} · ${Math.round(this.viewZoom * 100)}%`;
+  }
+
+  _syncForceVizUI() {
+    const select = document.getElementById('simModeSelect');
+    if (select && select.value !== this.simulation.mode) select.value = this.simulation.mode;
+    document.querySelectorAll('[data-sim-force-viz-only]').forEach(el => {
+      el.style.display = this.simulation.mode === 'forceVisualization' ? '' : 'none';
+    });
+    this._renderForceVizPanel?.();
+    this._updateForceVizStatusText();
+  }
+
+  /** Cheap per-frame text refresh, split out from _syncForceVizUI() (which
+   *  also toggles DOM visibility) so the camera-frame hook in the main RAF
+   *  loop isn't doing a querySelectorAll every frame. */
+  _updateForceVizStatusText() {
+    const status = document.getElementById('simForceVizStatus');
+    if (!status) return;
+    const text = this._formatForceVizStatusText();
+    if (status.textContent !== text) status.textContent = text;
+    const nextDisplay = text ? '' : 'none';
+    if (status.style.display !== nextDisplay) status.style.display = nextDisplay;
   }
 
   _resolveSimulationSpawnConfig(spawn, p = this.getP()) {
@@ -7457,6 +8739,8 @@ export class App {
     if (!Number.isFinite(alpha) || alpha <= 0 || typeof drawBand !== 'function') return;
     const scratch = this._getSimulationOverlayScratchContext();
     if (!scratch?.ctx || !scratch.canvas) return;
+    scratch.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    scratch.ctx.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
     drawBand(scratch.ctx);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -8389,6 +9673,14 @@ export class App {
     document.getElementById('simHelpModal')?.classList.remove('open');
   }
 
+  _openForceVizHelp() {
+    document.getElementById('forceVizHelpModal')?.classList.add('open');
+  }
+
+  _closeForceVizHelp() {
+    document.getElementById('forceVizHelpModal')?.classList.remove('open');
+  }
+
   _toggleSimTopbarGuide() {
     this._openSimulationHelp();
   }
@@ -8642,6 +9934,7 @@ export class App {
       sensingChannel: typeof normalizedBaseVars.sensingChannel === 'string' ? normalizedBaseVars.sensingChannel : snapshot.sensingChannel,
       sensingStrength: Number.isFinite(normalizedBaseVars.sensingStrength) ? normalizedBaseVars.sensingStrength : snapshot.sensingStrength,
       sensingRadius: Number.isFinite(normalizedBaseVars.sensingRadius) ? normalizedBaseVars.sensingRadius : snapshot.sensingRadius,
+      sensingFitRadius: Number.isFinite(normalizedBaseVars.sensingFitRadius) ? normalizedBaseVars.sensingFitRadius : snapshot.sensingFitRadius,
       sensingThreshold: Number.isFinite(normalizedBaseVars.sensingThreshold) ? normalizedBaseVars.sensingThreshold : snapshot.sensingThreshold,
       sensingSource: typeof normalizedBaseVars.sensingSource === 'string' ? normalizedBaseVars.sensingSource : snapshot.sensingSource,
       sensingUpdateFrames: Number.isFinite(normalizedBaseVars.sensingUpdateFrames) ? normalizedBaseVars.sensingUpdateFrames : snapshot.sensingUpdateFrames,
@@ -8684,6 +9977,7 @@ export class App {
     if (typeof vars.sensingChannel === 'string') assign('sensingChannel', vars.sensingChannel);
     if (Number.isFinite(vars.sensingStrength)) assign('sensingStrength', Math.round(vars.sensingStrength * 100));
     if (Number.isFinite(vars.sensingRadius)) assign('sensingRadius', Math.round(vars.sensingRadius));
+    if (Number.isFinite(vars.sensingFitRadius)) assign('sensingFitRadius', Math.round(vars.sensingFitRadius));
     if (Number.isFinite(vars.sensingThreshold)) assign('sensingThreshold', Math.round(vars.sensingThreshold * 100));
     if (typeof vars.sensingSource === 'string') {
       assign('sensingSource', vars.sensingSource);
@@ -8716,6 +10010,7 @@ export class App {
       paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
+      savedPlayback: _normalizeSimulationSavedPlayback(this.simulation.savedPlayback),
       nextId: this.simulation.nextId,
     };
     this.simulation.sessions[activeIndex] = nextSession;
@@ -8733,6 +10028,8 @@ export class App {
     this._applySimulationSessionControlState(session.controlState, { sync: false });
     this._syncSimulationSessionSensingControls({ sync: false });
     this.simulation.brushData = _deepClone(session.brushData);
+    this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(session.savedPlayback);
+    this._simulationSavedPlaybackCapture = null;
     if (Number.isFinite(session.nextId)) this.simulation.nextId = Math.max(1, Math.round(session.nextId));
     this.simulation.selected = null;
     this._normalizeSimulationData();
@@ -8762,6 +10059,8 @@ export class App {
       boid: { spawns: [], points: [], paths: [] },
       ant: { spawns: [], points: [], edges: [], pheromonePaths: [] },
     };
+    this.simulation.savedPlayback = null;
+    this._simulationSavedPlaybackCapture = null;
     this.simulation.activeSessionIndex = -1;
     this.simulation.nextId = 1;
     this.simulation.selected = null;
@@ -8795,6 +10094,7 @@ export class App {
       paramSnapshot,
       sensingSourceSelection: _normalizeSimulationSensingSourceSelection(this._serializeSensingSourceSelection()),
       brushData: _deepClone(this.simulation.brushData),
+      savedPlayback: _normalizeSimulationSavedPlayback(this.simulation.savedPlayback),
       nextId: this.simulation.nextId,
     };
     if (existingSession) {
@@ -8903,10 +10203,14 @@ export class App {
         sensingChannel: SIM_SENSING_CHANNELS.includes(sessionVars.sensingChannel) ? sessionVars.sensingChannel : 'darkness',
         sensingStrength: Number.isFinite(sessionVars.sensingStrength) ? _clamp(sessionVars.sensingStrength, 0, 1) : 0.5,
         sensingRadius: Number.isFinite(sessionVars.sensingRadius) ? Math.max(0, sessionVars.sensingRadius) : 20,
+        sensingFitRadius: Number.isFinite(sessionVars.sensingFitRadius) ? Math.max(0, sessionVars.sensingFitRadius) : 0,
         sensingThreshold: Number.isFinite(sessionVars.sensingThreshold) ? _clamp(sessionVars.sensingThreshold, 0, 1) : 0.1,
         sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
         sensingSource,
         sensingLayerIds,
+        sensingRules: Array.isArray(sessionVars.sensingRules) && sessionVars.sensingRules.length
+          ? normalizeSensingRules(sessionVars.sensingRules)
+          : null,
         unresolvedLayers: [],
         unresolvedSensingLayers: [],
       };
@@ -8998,6 +10302,9 @@ export class App {
     if (Object.prototype.hasOwnProperty.call(updates, 'sensingRadius')) {
       row.sensingRadius = Number.isFinite(nextVars.sensingRadius) ? nextVars.sensingRadius : 20;
     }
+    if (Object.prototype.hasOwnProperty.call(updates, 'sensingFitRadius')) {
+      row.sensingFitRadius = Number.isFinite(nextVars.sensingFitRadius) ? nextVars.sensingFitRadius : 0;
+    }
     if (Object.prototype.hasOwnProperty.call(updates, 'sensingThreshold')) {
       row.sensingThreshold = Number.isFinite(nextVars.sensingThreshold) ? nextVars.sensingThreshold : 0.1;
     }
@@ -9036,10 +10343,12 @@ export class App {
     return session;
   }
 
-  _setSimulationSetupStatus(message = '', level = '') {
+  _setSimulationSetupStatus(message = '', level = '', { persist = true } = {}) {
     if (!this._simulationSetupDraft) return;
-    this._simulationSetupDraft.status = message;
-    this._simulationSetupDraft.statusLevel = level;
+    if (persist) {
+      this._simulationSetupDraft.status = message;
+      this._simulationSetupDraft.statusLevel = level;
+    }
     const node = document.getElementById('simSetupStatus');
     if (!node) return;
     node.textContent = message;
@@ -9079,12 +10388,40 @@ export class App {
     summary.textContent = `${this._simulationSetupDraft.rows.length} saved session${this._simulationSetupDraft.rows.length === 1 ? '' : 's'} in draft, ${enabledRows.length} enabled, ${routeCount} target route${routeCount === 1 ? '' : 's'}.`;
   }
 
+  _getSimulationSetupReadinessStatus() {
+    if (!this._simulationSetupDraft) return { message: '', level: '' };
+    if (this._simulationSetupDraft.multiSessionEnabled !== true) {
+      return {
+        message: 'Enable Multi-Session Playback to route saved sessions across layers.',
+        level: '',
+      };
+    }
+    const diagnostics = this._getMultiSessionRouteDiagnostics();
+    if (diagnostics.blockReason) {
+      return {
+        message: diagnostics.blockReason,
+        level: 'warn',
+      };
+    }
+    const routeCount = diagnostics.runnableRoutes.length;
+    const sessionCount = new Set(diagnostics.runnableRoutes.map(route => route.sessionIndex)).size;
+    return {
+      message: `Ready to run ${sessionCount} session${sessionCount === 1 ? '' : 's'} across ${routeCount} route${routeCount === 1 ? '' : 's'}.`,
+      level: 'success',
+    };
+  }
+
   _renderSimulationSetupExplorer() {
     const root = document.getElementById('simSetupRows');
     if (!root || !this._simulationSetupDraft) return;
     const rows = this._simulationSetupDraft.rows || [];
     this._updateSimulationSetupSummary();
-    this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '');
+    if (this._simulationSetupDraft.status) {
+      this._setSimulationSetupStatus(this._simulationSetupDraft.status || '', this._simulationSetupDraft.statusLevel || '', { persist: false });
+    } else {
+      const readiness = this._getSimulationSetupReadinessStatus();
+      this._setSimulationSetupStatus(readiness.message, readiness.level, { persist: false });
+    }
     if (!rows.length) {
       root.innerHTML = '<div class="sim-setup-empty">Save at least one simulation session before assigning setup rows.</div>';
       return;
@@ -9131,6 +10468,10 @@ export class App {
           <input type="number" min="0" max="200" step="1" data-sim-setup-future-field="sensingRadius" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingRadius) ? Math.round(row.sensingRadius) : 20}">
         </label>
         <label class="sim-setup-futureField">
+          <span>Fit Radius</span>
+          <input type="number" min="0" max="200" step="1" data-sim-setup-future-field="sensingFitRadius" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingFitRadius) ? Math.round(row.sensingFitRadius) : 0}">
+        </label>
+        <label class="sim-setup-futureField">
           <span>Threshold</span>
           <input type="number" min="0" max="1" step="0.01" data-sim-setup-future-field="sensingThreshold" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingThreshold) ? row.sensingThreshold.toFixed(2) : '0.10'}">
         </label>
@@ -9138,6 +10479,10 @@ export class App {
           <span>Every</span>
           <input type="number" min="1" max="50" step="1" data-sim-setup-future-field="sensingUpdateFrames" data-sim-setup-row="${_escapeHtml(row.sessionId)}" value="${Number.isFinite(row.sensingUpdateFrames) ? Math.round(row.sensingUpdateFrames) : 30}">
         </label>
+        <div class="sim-setup-rules">
+          <button type="button" data-sim-setup-rules-btn="${_escapeHtml(row.sessionId)}">Edit Rules…</button>
+          <span>${_escapeHtml(row.sensingRules ? _describeSensingRules(row.sensingRules) : '1 rule (from row controls)')}</span>
+        </div>
       </div>`;
     root.innerHTML = `
       <table class="sim-setup-table">
@@ -9268,6 +10613,13 @@ export class App {
         this._renderSimulationSetupExplorer();
       });
     });
+    root.querySelectorAll('[data-sim-setup-rules-btn]').forEach(button => {
+      button.addEventListener('click', event => {
+        const row = this._getSimulationSetupDraftRow(event.currentTarget.dataset.simSetupRulesBtn);
+        if (!row) return;
+        this._openSensingRulesModal({ type: 'simRow', row });
+      });
+    });
     root.querySelectorAll('[data-sim-setup-menu]').forEach(button => {
       button.addEventListener('click', event => {
         const rowKey = event.currentTarget.dataset.simSetupMenu;
@@ -9312,7 +10664,7 @@ export class App {
           const rawValue = Number(input.value);
           if (field === 'sensingStrength' || field === 'sensingThreshold') {
             value = Number.isFinite(rawValue) ? _clamp(rawValue, 0, 1) : undefined;
-          } else if (field === 'sensingRadius') {
+          } else if (field === 'sensingRadius' || field === 'sensingFitRadius') {
             value = Number.isFinite(rawValue) ? Math.max(0, rawValue) : undefined;
           } else if (field === 'sensingUpdateFrames') {
             value = Number.isFinite(rawValue) ? Math.max(1, Math.min(50, Math.round(rawValue))) : undefined;
@@ -9365,17 +10717,20 @@ export class App {
     for (const session of sessions) {
       const row = rowsById.get(session.id);
       if (!row) continue;
-      session.vars = _normalizeSimulationVars({
+      const rowRules = normalizeSensingRules(row.sensingRules);
+      session.vars = _normalizeSimulationVars(_syncSensingFlatFromRule0({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingMode: row.sensingMode,
         sensingChannel: row.sensingChannel,
         sensingStrength: row.sensingStrength,
         sensingRadius: row.sensingRadius,
+        sensingFitRadius: row.sensingFitRadius,
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
-      });
+        sensingRules: rowRules.length ? rowRules : undefined,
+      }, rowRules));
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
     this.simulation.sessions = sessions;
@@ -9439,17 +10794,20 @@ export class App {
     for (const session of sessions) {
       const row = rowsById.get(session.id);
       if (!row) continue;
-      session.vars = _normalizeSimulationVars({
+      const rowRules = normalizeSensingRules(row.sensingRules);
+      session.vars = _normalizeSimulationVars(_syncSensingFlatFromRule0({
         ...session.vars,
         sensingEnabled: row.sensingEnabled,
         sensingMode: row.sensingMode,
         sensingChannel: row.sensingChannel,
         sensingStrength: row.sensingStrength,
         sensingRadius: row.sensingRadius,
+        sensingFitRadius: row.sensingFitRadius,
         sensingThreshold: row.sensingThreshold,
         sensingUpdateFrames: row.sensingUpdateFrames,
         sensingSource: row.sensingSource,
-      });
+        sensingRules: rowRules.length ? rowRules : undefined,
+      }, rowRules));
       session.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
     }
     return {
@@ -9476,10 +10834,12 @@ export class App {
       row.sensingChannel = 'darkness';
       row.sensingStrength = 0.5;
       row.sensingRadius = 20;
+      row.sensingFitRadius = 0;
       row.sensingThreshold = 0.1;
       row.sensingUpdateFrames = 30;
       row.sensingSource = 'below';
       row.sensingLayerIds = [];
+      row.sensingRules = null;
       row.unresolvedLayers = [];
       row.unresolvedSensingLayers = [];
     });
@@ -9559,6 +10919,7 @@ export class App {
           ...session,
           vars: _normalizeSimulationVars(session.vars),
           sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+          savedPlayback: _normalizeSimulationSavedPlayback(session.savedPlayback),
         })),
     );
     const sessionIndexById = new Map(sessions.map((session, index) => [session.id, index]));
@@ -9617,10 +10978,18 @@ export class App {
           sensingChannel: SIM_SENSING_CHANNELS.includes(sessionVars.sensingChannel) ? sessionVars.sensingChannel : 'darkness',
           sensingStrength: Number.isFinite(sessionVars.sensingStrength) ? _clamp(sessionVars.sensingStrength, 0, 1) : 0.5,
           sensingRadius: Number.isFinite(sessionVars.sensingRadius) ? Math.max(0, sessionVars.sensingRadius) : 20,
+          sensingFitRadius: Number.isFinite(sessionVars.sensingFitRadius) ? Math.max(0, sessionVars.sensingFitRadius) : 0,
           sensingThreshold: Number.isFinite(sessionVars.sensingThreshold) ? _clamp(sessionVars.sensingThreshold, 0, 1) : 0.1,
           sensingUpdateFrames: Number.isFinite(sessionVars.sensingUpdateFrames) ? Math.max(1, Math.min(50, Math.round(sessionVars.sensingUpdateFrames))) : 30,
           sensingSource: SIM_SENSING_SOURCES.includes(sessionVars.sensingSource) ? sessionVars.sensingSource : 'below',
           sensingLayerIds: sensingMap.resolved,
+          sensingRules: Array.isArray(sessionVars.sensingRules) && sessionVars.sensingRules.length
+            ? normalizeSensingRules(sessionVars.sensingRules).map(rule => {
+                if (rule.source !== 'selected' || !rule.layerIds.length) return rule;
+                const ruleMap = this._mapImportedSimulationSetupLayerIds(rule.layerIds, normalized.importedSetupMeta?.sourceLayers);
+                return { ...rule, layerIds: ruleMap.resolved };
+              })
+            : null,
           unresolvedLayers: binding?.unresolvedLayers || [],
           unresolvedSensingLayers: sensingMap.missing,
         };
@@ -9801,29 +11170,36 @@ export class App {
     runtime.vars = _normalizeSimulationVars(session.vars);
     runtime.paramSnapshot = _sanitizeSimulationSessionData(session.paramSnapshot) || {};
     runtime.sensingSourceSelection = _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection);
+    runtime.savedPlayback = this._getSimulationSavedPlaybackForRuntime(session);
     runtime.layerId = layer.id;
     runtime.sessionIndex = this.simulation.sessions.indexOf(session);
     runtime.sessionName = session.name;
     runtime.leaderX = this.W * 0.5;
     runtime.leaderY = this.H * 0.5;
     runtime.strokeFrame = 0;
+    runtime.playbackCursor = 0;
+    runtime.playbackComplete = false;
     this._withSimulationRuntimeContext(runtime, () => {
       runtime.brushInstance.resetSimulationPlaybackState?.({ compositePreview: false });
       this._normalizeSimulationData();
       const runtimeParams = this.getP();
       this._constrainSimulationDataToBounds(runtime.brush, runtimeParams);
-      const allSpawns = this._ensureSimulationSpawns(runtime.brush);
-      const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
-      const spawn = spawns[0] || allSpawns[0];
-      for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
-        pathItem.travelDistance = 0;
+      if (runtime.savedPlayback) {
+        runtime.brushInstance.prepareSavedPlayback?.(runtime.savedPlayback, runtimeParams);
+      } else {
+        const allSpawns = this._ensureSimulationSpawns(runtime.brush);
+        const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
+        const spawn = spawns[0] || allSpawns[0];
+        for (const pathItem of this._getSimulationBrushData('boid')?.paths || []) {
+          pathItem.travelDistance = 0;
+        }
+        this._updateSimulationLeader(0, runtimeParams);
+        runtime.leaderX = this.leaderX;
+        runtime.leaderY = this.leaderY;
+        runtime.brushInstance.onDown?.(spawn.x, spawn.y, 1);
+        runtime.brushInstance.configureSimulation?.(this._getSimulationBrushData(runtime.brush), runtimeParams);
+        runtime.brushInstance.ensureSimulationSpawnAppearance?.(runtimeParams);
       }
-      this._updateSimulationLeader(0, runtimeParams);
-      runtime.leaderX = this.leaderX;
-      runtime.leaderY = this.leaderY;
-      runtime.brushInstance.onDown?.(spawn.x, spawn.y, 1);
-      runtime.brushInstance.configureSimulation?.(this._getSimulationBrushData(runtime.brush), runtimeParams);
-      runtime.brushInstance.ensureSimulationSpawnAppearance?.(runtimeParams);
     });
   }
 
@@ -9876,12 +11252,15 @@ export class App {
         vars: _normalizeSimulationVars(session.vars),
         paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
         sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+        savedPlayback: this._getSimulationSavedPlaybackForRuntime(session),
         layerId: layer.id,
         sessionIndex: binding.sessionIndex,
         sessionName: session.name,
         leaderX: this.W * 0.5,
         leaderY: this.H * 0.5,
         strokeFrame: 0,
+        playbackCursor: 0,
+        playbackComplete: false,
         brushInstance: null,
       };
       try {
@@ -9901,8 +11280,29 @@ export class App {
   }
 
   _stepMultiSessionSimulation(elapsed, p) {
+    let liveRuntimeCount = 0;
+    let savedRuntimeCount = 0;
+    let savedRuntimeCompleteCount = 0;
     for (const runtime of this.simulation.runtimeSessions) {
       if (!runtime?.brushInstance) continue;
+      if (runtime.savedPlayback) {
+        savedRuntimeCount++;
+        if (runtime.playbackCursor >= (runtime.savedPlayback.frames?.length || 0)) {
+          runtime.playbackComplete = true;
+          savedRuntimeCompleteCount++;
+          continue;
+        }
+        this._withSimulationRuntimeContext(runtime, () => {
+          const runtimeParams = this.getP();
+          this._applySimulationEphemeralFade(runtimeParams);
+          runtime.brushInstance.renderSavedPlaybackFrame?.(runtime.savedPlayback, runtime.playbackCursor, runtimeParams);
+        });
+        runtime.playbackCursor += 1;
+        runtime.playbackComplete = runtime.playbackCursor >= runtime.savedPlayback.frames.length;
+        if (runtime.playbackComplete) savedRuntimeCompleteCount++;
+        continue;
+      }
+      liveRuntimeCount++;
       this._withSimulationRuntimeContext(runtime, () => {
         const runtimeParams = this.getP();
         this._updateSimulationLeader(elapsed, runtimeParams);
@@ -9913,6 +11313,12 @@ export class App {
       });
     }
     this._updateSimulationLeader(elapsed, p);
+    const allSavedPlaybackComplete = savedRuntimeCount > 0
+      && liveRuntimeCount === 0
+      && savedRuntimeCompleteCount === savedRuntimeCount;
+    if (allSavedPlaybackComplete && this.simulation.running) {
+      this._pauseSimulationAtSavedPlaybackEnd();
+    }
   }
 
   _teardownMultiSessionRuntimeSessions({ commitPreview = false, cache = false } = {}) {
@@ -10087,6 +11493,7 @@ export class App {
         case 'damping':
           return value.toFixed(2);
         case 'sensingRadius':
+        case 'sensingFitRadius':
           return `${Math.round(value)}px`;
         case 'sensingUpdateFrames':
           return `${Math.round(value)}f`;
@@ -10105,12 +11512,16 @@ export class App {
         case 'simPointStrength':
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
-        case 'simEphemeralFade': {
+        case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold': {
           const max = {
             simPointStrength: 2,
             simEdgeForce: 2,
             simPheroPaintStrength: 1,
             simEphemeralFade: 3,
+            sensingStrength: 1,
+            sensingThreshold: 1,
           }[id] ?? 2;
           return { value: raw / 100, min: 0, max, step: 0.01, digits: 2 };
         }
@@ -10125,6 +11536,8 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
         case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold':
           return displayValue * 100;
         default:
           return displayValue;
@@ -10166,7 +11579,14 @@ export class App {
         case 'simEdgeForce':
         case 'simPheroPaintStrength':
         case 'simEphemeralFade':
+        case 'sensingStrength':
+        case 'sensingThreshold':
           return (value / 100).toFixed(2);
+        case 'sensingRadius':
+        case 'sensingFitRadius':
+          return `${Math.round(value)}px`;
+        case 'sensingUpdateFrames':
+          return `${Math.round(value)}f`;
         case 'simBoundsMargin':
           return Math.round(value) >= SIM_NEAR_INFINITE_BOUNDS_MARGIN
             ? 'Near-infinite'
@@ -10185,6 +11605,20 @@ export class App {
         <input type="checkbox" data-sim-param="${id}" ${document.getElementById(id)?.checked ? 'checked' : ''}>
       </label>
       ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
+    // Mirrors a sidebar <select> control: options are cloned from the source
+    // element so both stay in sync through the data-sim-param wiring.
+    const simPanelSelect = ({ id, label, desc }) => {
+      const source = document.getElementById(id);
+      const options = source
+        ? Array.from(source.options).map(opt => `<option value="${_escapeHtml(opt.value)}" ${opt.value === source.value ? 'selected' : ''}>${_escapeHtml(opt.textContent)}</option>`).join('')
+        : '';
+      return `
+      <label class="sim-inspector-row" style="margin:4px 0">
+        <span>${label}</span>
+        <select class="sim-stage-select" style="max-width:150px" data-sim-param="${id}" data-sim-input-kind="select">${options}</select>
+      </label>
+      ${desc ? `<div class="sim-inspector-note" style="margin-top:2px">${desc}</div>` : ''}`;
+    };
     const simPanelSlider = ({ id, label, min, max, value, desc, step = 1 }) => {
       const numberMeta = getSimParamDisplayMeta(id, value);
       const numberMin = numberMeta.min ?? getSimParamDisplayMeta(id, min).value;
@@ -10315,8 +11749,23 @@ export class App {
       <div class="sim-inspector-note">Motion overrides affect already-running boids without forcing a respawn.</div>
       ${simVarSlider({ id: 'maxSpeed', label: 'Max Speed', min: 1, max: 30, step: 0.5, scale: 0.5, value: maxSpeedValue })}
       ${simVarSlider({ id: 'damping', label: 'Damping', min: 80, max: 100, step: 0.5, scale: 0.01, value: dampingValue })}`;
-    const boidSensingBody = `
-      <div class="sim-inspector-note">Use the sidebar Pixel Sensing controls while this session is loaded. Those drawing-mode controls are saved with the active simulation session and applied per runtime during multi-session playback.</div>`;
+    const sensingSourceValue = document.getElementById('sensingSource')?.value || 'below';
+    const sensingBody = `
+      <div class="sim-inspector-note">These mirror the sidebar Pixel Sensing controls. Changes apply immediately and are saved with the active simulation session.</div>
+      ${simPanelCheckbox({ id: 'sensingEnabled', label: 'Enable' })}
+      ${simPanelSelect({ id: 'sensingMode', label: 'Mode' })}
+      ${simPanelSelect({ id: 'sensingChannel', label: 'Channel' })}
+      ${simPanelSlider({ id: 'sensingStrength', label: 'Strength', min: 0, max: 100, value: Math.round((p.sensingStrength ?? 0.5) * 100) })}
+      ${simPanelSlider({ id: 'sensingRadius', label: 'Radius', min: 5, max: 80, value: Math.round(p.sensingRadius ?? 20) })}
+      ${simPanelSlider({ id: 'sensingFitRadius', label: 'Fit Radius', min: 0, max: 80, value: Math.round(p.sensingFitRadius ?? 0) })}
+      ${simPanelSlider({ id: 'sensingThreshold', label: 'Threshold', min: 0, max: 100, value: Math.round((p.sensingThreshold ?? 0.1) * 100) })}
+      ${simPanelSlider({ id: 'sensingUpdateFrames', label: 'Update Every', min: 1, max: 50, value: Math.round(p.sensingUpdateFrames ?? 30), desc: 'Frames between sensing refreshes for Active and All sources' })}
+      ${simPanelSelect({ id: 'sensingSource', label: 'Source' })}
+      <div class="sim-inspector-actions" style="margin-top:4px">
+        <button data-sim-sensing-pick-layers="1">${sensingSourceValue === 'selected' ? 'Edit Layers' : 'Pick Layers'}</button>
+        <button data-sim-sensing-edit-rules="1">Edit Rules…</button>
+      </div>
+      <div class="sim-inspector-note" data-sim-sensing-layer-summary="1">${_escapeHtml(`${sensingSourceValue === 'selected' ? 'Using: ' : 'Custom: '}${this._buildSensingLayerSelectionSummary()}`)}</div>`;
     const activeSavedSession = this.simulation.activeSessionIndex >= 0
       ? this.simulation.sessions[this.simulation.activeSessionIndex] || null
       : null;
@@ -10334,6 +11783,8 @@ export class App {
             const session = this.simulation.sessions[row.sessionIndex] || null;
             if (!session) return '';
             const isEditing = row.sessionIndex === this.simulation.activeSessionIndex;
+            const playbackStatus = this._getSimulationSavedPlaybackStatus(session);
+            const playbackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
             const normalizedLayerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
             const selectedLayerIdSet = new Set(normalizedLayerIds);
             const selectedSensingLayerSet = new Set(row.sensingLayerIds);
@@ -10349,6 +11800,7 @@ export class App {
                       <span class="sim-stage-card-title">${_escapeHtml(session.name || `Session ${row.sessionIndex + 1}`)}</span>
                       ${isEditing ? '<span class="sim-stage-badge active">Draft loaded</span>' : ''}
                       <span class="sim-stage-badge${row.enabled ? '' : ' muted'}">${row.enabled ? 'Mounted' : 'Off'}</span>
+                      <span class="sim-stage-badge ${playbackBadgeTone}">${_escapeHtml(playbackStatus.badge)}</span>
                     </div>
                     <div class="sim-stage-card-meta">Stage: ${_escapeHtml(routeSummary)} · Sensing: ${_escapeHtml(sensingSummary)} · ${routeCount} route${routeCount === 1 ? '' : 's'}</div>
                   </div>
@@ -10410,18 +11862,25 @@ export class App {
                       }).join('')}
                     </div>
                   </div>
+                  <div class="sim-inspector-note">${_escapeHtml(playbackStatus.summary)}</div>
                 </div>
               </details>`;
           }).join('')}</div>`;
         })()
       : '';
+    const activePlaybackStatus = this._getSimulationSavedPlaybackStatus(activeSavedSession);
+    const activePlaybackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(activePlaybackStatus);
     const savedSessionControls = isBoid
       ? `
         <div class="sim-inspector-note">Use the brush sidebar or this editor to keep session-specific boid settings, guide edits, and stage routing together.</div>
         ${renderInspectorSubgroup('Active Session Draft', `
           <div class="sim-stage-draft">
             <div class="sim-stage-draft-title">${activeSavedSession ? `Editing saved session “${_escapeHtml(activeSavedSession.name || 'Untitled')}”` : 'Editing unsaved draft session'}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px;">
+              <span class="sim-stage-badge ${activePlaybackBadgeTone}">${_escapeHtml(activePlaybackStatus.badge)}</span>
+            </div>
             <div class="sim-inspector-note">${_escapeHtml(sessionContext.editorSummary)}</div>
+            <div class="sim-inspector-note">${_escapeHtml(activePlaybackStatus.summary)}</div>
             <label class="sim-inspector-row">
               <span>
                 <span>Multi-Session Playback</span>
@@ -10455,9 +11914,9 @@ export class App {
           renderInspectorSubgroup('Motion', boidMotionBody),
         ])
       : '';
-    const pixelSensingSection = isBoid
-      ? renderTypeSection('pixelSensing', 'Simulation Pixel Sensing', [
-          renderInspectorSubgroup('Per-Session Sensing', boidSensingBody),
+    const pixelSensingSection = (isBoid || this.activeBrush === 'ant')
+      ? renderTypeSection('pixelSensing', 'Pixel Sensing', [
+          renderInspectorSubgroup('Sensing Controls', sensingBody),
         ])
       : '';
     const pointSection = renderTypeSection('pointSettings', 'Points', [
@@ -11034,11 +12493,16 @@ export class App {
       const paramId = el.dataset.simParam;
       const source = document.getElementById(paramId);
       const isBooleanParam = (el.type === 'checkbox') || (source?.type === 'checkbox');
+      const isSelectParam = el.tagName === 'SELECT' || source?.tagName === 'SELECT';
       const inputKind = el.dataset.simInputKind || (el.type === 'number' ? 'number' : 'range');
       const peers = () => Array.from(panel.querySelectorAll(`[data-sim-param="${paramId}"]`));
       const syncParamUI = value => {
         if (isBooleanParam) {
           peers().forEach(peer => { peer.checked = !!value; });
+          return;
+        }
+        if (isSelectParam) {
+          peers().forEach(peer => { peer.value = String(value); });
           return;
         }
         const label = panel.querySelector(`[data-sim-param-label="${paramId}"]`);
@@ -11056,6 +12520,7 @@ export class App {
       };
       const initialParamValue = (() => {
         if (isBooleanParam) return !!source?.checked;
+        if (isSelectParam) return String(source?.value ?? el.value ?? '');
         const rawValue = Number(source?.value ?? el.value);
         return Number.isFinite(rawValue) ? rawValue : 0;
       })();
@@ -11066,6 +12531,13 @@ export class App {
           const nextChecked = !!el.checked;
           source.checked = nextChecked;
           syncParamUI(nextChecked);
+          source.dispatchEvent(new Event(eventName, { bubbles: true }));
+          return;
+        }
+        if (isSelectParam) {
+          const nextSelected = String(el.value);
+          source.value = nextSelected;
+          syncParamUI(nextSelected);
           source.dispatchEvent(new Event(eventName, { bubbles: true }));
           return;
         }
@@ -11114,6 +12586,12 @@ export class App {
         forward('input');
       });
       el.addEventListener('change', () => forward('change'));
+    });
+    panel.querySelectorAll('[data-sim-sensing-pick-layers]').forEach(button => {
+      button.addEventListener('click', () => this.toggleSensingSourcePicker?.(button));
+    });
+    panel.querySelectorAll('[data-sim-sensing-edit-rules]').forEach(button => {
+      button.addEventListener('click', () => this._openSensingRulesModal?.({ type: 'drawing' }));
     });
     queryAllInRoots('[data-sim-field]').forEach(el => {
       const field = el.dataset.simField;
@@ -11457,6 +12935,7 @@ export class App {
     }
     this._ensureSimulationSpawns();
     if (wasEnabled && !next) this._restoreSimulationPriorDrawSeek();
+    this._toggleBrushSections(this.activeBrush);
     this._syncSimulationUI();
     if (next && !overlayHudEnabled) this._showSimulationControlsDrawer();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
@@ -11469,6 +12948,7 @@ export class App {
   }
 
   _syncSimulationUI() {
+    this._syncForceVizUI();
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'pheromone') this.simulation.editorTool = 'spawn';
@@ -11552,6 +13032,15 @@ export class App {
     }
     const resetBtn = document.getElementById('simResetBtn');
     if (resetBtn) resetBtn.disabled = !this.simulation.running && !this.simulation.paused && !(this.simulation.frameCount > 0);
+    const forceVizBtn = document.getElementById('simForceVizToggle');
+    if (forceVizBtn) {
+      const forceVizOn = this.simulation.mode === 'forceVisualization';
+      const forceVizLabel = forceVizOn ? 'Force Visualization mode on' : 'Force Visualization mode off';
+      forceVizBtn.classList.toggle('active', forceVizOn);
+      forceVizBtn.setAttribute('aria-pressed', forceVizOn ? 'true' : 'false');
+      forceVizBtn.setAttribute('aria-label', forceVizLabel);
+      forceVizBtn.title = forceVizLabel;
+    }
     const simTabActive = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="simulation"]')?.classList.contains('active');
     inspectorButtons.forEach(button => button?.classList.toggle('active', !!simTabActive));
     guidesButtons.forEach(button => {
@@ -11576,16 +13065,33 @@ export class App {
       button.disabled = !canStepPaths;
     });
     const status = document.getElementById('simStatus');
+    const playbackBadge = document.getElementById('simPlaybackReadyBadge');
+    const routingSummary = document.getElementById('simRoutingSummary');
     if (status) {
       const context = this._getSimulationSessionContextSummary();
       const base = this.simulation.running ? 'Running' : (this.simulation.paused ? 'Paused' : 'Ready');
       const extras = [];
+      const savedRuntimeStats = this._getSavedPlaybackRuntimeStats();
       const sessionLabel = context.playbackLabel || 'Session';
       if (this.simulation.heatmapVisible) extras.push('Heatmap');
+      if (savedRuntimeStats.total > 0) {
+        extras.push(savedRuntimeStats.completed >= savedRuntimeStats.total
+          ? 'Saved complete'
+          : `Saved ${savedRuntimeStats.completed}/${savedRuntimeStats.total}`);
+      }
       if (this._simulationExport.armedOnStart) extras.push('REC Armed');
       if (this._simulationExport.recording) extras.push('REC');
       const stateLabel = extras.length ? `${base} · ${extras.join(' · ')}` : base;
       status.textContent = `${sessionLabel} · ${stateLabel}`;
+      if (playbackBadge) {
+        const playbackStatus = this._getSimulationSavedPlaybackStatus(context.session);
+        const badgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
+        playbackBadge.textContent = context.playbackBadge;
+        playbackBadge.className = `sim-playback-readout ${badgeTone}`;
+      }
+      if (routingSummary) {
+        routingSummary.textContent = this._getSimulationPlaybackBarSummary(context);
+      }
     }
     this._syncSimulationSessionContextUi();
     this._refreshSimulationExportUi();
@@ -11634,6 +13140,7 @@ export class App {
     this._constrainSimulationDataToBounds(this.activeBrush);
     this.stopSimulation(false);
     this.simulation.starting = true;
+    let diagnostics = null;
     try {
       this.simulation.running = true;
       this.simulation.paused = false;
@@ -11645,7 +13152,8 @@ export class App {
       this.strokeFrame = 0;
 
       if (this._shouldUseMultiSessionPlayback()) {
-        const diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
+        this._simulationSavedPlaybackCapture = null;
+        diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
         if (diagnostics.healedBindings) this.saveSession();
         if (!diagnostics.runnableRoutes.length) {
           this.simulation.running = false;
@@ -11667,6 +13175,7 @@ export class App {
         brush.deactivate?.();
         this.simulation.runtimeSessions = runtimeSessions;
       } else {
+        this._beginSimulationSavedPlaybackCapture();
         this.simulation.runtimeSessions = [];
         const allSpawns = this._ensureSimulationSpawns();
         const spawns = allSpawns.filter(spawn => spawn.enabled !== false);
@@ -11678,6 +13187,20 @@ export class App {
         }
         this.simulation.runtimeStrokeStarts = this._collectSimulationStrokeStartSpawns(this.activeBrush, simParams);
         const launchSpawn = this.simulation.runtimeStrokeStarts[0] || spawn;
+        const bindForceVizSpawn = this.simulation.mode === 'forceVisualization'
+          && this.activeBrush === 'boid'
+          && spawn
+          && Array.isArray(this.simulation.forceViz?.scenarios);
+        if (bindForceVizSpawn) {
+          const activeScenario = this._getActiveForceVizScenario();
+          const activeRoutes = activeScenario?.routes || [];
+          const activeGroups = activeScenario?.groups || [];
+          const boundSpawnIds = new Set(activeRoutes.filter(route => route.enabled !== false).map(route => route.groupId));
+          const primaryGroup = activeGroups.find(group => boundSpawnIds.has(group.id) && group.spawnId != null)
+            || activeGroups.find(group => group.spawnId != null)
+            || null;
+          brush._primarySpawnId = primaryGroup?.spawnId ?? spawn.id ?? null;
+        }
         this._updateSimulationLeader(0, simParams);
         brush.onDown?.(launchSpawn.x, launchSpawn.y, 1);
         brush.configureSimulation?.(this._getSimulationBrushData(), simParams);
@@ -11687,7 +13210,7 @@ export class App {
       this._syncSimulationUI();
       if (announce) {
         this.showToast(this.simulation.runtimeSessions.length
-          ? `Simulation running (${this.simulation.runtimeSessions.length} sessions)`
+          ? this._buildSimulationRunToastMessage(this.simulation.runtimeSessions, diagnostics?.runnableRoutes?.length || 0)
           : 'Simulation running');
       }
     } catch (error) {
@@ -11712,7 +13235,9 @@ export class App {
     this.simulation.paused = true;
     this.isDrawing = false;
     this._syncSimulationUI();
-    this.showToast('Simulation paused');
+    this.showToast(this.simulation.runtimeSessions.length
+      ? `Simulation paused (${this.simulation.runtimeSessions.length} sessions)`
+      : 'Simulation paused');
   }
 
   resumeSimulation() {
@@ -11721,7 +13246,9 @@ export class App {
     this.simulation.running = true;
     this.isDrawing = true;
     this._syncSimulationUI();
-    this.showToast('Simulation resumed');
+    this.showToast(this.simulation.runtimeSessions.length
+      ? `Simulation resumed (${this.simulation.runtimeSessions.length} sessions)`
+      : 'Simulation resumed');
   }
 
   stopSimulation(showToast = true) {
@@ -11746,6 +13273,8 @@ export class App {
     this.simulation.motionPathVelocity = { x: 0, y: 0 };
     this.isDrawing = false;
     this.isTapering = false;
+    this._simulationSavedPlaybackCapture = null;
+    if (wasActive && this.simulation.mode === 'forceVisualization') this._applyForceVizExitBehaviorOnStop();
     this._syncSimulationUI();
     if (showToast && wasActive) this.showToast('Simulation stopped');
   }
@@ -12562,18 +14091,18 @@ export class App {
         ctx.stroke();
         ctx.restore();
       }
-      ctx.fillStyle = 'rgba(18,18,22,0.55)';
+      ctx.fillStyle = 'rgba(18,18,22,0.72)';
       ctx.beginPath();
       ctx.arc(badge.x, badge.y, ui.deleteBadgeRadius, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.34)';
       ctx.lineWidth = Math.max(1, ui.scale);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
       ctx.font = `${ui.deleteBadgeFont}px Segoe UI, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('×', badge.x, badge.y + 0.5);
+      ctx.fillText('×', badge.x, badge.y + (0.5 * ui.scale));
     };
 
     const drawOverlayChip = (button, label) => {
@@ -12943,25 +14472,13 @@ export class App {
             }, 'Format');
           }
           for (const button of speedControls.deleteButtons) {
-            drawOverlayChip({ ...button, width: 20, height: 20 }, '×');
+            drawDelete('paths', 'pathSpeedPoint', { id: `speed:${button.speedPointId}` }, button.x, button.y);
           }
           for (const button of speedControls.radiusDeleteButtons) {
-            drawOverlayChip({
-              ...button,
-              width: 20,
-              height: 20,
-              strokeStyle: 'rgba(255,105,214,0.82)',
-              textStyle: 'rgba(255,222,246,0.98)',
-            }, '×');
+            drawDelete('paths', 'pathRadiusPoint', { id: `radius:${button.radiusPointId}` }, button.x, button.y);
           }
           for (const button of speedControls.strengthDeleteButtons) {
-            drawOverlayChip({
-              ...button,
-              width: 20,
-              height: 20,
-              strokeStyle: 'rgba(100,220,255,0.82)',
-              textStyle: 'rgba(196,244,255,0.98)',
-            }, '×');
+            drawDelete('paths', 'pathStrengthPoint', { id: `strength:${button.strengthPointId}` }, button.x, button.y);
           }
           const drawToggleChip = (button, active) => {
             if (!button) return;
@@ -15245,14 +16762,14 @@ export class App {
     this._ensureSimulationSpawns(name);
     this._syncSimulationUI();
     this._syncMotionPathUI();
+    this._refreshSettingsManagementUi?.();
     this._paramsDirty = true;
   }
 
   _toggleBrushSections(brush) {
     document.querySelectorAll('[data-brushes]').forEach(el => {
       const allowed = el.dataset.brushes.split(' ');
-      const shouldShow = allowed.includes(brush)
-        && !(el.dataset.section === 'sensing' && this.simulation.enabled && this._isMotionBrush(brush));
+      const shouldShow = allowed.includes(brush);
       el.classList.toggle('brush-hidden', !shouldShow);
     });
   }
@@ -15506,6 +17023,9 @@ export class App {
       source.dispatchEvent(new Event('change', { bubbles: true }));
       this._syncSimulationUI();
     });
+    document.getElementById('simForceVizToggle')?.addEventListener('click', () => {
+      this._setSimulationMode(this.simulation.mode === 'forceVisualization' ? 'normal' : 'forceVisualization');
+    });
     document.getElementById('simSetupExplorerBtn')?.addEventListener('click', event => {
       this.toggleSimulationSessionRoutingPicker(event.currentTarget);
     });
@@ -15557,6 +17077,9 @@ export class App {
       this.simulation.hudCollapsed = !this.simulation.hudCollapsed;
       this._syncSimulationUI();
     });
+    document.getElementById('simModeSelect')?.addEventListener('change', event => {
+      this._setSimulationMode(event.target.value);
+    });
     ['simInspectorToggle', 'simDrawerInspectorToggle'].forEach(id => {
       document.getElementById(id)?.addEventListener('click', () => {
         // Toggle simulation tab visibility in right panel
@@ -15592,6 +17115,8 @@ export class App {
     });
     document.getElementById('simHelpClose')?.addEventListener('click', () => this._closeSimulationHelp());
     document.getElementById('simHelpBackdrop')?.addEventListener('click', () => this._closeSimulationHelp());
+    document.getElementById('forceVizHelpClose')?.addEventListener('click', () => this._closeForceVizHelp());
+    document.getElementById('forceVizHelpBackdrop')?.addEventListener('click', () => this._closeForceVizHelp());
     document.getElementById('simDistributePointsClose')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsBackdrop')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
     document.getElementById('simDistributePointsCancel')?.addEventListener('click', () => this._closeSimulationDistributeDialog());
@@ -15623,6 +17148,19 @@ export class App {
     document.getElementById('canvasSizeBtn')?.addEventListener('click', () => this._showCanvasSizeModal());
     document.getElementById('canvasSizeClose')?.addEventListener('click', () => this._hideCanvasSizeModal());
     document.getElementById('canvasSizeBackdrop')?.addEventListener('click', () => this._hideCanvasSizeModal());
+    document.getElementById('sensingRulesBtn')?.addEventListener('click', () => this._openSensingRulesModal({ type: 'drawing' }));
+    document.getElementById('sensingRulesClose')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesBackdrop')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesCancelBtn')?.addEventListener('click', () => this._closeSensingRulesModal());
+    document.getElementById('sensingRulesApplyBtn')?.addEventListener('click', () => this._applySensingRulesModal());
+    document.getElementById('sensingRulesResetBtn')?.addEventListener('click', () => this._resetSensingRulesModal());
+    document.getElementById('sensingRulesAddBtn')?.addEventListener('click', () => {
+      const state = this._sensingRulesModalState;
+      if (!state || state.rules.length >= MAX_SENSING_RULES) return;
+      const last = state.rules[state.rules.length - 1] || _sensingRuleFromFlat(this.getP(), this._serializeSensingSourceSelection());
+      state.rules.push(_normalizeSensingRule({ ...last, layerIds: [...(last.layerIds || [])] }));
+      this._renderSensingRulesModal();
+    });
     document.getElementById('workspaceJsonCloseAction')?.addEventListener('click', () => this._hideWorkspaceJsonModal());
     document.getElementById('workspaceJsonDocumentSelect')?.addEventListener('change', event => {
       this._workspaceJsonEditorDocKey = event.target.value || 'workspace';
@@ -15713,6 +17251,15 @@ export class App {
       } catch (error) {
         console.error('Workspace import failed:', error);
         this._setSimulationSetupStatus(error?.message || 'Workspace import failed.', 'error');
+      }
+    });
+    document.addEventListener('keydown', event => {
+      const modal = document.getElementById('sensingRulesModal');
+      if (!modal?.classList.contains('open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this._closeSensingRulesModal();
       }
     });
     document.addEventListener('keydown', event => {
@@ -16150,7 +17697,9 @@ export class App {
     // #topbar itself changes size (e.g. after show/hide of conditional buttons).
     window.addEventListener('resize', layout);
     window.addEventListener('orientationchange', layout);
-    new ResizeObserver(layout).observe(topbar);
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(layout).observe(topbar);
+    }
 
     layout();
   }
@@ -16735,6 +18284,7 @@ export class App {
   _onTouchMove(e) {
     if (this._pinchActive && e.touches.length === 2) {
       e.preventDefault();
+      this._forceVizCameraRuntime.lastManualInputAt = performance.now();
       const t0 = e.touches[0], t1 = e.touches[1];
       const dx = t1.clientX - t0.clientX;
       const dy = t1.clientY - t0.clientY;
@@ -16768,6 +18318,7 @@ export class App {
 
   _onWheel(e) {
     e.preventDefault();
+    this._forceVizCameraRuntime.lastManualInputAt = performance.now();
     // Shift+scroll = rotate view
     if (e.shiftKey) {
       const areaRect = document.getElementById('canvasArea').getBoundingClientRect();
@@ -17548,6 +19099,14 @@ export class App {
     }
     if ((this.isDrawing || this.simulation.running) && brush && brush.onFrame && !this._hasActiveMultiSessionPlayback()) {
       brush.onFrame(elapsed);
+      if (this.simulation.running && this.simulation.enabled && this.activeBrush === 'boid') {
+        this._syncSimulationSavedPlaybackCapture(brush);
+        // Force Visualization camera: resolves its target from the BoidBrush
+        // transient snapshot brush.onFrame() just refreshed, then smooths
+        // view state via the same _applyViewTransform() manual nav uses.
+        this._applyForceVizCameraFrame(brush, elapsed);
+        this._updateForceVizStatusText();
+      }
     } else if (!this.isDrawing && !this.simulation.running && !this.isTapering && brush && brush.onHoverFrame) {
       // Step hover simulation (boid flocking / bristle physics) without stamping
       // Skip during taper — taperFrame already steps the sim
@@ -18301,6 +19860,328 @@ export class App {
   // SENSING (for boid brush)
   // ========================================================
 
+  /**
+   * Compose the effective sensing rules array for the current drawing-mode
+   * params. Rule 0 always mirrors the flat sidebar controls (mode, channel,
+   * strength, threshold→rangeMin, source); the stored rule 0 keeps only its
+   * modal-exclusive fields (rangeMax, hue target/tolerance, enabled).
+   */
+  _composeSensingRules(flat) {
+    const layerIds = this._serializeSensingSourceSelection();
+    const flatRule = _sensingRuleFromFlat(flat, layerIds);
+    const stored = normalizeSensingRules(this._sensingRules);
+    if (!stored.length) return [flatRule];
+    stored[0] = Object.assign({}, flatRule, {
+      enabled: stored[0].enabled,
+      rangeMax: stored[0].rangeMax,
+      hueTarget: stored[0].hueTarget,
+      hueTolerance: stored[0].hueTolerance,
+      channel: stored[0].channel === 'hue' ? 'hue' : flatRule.channel,
+      rangeMin: Math.min(flatRule.rangeMin, stored[0].rangeMax),
+    });
+    return stored;
+  }
+
+  /** Replace the drawing-mode sensing rules (from the Sensing Rules modal). */
+  _setSensingRules(rules) {
+    const normalized = normalizeSensingRules(rules);
+    this._sensingRules = normalized.length ? normalized : null;
+    // Keep the flat sidebar controls in sync with rule 0 so legacy readers
+    // (presets, Ant Math mirrors, leader overrides) stay coherent.
+    const rule0 = normalized[0];
+    if (rule0) {
+      const setSel = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+      const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      setSel('sensingMode', rule0.mode);
+      if (SIM_SENSING_CHANNELS.includes(rule0.channel)) setSel('sensingChannel', rule0.channel);
+      setSel('sensingSource', rule0.source);
+      setVal('sensingStrength', Math.round(rule0.strength * 100));
+      setVal('sensingThreshold', Math.round(rule0.rangeMin * 100));
+      if (rule0.source === 'selected' && rule0.layerIds.length) {
+        this._setSensingSourceSelection(rule0.layerIds, { refreshUi: true, invalidate: false });
+      }
+      this._refreshSensingLayerSourceUi?.();
+    }
+    this.invalidateParams();
+    this._refreshSensingRulesSummary();
+    this._maybeAutoSaveSession?.();
+  }
+
+  /** Update the sidebar "Edit Rules…" summary text. */
+  _refreshSensingRulesSummary() {
+    const summary = document.getElementById('sensingRulesSummary');
+    if (!summary) return;
+    const rules = this.getP().sensingRules;
+    summary.textContent = this._sensingRules ? _describeSensingRules(rules) : '1 rule (from controls above)';
+  }
+
+  _openSensingRulesModal(scope = { type: 'drawing' }) {
+    const modal = document.getElementById('sensingRulesModal');
+    if (!modal) return;
+    let rules = [];
+    if (scope.type === 'simRow' && scope.row) {
+      rules = normalizeSensingRules(scope.row.sensingRules);
+      if (!rules.length) {
+        rules = [_sensingRuleFromFlat({
+          sensingMode: scope.row.sensingMode,
+          sensingChannel: scope.row.sensingChannel,
+          sensingStrength: scope.row.sensingStrength,
+          sensingThreshold: scope.row.sensingThreshold,
+          sensingSource: scope.row.sensingSource,
+        }, scope.row.sensingLayerIds)];
+      }
+    } else {
+      rules = normalizeSensingRules(this._sensingRules);
+      if (!rules.length) {
+        rules = [_sensingRuleFromFlat(this.getP(), this._serializeSensingSourceSelection())];
+      }
+      scope = { type: 'drawing' };
+    }
+    this._sensingRulesModalState = {
+      scope,
+      rules: normalizeSensingRules(rules).map(rule => ({ ...rule, layerIds: [...(rule.layerIds || [])] })),
+    };
+    this._renderSensingRulesModal();
+    modal.classList.add('open');
+    queueMicrotask(() => document.getElementById('sensingRulesAddBtn')?.focus());
+  }
+
+  _closeSensingRulesModal() {
+    document.getElementById('sensingRulesModal')?.classList.remove('open');
+    this._sensingRulesModalState = null;
+  }
+
+  _renderSensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    const list = document.getElementById('sensingRulesList');
+    if (!state || !list) return;
+    const sourceLabels = { below: 'Below', active: 'Active', all: 'All', selected: 'Selected Layers' };
+    const channelLabels = {
+      darkness: 'Darkness',
+      lightness: 'Lightness',
+      saturation: 'Saturation',
+      red: 'Red',
+      green: 'Green',
+      blue: 'Blue',
+      alpha: 'Alpha',
+      hue: 'Hue match',
+    };
+    const context = document.getElementById('sensingRulesModalContext');
+    if (context) {
+      context.textContent = state.scope.type === 'simRow'
+        ? `Simulation session ${(state.scope.row?.sessionIndex ?? 0) + 1}: ${state.scope.row?.name || 'Untitled'}`
+        : 'Drawing Mode';
+    }
+    const addBtn = document.getElementById('sensingRulesAddBtn');
+    if (addBtn) addBtn.disabled = state.rules.length >= MAX_SENSING_RULES;
+    const layerOptions = this.layers.map(layer => ({
+      id: layer.id,
+      label: layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer'),
+    }));
+    const pct = value => Math.round(_clamp(value, 0, 1) * 100);
+    list.innerHTML = state.rules.map((rule, index) => `
+      <div class="sensing-rule-card" data-sensing-rule-index="${index}">
+        <div class="sensing-rule-card-header">
+          <label class="sensing-rule-enabled">
+            <input type="checkbox" data-sensing-rule-field="enabled" ${rule.enabled ? 'checked' : ''}>
+            <span>Rule ${index + 1}</span>
+          </label>
+          <div class="sensing-rule-actions">
+            <button type="button" data-sensing-rule-action="duplicate" ${state.rules.length >= MAX_SENSING_RULES ? 'disabled' : ''}>Duplicate</button>
+            <button type="button" data-sensing-rule-action="delete" ${state.rules.length <= 1 ? 'disabled' : ''}>Delete</button>
+          </div>
+        </div>
+        <div class="sensing-rule-grid">
+          <label class="sensing-rule-field">
+            <span>Response</span>
+            <select data-sensing-rule-field="mode">
+              <option value="avoid" ${rule.mode === 'avoid' ? 'selected' : ''}>Avoid</option>
+              <option value="attract" ${rule.mode === 'attract' ? 'selected' : ''}>Attract</option>
+            </select>
+          </label>
+          <label class="sensing-rule-field">
+            <span>Channel</span>
+            <select data-sensing-rule-field="channel">
+              ${SENSING_RULE_CHANNELS.map(channel => `<option value="${_escapeHtml(channel)}" ${rule.channel === channel ? 'selected' : ''}>${_escapeHtml(channelLabels[channel] || channel)}</option>`).join('')}
+            </select>
+          </label>
+          ${rule.channel === 'hue' ? `
+            <label class="sensing-rule-field">
+              <span>Hue Target <span class="sensing-rule-value" data-sensing-rule-value="hueTarget">${Math.round(rule.hueTarget)}°</span></span>
+              <span class="sensing-rule-hue-row">
+                <input type="range" min="0" max="360" step="1" data-sensing-rule-field="hueTarget" value="${Math.round(rule.hueTarget)}">
+                <span class="sensing-rule-swatch" data-sensing-rule-swatch style="background:hsl(${Math.round(rule.hueTarget)},100%,50%);"></span>
+              </span>
+            </label>
+            <label class="sensing-rule-field">
+              <span>Hue Tolerance <span class="sensing-rule-value" data-sensing-rule-value="hueTolerance">${Math.round(rule.hueTolerance)}°</span></span>
+              <input type="range" min="1" max="180" step="1" data-sensing-rule-field="hueTolerance" value="${Math.round(rule.hueTolerance)}">
+            </label>
+          ` : ''}
+          <label class="sensing-rule-field">
+            <span>Range Min <span class="sensing-rule-value" data-sensing-rule-value="rangeMin">${rule.rangeMin.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="rangeMin" value="${pct(rule.rangeMin)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Range Max <span class="sensing-rule-value" data-sensing-rule-value="rangeMax">${rule.rangeMax.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="rangeMax" value="${pct(rule.rangeMax)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Strength <span class="sensing-rule-value" data-sensing-rule-value="strength">${rule.strength.toFixed(2)}</span></span>
+            <input type="range" min="0" max="100" step="1" data-sensing-rule-field="strength" value="${pct(rule.strength)}">
+          </label>
+          <label class="sensing-rule-field">
+            <span>Source</span>
+            <select data-sensing-rule-field="source">
+              ${SIM_SENSING_SOURCES.map(source => `<option value="${_escapeHtml(source)}" ${rule.source === source ? 'selected' : ''}>${_escapeHtml(sourceLabels[source] || source)}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${rule.source === 'selected' ? `
+          <div class="sensing-rule-field">
+            <span>Selected Layers</span>
+            <div class="sensing-rule-layer-list">
+              ${layerOptions.map(option => `
+                <label>
+                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(option.id) ? 'checked' : ''}>
+                  <span>${_escapeHtml(option.label)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+        <div class="sensing-rule-summary">${_escapeHtml(_describeSensingRule(rule))}</div>
+      </div>
+    `).join('');
+    const updateSummary = index => {
+      const card = list.querySelector(`[data-sensing-rule-index="${index}"]`);
+      const rule = state.rules[index];
+      if (!card || !rule) return;
+      const summary = card.querySelector('.sensing-rule-summary');
+      if (summary) summary.textContent = _describeSensingRule(rule);
+      card.querySelectorAll('[data-sensing-rule-value]').forEach(node => {
+        const field = node.dataset.sensingRuleValue;
+        node.textContent = field === 'hueTarget' || field === 'hueTolerance'
+          ? `${Math.round(rule[field])}°`
+          : rule[field].toFixed(2);
+      });
+      const swatch = card.querySelector('[data-sensing-rule-swatch]');
+      if (swatch) swatch.style.background = `hsl(${Math.round(rule.hueTarget)},100%,50%)`;
+    };
+    const updateField = event => {
+      const fieldEl = event.target.closest('[data-sensing-rule-field]');
+      const layerEl = event.target.closest('[data-sensing-rule-layer]');
+      if (!fieldEl && !layerEl) return;
+      const card = event.target.closest('[data-sensing-rule-index]');
+      const index = Number(card?.dataset.sensingRuleIndex);
+      const rule = state.rules[index];
+      if (!rule) return;
+      if (layerEl) {
+        const ids = new Set(rule.layerIds || []);
+        if (layerEl.checked) ids.add(layerEl.value);
+        else ids.delete(layerEl.value);
+        rule.layerIds = _normalizeSimulationSensingSourceSelection([...ids]);
+        updateSummary(index);
+        return;
+      }
+      const field = fieldEl.dataset.sensingRuleField;
+      if (field === 'enabled') rule.enabled = !!fieldEl.checked;
+      else if (field === 'mode') rule.mode = fieldEl.value === 'attract' ? 'attract' : 'avoid';
+      else if (field === 'channel') rule.channel = SENSING_RULE_CHANNELS.includes(fieldEl.value) ? fieldEl.value : 'darkness';
+      else if (field === 'source') rule.source = SIM_SENSING_SOURCES.includes(fieldEl.value) ? fieldEl.value : 'below';
+      else if (field === 'hueTarget') rule.hueTarget = _clamp(Number(fieldEl.value) || 0, 0, 360);
+      else if (field === 'hueTolerance') rule.hueTolerance = _clamp(Number(fieldEl.value) || 1, 1, 180);
+      else if (field === 'rangeMin') {
+        rule.rangeMin = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+        if (rule.rangeMin > rule.rangeMax) rule.rangeMax = rule.rangeMin;
+      } else if (field === 'rangeMax') {
+        rule.rangeMax = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+        if (rule.rangeMax < rule.rangeMin) rule.rangeMin = rule.rangeMax;
+      } else if (field === 'strength') {
+        rule.strength = _clamp((Number(fieldEl.value) || 0) / 100, 0, 1);
+      }
+      state.rules[index] = _normalizeSensingRule(rule);
+      if (field === 'channel' || field === 'source' || field === 'rangeMin' || field === 'rangeMax') this._renderSensingRulesModal();
+      else updateSummary(index);
+    };
+    list.oninput = event => {
+      if (event.target?.matches?.('input[type="range"]')) updateField(event);
+    };
+    list.onchange = event => {
+      if (!event.target?.matches?.('input[type="range"]')) updateField(event);
+    };
+    list.onclick = event => {
+      const button = event.target.closest('[data-sensing-rule-action]');
+      if (!button) return;
+      const card = button.closest('[data-sensing-rule-index]');
+      const index = Number(card?.dataset.sensingRuleIndex);
+      const rule = state.rules[index];
+      if (!rule) return;
+      if (button.dataset.sensingRuleAction === 'duplicate' && state.rules.length < MAX_SENSING_RULES) {
+        state.rules.splice(index + 1, 0, _normalizeSensingRule({ ...rule, layerIds: [...(rule.layerIds || [])] }));
+      } else if (button.dataset.sensingRuleAction === 'delete' && state.rules.length > 1) {
+        state.rules.splice(index, 1);
+      }
+      this._renderSensingRulesModal();
+    };
+  }
+
+  _applySensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    if (!state) return;
+    const rules = normalizeSensingRules(state.rules);
+    if (state.scope.type === 'simRow' && state.scope.row) {
+      const row = state.scope.row;
+      row.sensingRules = rules.length ? rules : null;
+      const rule0 = rules[0];
+      if (rule0) {
+        row.sensingMode = rule0.mode;
+        if (SIM_SENSING_CHANNELS.includes(rule0.channel)) row.sensingChannel = rule0.channel;
+        row.sensingStrength = rule0.strength;
+        row.sensingThreshold = rule0.rangeMin;
+        row.sensingSource = rule0.source;
+        if (rule0.source === 'selected') row.sensingLayerIds = _normalizeSimulationSensingSourceSelection(rule0.layerIds);
+      }
+      const updates = {
+        sensingRules: row.sensingRules || undefined,
+        sensingMode: row.sensingMode,
+        sensingStrength: row.sensingStrength,
+        sensingThreshold: row.sensingThreshold,
+        sensingSource: row.sensingSource,
+      };
+      if (SIM_SENSING_CHANNELS.includes(row.sensingChannel)) updates.sensingChannel = row.sensingChannel;
+      const session = this._syncSimulationSetupRowSensingVars(row, updates);
+      const sensingLayerIds = _normalizeSimulationSensingSourceSelection(row.sensingLayerIds);
+      if (session) session.sensingSourceSelection = sensingLayerIds;
+      const liveSession = this.simulation.sessions?.[row.sessionIndex];
+      if (liveSession) liveSession.sensingSourceSelection = sensingLayerIds;
+      this._renderSimulationSetupExplorer();
+      this._updateSimulationSetupSummary?.();
+    } else {
+      this._setSensingRules(rules);
+    }
+    this._closeSensingRulesModal();
+  }
+
+  _resetSensingRulesModal() {
+    const state = this._sensingRulesModalState;
+    if (!state) return;
+    if (state.scope.type === 'simRow' && state.scope.row) {
+      state.scope.row.sensingRules = null;
+      this._syncSimulationSetupRowSensingVars(state.scope.row, { sensingRules: undefined });
+      this._renderSimulationSetupExplorer();
+      this._updateSimulationSetupSummary?.();
+    } else {
+      this._setSensingRules([]);
+    }
+    this._closeSensingRulesModal();
+  }
+
   _serializeSensingSourceSelection() {
     const seen = new Set();
     const serialized = [];
@@ -18390,6 +20271,13 @@ export class App {
     }
     if (button) {
       button.textContent = sourceSelect?.value === 'selected' ? 'Edit Layers' : 'Pick Layers';
+    }
+    const inspectorPickBtn = document.querySelector('[data-sim-sensing-pick-layers]');
+    if (inspectorPickBtn) inspectorPickBtn.textContent = sourceSelect?.value === 'selected' ? 'Edit Layers' : 'Pick Layers';
+    const inspectorSummary = document.querySelector('[data-sim-sensing-layer-summary]');
+    if (inspectorSummary) {
+      const prefix = sourceSelect?.value === 'selected' ? 'Using: ' : 'Custom: ';
+      inspectorSummary.textContent = prefix + this._buildSensingLayerSelectionSummary();
     }
     if (this._sensingSourcePickerPanel?.classList.contains('open')) {
       this._renderSensingSourcePicker();
@@ -18566,8 +20454,13 @@ export class App {
     }
   }
 
-  buildSensingData(p = this.getP()) {
-    const src = p.sensingSource;
+  /**
+   * Composite the sensing source layers into RGBA ImageData.
+   * @param {Object} p - params (used for the default sensingSource)
+   * @param {Object} [override] - per-rule source override: { source, layerIds }
+   */
+  buildSensingData(p = this.getP(), override = null) {
+    const src = override?.source || p.sensingSource;
     const w = this.W * this.DPR, h = this.H * this.DPR;
     if (src === 'active') {
       // Read directly from the active layer bitmap; the reusable offscreen
@@ -18611,7 +20504,11 @@ export class App {
         drawLayer(l);
       }
     } else if (src === 'selected') {
-      const selectedIds = new Set(this._serializeSensingSourceSelection());
+      const selectedIds = new Set(
+        Array.isArray(override?.layerIds) && override.layerIds.length
+          ? override.layerIds
+          : this._serializeSensingSourceSelection()
+      );
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
         if (!selectedIds.has(l.id)) continue;
@@ -18879,11 +20776,11 @@ export class App {
 
   _captureSessionControls() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel select').forEach(el => {
-      if (el.id) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel input[type="text"], #settingsPanel select').forEach(el => {
+      if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {
-      if (el.id) controls[el.id] = el.value;
+      if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.value;
     });
     controls.primaryColor = this.primaryEl.value;
     controls.secondaryColor = this.secondaryEl.value;
@@ -18908,19 +20805,26 @@ export class App {
       inspectorCollapsed: this.simulation.inspectorCollapsed,
       inspectorSections: this.simulation.inspectorSections,
       editorTool: this.simulation.editorTool,
+      // 'normal' | 'forceVisualization' — config only, no runtimes/camera
+      // smoothing state. See _createDefaultForceVizState().
+      mode: this.simulation.mode,
+      forceViz: _deepClone(this.simulation.forceViz),
       brushData: this.simulation.brushData,
       nextId: this.simulation.nextId,
       vars: this.simulation.vars,
       sessions: this.simulation.sessions,
       activeSessionIndex: this.simulation.activeSessionIndex,
+      savedPlayback: this.simulation.savedPlayback,
       multiSessionEnabled: this.simulation.multiSessionEnabled,
       multiSessionBindings: this.simulation.multiSessionBindings,
     };
     controls._symmetryState = this._serializeSymmetryState();
     controls._sensingSourceSelection = this._serializeSensingSourceSelection();
+    controls._sensingRules = Array.isArray(this._sensingRules) ? normalizeSensingRules(this._sensingRules) : null;
     controls._motionPath = this._serializeMotionPathState();
     controls._canvasTextureState = this._serializeCanvasTextureState();
     controls._stampImageState = this._serializeCustomStampImageState();
+    controls._boidColorDist = this._sanitizeBoidColorDist(this._boidColorDist);
     return controls;
   }
 
@@ -19284,19 +21188,11 @@ export class App {
   }
 
   saveSession() {
+    if (this._suppressSessionPersistence) return;
     try {
       this._syncActiveSimulationSessionFromDraft();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this._captureSessionControls()));
     } catch { /* quota exceeded — ignore */ }
-  }
-
-  _readWorkspacePresets() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}');
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
   }
 
   _sanitizeWorkspacePresets(presets) {
@@ -19320,7 +21216,6 @@ export class App {
       exportedAt: new Date().toISOString(),
       appBuildId: APP_BUILD_ID,
       session: this._captureSessionControls(),
-      presets: this._readWorkspacePresets(),
       autosaveEnabled: autoSaveValue,
     };
     if (includeDocument) bundle.document = this._captureWorkspaceDocumentState();
@@ -19355,9 +21250,13 @@ export class App {
       throw new Error('Invalid workspace payload');
     }
     if (bundle.format === WORKSPACE_SETTINGS_FORMAT) {
+      const workspaceVersion = bundle.version == null ? 1 : bundle.version;
+      if (!Number.isInteger(workspaceVersion) || workspaceVersion < 1 || workspaceVersion > WORKSPACE_SETTINGS_VERSION) {
+        throw new Error(`Unsupported workspace version: ${workspaceVersion}`);
+      }
       return {
         session: bundle.session,
-        presets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : {},
+        legacyPresets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : null,
         autosaveValue: bundle.autosaveEnabled === true ? '1' : '0',
         document: bundle.document && typeof bundle.document === 'object' && !Array.isArray(bundle.document)
           ? _deepClone(bundle.document)
@@ -19367,7 +21266,7 @@ export class App {
     if (Object.prototype.hasOwnProperty.call(bundle, 'session') || Object.prototype.hasOwnProperty.call(bundle, 'presets')) {
       return {
         session: bundle.session,
-        presets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : this._readWorkspacePresets(),
+        legacyPresets: Object.prototype.hasOwnProperty.call(bundle, 'presets') ? bundle.presets : null,
         autosaveValue: bundle.autosaveEnabled === true || bundle.autosave === '1'
           ? '1'
           : (bundle.autosaveEnabled === false || bundle.autosave === '0' ? '0' : null),
@@ -19378,7 +21277,7 @@ export class App {
     }
     return {
       session: bundle,
-      presets: this._readWorkspacePresets(),
+      legacyPresets: null,
       autosaveValue: null,
       document: null,
     };
@@ -19395,7 +21294,9 @@ export class App {
       this._syncSelectionUI();
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized.session));
-    localStorage.setItem(PRESETS_KEY, JSON.stringify(this._sanitizeWorkspacePresets(normalized.presets)));
+    this._pendingLegacyWorkspacePresets = normalized.legacyPresets
+      ? this._sanitizeWorkspacePresets(normalized.legacyPresets)
+      : null;
     await this._restoreSession();
     if (normalized.document) {
       await this._restoreWorkspaceDocumentState(normalized.document);
@@ -19406,7 +21307,11 @@ export class App {
       localStorage.setItem(AUTOSAVE_STORAGE_KEY, autoSaveValue);
     } catch { /* ignore localStorage failures */ }
     if (checkbox) checkbox.checked = autoSaveValue === '1';
+    this._refreshSettingsManagementUi?.();
     this.compositeAllLayers({ forceFull: true });
+    if (this._pendingLegacyWorkspacePresets && Object.keys(this._pendingLegacyWorkspacePresets).length) {
+      this.showToast('Workspace opened · embedded legacy presets are available for explicit import');
+    }
     return true;
   }
 
@@ -19470,11 +21375,22 @@ export class App {
               controlState: _sanitizeSimulationSessionData(session.controlState) || {},
               paramSnapshot: _sanitizeSimulationSessionData(session.paramSnapshot) || {},
               sensingSourceSelection: _normalizeSimulationSensingSourceSelection(session.sensingSourceSelection),
+              savedPlayback: _normalizeSimulationSavedPlayback(session.savedPlayback),
             }));
         }
         this.simulation.activeSessionIndex = Number.isFinite(val?.activeSessionIndex) ? Math.round(val.activeSessionIndex) : -1;
+        this.simulation.savedPlayback = _normalizeSimulationSavedPlayback(val?.savedPlayback);
         this.simulation.multiSessionEnabled = !!val?.multiSessionEnabled;
         this.simulation.multiSessionBindings = Array.isArray(val?.multiSessionBindings) ? _deepClone(val.multiSessionBindings) : [];
+        // Older saves predate the submode entirely — missing `mode`/`forceViz`
+        // falls back to 'normal' plus the default scenario via normalization.
+        this.simulation.mode = val?.mode === 'forceVisualization' ? 'forceVisualization' : 'normal';
+        this.simulation.forceViz = val?.forceViz && typeof val.forceViz === 'object' ? _deepClone(val.forceViz) : null;
+        // A persisted session owns its own manual-view baseline. Discard any
+        // runtime snapshot from the previously open workspace; _restoreSession
+        // captures the restored view after `_view` has been applied.
+        this._forceVizManualViewSnapshot = null;
+        this._normalizeForceVizState();
         continue;
       }
       if (id === '_symmetryState') {
@@ -19483,6 +21399,16 @@ export class App {
       }
       if (id === '_sensingSourceSelection') {
         this._restoreSensingSourceSelection(val);
+        continue;
+      }
+      if (id === '_boidColorDist') {
+        this._boidColorDist = this._sanitizeBoidColorDist(val);
+        this.invalidateParams();
+        continue;
+      }
+      if (id === '_sensingRules') {
+        const restored = normalizeSensingRules(val);
+        this._sensingRules = restored.length ? restored : null;
         continue;
       }
       if (id === '_motionPath') {
@@ -19498,9 +21424,29 @@ export class App {
       }
       const el = document.getElementById(id);
       if (!el) continue;
+      // Self-persisted settings own a dedicated localStorage key; never let a
+      // (possibly stale) session snapshot override it — the snapshot can't fire
+      // the change handlers that apply their side effects (telemetry, wake
+      // lock, tab visibility, auto-save gating).
+      if (SELF_PERSISTED_CONTROL_IDS.has(id)) continue;
       if (el.type === 'checkbox') el.checked = !!val;
-      else el.value = val;
+      else if (el.tagName === 'SELECT') {
+        // Only apply values that match an existing option. Assigning an
+        // unknown value would blank the select (selectedIndex -1), which then
+        // gets re-captured as "" — keep the current/default option instead.
+        const target = String(val);
+        if (Array.from(el.options).some(opt => opt.value === target)) el.value = target;
+      } else {
+        el.value = val;
+        if (el.classList.contains('pressure-curve-value')) {
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
     }
+    // Keep the sensing-source revert tracker aligned with the restored value
+    // so the next user change reports the correct previous source.
+    const sensingSourceEl = document.getElementById('sensingSource');
+    if (sensingSourceEl) sensingSourceEl.dataset.prevValue = sensingSourceEl.value || 'below';
     this._normalizeSimulationSessionBindings();
     if (this.simulation.activeSessionIndex >= 0) {
       this._applySimulationSessionToDraft(this.simulation.sessions[this.simulation.activeSessionIndex]);
@@ -19565,6 +21511,9 @@ export class App {
         await this.resizeDocument(controls._docW, controls._docH, this.bgColorEl?.value || '#ffffff');
       }
       if (restoredView) this._applyViewState(restoredView);
+      this._forceVizManualViewSnapshot = this.simulation.mode === 'forceVisualization'
+        ? this._captureViewState()
+        : null;
       if (this.activeTool === 'transform' && !this.selectionMgr?.active) {
         this.setTool('brush');
       }
@@ -19649,6 +21598,9 @@ export class App {
   async reloadAppWithCacheBust({ wipeSession = false } = {}) {
     const btn = document.getElementById('reloadAppBtn');
     if (btn) btn.disabled = true;
+    // Block any further session writes (e.g. the pagehide auto-save flush)
+    // so a wiped session can't be re-persisted on the way out.
+    if (wipeSession) this._suppressSessionPersistence = true;
     this.setStatus(wipeSession ? 'Reloading app (clearing saved data and caches)…' : 'Reloading app (clearing caches)…');
     await this._clearReloadCaches();
     this._clearReloadStorageArtifacts({ wipeSession });

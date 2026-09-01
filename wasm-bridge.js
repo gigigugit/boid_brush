@@ -25,6 +25,8 @@
  * @property {function(number): void} removeAgent
  * @property {function(): void} clearAgents
  * @property {function(Uint8Array, number, number): void} uploadSensing
+ * @property {function(number, Uint8Array, number, number): void} uploadSensingSlot
+ * @property {function(number): void} clearSensingSlot
  * @property {Object} wasm - raw WASM exports for advanced use
  */
 
@@ -215,6 +217,26 @@ export class BoidSim {
     v[63] = p.leader?.satVar ?? 0;
     v[64] = p.leader?.litVar ?? 0;
     v[65] = p.leader?.simBoundsMargin ?? -1;
+    v[66] = p.sensingFitRadius ?? 0;
+    v[67] = p.leader?.sensingFitRadius ?? (p.sensingFitRadius ?? 0);
+    for (let i = 0; i < 4; i++) {
+      const base = 68 + i * 5;
+      if (base + 4 >= v.length) break;
+      const rule = Array.isArray(p.sensingRules) && p.sensingEnabled ? p.sensingRules[i] : null;
+      if (rule && rule.enabled !== false) {
+        v[base] = 1;
+        v[base + 1] = rule.mode === 'attract' ? 1 : 0;
+        v[base + 2] = rule.strength ?? 0.5;
+        v[base + 3] = rule.rangeMin ?? 0;
+        v[base + 4] = rule.rangeMax ?? 1;
+      } else {
+        v[base] = 0;
+        v[base + 1] = 0;
+        v[base + 2] = 0;
+        v[base + 3] = 0;
+        v[base + 4] = 0;
+      }
+    }
     if (this._handle !== null && typeof this._mod.boid_set_params === 'function') this._mod.boid_set_params(this._handle);
     else this._mod.set_params();
   }
@@ -327,17 +349,66 @@ export class BoidSim {
    * @param {number} h - Height of the luminance map.
    */
   uploadSensing(luminance, w, h) {
-    if (this._handle !== null && typeof this._mod.boid_init_sensing === 'function') this._mod.boid_init_sensing(this._handle, w, h);
-    else this._mod.init_sensing(w, h);
-    const ptr = this._handle !== null && typeof this._mod.boid_get_sensing_buffer_ptr === 'function'
-      ? this._mod.boid_get_sensing_buffer_ptr(this._handle)
-      : this._mod.get_sensing_buffer_ptr();
+    this.uploadSensingSlot(0, luminance, w, h);
+  }
+
+  /**
+   * Upload a downsampled luminance map to one pixel sensing slot.
+   *
+   * Slot-aware WASM modules expose four sensing slots. With older modules,
+   * slot 0 falls back to the legacy single-map exports and other slots no-op.
+   *
+   * @param {number} slot - Sensing map slot, clamped by WASM to 0..3.
+   * @param {Uint8Array} luminance - Single-channel luminance data.
+   * @param {number} w - Width of the luminance map.
+   * @param {number} h - Height of the luminance map.
+   */
+  uploadSensingSlot(slot, luminance, w, h) {
+    const m = this._mod;
+    const useHandleSlots = this._handle !== null
+      && typeof m.boid_init_sensing_slot === 'function'
+      && typeof m.boid_get_sensing_slot_buffer_ptr === 'function'
+      && typeof m.boid_update_sensing_slot === 'function';
+    const useGlobalSlots = typeof m.init_sensing_slot === 'function'
+      && typeof m.get_sensing_slot_buffer_ptr === 'function'
+      && typeof m.update_sensing_slot === 'function';
+
+    if (useHandleSlots) m.boid_init_sensing_slot(this._handle, slot, w, h);
+    else if (useGlobalSlots) m.init_sensing_slot(slot, w, h);
+    else if (slot === 0) {
+      if (this._handle !== null && typeof m.boid_init_sensing === 'function') m.boid_init_sensing(this._handle, w, h);
+      else m.init_sensing(w, h);
+    } else {
+      return;
+    }
+
+    const ptr = useHandleSlots
+      ? m.boid_get_sensing_slot_buffer_ptr(this._handle, slot)
+      : useGlobalSlots
+        ? m.get_sensing_slot_buffer_ptr(slot)
+        : this._handle !== null && typeof m.boid_get_sensing_buffer_ptr === 'function'
+          ? m.boid_get_sensing_buffer_ptr(this._handle)
+          : m.get_sensing_buffer_ptr();
     if (!ptr) return;
     const mem = this._getMemory();
     const dst = new Uint8Array(mem.buffer, ptr, w * h);
     dst.set(luminance);
-    if (this._handle !== null && typeof this._mod.boid_update_sensing === 'function') this._mod.boid_update_sensing(this._handle);
-    else this._mod.update_sensing();
+    if (useHandleSlots) m.boid_update_sensing_slot(this._handle, slot);
+    else if (useGlobalSlots) m.update_sensing_slot(slot);
+    else if (this._handle !== null && typeof m.boid_update_sensing === 'function') m.boid_update_sensing(this._handle);
+    else m.update_sensing();
+  }
+
+  clearSensingSlot(slot) {
+    const m = this._mod;
+    if (this._handle !== null && typeof m.boid_clear_sensing_slot === 'function') {
+      m.boid_clear_sensing_slot(this._handle, slot);
+    } else if (typeof m.clear_sensing_slot === 'function') {
+      m.clear_sensing_slot(slot);
+    } else if (slot === 0) {
+      if (this._handle !== null && typeof m.boid_init_sensing === 'function') m.boid_init_sensing(this._handle, 0, 0);
+      else if (typeof m.init_sensing === 'function') m.init_sensing(0, 0);
+    }
   }
 
   /** @private Recreate typed views if memory buffer has changed (growth). */
@@ -380,9 +451,6 @@ const FLUID_RENDER_MODE_MAP = {
 };
 const MIN_FLUID_SCALE = 0.35;
 
-let _fluidModulePromise = null;
-let _fluidModulePath = '';
-
 function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, sourceCtx, targetCanvas, targetCtx) {
   if (sourceCanvas.width !== imageData.width || sourceCanvas.height !== imageData.height) {
     sourceCanvas.width = imageData.width;
@@ -400,18 +468,11 @@ function _scaleImageDataViaCanvas(imageData, width, height, sourceCanvas, source
 }
 
 async function _getOrLoadFluidModule(wasmPath) {
-  if (!_fluidModulePromise || _fluidModulePath !== wasmPath) {
-    _fluidModulePath = wasmPath;
-    _fluidModulePromise = (async () => {
-      const mod = await import(wasmPath);
-      if (typeof mod.default === 'function') await mod.default({ module_or_path: _fetchWithRetry(_resolveWasmBinaryUrl(wasmPath)) });
-      if (typeof mod.fluid_create_simulator !== 'function') {
-        throw new Error('Fluid exports are unavailable in the WASM module.');
-      }
-      return mod;
-    })();
+  const { mod } = await _getOrLoadBoidModule(wasmPath);
+  if (typeof mod.fluid_create_simulator !== 'function') {
+    throw new Error('Fluid exports are unavailable in the WASM module.');
   }
-  return _fluidModulePromise;
+  return mod;
 }
 
 export class FluidSim {
