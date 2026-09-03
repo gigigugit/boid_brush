@@ -8,7 +8,7 @@
 :root {
   --topbar-h: clamp(44px, 6.2vw, 56px);
   --status-h: 24px;
-  --sidebar-w: 320px;
+  --sidebar-w: 380px;
   --right-panel-open-w: var(--sidebar-w);
   --layers-w: 230px;
   --panel-top: var(--topbar-h);
@@ -33,10 +33,10 @@
   --tap-min: 40px;
 }
 @media (max-width: 1100px) {
-  :root { --sidebar-w: 288px; --layers-w: 210px; --tap-min: 44px; }
+  :root { --sidebar-w: min(42vw, 350px); --layers-w: 210px; --tap-min: 44px; }
 }
 @media (max-width: 760px) {
-  :root { --sidebar-w: min(92vw, 320px); --layers-w: min(76vw, 220px); --topbar-h: 54px; --tap-min: 44px; }
+  :root { --sidebar-w: min(96vw, 360px); --layers-w: min(76vw, 220px); --topbar-h: 54px; --tap-min: 44px; }
 }
 *{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;box-sizing:border-box;}
 html,body{overflow:hidden;width:100%;height:100%;
