@@ -716,6 +716,14 @@ function _refreshModulationDiagnostics(app) {
     return;
   }
   const applied = app.getCurrentBrush?.()?.getModulationApplied?.() || null;
+  for (const report of snapshot.diagnostics.routes) {
+    const status = document.querySelector(`[data-mod-route-status="${report.id}"]`);
+    if (!status) continue;
+    status.textContent = report.applied
+      ? `active · signal ${report.signal.toFixed(2)} · contrib ${report.contribution >= 0 ? '+' : ''}${report.contribution.toFixed(2)}`
+      : `idle · ${report.reason || 'inactive'}`;
+    status.style.color = report.applied ? '#7fe0a0' : '#8b98aa';
+  }
   const lines = snapshot.diagnostics.routes.map(report => {
     const arrow = `${report.source} → ${report.target}`;
     if (!report.applied) return `· ${report.id} ${arrow} — ${report.reason}`;

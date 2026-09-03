@@ -24,6 +24,16 @@ const clamp = (value, min, max) => value < min ? min : (value > max ? max : valu
 const clamp01 = value => clamp(value, 0, 1);
 const finite = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
+const CIRCULAR_CHANNEL_IDS = new Set(['direction', 'azimuth', 'twist']);
+
+function _smoothChannel(previous, next, alpha, circular) {
+  if (!circular) return previous + (next - previous) * alpha;
+  let delta = next - previous;
+  if (delta > 0.5) delta -= 1;
+  else if (delta < -0.5) delta += 1;
+  const value = previous + delta * alpha;
+  return ((value % 1) + 1) % 1;
+}
 
 // ── Input capabilities ──────────────────────────────────────
 // A capability is a claim about what the *device* actually reported for this
@@ -232,26 +242,26 @@ function _evaluateCondition(condition, features) {
 // bounds the sidebar sliders already enforce. There is no path from a preset
 // or an imported route to an arbitrary property write.
 export const MOD_TARGETS = Object.freeze([
-  { id: 'seek', label: 'Seek', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'cohesion', label: 'Cohesion', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'separation', label: 'Separation', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'alignment', label: 'Alignment', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'jitter', label: 'Jitter', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'wander', label: 'Wander', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'wanderSpeed', label: 'Wander Speed', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'flowField', label: 'Flow Field', section: 'Forces', min: 0, max: 2, integer: false },
-  { id: 'flowScale', label: 'Flow Scale', section: 'Forces', min: 0.001, max: 0.2, integer: false },
-  { id: 'fleeRadius', label: 'Flee Radius', section: 'Forces', min: 0, max: 300, integer: false },
+  { id: 'seek', label: 'Seek', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'cohesion', label: 'Cohesion', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'separation', label: 'Separation', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'alignment', label: 'Alignment', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'jitter', label: 'Jitter', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'wander', label: 'Wander', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'wanderSpeed', label: 'Wander Speed', section: 'Forces', min: 0.01, max: 1, integer: false },
+  { id: 'flowField', label: 'Flow Field', section: 'Forces', min: 0, max: 1, integer: false },
+  { id: 'flowScale', label: 'Flow Scale', section: 'Forces', min: 0.001, max: 0.1, integer: false },
+  { id: 'fleeRadius', label: 'Flee Radius', section: 'Forces', min: 0, max: 150, integer: false },
   { id: 'fov', label: 'Field of View', section: 'Forces', min: 30, max: 360, integer: false },
   { id: 'individuality', label: 'Individuality', section: 'Forces', min: 0, max: 1, integer: false },
-  { id: 'maxSpeed', label: 'Max Speed', section: 'Motion', min: 0.5, max: 30, integer: false },
-  { id: 'damping', label: 'Damping', section: 'Motion', min: 0.5, max: 1, integer: false },
-  { id: 'neighborRadius', label: 'Neighbor Radius', section: 'Motion', min: 5, max: 400, integer: false },
-  { id: 'separationRadius', label: 'Separation Radius', section: 'Motion', min: 2, max: 200, integer: false },
+  { id: 'maxSpeed', label: 'Max Speed', section: 'Motion', min: 0.5, max: 15, integer: false },
+  { id: 'damping', label: 'Damping', section: 'Motion', min: 0.8, max: 1, integer: false },
+  { id: 'neighborRadius', label: 'Neighbor Radius', section: 'Motion', min: 10, max: 200, integer: false },
+  { id: 'separationRadius', label: 'Separation Radius', section: 'Motion', min: 5, max: 100, integer: false },
   { id: 'quorumThreshold', label: 'Quorum Threshold', section: 'Quorum', min: 0, max: 100, integer: true },
   { id: 'quorumCompositeStrength', label: 'Quorum Composite', section: 'Quorum', min: 0, max: 1, integer: false },
   { id: 'sensingStrength', label: 'Sensing Strength', section: 'Sensing', min: 0, max: 1, integer: false },
-  { id: 'sensingRadius', label: 'Sensing Radius', section: 'Sensing', min: 1, max: 200, integer: false },
+  { id: 'sensingRadius', label: 'Sensing Radius', section: 'Sensing', min: 5, max: 80, integer: false },
   { id: 'sensingThreshold', label: 'Sensing Threshold', section: 'Sensing', min: 0, max: 1, integer: false },
 ]);
 
@@ -356,7 +366,12 @@ export function stepFeatureState(state, inputFrame, channelConfig = {}) {
     // "more smoothing". `restart` snaps, so a new stroke (or one resumed after a
     // gap) never inherits the tail of the previous one.
     const alpha = restart ? 1 : (1 - tuning.smoothing);
-    smoothed[channel.id] = clamp01(previousValue + (gated - previousValue) * alpha);
+    smoothed[channel.id] = clamp01(_smoothChannel(
+      previousValue,
+      gated,
+      alpha,
+      CIRCULAR_CHANNEL_IDS.has(channel.id),
+    ));
   }
   smoothed.constant = 1;
 
@@ -412,15 +427,30 @@ export class FeatureTracker {
     this._lastSampleWallClock = 0;
   }
 
-  reset() {
+  reset({ preserveCapabilities = false } = {}) {
+    const capabilities = preserveCapabilities ? [...this._state.capabilities] : [];
+    const sourceId = preserveCapabilities ? this._state.sourceId : 'mouse';
     this._state = createFeatureState();
+    this._state.capabilities = capabilities;
+    this._state.sourceId = sourceId;
     this._lastSampleWallClock = 0;
   }
 
   /** @param {object} rawFrame InputFrame-shaped sample from an adapter. */
   sample(rawFrame, channelConfig, wallClockMs) {
-    this._state = stepFeatureState(this._state, createInputFrame(rawFrame), channelConfig);
-    this._lastSampleWallClock = finite(wallClockMs, this._state.lastT);
+    const sampleClock = finite(wallClockMs, this._state.lastT);
+    if (this._state.hasSample) {
+      this._state = decayFeatureState(this._state, sampleClock - this._lastSampleWallClock);
+    }
+    let frame = createInputFrame(rawFrame);
+    if (this._state.hasSample && this._state.sourceId === frame.sourceId) {
+      frame = createInputFrame({
+        ...frame,
+        capabilities: [...new Set([...this._state.capabilities, ...frame.capabilities])],
+      });
+    }
+    this._state = stepFeatureState(this._state, frame, channelConfig);
+    this._lastSampleWallClock = sampleClock;
     return this._state;
   }
 

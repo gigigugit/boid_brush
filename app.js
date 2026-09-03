@@ -6075,7 +6075,10 @@ export class App {
   // PARAMETER CACHE
   // ========================================================
 
-  invalidateParams() { this._paramsDirty = true; }
+  invalidateParams() {
+    this._paramsDirty = true;
+    this._modSnapshotTime = -1;
+  }
 
   getP() {
     if (!this._paramsDirty && this._cachedP) {
@@ -17770,7 +17773,7 @@ export class App {
     // Mice report a constant 0.5 while buttons are down and 0 otherwise; only
     // advertise the pressure capability for devices that really measure it.
     if (sourceId !== 'mouse' && Number.isFinite(e.pressure)) frame.pressure = e.pressure;
-    if (Number.isFinite(e.tiltX) && (e.tiltX !== 0 || e.tiltY !== 0)) {
+    if (sourceId === 'pen' && Number.isFinite(e.tiltX) && Number.isFinite(e.tiltY)) {
       frame.tiltX = e.tiltX;
       frame.tiltY = e.tiltY;
     }
@@ -17778,11 +17781,13 @@ export class App {
     else if (frame.tiltX !== undefined && Number.isFinite(this.altitude)) frame.altitude = this.altitude;
     if (Number.isFinite(e.azimuthAngle)) frame.azimuth = e.azimuthAngle;
     else if (frame.tiltX !== undefined && Number.isFinite(this.azimuth)) frame.azimuth = this.azimuth;
-    if (Number.isFinite(e.twist) && sourceId === 'pen') frame.twist = e.twist;
+    if (Number.isFinite(e.twist) && sourceId === 'pen' && (e.twist !== 0 || this._inputFeatureTracker.frame(now).capabilities.includes('twist'))) {
+      frame.twist = e.twist;
+    }
     if (sourceId === 'touch') {
       if (Number.isFinite(e.width)) frame.contactWidth = e.width;
       if (Number.isFinite(e.height)) frame.contactHeight = e.height;
-      frame.touchCount = this._activePointers?.size || 1;
+      frame.touchCount = this._activePointers?.size ?? 1;
     }
     this._inputFeatureTracker.sample(frame, this._cachedP?.modMatrix?.channels, now);
     // A fresh sample invalidates the per-frame modulation snapshot.
@@ -17847,14 +17852,16 @@ export class App {
     // Track active pointers for multi-touch detection
     this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     this.pointerType = e.pointerType || 'mouse';
+    const { x, y } = this._getEventCoords(e);
+    this._captureTilt(e);
+    if (this._activePointers.size === 1) this._inputFeatureTracker.reset({ preserveCapabilities: true });
+    this._ingestInputSample(e, x, y);
     // Don't start drawing during pinch gesture
     if (this._pinchActive) return;
     // Don't start drawing if touch and multiple pointers (pinch incoming)
     if (e.pointerType === 'touch' && this._activePointers.size > 1) return;
 
     this.interactionCanvas.setPointerCapture(e.pointerId);
-    const { x, y } = this._getEventCoords(e);
-    this._captureTilt(e);
     if (this._handleSimulationPointerDown(x, y)) return;
     if (this._handleSymmetryPointerDown(x, y, e)) return;
     // Move selection by dragging inside it (works in any tool mode)
@@ -17904,8 +17911,6 @@ export class App {
     // Reset EMA pressure at stroke start for immediate response
     this._rawPressure = e.pressure || 0.5;
     this.pressure = this._rawPressure;
-    // Seed the modulation input adapter so a quick tap already has a frame.
-    this._ingestInputSample(e, x, y);
     this._stabX = x;
     this._stabY = y;
     this.isDrawing = true;
@@ -17931,7 +17936,11 @@ export class App {
     this._cursorX = e.clientX - areaRect.left;
     this._cursorY = e.clientY - areaRect.top;
     // Don't draw during pinch
-    if (this._pinchActive) return;
+    if (this._pinchActive) {
+      const { x, y } = this._getEventCoords(e);
+      this._ingestInputSample(e, x, y);
+      return;
+    }
     const simCoords = this._getEventCoords(e);
     if (this._handleSimulationPointerMove(simCoords.x, simCoords.y)) {
       // Simulation mode still feeds the modulation input adapter for boid so
@@ -18014,6 +18023,10 @@ export class App {
 
   _onPointerUp(e) {
     this._activePointers.delete(e.pointerId);
+    if ((e.pointerType || this.pointerType) === 'touch') {
+      const { x, y } = this._getEventCoords(e);
+      this._ingestInputSample(e, x, y);
+    }
     if (this._handleSimulationPointerUp()) return;
     if (this._handleSymmetryPointerUp()) return;
     // Move-drag end (any tool mode) — keep pixels floating

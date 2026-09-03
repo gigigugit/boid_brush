@@ -130,6 +130,17 @@ test('EMA smoothing uses the complement of the smoothing amount', () => {
   assert.ok(Math.abs(state.smoothed.pressure - 0.25) < 1e-9);
 });
 
+test('circular channels smooth across their wrap boundary', () => {
+  const config = { twist: { smoothing: 0.5, deadzone: 0 } };
+  let state = stepFeatureState(createFeatureState(), createInputFrame({
+    sourceId: 'pen', t: 0, x: 0, y: 0, twist: 359,
+  }), config);
+  state = stepFeatureState(state, createInputFrame({
+    sourceId: 'pen', t: 16, x: 0, y: 0, twist: 1,
+  }), config);
+  assert.ok(state.smoothed.twist < 0.01 || state.smoothed.twist > 0.99);
+});
+
 test('decayFeatureState bleeds motion channels toward zero while idle', () => {
   const config = { speed: { smoothing: 0, deadzone: 0 } };
   let state = stepFeatureState(createFeatureState(), createInputFrame({ t: 0, x: 0, y: 0 }), config);
@@ -152,6 +163,46 @@ test('FeatureTracker produces a hardware-independent FeatureFrame', () => {
   // The frame is a copy: the runtime cannot reach back into tracker state.
   frame.channels.pressure = 999;
   assert.notEqual(tracker.frame(0).channels.pressure, 999);
+});
+
+test('FeatureTracker folds idle decay into the next sample and resets between interactions', () => {
+  const tracker = new FeatureTracker();
+  const config = { speed: { smoothing: 0.5, deadzone: 0 } };
+  tracker.sample({ t: 0, x: 0, y: 0 }, config, 1);
+  tracker.sample({ t: 1, x: FEATURE_REFERENCES.SPEED_PX_PER_MS, y: 0 }, config, 2);
+  assert.ok(tracker.frame(2).channels.speed > 0);
+  tracker.sample({ t: 2, x: FEATURE_REFERENCES.SPEED_PX_PER_MS, y: 0 }, config, 2 + FEATURE_REFERENCES.IDLE_MS);
+  assert.equal(tracker.frame(2 + FEATURE_REFERENCES.IDLE_MS).channels.speed, 0);
+  tracker.reset();
+  tracker.sample({ t: 3, x: 9999, y: 0 }, config, 3);
+  assert.equal(tracker.frame(3).channels.speed, 0);
+});
+
+test('FeatureTracker keeps observed capabilities stable until the source changes', () => {
+  const tracker = new FeatureTracker();
+  tracker.sample({ sourceId: 'pen', t: 0, x: 0, y: 0, twist: 30 }, {}, 0);
+  tracker.sample({ sourceId: 'pen', t: 1, x: 1, y: 0 }, {}, 1);
+  assert.ok(tracker.frame(1).capabilities.includes(INPUT_CAPABILITIES.TWIST));
+  tracker.sample({ sourceId: 'mouse', t: 2, x: 2, y: 0 }, {}, 2);
+  assert.ok(!tracker.frame(2).capabilities.includes(INPUT_CAPABILITIES.TWIST));
+});
+
+test('modulation target bounds match their owning UI controls', () => {
+  assert.deepEqual(
+    Object.fromEntries(['seek', 'wanderSpeed', 'flowScale', 'fleeRadius', 'maxSpeed', 'damping', 'neighborRadius', 'separationRadius', 'sensingRadius']
+      .map(id => [id, [resolveModTarget(id).min, resolveModTarget(id).max]])),
+    {
+      seek: [0, 1],
+      wanderSpeed: [0.01, 1],
+      flowScale: [0.001, 0.1],
+      fleeRadius: [0, 150],
+      maxSpeed: [0.5, 15],
+      damping: [0.8, 1],
+      neighborRadius: [10, 200],
+      separationRadius: [5, 100],
+      sensingRadius: [5, 80],
+    },
+  );
 });
 
 test('toFeatureFrame of a fresh state is safe to consume', () => {
@@ -306,26 +357,26 @@ test('curves stay bounded and unknown curve ids fall back to linear', () => {
 // ── Evaluation: combine modes ──────────────────────────────────────────────
 
 test('sum combine adds amount x span to the base value', () => {
-  // seek spans 0..2, so amount 0.25 with a full-scale signal shifts by +0.5.
+  // seek spans 0..1, so amount 0.25 with a full-scale signal shifts by +0.25.
   const { params } = run(matrixOf({ source: 'constant', target: 'seek', amount: 0.25, combine: 'sum' }), {
-    params: { seek: 1 },
+    params: { seek: 0.25 },
   });
-  assert.ok(Math.abs(params.seek - 1.5) < 1e-9);
+  assert.ok(Math.abs(params.seek - 0.5) < 1e-9);
 });
 
 test('sum combine accumulates across routes', () => {
   const { params } = run(matrixOf(
     { source: 'constant', target: 'seek', amount: 0.1, combine: 'sum' },
     { source: 'constant', target: 'seek', amount: 0.15, combine: 'sum' },
-  ), { params: { seek: 1 } });
-  assert.ok(Math.abs(params.seek - 1.5) < 1e-9);
+  ), { params: { seek: 0.25 } });
+  assert.ok(Math.abs(params.seek - 0.5) < 1e-9);
 });
 
 test('mul combine scales the target by (1 + contribution)', () => {
   const { params } = run(matrixOf({ source: 'constant', target: 'seek', amount: 0.5, combine: 'mul' }), {
-    params: { seek: 1 },
+    params: { seek: 0.5 },
   });
-  assert.ok(Math.abs(params.seek - 1.5) < 1e-9);
+  assert.ok(Math.abs(params.seek - 0.75) < 1e-9);
 });
 
 test('max combine keeps only the largest-magnitude contribution', () => {
@@ -333,8 +384,8 @@ test('max combine keeps only the largest-magnitude contribution', () => {
     { source: 'constant', target: 'seek', amount: 0.1, combine: 'max' },
     { source: 'constant', target: 'seek', amount: 0.3, combine: 'max' },
     { source: 'constant', target: 'seek', amount: 0.2, combine: 'max' },
-  ), { params: { seek: 1 } });
-  assert.ok(Math.abs(params.seek - 1.6) < 1e-9, 'only 0.3 x span applies');
+  ), { params: { seek: 0.5 } });
+  assert.ok(Math.abs(params.seek - 0.8) < 1e-9, 'only 0.3 x span applies');
 });
 
 test('priority combine replaces sum/max offsets and outranks later priority routes', () => {
@@ -342,8 +393,8 @@ test('priority combine replaces sum/max offsets and outranks later priority rout
     { id: 'sum', source: 'constant', target: 'seek', amount: 0.5, combine: 'sum', priority: 0 },
     { id: 'hi', source: 'constant', target: 'seek', amount: -0.25, combine: 'priority', priority: 10 },
     { id: 'lo', source: 'constant', target: 'seek', amount: 0.9, combine: 'priority', priority: 5 },
-  ), { params: { seek: 1.5 } });
-  assert.ok(Math.abs(params.seek - 1.0) < 1e-9, 'only the winning priority offset applies');
+  ), { params: { seek: 0.75 } });
+  assert.ok(Math.abs(params.seek - 0.5) < 1e-9, 'only the winning priority offset applies');
   const outranked = evaluation.diagnostics.routes.find(report => report.id === 'lo');
   assert.equal(outranked.applied, false);
   assert.equal(outranked.reason, 'priority-outranked');
@@ -362,20 +413,20 @@ test('evaluation order is priority descending, then document order', () => {
 
 test('invert and curve shape the signal before the amount is applied', () => {
   const features = { pressure: 0.25 };
-  // sqrt(0.25) = 0.5; invert → 0.5; amount 1 → +0.5 span on seek (span 2) = +1.
+  // sqrt(0.25) = 0.5; invert → 0.5; amount 1 → +0.5 on seek.
   const { params } = run(matrixOf({ source: 'pressure', target: 'seek', amount: 1, curve: 'sqrt', invert: true }), {
-    params: { seek: 0.5 }, features,
+    params: { seek: 0.25 }, features,
   });
-  assert.ok(Math.abs(params.seek - 1.5) < 1e-9);
+  assert.ok(Math.abs(params.seek - 0.75) < 1e-9);
 });
 
 test('per-route clamps intersect to the narrowest window on a target', () => {
-  // seek spans 0..2 → clamp 0.25..0.6 means an absolute window of 0.5..1.2.
+  // seek spans 0..1 → clamp 0.25..0.6 means an absolute window of 0.25..0.6.
   const { params } = run(matrixOf(
     { source: 'constant', target: 'seek', amount: 0.9, clampMin: 0.25, clampMax: 0.75 },
     { source: 'constant', target: 'seek', amount: 0, clampMin: 0.1, clampMax: 0.6 },
   ), { params: { seek: 1 } });
-  assert.ok(Math.abs(params.seek - 1.2) < 1e-9, 'a safety clamp cannot be widened by adding a route');
+  assert.ok(Math.abs(params.seek - 0.6) < 1e-9, 'a safety clamp cannot be widened by adding a route');
 });
 
 test('contradictory clamps collapse to a value instead of inverting', () => {
@@ -383,7 +434,7 @@ test('contradictory clamps collapse to a value instead of inverting', () => {
     { source: 'constant', target: 'seek', amount: 1, clampMin: 0.8, clampMax: 1 },
     { source: 'constant', target: 'seek', amount: 0, clampMin: 0, clampMax: 0.2 },
   ), { params: { seek: 1 } });
-  assert.ok(Math.abs(params.seek - 1.6) < 1e-9, 'window collapses to clampMin (0.8 of the 0..2 span)');
+  assert.ok(Math.abs(params.seek - 0.8) < 1e-9, 'window collapses to clampMin (0.8 of the 0..1 span)');
 });
 
 test('routes are skipped when the device did not report the channel capability', () => {
@@ -402,8 +453,8 @@ test('routes are skipped when the device did not report the channel capability',
 test('conditions gate a route and fail closed when unverifiable', () => {
   const route = { id: 'gated', source: 'constant', target: 'seek', amount: 0.5, conditions: [{ channel: 'pressure', op: 'gt', value: 0.5 }] };
 
-  const open = run(matrixOf(route), { params: { seek: 1 }, features: { pressure: 0.9 } });
-  assert.ok(Math.abs(open.params.seek - 2) < 1e-9);
+  const open = run(matrixOf(route), { params: { seek: 0.25 }, features: { pressure: 0.9 } });
+  assert.ok(Math.abs(open.params.seek - 0.75) < 1e-9);
   assert.equal(open.evaluation.diagnostics.active, 1);
 
   const shut = run(matrixOf(route), { params: { seek: 1 }, features: { pressure: 0.1 } });
@@ -459,7 +510,7 @@ test('evaluation normalizes hand-built matrices, so raw objects cannot bypass th
 // ── Application ────────────────────────────────────────────────────────────
 
 test('applyModTargets writes only allowlisted ids present on the params object', () => {
-  const params = { seek: 1, brushSize: 20 };
+  const params = { seek: 0.5, brushSize: 20 };
   const targets = {
     seek: { offsetNorm: 0.25, gain: 1, clampMin: 0, clampMax: 1, routeIds: ['a'] },
     brushSize: { offsetNorm: 1, gain: 4, clampMin: 0, clampMax: 1, routeIds: ['b'] },
@@ -471,7 +522,7 @@ test('applyModTargets writes only allowlisted ids present on the params object',
     enumerable: true, configurable: true, writable: true,
   });
   const { applied } = applyModTargets(params, { targets });
-  assert.ok(Math.abs(params.seek - 1.5) < 1e-9);
+  assert.ok(Math.abs(params.seek - 0.75) < 1e-9);
   assert.equal(params.brushSize, 20, 'non-allowlisted keys are never written');
   assert.deepEqual(Object.keys(applied), ['seek']);
   assert.equal(Object.getPrototypeOf(params), Object.prototype, 'prototype is untouched');
