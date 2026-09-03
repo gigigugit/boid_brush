@@ -21533,8 +21533,8 @@ export class App {
     this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 1800);
   }
 
-  openBoidSettingsEditor() {
-    openBoidSettingsEditor(this);
+  openBoidSettingsEditor(options = {}) {
+    openBoidSettingsEditor(this, options);
   }
 
   _handleInitError(error) {

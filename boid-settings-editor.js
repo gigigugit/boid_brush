@@ -143,7 +143,7 @@ const BOID_PARAM_GROUPS = [
 // ─── State helpers ───────────────────────────────────────────────────────────
 
 /** Read current sidebar values into a flat state snapshot. */
-function _readState() {
+function _readState(app) {
   const state = {};
   for (const group of BOID_PARAM_GROUPS) {
     for (const p of group.params) {
@@ -161,6 +161,13 @@ function _readState() {
       else state[p.id] = +el.value;
     }
   }
+  const distribution = app?._sanitizeBoidColorDist?.(app._boidColorDist);
+  state.agentColors = {
+    distribution: _cloneState(distribution || [{
+      color: app?.getColorValue?.('primary', '#1a1a1a') || '#1a1a1a',
+      weight: 1,
+    }]),
+  };
   return state;
 }
 
@@ -182,6 +189,8 @@ function _writeStateToSidebar(state, app) {
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }
   }
+  const distribution = app._sanitizeBoidColorDist?.(state.agentColors?.distribution);
+  if (distribution) app._boidColorDist = _cloneState(distribution);
   app.invalidateParams();
   // Sync sidebar readout spans and edge sliders via the app's existing syncUI path
   app._maybeAutoSaveSession?.();
@@ -387,13 +396,13 @@ let _previewRaf  = null;
 let _previewDirty = false;
 
 /** Open (or bring to front) the editor. */
-export function openBoidSettingsEditor(app) {
+export function openBoidSettingsEditor(app, options = {}) {
   _app = app;
   let modal = document.getElementById(MODAL_ID);
   if (!modal) modal = _buildModal();
 
   // Snapshot current sidebar state
-  _editorState = _readState();
+  _editorState = _readState(app);
   _openState   = _cloneState(_editorState);
   _undoStack   = [];
   _redoStack   = [];
@@ -403,7 +412,12 @@ export function openBoidSettingsEditor(app) {
   _schedulePreview();
 
   modal.style.display = 'flex';
-  requestAnimationFrame(() => modal.classList.add('bse-open'));
+  requestAnimationFrame(() => {
+    modal.classList.add('bse-open');
+    if (options.section === 'agentColors') {
+      modal.querySelector('#bse-agent-colors')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  });
 }
 
 /** Build the modal DOM and attach it to <body>. */
@@ -455,6 +469,18 @@ function _buildModal() {
             <div class="bse-col">${col1}</div>
             <div class="bse-col">${col2}</div>
           </div>
+          <section id="bse-agent-colors" aria-labelledby="bse-agent-colors-title">
+            <div class="bse-agent-colors-head">
+              <div>
+                <div id="bse-agent-colors-title">🎨 Agent Colors</div>
+                <div class="bse-agent-colors-help">Set the relative color mix used across individual boids.</div>
+              </div>
+              <button id="bse-agent-color-add" type="button">＋ Add Color</button>
+            </div>
+            <div id="bse-agent-color-scroll" tabindex="0" aria-label="Per-agent color distribution">
+              <div id="bse-agent-color-list"></div>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -497,15 +523,18 @@ function _injectStyles() {
       -webkit-backdrop-filter: blur(14px) saturate(0.7);
       opacity: 0;
       transition: opacity 0.18s ease;
+      padding: 12px;
+      box-sizing: border-box;
+      overflow: auto;
     }
     #${MODAL_ID}.bse-open { opacity: 1; }
 
     #bse-panel {
       display: flex;
       flex-direction: column;
-      width: clamp(640px, 60vw, 1160px);
-      height: clamp(380px, calc(60vw / 1.618), calc(100vh - 60px));
-      max-height: calc(100vh - 40px);
+      width: min(1160px, 100%);
+      height: min(720px, calc(100vh - 24px));
+      min-height: 0;
       background: linear-gradient(165deg, rgba(14,18,30,0.99), rgba(8,11,21,0.99));
       border: 1px solid rgba(80,120,220,0.2);
       border-radius: 16px;
@@ -647,6 +676,79 @@ function _injectStyles() {
       align-items: start;
     }
     .bse-col { min-width: 0; }
+    #bse-agent-colors {
+      margin-top: 16px;
+      padding: 12px;
+      border: 1px solid rgba(80,120,220,0.2);
+      border-radius: 10px;
+      background: rgba(58,106,232,0.06);
+      min-width: 0;
+    }
+    .bse-agent-colors-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    #bse-agent-colors-title { color: #dce8ff; font-size: 12px; font-weight: 700; }
+    .bse-agent-colors-help { color: #7890b8; font-size: 10px; margin-top: 2px; }
+    #bse-agent-color-add {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border-radius: 6px;
+      border: 1px solid rgba(91,138,240,0.4);
+      background: rgba(58,106,232,0.2);
+      color: #a9c4ff;
+      font: 600 10px inherit;
+      cursor: pointer;
+    }
+    #bse-agent-color-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      padding: 2px 2px 8px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(80,120,220,0.35) transparent;
+    }
+    #bse-agent-color-list { display: flex; gap: 10px; width: max-content; min-width: 100%; }
+    .bse-agent-color {
+      width: 112px;
+      flex: 0 0 112px;
+      padding: 9px;
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 8px;
+      background: rgba(8,11,21,0.75);
+      box-sizing: border-box;
+    }
+    .bse-agent-color-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .bse-agent-color-pct { color: #b9caf0; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .bse-agent-color-remove {
+      border: 0;
+      background: transparent;
+      color: #7890b8;
+      cursor: pointer;
+      padding: 2px;
+    }
+    .bse-agent-color-remove:disabled { opacity: .25; cursor: default; }
+    .bse-agent-color-button {
+      display: block;
+      width: 100%;
+      height: 34px;
+      border: 2px solid rgba(255,255,255,.35);
+      border-radius: 7px;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+    .bse-agent-color-weight { width: 100%; margin: 0; accent-color: #5b8af0; }
+    .bse-agent-color-label { display: block; color: #7890b8; font-size: 9px; margin-bottom: 3px; }
+    @media (max-width: 720px) {
+      #bse-body { display: block; overflow-y: auto; }
+      #bse-preview-col { width: auto; border-right: 0; border-bottom: 1px solid rgba(255,255,255,.07); overflow: visible; }
+      #bse-preview-wrap { max-width: 280px; }
+      #bse-controls-col { overflow: visible; }
+      #bse-controls-grid { grid-template-columns: 1fr; }
+      #bse-footer-left, #bse-footer-right { flex-wrap: wrap; }
+    }
 
     /* Footer */
     #bse-footer {
@@ -735,6 +837,117 @@ function _buildPresetButtons(modal) {
   }
 }
 
+function _closeAgentColorPicker() {
+  if (!_app?._colorPicker?.open) return;
+  const key = String(_app._getColorTargetKey?.(_app._colorPicker.target) || '');
+  if (key.startsWith('boidSettingsColor:')) {
+    _app._closeColorPicker?.({ recordHistory: false });
+  }
+}
+
+function _updateAgentColorPercentages() {
+  const modal = document.getElementById(MODAL_ID);
+  const distribution = _editorState?.agentColors?.distribution || [];
+  const total = distribution.reduce((sum, entry) => sum + (+entry.weight || 0), 0) || 1;
+  modal?.querySelectorAll('.bse-agent-color-pct').forEach((label, index) => {
+    label.textContent = `${Math.round(((+distribution[index]?.weight || 0) / total) * 100)}%`;
+  });
+}
+
+function _renderAgentColors() {
+  const modal = document.getElementById(MODAL_ID);
+  const list = modal?.querySelector('#bse-agent-color-list');
+  if (!list || !_editorState) return;
+  _closeAgentColorPicker();
+  const distribution = _editorState.agentColors?.distribution || [];
+  list.innerHTML = '';
+
+  distribution.forEach((entry, index) => {
+    const card = document.createElement('div');
+    card.className = 'bse-agent-color';
+
+    const top = document.createElement('div');
+    top.className = 'bse-agent-color-top';
+    const pct = document.createElement('span');
+    pct.className = 'bse-agent-color-pct';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'bse-agent-color-remove';
+    remove.textContent = '🗑';
+    remove.title = 'Remove color';
+    remove.setAttribute('aria-label', `Remove color ${index + 1}`);
+    remove.disabled = distribution.length <= 1;
+    remove.addEventListener('click', () => {
+      if (distribution.length <= 1) return;
+      _pushUndo();
+      distribution.splice(index, 1);
+      _renderAgentColors();
+      _markDirty();
+      _schedulePreview();
+    });
+    top.append(pct, remove);
+
+    const colorButton = document.createElement('button');
+    colorButton.type = 'button';
+    colorButton.className = 'bse-agent-color-button';
+    colorButton.style.background = entry.color;
+    colorButton.title = entry.color.toUpperCase();
+    colorButton.setAttribute('aria-label', `Choose color ${index + 1}`);
+    colorButton.setAttribute('aria-haspopup', 'dialog');
+    colorButton.setAttribute('aria-controls', 'colorPickerPanel');
+    colorButton.addEventListener('click', event => {
+      event.stopPropagation();
+      let undoCaptured = false;
+      const target = {
+        key: `boidSettingsColor:${index}`,
+        trigger: colorButton,
+        label: `Agent Color ${index + 1}`,
+        getValue: () => distribution[index]?.color || '#1a1a1a',
+        setValue: normalized => {
+          if (!distribution[index]) return;
+          if (!undoCaptured) {
+            _pushUndo();
+            undoCaptured = true;
+          }
+          distribution[index].color = normalized;
+          colorButton.style.background = normalized;
+          colorButton.title = normalized.toUpperCase();
+          _markDirty();
+          _schedulePreview();
+        },
+      };
+      _app?._openColorPicker?.(target, colorButton);
+    });
+
+    const weightLabel = document.createElement('label');
+    weightLabel.className = 'bse-agent-color-label';
+    weightLabel.textContent = 'Relative weight';
+    const weight = document.createElement('input');
+    weight.type = 'range';
+    weight.className = 'bse-agent-color-weight';
+    weight.min = '1';
+    weight.max = '100';
+    weight.value = String(Math.round(Math.min(1, Math.max(0.01, +entry.weight || 0.01)) * 100));
+    weight.setAttribute('aria-label', `Color ${index + 1} relative weight`);
+    let weightEditActive = false;
+    weight.addEventListener('input', () => {
+      if (!weightEditActive) {
+        _pushUndo();
+        weightEditActive = true;
+      }
+      entry.weight = Math.min(1, Math.max(0.01, (+weight.value || 1) / 100));
+      _updateAgentColorPercentages();
+      _markDirty();
+      _schedulePreview();
+    });
+    weight.addEventListener('change', () => { weightEditActive = false; });
+
+    card.append(top, colorButton, weightLabel, weight);
+    list.appendChild(card);
+  });
+  _updateAgentColorPercentages();
+}
+
 function _bindEvents(modal) {
   // Close via backdrop click
   modal.addEventListener('click', e => {
@@ -751,6 +964,18 @@ function _bindEvents(modal) {
   modal.querySelector('#bse-btn-redo').addEventListener('click', _doRedo);
   modal.querySelector('#bse-btn-apply').addEventListener('click', _doApply);
   modal.querySelector('#bse-btn-apply-close').addEventListener('click', () => { _doApply(); _closeEditor(); });
+  modal.querySelector('#bse-agent-color-add').addEventListener('click', () => {
+    _pushUndo();
+    const distribution = _editorState.agentColors.distribution;
+    distribution.push({
+      color: _app?.getColorValue?.('primary', '#1a1a1a') || '#1a1a1a',
+      weight: distribution[distribution.length - 1]?.weight || 1,
+    });
+    _renderAgentColors();
+    _markDirty();
+    _schedulePreview();
+    modal.querySelector('#bse-agent-color-scroll').scrollLeft = Number.MAX_SAFE_INTEGER;
+  });
 
   // Keyboard shortcuts
   modal.addEventListener('keydown', e => {
@@ -871,6 +1096,7 @@ function _closeEditor() {
   const modal = document.getElementById(MODAL_ID);
   if (!modal) return;
   modal.classList.remove('bse-open');
+  _closeAgentColorPicker();
   setTimeout(() => { modal.style.display = 'none'; }, BSE_CLOSE_TRANSITION_MS);
   if (_previewRaf) { cancelAnimationFrame(_previewRaf); _previewRaf = null; }
 }
@@ -900,6 +1126,7 @@ function _populateControls(state) {
       }
     }
   }
+  _renderAgentColors();
   _refreshUndoRedoBtns();
 }
 

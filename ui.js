@@ -1296,7 +1296,8 @@ export function buildSidebar(app) {
     app._showSimulationSetupExplorer?.(event.currentTarget);
   });
   document.getElementById('btnBoidColorDist')?.addEventListener('click', () => {
-    app._openBoidColorDistModal?.();
+    if (app.activeBrush === 'boid') app.openBoidSettingsEditor?.({ section: 'agentColors' });
+    else app._openBoidColorDistModal?.();
   });
   const syncSimulationDraftFromSidebar = () => app._syncSimulationSessionDraftUi?.();
   sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
