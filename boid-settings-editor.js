@@ -525,21 +525,30 @@ function _injectStyles() {
       transition: opacity 0.18s ease;
       padding: 12px;
       box-sizing: border-box;
-      overflow: auto;
+      overflow: hidden;
+      touch-action: pan-y;
     }
     #${MODAL_ID}.bse-open { opacity: 1; }
+    #${MODAL_ID} * { touch-action: pan-y; }
 
     #bse-panel {
       display: flex;
       flex-direction: column;
       width: min(1160px, 100%);
       height: min(720px, calc(100vh - 24px));
+      max-height: calc(100vh - 24px);
       min-height: 0;
       background: linear-gradient(165deg, rgba(14,18,30,0.99), rgba(8,11,21,0.99));
       border: 1px solid rgba(80,120,220,0.2);
       border-radius: 16px;
       box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04) inset;
       overflow: hidden;
+    }
+    @supports (height: 100dvh) {
+      #bse-panel {
+        height: min(720px, calc(100dvh - 24px));
+        max-height: calc(100dvh - 24px);
+      }
     }
 
     /* Header */
@@ -592,6 +601,7 @@ function _injectStyles() {
       gap: 12px;
       background: rgba(6,8,16,0.4);
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     #bse-preview-wrap {
       width: 100%;
@@ -665,6 +675,8 @@ function _injectStyles() {
     #bse-controls-col {
       flex: 1;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
       padding: 16px 20px;
       scrollbar-width: thin;
       scrollbar-color: rgba(80,120,220,0.3) transparent;
@@ -706,11 +718,15 @@ function _injectStyles() {
     #bse-agent-color-scroll {
       max-width: 100%;
       overflow-x: auto;
+      overflow-y: hidden;
+      touch-action: pan-x pan-y;
+      -webkit-overflow-scrolling: touch;
       padding: 2px 2px 8px;
       scrollbar-width: thin;
       scrollbar-color: rgba(80,120,220,0.35) transparent;
     }
     #bse-agent-color-list { display: flex; gap: 10px; width: max-content; min-width: 100%; }
+    #bse-agent-color-scroll * { touch-action: pan-x pan-y; }
     .bse-agent-color {
       width: 112px;
       flex: 0 0 112px;
@@ -741,8 +757,13 @@ function _injectStyles() {
     }
     .bse-agent-color-weight { width: 100%; margin: 0; accent-color: #5b8af0; }
     .bse-agent-color-label { display: block; color: #7890b8; font-size: 9px; margin-bottom: 3px; }
-    @media (max-width: 720px) {
-      #bse-body { display: block; overflow-y: auto; }
+    @media (max-width: 900px) {
+      #bse-body {
+        display: block;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+      }
       #bse-preview-col { width: auto; border-right: 0; border-bottom: 1px solid rgba(255,255,255,.07); overflow: visible; }
       #bse-preview-wrap { max-width: 280px; }
       #bse-controls-col { overflow: visible; }
