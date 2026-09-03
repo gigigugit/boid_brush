@@ -13,6 +13,12 @@ import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 import { workspaceControlBelongsToBrush } from './settings-catalog.js';
+import {
+  FeatureTracker,
+  evaluateModMatrix,
+  isEmptyModMatrix,
+  parseModMatrix,
+} from './boid-input-modulation.js';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
@@ -368,6 +374,11 @@ const WHEEL_ROTATION_DEG = 2;
 const WORKSPACE_MARGIN_PX = 200;
 // Pressure EMA alpha (~4-sample smoothing window for pointer events)
 const PRESSURE_SMOOTH_ALPHA = 0.25;
+// Boid Input Modulation Framework: the input adapter re-samples on every
+// pointer event, but the modulation matrix is evaluated at most once per
+// animation frame and shared by the brush, the status line, and the sidebar
+// channel monitor so all three always report the same numbers.
+const MOD_SNAPSHOT_MAX_AGE_MS = 8;
 const DEFAULT_CANVAS_TEXTURE_ID = 'builtin-paper-grain';
 const RETRYABLE_STARTUP_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const PAPER_TEXTURE_FLECK_SCALE = 3.2;
@@ -829,6 +840,18 @@ function _readLeaderOverrideConfig({ val, chk, sel }) {
     pull: val('leaderPull') / 100,
     overrides,
   };
+}
+
+/** Boid Input Modulation Framework — the whole modulation matrix lives in one
+ *  hidden JSON control (`#boidModMatrix`) inside the boid-only "Input
+ *  Modulation" sidebar section. Reading it here keeps the parameter path the
+ *  same shape as every other control (one id, one read, one consumer) while
+ *  still letting the structured document ride through the scalar-only preset
+ *  catalog filter as a string. `parseModMatrix` never throws: an unreadable or
+ *  hostile document degrades to an empty matrix (= no modulation), and route
+ *  targets are re-checked against the allowlist on every parse. */
+function _readBoidModMatrix(sel) {
+  return parseModMatrix(sel('boidModMatrix'));
 }
 
 function _normalizeSimulationInspectorSections(value) {
@@ -2087,6 +2110,13 @@ export class App {
     this.isDrawing = false;
     this.pressure = 0.5;
     this._rawPressure = 0.5;  // unsmoothed pressure for EMA calculation
+    // Boid Input Modulation Framework — one tracker turns raw pointer/pencil/
+    // touch samples into the stable FeatureFrame channels the boid runtime
+    // reads. Fed on every pointer move (hover and drawing) so channels stay
+    // meaningful between strokes and in simulation mode.
+    this._inputFeatureTracker = new FeatureTracker();
+    this._modSnapshot = null;
+    this._modSnapshotTime = -1;
     this.tiltX = 0;       // stylus tilt in degrees (-90..90)
     this.tiltY = 0;
     this.azimuth = 0;     // stylus azimuth in radians (0..2π)
@@ -6105,6 +6135,9 @@ export class App {
       individuality: val('individuality') / 100,
       quorumThreshold: Math.max(0, Math.round(val('quorumThreshold') || 0)),
       quorumCompositeStrength: val('quorumCompositeStrength') / 100,
+      // Boid Input Modulation Framework (boid only; consumed by BoidBrush via
+      // App.getModulationSnapshot()).
+      modMatrix: _readBoidModMatrix(sel),
       // Variance
       sizeVar: val('sizeVar') / 100,
       opacityVar: val('opacityVar') / 100,
@@ -17711,6 +17744,82 @@ export class App {
     this._captureTilt(e);
   }
 
+  /** Boid Input Modulation Framework — pointer / Apple Pencil / touch adapter.
+   *  Converts one PointerEvent into a normalized InputFrame and feeds the
+   *  FeatureTracker. Everything downstream (features, routes, boid runtime)
+   *  only ever sees the normalized frame, so the same channels work for a
+   *  mouse, a Pencil, or a finger without any hardware branching.
+   *
+   *  Capability detection is per-sample and intentionally conservative: a field
+   *  only advertises its capability when the event actually carried it, which
+   *  is what makes capability-aware route skipping meaningful.
+   *
+   *  Called for hover moves, drawing moves, coalesced sub-frame samples, and
+   *  simulation-mode drags with canvas-space coordinates. */
+  _ingestInputSample(e, x, y) {
+    if (!e) return;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const pointerType = e.pointerType || this.pointerType || 'mouse';
+    const sourceId = pointerType === 'pen' ? 'pen' : (pointerType === 'touch' ? 'touch' : 'mouse');
+    const frame = {
+      sourceId,
+      t: Number.isFinite(e.timeStamp) ? e.timeStamp : now,
+      x,
+      y,
+    };
+    // Mice report a constant 0.5 while buttons are down and 0 otherwise; only
+    // advertise the pressure capability for devices that really measure it.
+    if (sourceId !== 'mouse' && Number.isFinite(e.pressure)) frame.pressure = e.pressure;
+    if (Number.isFinite(e.tiltX) && (e.tiltX !== 0 || e.tiltY !== 0)) {
+      frame.tiltX = e.tiltX;
+      frame.tiltY = e.tiltY;
+    }
+    if (Number.isFinite(e.altitudeAngle)) frame.altitude = e.altitudeAngle;
+    else if (frame.tiltX !== undefined && Number.isFinite(this.altitude)) frame.altitude = this.altitude;
+    if (Number.isFinite(e.azimuthAngle)) frame.azimuth = e.azimuthAngle;
+    else if (frame.tiltX !== undefined && Number.isFinite(this.azimuth)) frame.azimuth = this.azimuth;
+    if (Number.isFinite(e.twist) && sourceId === 'pen') frame.twist = e.twist;
+    if (sourceId === 'touch') {
+      if (Number.isFinite(e.width)) frame.contactWidth = e.width;
+      if (Number.isFinite(e.height)) frame.contactHeight = e.height;
+      frame.touchCount = this._activePointers?.size || 1;
+    }
+    this._inputFeatureTracker.sample(frame, this._cachedP?.modMatrix?.channels, now);
+    // A fresh sample invalidates the per-frame modulation snapshot.
+    this._modSnapshotTime = -1;
+  }
+
+  /** Read-only FeatureFrame for the boid runtime, the status line, and the
+   *  sidebar channel monitor. Hardware-agnostic by construction. */
+  getInputFeatureFrame() {
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    return this._inputFeatureTracker.frame(now);
+  }
+
+  /** Evaluate the boid modulation matrix at most once per animation frame.
+   *  Returns base-value-free instructions (`evaluation.targets`) so callers can
+   *  apply them to whichever param object they actually hold — the brush
+   *  applies them after simulation-var overrides, the UI applies them to a
+   *  throwaway copy for diagnostics. Returns null when there is nothing to do,
+   *  which is the default state for every existing document. */
+  getModulationSnapshot() {
+    const matrix = this.getP().modMatrix;
+    if (!matrix || isEmptyModMatrix(matrix)) return null;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (this._modSnapshot && this._modSnapshotTime >= 0 && (now - this._modSnapshotTime) < MOD_SNAPSHOT_MAX_AGE_MS) {
+      return this._modSnapshot;
+    }
+    const features = this.getInputFeatureFrame();
+    const evaluation = evaluateModMatrix({
+      matrix,
+      features: features.channels,
+      capabilities: features.capabilities,
+    });
+    this._modSnapshot = { features, matrix, ...evaluation };
+    this._modSnapshotTime = now;
+    return this._modSnapshot;
+  }
+
   getCurrentPenAngle() {
     if (this.pointerType !== 'pen') return null;
     if (!this.penAngleSampleValid || !Number.isFinite(this.azimuth)) return null;
@@ -17795,6 +17904,8 @@ export class App {
     // Reset EMA pressure at stroke start for immediate response
     this._rawPressure = e.pressure || 0.5;
     this.pressure = this._rawPressure;
+    // Seed the modulation input adapter so a quick tap already has a frame.
+    this._ingestInputSample(e, x, y);
     this._stabX = x;
     this._stabY = y;
     this.isDrawing = true;
@@ -17822,7 +17933,17 @@ export class App {
     // Don't draw during pinch
     if (this._pinchActive) return;
     const simCoords = this._getEventCoords(e);
-    if (this._handleSimulationPointerMove(simCoords.x, simCoords.y)) return;
+    if (this._handleSimulationPointerMove(simCoords.x, simCoords.y)) {
+      // Simulation mode still feeds the modulation input adapter for boid so
+      // live channels keep updating while dragging guides/spawns.
+      if (this.activeBrush === 'boid') {
+        this._rawPressure = e.pressure || 0.5;
+        this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
+        this._captureTilt(e);
+        this._ingestInputSample(e, simCoords.x, simCoords.y);
+      }
+      return;
+    }
     if (this._handleSymmetryPointerMove(simCoords.x, simCoords.y)) return;
     // Move-drag dispatch (any tool mode)
     if (this.selectionMgr?._isMoving) {
@@ -17848,6 +17969,7 @@ export class App {
       this._rawPressure = e.pressure || 0.5;
       this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
       this._captureTilt(e);
+      this._ingestInputSample(e, x, y);
       this.leaderX = x;
       this.leaderY = y;
       // Notify brush of hover for Apple Pencil hover preview/spawn
@@ -17870,6 +17992,7 @@ export class App {
       this._rawPressure = pe.pressure || 0.5;
       this.pressure += (this._rawPressure - this.pressure) * PRESSURE_SMOOTH_ALPHA;
       this._captureTilt(pe);
+      this._ingestInputSample(pe, x, y);
 
       // Apply stabilizer (lazy mouse)
       if (stab > 0) {
@@ -19092,6 +19215,10 @@ export class App {
     const perf = this._getPerformanceStatusSummary();
     if (perf) info += ` | ${perf}`;
     this.statusEl.textContent = info;
+    // Boid Input Modulation Framework live monitor + diagnostics. The hook is
+    // installed by ui.js and early-returns unless the boid section is open, so
+    // the common path is a single property read per frame.
+    this._refreshModulationDebugUi?.();
   }
 
   // ========================================================

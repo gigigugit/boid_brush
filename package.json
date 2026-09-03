@@ -4,12 +4,14 @@
   "private": true,
   "description": "Boid Brush shared web app with a thin Electron desktop shell",
   "main": "electron/main.cjs",
+  "type": "module",
   "scripts": {
     "setup": "npm install",
     "start:web": "node electron/start-web.cjs",
     "start:desktop": "node electron/start-desktop.cjs",
     "build:desktop": "electron-builder --dir",
-    "package:desktop": "electron-builder"
+    "package:desktop": "electron-builder",
+    "test": "node --test tests/"
   },
   "devDependencies": {
     "electron": "^42.3.2",
