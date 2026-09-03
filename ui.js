@@ -546,7 +546,7 @@ const _MOD_NUM_STYLE = 'width:52px;flex:0 0 auto;';
 function _buildModConditionRow(route, condition, index) {
   const needsSecond = condition.op === 'between' || condition.op === 'outside';
   return `
-    <div style="${_MOD_ROW_STYLE}">
+    <div class="mod-route-row mod-condition-row" style="${_MOD_ROW_STYLE}">
       <span style="flex:0 0 auto;">When</span>
       ${_modSelect(`data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-prop="channel"`, _MOD_CHANNEL_OPTIONS, condition.channel)}
       ${_modSelect(`data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-prop="op"`, _MOD_CONDITION_OPTIONS, condition.op)}
@@ -565,8 +565,8 @@ function _buildModRouteCard(route, index, report) {
     : (report?.reason ? `idle · ${report.reason}` : 'idle');
   const statusColor = report?.applied ? '#7fe0a0' : '#8b98aa';
   return `
-    <div data-mod-route-card="${route.id}" style="${_MOD_CARD_STYLE}${route.enabled ? '' : 'opacity:0.55;'}">
-      <div style="display:flex;align-items:center;gap:6px;margin:0 0 4px;">
+    <div class="mod-route-card" data-mod-route-card="${route.id}" style="${_MOD_CARD_STYLE}${route.enabled ? '' : 'opacity:0.55;'}">
+      <div class="mod-route-header" style="display:flex;align-items:center;gap:6px;margin:0 0 4px;">
         <span style="font-weight:600;color:#eef3ff;flex:1;">Route ${index + 1}</span>
         <span style="font-size:10px;color:${statusColor};" data-mod-route-status="${route.id}">${statusText}</span>
         <label style="margin:0;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#9fb0c6;">On
@@ -574,7 +574,7 @@ function _buildModRouteCard(route, index, report) {
         </label>
         <button type="button" data-mod-route="${route.id}" data-mod-action="remove-route" title="Delete route" style="flex:0 0 auto;padding:0 6px;">✕</button>
       </div>
-      <div style="${_MOD_ROW_STYLE}">
+      <div class="mod-route-row mod-source-target-row" style="${_MOD_ROW_STYLE}">
         <span style="flex:0 0 44px;">Source</span>
         ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="source"`, _MOD_CHANNEL_OPTIONS, route.source)}
         <span style="flex:0 0 40px;text-align:right;">Target</span>
@@ -584,20 +584,20 @@ function _buildModRouteCard(route, index, report) {
         <input type="range" min="-100" max="100" value="${Math.round(route.amount * 100)}" data-mod-route="${route.id}" data-mod-prop="amount">
       </label>
       <span class="slider-desc">${target ? `Fraction of the ${target.label} range (${target.min}…${target.max}) this route can move.` : 'Fraction of the target range this route can move.'}</span>
-      <div style="${_MOD_ROW_STYLE}">
+      <div class="mod-route-row mod-curve-row" style="${_MOD_ROW_STYLE}">
         <span style="flex:0 0 44px;">Curve</span>
         ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="curve"`, _MOD_CURVE_OPTIONS, route.curve)}
         <label style="margin:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;">Invert
           <input type="checkbox" ${route.invert ? 'checked' : ''} data-mod-route="${route.id}" data-mod-prop="invert" aria-label="Invert route ${index + 1}">
         </label>
       </div>
-      <div style="${_MOD_ROW_STYLE}">
+      <div class="mod-route-row mod-combine-row" style="${_MOD_ROW_STYLE}">
         <span style="flex:0 0 44px;">Combine</span>
         ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="combine"`, _MOD_COMBINE_OPTIONS, route.combine)}
         <span style="flex:0 0 auto;">Priority</span>
         <input type="number" min="-99" max="99" step="1" value="${route.priority}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="priority" aria-label="Route ${index + 1} priority">
       </div>
-      <div style="${_MOD_ROW_STYLE}">
+      <div class="mod-route-row mod-clamp-row" style="${_MOD_ROW_STYLE}">
         <span style="flex:0 0 44px;">Clamp</span>
         <input type="number" min="0" max="1" step="0.05" value="${route.clampMin}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="clampMin" aria-label="Route ${index + 1} clamp minimum">
         <span style="flex:0 0 auto;">…</span>
