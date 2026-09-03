@@ -108,6 +108,42 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .canvas-size-color-trigger.active{border-color:rgba(117,162,255,0.65);box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset,0 0 10px rgba(75,120,241,0.24);}
 .canvas-size-color-chip{width:24px;height:24px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);flex:none;}
 .canvas-size-color-value{font-size:11px;font-weight:700;letter-spacing:.04em;color:#eef3ff;text-transform:uppercase;}
+/* Canvas Size Modal — redesigned panel */
+.cs-panel{position:relative;width:min(92vw,360px);padding:14px;border:1px solid var(--line-1);border-radius:18px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);overflow-y:auto;max-height:90vh;touch-action:pan-y;display:grid;gap:12px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.12) transparent;}
+.cs-panel::-webkit-scrollbar{width:5px;}
+.cs-panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
+.cs-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.cs-header-text{display:grid;gap:2px;}
+.cs-kicker{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.cs-title{font-size:15px;font-weight:700;color:var(--ink-0);}
+.cs-preview-wrap{border-radius:14px;border:1px solid rgba(255,255,255,0.08);overflow:hidden;position:relative;height:96px;display:flex;align-items:center;justify-content:center;padding:8px;}
+.cs-preview-canvas-box{position:relative;border-radius:3px;box-shadow:0 0 0 1px rgba(255,255,255,0.22),0 4px 16px rgba(0,0,0,0.55);overflow:hidden;flex:none;}
+.cs-preview-stamp{width:36%;height:36%;border-radius:50%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);opacity:.9;box-shadow:0 2px 10px rgba(0,0,0,0.45),0 0 0 2px rgba(255,255,255,0.1);}
+.cs-preview-dims{position:absolute;bottom:7px;right:10px;font-size:9px;font-weight:700;letter-spacing:.06em;color:rgba(255,255,255,0.6);text-shadow:0 1px 3px rgba(0,0,0,0.9);pointer-events:none;}
+.cs-section-label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin-bottom:6px;}
+.cs-colors-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}
+.cs-color-trigger{display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 5px 7px;border:1px solid rgba(255,255,255,0.1);border-radius:12px;background:rgba(255,255,255,0.04);color:#e7ebf5;cursor:pointer;transition:all 140ms ease;min-width:0;}
+.cs-color-trigger:hover{background:rgba(255,255,255,0.09);border-color:rgba(255,255,255,0.18);color:#fff;}
+.cs-color-trigger.active{border-color:rgba(117,162,255,0.65);box-shadow:0 0 0 1px rgba(117,162,255,0.18) inset,0 0 10px rgba(75,120,241,0.24);}
+.cs-color-chip{width:28px;height:28px;border-radius:9px;border:1px solid rgba(255,255,255,0.14);background:#ffffff;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08);flex:none;}
+.cs-color-label{font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.cs-color-hex{font-size:9px;font-weight:700;letter-spacing:.03em;color:#eef3ff;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.cs-section{display:grid;gap:4px;}
+.cs-dims-row{display:flex;gap:8px;align-items:flex-end;}
+.cs-dim-field{flex:1;display:grid;gap:3px;}
+.cs-dim-label{font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.cs-dim-input-wrap{display:flex;align-items:center;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:rgba(255,255,255,0.06);overflow:hidden;}
+.cs-dim-input{background:transparent;border:none;color:#ddd;padding:6px 8px;font-size:11px;font-family:inherit;width:100%;box-sizing:border-box;outline:none;}
+.cs-dim-input:focus{box-shadow:none;}
+.cs-dim-input-wrap:focus-within{border-color:rgba(117,162,255,0.6);}
+.cs-dim-unit{font-size:10px;color:var(--ink-3);font-weight:600;padding-right:8px;flex:none;}
+.cs-swap-btn{padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#ccc;cursor:pointer;font-size:14px;transition:all 140ms ease;white-space:nowrap;flex:none;}
+.cs-swap-btn:hover{background:rgba(255,255,255,0.1);}
+.cs-preset-select{width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#ddd;padding:6px 10px;font-size:11px;cursor:pointer;color-scheme:dark;}
+.cs-preset-select option,.cs-preset-select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+.cs-footer{display:flex;justify-content:flex-end;padding-top:2px;}
+.cs-apply-btn{padding:8px 22px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;border:none;background:linear-gradient(135deg,#3a6ae8,#5b8af0);color:#fff;letter-spacing:.03em;transition:opacity 140ms ease;}
+.cs-apply-btn:hover{opacity:.85;}
 
 #colorPickerPanel{position:fixed;display:none;z-index:260;width:min(92vw,360px);padding:14px;border:1px solid var(--line-1);border-radius:18px;background:rgba(14,17,24,0.98);backdrop-filter:blur(22px);box-shadow:var(--shadow-lg);touch-action:pan-y;}
 #colorPickerPanel.open{display:block;}
@@ -1455,14 +1491,72 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <!-- ══════════ Canvas Size Modal ══════════ -->
 <div id="canvasSizeModal">
   <div class="ai-modal-backdrop" id="canvasSizeBackdrop"></div>
-  <div class="ai-modal-panel" style="width:420px;">
-    <button class="ai-modal-close" id="canvasSizeClose">✕</button>
-    <h2>📐 Canvas Size</h2>
-    <p class="ai-subtitle">Choose a preset or enter custom dimensions.</p>
+  <div class="cs-panel">
+    <!-- Header -->
+    <div class="cs-header">
+      <div class="cs-header-text">
+        <div class="cs-kicker">Document Setup</div>
+        <div class="cs-title">Canvas Size</div>
+      </div>
+      <button class="color-picker-close" id="canvasSizeClose" type="button" aria-label="Close canvas size dialog">✕</button>
+    </div>
 
-    <div style="margin-bottom:12px;">
-      <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Preset</label>
-      <select id="canvasSizePreset" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;">
+    <!-- Canvas Preview -->
+    <div class="cs-preview-wrap" id="canvasSizePreviewWrap">
+      <div class="cs-preview-canvas-box" id="canvasSizePreviewBox">
+        <div class="cs-preview-stamp" id="canvasSizePreviewStamp"></div>
+      </div>
+      <div class="cs-preview-dims" id="canvasSizePreviewDims">1024 × 1024</div>
+    </div>
+
+    <!-- Colors -->
+    <div class="cs-section">
+      <div class="cs-section-label">Colors</div>
+      <div class="cs-colors-row">
+        <button id="canvasSizePrimaryTrigger" class="cs-color-trigger" type="button" aria-label="Primary color" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false">
+          <span class="cs-color-chip" id="canvasSizePrimaryChip"></span>
+          <span class="cs-color-label">Primary</span>
+          <span class="cs-color-hex" id="canvasSizePrimaryHex">#1A1A1A</span>
+        </button>
+        <button id="canvasSizeSecondaryTrigger" class="cs-color-trigger" type="button" aria-label="Secondary color" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false">
+          <span class="cs-color-chip" id="canvasSizeSecondaryChip"></span>
+          <span class="cs-color-label">Secondary</span>
+          <span class="cs-color-hex" id="canvasSizeSecondaryHex">#FFFFFF</span>
+        </button>
+        <button id="canvasSizeBgTrigger" class="cs-color-trigger canvas-size-color-trigger" type="button" aria-label="Canvas background color" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false">
+          <span class="cs-color-chip canvas-size-color-chip"></span>
+          <span class="cs-color-label">Canvas</span>
+          <span class="cs-color-hex canvas-size-color-value" id="canvasSizeBgValue">#313131</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Dimensions -->
+    <div class="cs-section">
+      <div class="cs-section-label">Dimensions</div>
+      <div class="cs-dims-row">
+        <div class="cs-dim-field">
+          <label class="cs-dim-label" for="canvasSizeW">Width</label>
+          <div class="cs-dim-input-wrap">
+            <input type="number" id="canvasSizeW" class="cs-dim-input" min="1" max="8192" value="1024" aria-label="Canvas width in pixels">
+            <span class="cs-dim-unit">px</span>
+          </div>
+        </div>
+        <button id="canvasSizeSwap" class="cs-swap-btn" title="Swap width and height">⇄</button>
+        <div class="cs-dim-field">
+          <label class="cs-dim-label" for="canvasSizeH">Height</label>
+          <div class="cs-dim-input-wrap">
+            <input type="number" id="canvasSizeH" class="cs-dim-input" min="1" max="8192" value="1024" aria-label="Canvas height in pixels">
+            <span class="cs-dim-unit">px</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preset -->
+    <div class="cs-section">
+      <div class="cs-section-label">Preset</div>
+      <select id="canvasSizePreset" class="cs-preset-select" aria-label="Canvas size preset">
         <option value="custom">Custom</option>
         <optgroup label="Screen">
           <option value="1920x1080">HD 1080p (1920×1080)</option>
@@ -1489,29 +1583,12 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       </select>
     </div>
 
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
-      <div style="flex:1;">
-        <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Width (px)</label>
-        <input type="number" id="canvasSizeW" min="1" max="8192" value="1024" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
-      </div>
-      <button id="canvasSizeSwap" style="margin-top:18px;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ccc;cursor:pointer;font-size:14px;" title="Swap width/height">⇄</button>
-      <div style="flex:1;">
-        <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Height (px)</label>
-        <input type="number" id="canvasSizeH" min="1" max="8192" value="1024" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ddd;padding:7px 10px;font-size:11px;font-family:inherit;">
-      </div>
-    </div>
+    <!-- hidden bg state for color picker integration -->
+    <input type="hidden" id="canvasSizeBg" value="#313131">
 
-    <div style="margin-bottom:12px;">
-      <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Background</label>
-      <input type="hidden" id="canvasSizeBg" value="#313131">
-      <button id="canvasSizeBgTrigger" class="canvas-size-color-trigger" type="button" aria-haspopup="dialog" aria-controls="colorPickerPanel" aria-expanded="false">
-        <span class="canvas-size-color-chip"></span>
-        <span class="canvas-size-color-value" id="canvasSizeBgValue">#313131</span>
-      </button>
-    </div>
-
-    <div class="ai-modal-footer">
-      <button id="canvasSizeApply" class="ai-save-btn">Apply</button>
+    <!-- Footer -->
+    <div class="cs-footer">
+      <button id="canvasSizeApply" class="cs-apply-btn">Apply</button>
     </div>
   </div>
 </div>

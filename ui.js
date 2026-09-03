@@ -556,6 +556,7 @@ export function buildSidebar(app) {
     <div class="section-header" data-brushes="boid ant" data-section="swarm">Swarm <span class="chevron">▼</span></div>
     <div class="section-body" data-brushes="boid ant">
       ${sliderRow('count', 'Count', 3, MAX_SWARM_COUNT, 60)}
+      <button id="btnBoidAgentEditor" data-brushes="boid" style="width:100%;margin-top:4px;padding:6px;background:rgba(58,106,232,0.2);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#8ab4f8;font-size:11px;cursor:pointer;">🧬 Agent Settings Editor</button>
       <button id="btnBoidColorDist" style="width:100%;margin-top:6px;padding:6px;background:rgba(58,106,232,0.2);border:1px solid rgba(58,106,232,0.3);border-radius:6px;color:#8ab4f8;font-size:11px;cursor:pointer;">🎨 Color Distribution</button>
     </div>
 
@@ -1295,7 +1296,8 @@ export function buildSidebar(app) {
     app._showSimulationSetupExplorer?.(event.currentTarget);
   });
   document.getElementById('btnBoidColorDist')?.addEventListener('click', () => {
-    app._openBoidColorDistModal?.();
+    if (app.activeBrush === 'boid') app.openBoidSettingsEditor?.({ section: 'agentColors' });
+    else app._openBoidColorDistModal?.();
   });
   const syncSimulationDraftFromSidebar = () => app._syncSimulationSessionDraftUi?.();
   sb.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], input[type="text"]').forEach(el => {
@@ -1311,6 +1313,11 @@ export function buildSidebar(app) {
 
   // ── Ant Math overlay panel ──
   _buildAntMathPanel(app);
+
+  // ── Boid Agent Settings Editor button ──
+  document.getElementById('btnBoidAgentEditor')?.addEventListener('click', () => {
+    app.openBoidSettingsEditor?.();
+  });
 }
 
 function _workspaceSettingsMarkup() {

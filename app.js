@@ -12,6 +12,7 @@ import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
+import { openBoidSettingsEditor } from './boid-settings-editor.js';
 import { workspaceControlBelongsToBrush } from './settings-catalog.js';
 
 const STORAGE_KEY = 'bb_session_v1';
@@ -2887,13 +2888,17 @@ export class App {
     if (hEl) hEl.value = this._docH || this.H;
     if (bgEl) bgEl.value = this.bgColorEl?.value || '#313131';
     if (presetEl) presetEl.value = `${this._docW || this.W}x${this._docH || this.H}`;
-    this._syncCanvasSizeColorTrigger(bgEl?.value || '#313131');
+    this._syncCanvasSizeAllColorTriggers();
+    this._updateCanvasSizePreview();
     modal.classList.add('open');
   }
 
   _hideCanvasSizeModal() {
-    if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === 'canvasSizeBg') {
-      this._closeColorPicker({ recordHistory: false });
+    if (this._colorPicker.open) {
+      const activeKey = this._getColorTargetKey(this._colorPicker.target);
+      if (activeKey === 'canvasSizeBg' || activeKey === 'primary' || activeKey === 'secondary') {
+        this._closeColorPicker({ recordHistory: false });
+      }
     }
     document.getElementById('canvasSizeModal')?.classList.remove('open');
   }
@@ -4034,6 +4039,7 @@ export class App {
     const hEl = document.getElementById('canvasSizeH');
     if (wEl) wEl.value = w;
     if (hEl) hEl.value = h;
+    this._updateCanvasSizePreview();
   }
 
   makeLayerCanvas() {
@@ -4479,10 +4485,47 @@ export class App {
       this._setColorTriggerActive(trigger, activeKey === this._getColorTargetKey(target));
     });
     this._syncCanvasSizeColorTrigger();
+    // Also sync primary/secondary chips in the canvas size modal
+    this._syncCanvasSizeModalColorChips();
     const customTrigger = this._getColorTrigger(this._colorPicker.target);
     if (customTrigger && !['primaryColorTrigger', 'secondaryColorTrigger', 'bgColorTrigger'].includes(customTrigger.id || '')) {
       this._setColorTriggerActive(customTrigger, this._colorPicker.open);
     }
+  }
+
+  _syncCanvasSizeModalColorChips() {
+    const activeKey = this._colorPicker.open ? this._getColorTargetKey(this._colorPicker.target) : '';
+    // Primary chip
+    const primaryHex = this.getColorValue('primary', '#1a1a1a');
+    const primaryChip = document.getElementById('canvasSizePrimaryChip');
+    const primaryHexEl = document.getElementById('canvasSizePrimaryHex');
+    const primaryTrigger = document.getElementById('canvasSizePrimaryTrigger');
+    if (primaryChip) primaryChip.style.background = primaryHex;
+    if (primaryHexEl) primaryHexEl.textContent = primaryHex.toUpperCase();
+    if (primaryTrigger) {
+      this._setColorTriggerActive(primaryTrigger, activeKey === 'primary');
+      primaryTrigger.setAttribute('aria-expanded', String(activeKey === 'primary'));
+    }
+    // Secondary chip
+    const secondaryHex = this.getColorValue('secondary', '#ffffff');
+    const secondaryChip = document.getElementById('canvasSizeSecondaryChip');
+    const secondaryHexEl = document.getElementById('canvasSizeSecondaryHex');
+    const secondaryTrigger = document.getElementById('canvasSizeSecondaryTrigger');
+    if (secondaryChip) secondaryChip.style.background = secondaryHex;
+    if (secondaryHexEl) secondaryHexEl.textContent = secondaryHex.toUpperCase();
+    if (secondaryTrigger) {
+      this._setColorTriggerActive(secondaryTrigger, activeKey === 'secondary');
+      secondaryTrigger.setAttribute('aria-expanded', String(activeKey === 'secondary'));
+    }
+    // Bg trigger active state and aria-expanded
+    const bgTrigger = document.getElementById('canvasSizeBgTrigger');
+    if (bgTrigger) {
+      this._setColorTriggerActive(bgTrigger, activeKey === 'canvasSizeBg');
+      bgTrigger.setAttribute('aria-expanded', String(activeKey === 'canvasSizeBg'));
+    }
+    // Update preview stamp primary color
+    const stamp = document.getElementById('canvasSizePreviewStamp');
+    if (stamp) stamp.style.background = primaryHex;
   }
 
   _syncCanvasSizeColorTrigger(color = null) {
@@ -4494,6 +4537,46 @@ export class App {
     if (input) input.value = normalized;
     if (chip) chip.style.background = normalized;
     if (valueEl) valueEl.textContent = normalized.toUpperCase();
+    this._updateCanvasSizePreview();
+  }
+
+  _syncCanvasSizeAllColorTriggers() {
+    // Sync primary chip
+    const primaryHex = this.getColorValue('primary', '#1a1a1a');
+    const primaryChip = document.getElementById('canvasSizePrimaryChip');
+    const primaryHexEl = document.getElementById('canvasSizePrimaryHex');
+    if (primaryChip) primaryChip.style.background = primaryHex;
+    if (primaryHexEl) primaryHexEl.textContent = primaryHex.toUpperCase();
+    // Sync secondary chip
+    const secondaryHex = this.getColorValue('secondary', '#ffffff');
+    const secondaryChip = document.getElementById('canvasSizeSecondaryChip');
+    const secondaryHexEl = document.getElementById('canvasSizeSecondaryHex');
+    if (secondaryChip) secondaryChip.style.background = secondaryHex;
+    if (secondaryHexEl) secondaryHexEl.textContent = secondaryHex.toUpperCase();
+    // Sync bg via existing method (also triggers preview update)
+    this._syncCanvasSizeColorTrigger();
+  }
+
+  _updateCanvasSizePreview() {
+    const box = document.getElementById('canvasSizePreviewBox');
+    const stamp = document.getElementById('canvasSizePreviewStamp');
+    const dimsEl = document.getElementById('canvasSizePreviewDims');
+    if (!box) return;
+    const w = Math.max(1, +(document.getElementById('canvasSizeW')?.value) || 1024);
+    const h = Math.max(1, +(document.getElementById('canvasSizeH')?.value) || 1024);
+    const bgColor = document.getElementById('canvasSizeBg')?.value || '#313131';
+    const primaryColor = this.getColorValue('primary', '#1a1a1a');
+    // Scale to fit inside preview area (max ~220×80 to leave padding)
+    const maxW = 220;
+    const maxH = 80;
+    const scale = Math.min(maxW / w, maxH / h);
+    const pw = Math.max(24, Math.round(w * scale));
+    const ph = Math.max(24, Math.round(h * scale));
+    box.style.width = `${pw}px`;
+    box.style.height = `${ph}px`;
+    box.style.background = bgColor;
+    if (stamp) stamp.style.background = primaryColor;
+    if (dimsEl) dimsEl.textContent = `${w} × ${h}`;
   }
 
   _getCanvasSizeColorTarget() {
@@ -17255,6 +17338,27 @@ export class App {
       const w = document.getElementById('canvasSizeW');
       const h = document.getElementById('canvasSizeH');
       if (w && h) { const t = w.value; w.value = h.value; h.value = t; }
+      this._updateCanvasSizePreview();
+    });
+    document.getElementById('canvasSizeW')?.addEventListener('input', () => this._updateCanvasSizePreview());
+    document.getElementById('canvasSizeH')?.addEventListener('input', () => this._updateCanvasSizePreview());
+    document.getElementById('canvasSizePrimaryTrigger')?.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === 'primary') {
+        this._closeColorPicker({ recordHistory: false });
+        return;
+      }
+      this._openColorPicker('primary', event.currentTarget);
+    });
+    document.getElementById('canvasSizeSecondaryTrigger')?.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this._colorPicker.open && this._getColorTargetKey(this._colorPicker.target) === 'secondary') {
+        this._closeColorPicker({ recordHistory: false });
+        return;
+      }
+      this._openColorPicker('secondary', event.currentTarget);
     });
     document.getElementById('canvasSizeApply')?.addEventListener('click', async () => {
       const w = +document.getElementById('canvasSizeW')?.value || 1920;
@@ -21427,6 +21531,10 @@ export class App {
     this.toastEl.classList.add('show');
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 1800);
+  }
+
+  openBoidSettingsEditor(options = {}) {
+    openBoidSettingsEditor(this, options);
   }
 
   _handleInitError(error) {
