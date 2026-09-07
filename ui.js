@@ -1221,7 +1221,7 @@ export function buildSidebar(app) {
            autosave, and workspace export — while the scalar-only preset filter
            sees an ordinary string. It stays in the sidebar section body (not
            the modal) so the settings catalog, which only indexes controls
-           inside a `.section-body`, keeps finding it. -->
+           inside a section-body container, keeps finding it. -->
       <label id="modMatrixJsonRow" style="display:none;">Modulation Matrix (JSON)
         <input type="text" id="boidModMatrix" value="" spellcheck="false" aria-label="Boid modulation matrix JSON" style="width:100%;font-family:ui-monospace,monospace;font-size:10px;">
       </label>
