@@ -14,7 +14,7 @@ import {
   normalizeLibrary,
   normalizePreset,
 } from './settings-library.js';
-import { evaluatePressureCurve } from './pressure-curve.js';
+import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-07-input-modulation-modal-2';
 import {
   DEFAULT_MOD_CURVE_POINTS,
   FEATURE_CHANNELS,
@@ -33,7 +33,7 @@ import {
   modMatrixToControlValue,
   parseModMatrix,
   resolveModTarget,
-} from './boid-input-modulation.js';
+} from './boid-input-modulation.js?v=2026-09-07-input-modulation-modal-2';
 
 // =============================================================================
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers

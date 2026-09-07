@@ -16,7 +16,7 @@
  * be unit tested without a DOM.
  */
 
-import { evaluateSplineCurve } from './pressure-curve.js';
+import { evaluateSplineCurve } from './pressure-curve.js?v=2026-09-07-input-modulation-modal-2';
 
 export const MOD_MATRIX_FORMAT = 'modMatrix.v1';
 export const MOD_MATRIX_VERSION = 1;

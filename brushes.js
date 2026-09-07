@@ -12,7 +12,7 @@ import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
-import { applyModTargets, summarizeModulation } from './boid-input-modulation.js';
+import { applyModTargets, summarizeModulation } from './boid-input-modulation.js?v=2026-09-07-input-modulation-modal-2';
 import { evaluatePressureCurve } from './pressure-curve.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
