@@ -516,6 +516,7 @@ const MOD_CONDITION_LIMIT = 3;
 const MOD_MATRIX_MAX_JSON_LENGTH = 24000;
 
 let _modSelectedRouteId = null;
+let _modCurveResizeObserver = null;
 
 function _modMatrixControl() {
   return document.getElementById('boidModMatrix');
@@ -707,6 +708,8 @@ function _renderModRouteList(app) {
 function _renderModRouteDetail(app) {
   const container = document.getElementById('modRouteDetail');
   if (!container) return;
+  _modCurveResizeObserver?.disconnect();
+  _modCurveResizeObserver = null;
   const matrix = _readModMatrix();
   _modReconcileSelection(matrix);
   const index = matrix.routes.findIndex(route => route.id === _modSelectedRouteId);
@@ -863,7 +866,8 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     commit();
     draw();
   });
-  new ResizeObserver(draw).observe(canvas);
+  _modCurveResizeObserver = new ResizeObserver(draw);
+  _modCurveResizeObserver.observe(canvas);
   draw();
 }
 
