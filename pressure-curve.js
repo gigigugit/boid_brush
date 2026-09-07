@@ -1,5 +1,8 @@
+function clamp(value, min, max) {
+  return value < min ? min : (value > max ? max : value);
+}
 function clamp01(value) {
-  return Math.max(0, Math.min(1, value));
+  return clamp(value, 0, 1);
 }
 
 function endpointSlope(hereSpan, nextSpan, hereSlope, nextSlope) {
@@ -49,21 +52,37 @@ function buildTangents(points) {
   return tangents;
 }
 
-export function evaluatePressureCurve(curve, pressure, fallbackLow = 0.3) {
-  const value = clamp01(Number.isFinite(pressure) ? pressure : 0.5);
+/**
+ * Generic monotone-Hermite spline evaluator shared by every "drag points on a
+ * canvas" curve editor in the app. `curve` is a sorted `[x, y]` point list
+ * with `x` always read in the unipolar 0..1 domain (matching a normalized
+ * pressure or channel signal); `y` is passed through unclamped internally and
+ * only clamped to `[clampMin, clampMax]` on the way out, so callers can reuse
+ * the exact same interpolation for a unipolar 0..1 output (the stylus
+ * pressure curves) or a bipolar -1..1 output (the input-modulation curve)
+ * without duplicating the spline math.
+ *
+ * On malformed/absent curve data this never throws: it falls back to
+ * `fallback(value)` (or, without a fallback, the clamped input itself), so a
+ * corrupted document degrades to a safe passthrough instead of breaking the
+ * caller.
+ */
+export function evaluateSplineCurve(curve, x, { clampMin = 0, clampMax = 1, fallback } = {}) {
+  const value = clamp01(Number.isFinite(x) ? x : 0.5);
+  const clampOut = v => clamp(v, clampMin, clampMax);
   if (!Array.isArray(curve) || curve.length < 2) {
-    return fallbackLow + (1 - fallbackLow) * value;
+    return typeof fallback === 'function' ? fallback(value) : clampOut(value);
   }
 
   for (let index = 0; index < curve.length; index += 1) {
     const point = curve[index];
     if (!Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])
       || (index > 0 && point[0] <= curve[index - 1][0])) {
-      return fallbackLow + (1 - fallbackLow) * value;
+      return typeof fallback === 'function' ? fallback(value) : clampOut(value);
     }
   }
-  if (value <= curve[0][0]) return clamp01(curve[0][1]);
-  if (value >= curve[curve.length - 1][0]) return clamp01(curve[curve.length - 1][1]);
+  if (value <= curve[0][0]) return clampOut(curve[0][1]);
+  if (value >= curve[curve.length - 1][0]) return clampOut(curve[curve.length - 1][1]);
 
   let segment = 0;
   while (segment < curve.length - 2 && value > curve[segment + 1][0]) segment += 1;
@@ -71,7 +90,7 @@ export function evaluatePressureCurve(curve, pressure, fallbackLow = 0.3) {
   const end = curve[segment + 1];
   const span = end[0] - start[0];
   const t = (value - start[0]) / span;
-  if (curve.length === 2) return clamp01(start[1] + (end[1] - start[1]) * t);
+  if (curve.length === 2) return clampOut(start[1] + (end[1] - start[1]) * t);
   const t2 = t * t;
   const t3 = t2 * t;
   const tangents = buildTangents(curve);
@@ -79,5 +98,13 @@ export function evaluatePressureCurve(curve, pressure, fallbackLow = 0.3) {
     + (t3 - 2 * t2 + t) * span * tangents[segment]
     + (-2 * t3 + 3 * t2) * end[1]
     + (t3 - t2) * span * tangents[segment + 1];
-  return clamp01(output);
+  return clampOut(output);
+}
+
+export function evaluatePressureCurve(curve, pressure, fallbackLow = 0.3) {
+  return evaluateSplineCurve(curve, pressure, {
+    clampMin: 0,
+    clampMax: 1,
+    fallback: value => fallbackLow + (1 - fallbackLow) * value,
+  });
 }

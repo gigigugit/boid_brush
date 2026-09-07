@@ -16,6 +16,8 @@
  * be unit tested without a DOM.
  */
 
+import { evaluateSplineCurve } from './pressure-curve.js';
+
 export const MOD_MATRIX_FORMAT = 'modMatrix.v1';
 export const MOD_MATRIX_VERSION = 1;
 
@@ -200,6 +202,30 @@ const MOD_CURVE_BY_ID = new Map(MOD_CURVES.map(curve => [curve.id, curve]));
 export function applyCurve(curveId, value) {
   const curve = MOD_CURVE_BY_ID.get(curveId) || MOD_CURVE_BY_ID.get('linear');
   return clamp01(curve.fn(clamp01(finite(value, 0))));
+}
+
+// ── Bipolar custom curve (per-route, optional) ──────────────
+// A route's shaping is normally one of the bounded presets above (always
+// unipolar 0..1). `curveMode: 'custom'` instead lets a route own a small
+// draggable spline — the same monotone-Hermite math the stylus pressure
+// curves already use (`evaluateSplineCurve` in pressure-curve.js) — whose
+// output spans -1..1 so the path can *cross zero*: part of the input range
+// yields negative modulation and another part positive, without needing two
+// routes. `invert` still means "mirror the shaped signal", but bipolar
+// mirroring is negation (`-value`) rather than the unipolar `1 - value`.
+export const DEFAULT_MOD_CURVE_POINTS = Object.freeze([Object.freeze([0, 0]), Object.freeze([1, 1])]);
+export const MOD_CURVE_POINT_LIMIT = 8;
+export const MOD_CURVE_MODES = Object.freeze([
+  { id: 'preset', label: 'Preset' },
+  { id: 'custom', label: 'Custom (bipolar)' },
+]);
+export const MOD_CURVE_MODE_IDS = Object.freeze(MOD_CURVE_MODES.map(mode => mode.id));
+
+/** Evaluate a route's custom bipolar curve: channel value (0..1) → signed
+ *  modulation strength (-1..1). Never throws; malformed points fall back to
+ *  an identity passthrough so a corrupted document degrades safely. */
+export function evaluateModCurvePoints(points, value) {
+  return evaluateSplineCurve(points, value, { clampMin: -1, clampMax: 1, fallback: v => v });
 }
 
 // ── Combine modes ───────────────────────────────────────────
@@ -469,6 +495,11 @@ const DEFAULT_ROUTE = Object.freeze({
   target: 'cohesion',
   amount: 0,
   curve: 'linear',
+  // 'preset' shapes the signal with `curve` (unipolar, via applyCurve());
+  // 'custom' shapes it with `curvePoints` instead (bipolar, via
+  // evaluateModCurvePoints()), letting the route cross zero mid-range.
+  curveMode: 'preset',
+  curvePoints: [[0, 0], [1, 1]],
   invert: false,
   clampMin: 0,
   clampMax: 1,
@@ -504,6 +535,34 @@ function _normalizeConditions(candidate) {
   return { conditions, dropped };
 }
 
+/** Normalize a route's custom bipolar curve points: sorted `[x, y]` pairs
+ *  with x clamped to 0..1 and y clamped to -1..1 (so it can cross zero),
+ *  deduplicated, and forced to span the full 0..1 domain — mirroring the
+ *  `_normalizePressureCurve` sanitizer the stylus pressure editors use in
+ *  ui.js. Falls back to the identity curve rather than throwing. */
+function _normalizeCurvePoints(candidate) {
+  const dropped = [];
+  const fallback = () => DEFAULT_ROUTE.curvePoints.map(point => [...point]);
+  if (candidate === undefined) return { points: fallback(), dropped };
+  if (!Array.isArray(candidate)) return { points: fallback(), dropped: ['curvePoints:not-an-array'] };
+  const sliced = candidate.slice(0, MOD_CURVE_POINT_LIMIT);
+  const points = sliced
+    .map(raw => [Number(raw?.[0]), Number(raw?.[1])])
+    .filter(point => point.every(Number.isFinite))
+    .map(([x, y]) => [clamp01(x), clamp(y, -1, 1)])
+    .sort((a, b) => a[0] - b[0]);
+  if (points.length !== sliced.length) dropped.push('curvePoints:invalid-entries');
+  if (candidate.length > MOD_CURVE_POINT_LIMIT) dropped.push('curvePoints:truncated');
+  const deduped = points.filter((point, index) => index === 0 || point[0] - points[index - 1][0] > 0.001);
+  if (deduped.length < 2) {
+    dropped.push('curvePoints:too-few-points');
+    return { points: fallback(), dropped };
+  }
+  deduped[0][0] = 0;
+  deduped[deduped.length - 1][0] = 1;
+  return { points: deduped, dropped };
+}
+
 export function normalizeModRoute(candidate, index = 0) {
   const dropped = [];
   // Garbage entries are dropped outright rather than materialized as inert
@@ -517,6 +576,10 @@ export function normalizeModRoute(candidate, index = 0) {
   if (!target) dropped.push(`target:${String(candidate.target)}`);
   const curve = MOD_CURVE_IDS.includes(candidate.curve) ? candidate.curve : DEFAULT_ROUTE.curve;
   if (candidate.curve !== undefined && curve !== candidate.curve) dropped.push(`curve:${String(candidate.curve)}`);
+  const curveMode = candidate.curveMode === 'custom' ? 'custom' : 'preset';
+  if (candidate.curveMode !== undefined && curveMode !== candidate.curveMode) dropped.push(`curveMode:${String(candidate.curveMode)}`);
+  const curvePointsResult = _normalizeCurvePoints(candidate.curvePoints);
+  dropped.push(...curvePointsResult.dropped);
   const combine = MOD_COMBINE_IDS.includes(candidate.combine) ? candidate.combine : DEFAULT_ROUTE.combine;
   if (candidate.combine !== undefined && combine !== candidate.combine) dropped.push(`combine:${String(candidate.combine)}`);
   const conditionResult = _normalizeConditions(candidate.conditions);
@@ -534,6 +597,8 @@ export function normalizeModRoute(candidate, index = 0) {
       target: target || DEFAULT_ROUTE.target,
       amount: clamp(finite(candidate.amount, DEFAULT_ROUTE.amount), -1, 1),
       curve,
+      curveMode,
+      curvePoints: curvePointsResult.points,
       invert: !!candidate.invert,
       clampMin: Math.min(clampMin, clampMax),
       clampMax: Math.max(clampMin, clampMax),
@@ -766,8 +831,17 @@ export function evaluateModMatrix({ matrix, features, capabilities } = {}) {
     }
 
     const signal = clamp01(finite(channels[route.source], 0));
-    const shaped = applyCurve(route.curve, signal);
-    const oriented = route.invert ? 1 - shaped : shaped;
+    // Preset curves are unipolar (0..1), so `invert` mirrors around the
+    // midpoint (`1 - shaped`). A custom curve is already bipolar (-1..1) and
+    // may itself cross zero, so `invert` there just flips its sign.
+    let oriented;
+    if (route.curveMode === 'custom') {
+      const bipolar = clamp(evaluateModCurvePoints(route.curvePoints, signal), -1, 1);
+      oriented = route.invert ? -bipolar : bipolar;
+    } else {
+      const shaped = applyCurve(route.curve, signal);
+      oriented = route.invert ? 1 - shaped : shaped;
+    }
     const contribution = clamp(route.amount * oriented, -1, 1);
     report.signal = signal;
     report.contribution = contribution;

@@ -15,12 +15,16 @@ import {
   INPUT_CAPABILITIES,
   MOD_TARGET_IDS,
   FEATURE_REFERENCES,
+  DEFAULT_MOD_CURVE_POINTS,
+  MOD_CURVE_POINT_LIMIT,
+  MOD_CURVE_MODE_IDS,
   createInputFrame,
   getInputSource,
   registerInputSource,
   listInputSources,
   getFeatureChannel,
   applyCurve,
+  evaluateModCurvePoints,
   resolveModTarget,
   createFeatureState,
   stepFeatureState,
@@ -28,6 +32,7 @@ import {
   toFeatureFrame,
   FeatureTracker,
   createModRoute,
+  normalizeModRoute,
   normalizeModMatrix,
   normalizeModMatrixWithReport,
   emptyModMatrix,
@@ -339,6 +344,18 @@ test('control value round-trips through parse without drift', () => {
   assert.equal(serializeModMatrix(parseModMatrix(encoded)), serializeModMatrix(matrix));
 });
 
+test('a custom bipolar curve round-trips through the control value without drift', () => {
+  const matrix = matrixOf({
+    id: 'bi', source: 'pressure', target: 'seek', amount: 0.7, combine: 'sum',
+    curveMode: 'custom', curvePoints: [[0, -1], [0.3, 0.2], [1, 1]],
+  });
+  const encoded = modMatrixToControlValue(matrix);
+  const reparsed = parseModMatrix(encoded);
+  assert.equal(reparsed.routes[0].curveMode, 'custom');
+  assert.deepEqual(reparsed.routes[0].curvePoints, matrix.routes[0].curvePoints);
+  assert.equal(modMatrixToControlValue(reparsed), encoded, 're-encoding a parsed document is a fixed point');
+});
+
 // ── Curves ─────────────────────────────────────────────────────────────────
 
 test('curves stay bounded and unknown curve ids fall back to linear', () => {
@@ -352,6 +369,115 @@ test('curves stay bounded and unknown curve ids fall back to linear', () => {
   assert.equal(applyCurve('nope', 0.3), 0.3);
   assert.equal(applyCurve('linear', 9), 1, 'inputs are clamped before shaping');
   assert.equal(applyCurve('linear', NaN), 0);
+});
+
+// ── Bipolar custom curve (curveMode: 'custom') ─────────────────────────────
+// The Input Modulation modal's curve editor maps a channel (0..1) to signed
+// modulation strength (-1..1) via `curvePoints`, gated behind an opt-in
+// `curveMode: 'custom'` flag so every existing (modMatrix.v1) document — which
+// has neither field — keeps using the original unipolar preset-curve path
+// with byte-identical output.
+
+test('routes without curveMode/curvePoints (modMatrix.v1 documents) normalize to safe defaults', () => {
+  const { route, dropped } = normalizeModRoute({ id: 'legacy', source: 'pressure', target: 'seek', amount: 0.5 });
+  assert.equal(route.curveMode, 'preset', 'absent curveMode defaults to the original preset-curve behaviour');
+  assert.deepEqual(route.curvePoints, [[0, 0], [1, 1]], 'absent curvePoints default to an identity curve');
+  assert.ok(!dropped.some(reason => reason.startsWith('curveMode') || reason.startsWith('curvePoints')),
+    'a document that never mentions the new fields reports no drops for them');
+});
+
+test('legacy routes evaluate identically whether or not curveMode/curvePoints are present', () => {
+  const legacyRoute = { id: 'a', source: 'pressure', target: 'seek', amount: 0.6, curve: 'sqrt', invert: true };
+  const withoutFields = matrixOf(legacyRoute);
+  const withDefaultsExplicit = matrixOf({ ...legacyRoute, curveMode: 'preset', curvePoints: [[0, 0], [1, 1]] });
+  const features = { pressure: 0.4 };
+  const a = run(withoutFields, { params: { seek: 0.2 }, features });
+  const b = run(withDefaultsExplicit, { params: { seek: 0.2 }, features });
+  assert.equal(a.params.seek, b.params.seek);
+});
+
+test('curvePoints are sorted, deduped, clamped, and endpoint x is pinned to 0 and 1', () => {
+  const { route } = normalizeModRoute({
+    id: 'r', target: 'seek', curveMode: 'custom',
+    curvePoints: [[0.6, 5], [-1, -5], [0.6, 0.2], [1.4, -9]],
+  });
+  assert.equal(route.curveMode, 'custom');
+  // [-1,-5] clamps to x=0 (then pinned), [1.4,-9] clamps to x=1 (then pinned);
+  // the duplicate x=0.6 pair (values 1 and 0.2 after clamping) collapses to
+  // whichever came first, since points within 0.001 of each other are merged.
+  assert.equal(route.curvePoints[0][0], 0);
+  assert.equal(route.curvePoints[route.curvePoints.length - 1][0], 1);
+  assert.equal(route.curvePoints.length, 3, 'the near-duplicate x=0.6 pair collapses to one point');
+  assert.ok(route.curvePoints.every(([x, y]) => x >= 0 && x <= 1 && y >= -1 && y <= 1));
+  const xs = route.curvePoints.map(point => point[0]);
+  assert.deepEqual(xs, [...xs].sort((x, y) => x - y), 'points stay sorted by x');
+});
+
+test('malformed curvePoints fall back to the default identity curve with a drop reason', () => {
+  for (const bad of ['not-an-array', 42, null]) {
+    const { route, dropped } = normalizeModRoute({ id: 'r', target: 'seek', curveMode: 'custom', curvePoints: bad });
+    assert.deepEqual(route.curvePoints, [[0, 0], [1, 1]]);
+    if (bad !== null) assert.ok(dropped.includes('curvePoints:not-an-array'));
+  }
+  const { route: tooFew, dropped: droppedFew } = normalizeModRoute({
+    id: 'r', target: 'seek', curveMode: 'custom', curvePoints: [[0.5, 0.5]],
+  });
+  assert.deepEqual(tooFew.curvePoints, [[0, 0], [1, 1]]);
+  assert.ok(droppedFew.includes('curvePoints:too-few-points'));
+});
+
+test('curvePoints beyond the point limit are truncated, not rejected', () => {
+  const overLimit = Array.from({ length: MOD_CURVE_POINT_LIMIT + 4 }, (_, i) => [i / (MOD_CURVE_POINT_LIMIT + 3), 0]);
+  const { route, dropped } = normalizeModRoute({ id: 'r', target: 'seek', curveMode: 'custom', curvePoints: overLimit });
+  assert.ok(route.curvePoints.length <= MOD_CURVE_POINT_LIMIT);
+  assert.ok(dropped.includes('curvePoints:truncated'));
+});
+
+test('an unrecognized curveMode value is dropped back to the preset default', () => {
+  const { route, dropped } = normalizeModRoute({ id: 'r', target: 'seek', curveMode: 'bogus' });
+  assert.equal(route.curveMode, 'preset');
+  assert.ok(dropped.includes('curveMode:bogus'));
+  assert.ok(MOD_CURVE_MODE_IDS.includes('preset') && MOD_CURVE_MODE_IDS.includes('custom'));
+});
+
+test('evaluateModCurvePoints is bipolar and lets a route cross zero mid-range', () => {
+  // A line from (0,-1) to (1,1) crosses zero exactly at x=0.5.
+  const crossing = [[0, -1], [1, 1]];
+  assert.ok(evaluateModCurvePoints(crossing, 0) < 0);
+  assert.ok(Math.abs(evaluateModCurvePoints(crossing, 0.5)) < 1e-9);
+  assert.ok(evaluateModCurvePoints(crossing, 1) > 0);
+  // Default identity curve is a no-op passthrough.
+  assert.equal(evaluateModCurvePoints(DEFAULT_MOD_CURVE_POINTS, 0.3), 0.3);
+});
+
+test('evaluateModCurvePoints degrades to an identity passthrough on malformed points, never throwing', () => {
+  assert.equal(evaluateModCurvePoints(null, 0.7), 0.7);
+  assert.equal(evaluateModCurvePoints([[0.5, 1]], 0.7), 0.7, 'fewer than two points falls back');
+  assert.equal(evaluateModCurvePoints([[0, 0], [1, NaN]], 0.25), 0.25, 'non-finite points fall back');
+});
+
+test('a custom bipolar curve drives the contribution directly, and invert negates rather than mirrors', () => {
+  const risingThroughZero = [[0, -1], [1, 1]];
+  const low = run(matrixOf({
+    id: 'bi', source: 'pressure', target: 'seek', amount: 1, combine: 'sum',
+    curveMode: 'custom', curvePoints: risingThroughZero,
+  }), { params: { seek: 0.5 }, features: { pressure: 0 } });
+  assert.ok(low.params.seek < 0.5, 'the low end of the curve is negative, so it pulls the target down');
+
+  const high = run(matrixOf({
+    id: 'bi', source: 'pressure', target: 'seek', amount: 1, combine: 'sum',
+    curveMode: 'custom', curvePoints: risingThroughZero,
+  }), { params: { seek: 0.5 }, features: { pressure: 1 } });
+  assert.ok(high.params.seek > 0.5, 'the high end of the curve is positive, so it pushes the target up');
+
+  // For a preset curve, invert mirrors (1 - shaped); for a custom bipolar
+  // curve it must instead negate, since the curve is already centred on zero.
+  const inverted = run(matrixOf({
+    id: 'bi', source: 'pressure', target: 'seek', amount: 1, combine: 'sum', invert: true,
+    curveMode: 'custom', curvePoints: risingThroughZero,
+  }), { params: { seek: 0.5 }, features: { pressure: 1 } });
+  assert.ok(Math.abs(inverted.params.seek - low.params.seek) < 1e-9,
+    'inverting the high-end (positive) reading matches the un-inverted low-end (negative) reading, i.e. sign flip');
 });
 
 // ── Evaluation: combine modes ──────────────────────────────────────────────
