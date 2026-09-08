@@ -5,13 +5,8 @@
  * Bug: `App.getModulationSnapshot()` (via `getInputFeatureFrame()`) and
  * `App._ingestInputSample()` used to dereference `this._inputFeatureTracker`
  * directly. `_inputFeatureTracker` is always created in the real constructor,
- * but simulation mode drives a BoidBrush through its full per-frame pipeline
- * (`_applySimVars` → `_applyInputModulation` → `App.getModulationSnapshot()`)
- * even when no Pencil/mouse/touch sample has ever reached the app (e.g. an
- * isolated multi-session runtime, or any lightweight caller that only
- * implements a subset of the App surface). Any such caller crashed with
- * "Cannot read properties of undefined (reading 'frame')" instead of running
- * simulation mode with "no modulation data".
+ * Callers without a live input tracker must remain safe, while BoidBrush must
+ * bypass input modulation entirely whenever simulation mode is enabled.
  *
  * `App.prototype` methods are exercised directly against a minimal
  * `Object.create(App.prototype)` stand-in (no DOM) so this stays a fast,
@@ -24,6 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { App } from '../app.js';
+import { BoidBrush } from '../brushes.js';
 import { FeatureTracker, MOD_MATRIX_FORMAT, MOD_MATRIX_VERSION, createModRoute } from '../boid-input-modulation.js?v=2026-09-07-input-modulation-modal-2';
 
 /** One-route matrix gating on a Pencil-only channel (pressure), matching how
@@ -108,4 +104,56 @@ test('live Pencil input still drives modulation normally once a real sample arri
 test('getModulationSnapshot() still returns null for the default (empty) modMatrix, tracker or not', () => {
   const app = makeHeadlessApp({ modMatrix: { format: MOD_MATRIX_FORMAT, version: MOD_MATRIX_VERSION, routes: [], channels: {} } });
   assert.equal(app.getModulationSnapshot(), null);
+});
+
+test('getModulationSnapshot() bypasses the matrix without creating input state in simulation mode', () => {
+  const app = makeHeadlessApp();
+  app.simulation = { enabled: true };
+
+  assert.equal(app.getModulationSnapshot(), null);
+  assert.equal(app._inputFeatureTracker, undefined);
+});
+
+test('BoidBrush bypasses input modulation completely in simulation mode', () => {
+  const brush = Object.create(BoidBrush.prototype);
+  brush.app = {
+    simulation: { enabled: true },
+    getModulationSnapshot() {
+      throw new Error('simulation mode must not evaluate input modulation');
+    },
+  };
+  brush._modApplied = { seek: { value: 9 } };
+  const params = { seek: 0.25 };
+
+  assert.equal(brush._applyInputModulation(params), params);
+  assert.equal(params.seek, 0.25);
+  assert.equal(brush._modApplied, null);
+});
+
+test('BoidBrush still applies input modulation outside simulation mode', () => {
+  let snapshotReads = 0;
+  const brush = Object.create(BoidBrush.prototype);
+  brush.app = {
+    simulation: { enabled: false },
+    getModulationSnapshot() {
+      snapshotReads++;
+      return {
+        targets: {
+          seek: {
+            offsetNorm: 0.1,
+            gain: 1,
+            clampMin: 0,
+            clampMax: 1,
+            routeIds: ['seek-route'],
+          },
+        },
+      };
+    },
+  };
+  const params = { seek: 0.25 };
+
+  brush._applyInputModulation(params);
+  assert.equal(snapshotReads, 1);
+  assert.notEqual(params.seek, 0.25);
+  assert.ok(brush._modApplied.seek);
 });

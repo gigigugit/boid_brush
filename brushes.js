@@ -1530,18 +1530,20 @@ export class BoidBrush {
    *  The app owns evaluation (`App.getModulationSnapshot()`), which is a pure
    *  function of the matrix plus the current FeatureFrame and therefore knows
    *  nothing about base parameter values. Application happens *here*, after
-   *  simulation-var overrides have landed on `next`, so a running simulation
-   *  modulates the values it is actually using. `applyModTargets` only writes
-   *  ids in the module's target allowlist and clamps each write to that
-   *  target's spec — an imported route can never reach an arbitrary property.
+   *  simulation-var overrides have landed on `next`. Simulation mode bypasses
+   *  input modulation entirely because it has no drawing-input lifecycle;
+   *  simulation vars remain authoritative there. `applyModTargets` only writes
+   *  ids in the module's target allowlist and clamps each write to that target's
+   *  spec — an imported route can never reach an arbitrary property.
    *
    *  Runs before `_resolveLeaderParams`, so leaders inherit modulated values
    *  unless a Leader Boids override pins that field. Boid-only: `_applySimVars`
    *  is the single gate every boid `writeParams()` call passes through
    *  (stroke, hover, and simulation mode). */
   _applyInputModulation(next) {
-    const snapshot = this.app.getModulationSnapshot?.();
     this._modApplied = null;
+    if (this.app.simulation?.enabled) return next;
+    const snapshot = this.app.getModulationSnapshot?.();
     if (!snapshot) return next;
     const { applied } = applyModTargets(next, snapshot);
     this._modApplied = applied;

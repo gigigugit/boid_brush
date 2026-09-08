@@ -17832,6 +17832,7 @@ export class App {
    *  throwaway copy for diagnostics. Returns null when there is nothing to do,
    *  which is the default state for every existing document. */
   getModulationSnapshot() {
+    if (this.simulation?.enabled) return null;
     const matrix = this.getP().modMatrix;
     if (!matrix || isEmptyModMatrix(matrix)) return null;
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
