@@ -17747,6 +17747,27 @@ export class App {
     this._captureTilt(e);
   }
 
+  /** Boid Input Modulation Framework — compatibility seam.
+   *
+   *  Simulation mode can drive a BoidBrush (main brush, or an isolated
+   *  multi-session runtime) through its full per-frame pipeline
+   *  (`_applySimVars` → `_applyInputModulation` → `App.getModulationSnapshot()`)
+   *  with no Pencil, mouse, or touch ever having reported a live sample —
+   *  e.g. a session that never received a pointer event on `interactionCanvas`,
+   *  or any future caller that only implements a subset of the App surface.
+   *  `_inputFeatureTracker` is always created in the constructor for normal
+   *  browser use, but every reader/writer goes through this accessor instead
+   *  of the field directly so a missing or not-yet-constructed tracker
+   *  degrades to "no live input yet" (an empty FeatureTracker) rather than
+   *  throwing — the same single tracker instance still accumulates real
+   *  Pencil/mouse/touch samples the moment one arrives. */
+  _ensureInputFeatureTracker() {
+    if (!(this._inputFeatureTracker instanceof FeatureTracker)) {
+      this._inputFeatureTracker = new FeatureTracker();
+    }
+    return this._inputFeatureTracker;
+  }
+
   /** Boid Input Modulation Framework — pointer / Apple Pencil / touch adapter.
    *  Converts one PointerEvent into a normalized InputFrame and feeds the
    *  FeatureTracker. Everything downstream (features, routes, boid runtime)
@@ -17761,6 +17782,7 @@ export class App {
    *  simulation-mode drags with canvas-space coordinates. */
   _ingestInputSample(e, x, y) {
     if (!e) return;
+    const tracker = this._ensureInputFeatureTracker();
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const pointerType = e.pointerType || this.pointerType || 'mouse';
     const sourceId = pointerType === 'pen' ? 'pen' : (pointerType === 'touch' ? 'touch' : 'mouse');
@@ -17781,7 +17803,7 @@ export class App {
     else if (frame.tiltX !== undefined && Number.isFinite(this.altitude)) frame.altitude = this.altitude;
     if (Number.isFinite(e.azimuthAngle)) frame.azimuth = e.azimuthAngle;
     else if (frame.tiltX !== undefined && Number.isFinite(this.azimuth)) frame.azimuth = this.azimuth;
-    if (Number.isFinite(e.twist) && sourceId === 'pen' && (e.twist !== 0 || this._inputFeatureTracker.frame(now).capabilities.includes('twist'))) {
+    if (Number.isFinite(e.twist) && sourceId === 'pen' && (e.twist !== 0 || tracker.frame(now).capabilities.includes('twist'))) {
       frame.twist = e.twist;
     }
     if (sourceId === 'touch') {
@@ -17789,16 +17811,18 @@ export class App {
       if (Number.isFinite(e.height)) frame.contactHeight = e.height;
       frame.touchCount = this._activePointers?.size ?? 1;
     }
-    this._inputFeatureTracker.sample(frame, this._cachedP?.modMatrix?.channels, now);
+    tracker.sample(frame, this._cachedP?.modMatrix?.channels, now);
     // A fresh sample invalidates the per-frame modulation snapshot.
     this._modSnapshotTime = -1;
   }
 
   /** Read-only FeatureFrame for the boid runtime, the status line, and the
-   *  sidebar channel monitor. Hardware-agnostic by construction. */
+   *  sidebar channel monitor. Hardware-agnostic by construction. Safe to call
+   *  even when simulation mode is running with no live input yet — see
+   *  `_ensureInputFeatureTracker()`. */
   getInputFeatureFrame() {
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    return this._inputFeatureTracker.frame(now);
+    return this._ensureInputFeatureTracker().frame(now);
   }
 
   /** Evaluate the boid modulation matrix at most once per animation frame.
@@ -17854,7 +17878,7 @@ export class App {
     this.pointerType = e.pointerType || 'mouse';
     const { x, y } = this._getEventCoords(e);
     this._captureTilt(e);
-    if (this._activePointers.size === 1) this._inputFeatureTracker.reset({ preserveCapabilities: true });
+    if (this._activePointers.size === 1) this._ensureInputFeatureTracker().reset({ preserveCapabilities: true });
     this._ingestInputSample(e, x, y);
     // Don't start drawing during pinch gesture
     if (this._pinchActive) return;
