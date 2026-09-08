@@ -24,7 +24,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { App } from '../app.js';
-import { FeatureTracker, MOD_MATRIX_FORMAT, MOD_MATRIX_VERSION, createModRoute } from '../boid-input-modulation.js';
+import { FeatureTracker, MOD_MATRIX_FORMAT, MOD_MATRIX_VERSION, createModRoute } from '../boid-input-modulation.js?v=2026-09-07-input-modulation-modal-2';
 
 /** One-route matrix gating on a Pencil-only channel (pressure), matching how
  *  a user would wire "boid cohesion follows stylus pressure". */
