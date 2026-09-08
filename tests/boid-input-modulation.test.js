@@ -25,6 +25,7 @@ import {
   getFeatureChannel,
   applyCurve,
   evaluateModCurvePoints,
+  evaluateModValueCurvePoints,
   resolveModTarget,
   createFeatureState,
   stepFeatureState,
@@ -35,6 +36,7 @@ import {
   normalizeModRoute,
   normalizeModMatrix,
   normalizeModMatrixWithReport,
+  migrateModRouteToAbsolute,
   emptyModMatrix,
   parseModMatrix,
   serializeModMatrix,
@@ -44,6 +46,79 @@ import {
   applyModTargets,
   summarizeModulation,
 } from '../boid-input-modulation.js';
+
+test('absolute value curves interpolate directly within every target native range', () => {
+  for (const targetId of MOD_TARGET_IDS) {
+    const spec = resolveModTarget(targetId);
+    const low = spec.min + 0.25 * (spec.max - spec.min);
+    const high = spec.min + 0.65 * (spec.max - spec.min);
+    const matrix = matrixOf({
+      source: 'pressure',
+      target: targetId,
+      valueMode: 'absolute',
+      curveMode: 'custom',
+      curvePoints: [[0, low], [1, high]],
+      priority: 5,
+    });
+    const params = { [targetId]: spec.min };
+    const { evaluation, params: result } = run(matrix, { params, features: { pressure: 0.5 } });
+    const expected = evaluateModValueCurvePoints([[0, low], [1, high]], 0.5, spec);
+    assert.equal(result[targetId], spec.integer ? Math.round(expected) : expected, targetId);
+    assert.equal(evaluation.diagnostics.routes[0].value, expected);
+  }
+});
+
+test('absolute route output is independent of the base setting value', () => {
+  const matrix = matrixOf({
+    source: 'pressure',
+    target: 'seek',
+    valueMode: 'absolute',
+    curvePoints: [[0, 0.25], [1, 0.65]],
+  });
+  const first = run(matrix, { params: { seek: 0 }, features: { pressure: 1 } }).params.seek;
+  const second = run(matrix, { params: { seek: 0.9 }, features: { pressure: 1 } }).params.seek;
+  assert.equal(first, 0.65);
+  assert.equal(second, 0.65);
+});
+
+test('absolute curves round-trip literal native target values', () => {
+  const matrix = matrixOf({
+    source: 'pressure',
+    target: 'fleeRadius',
+    valueMode: 'absolute',
+    curvePoints: [[0, 25], [0.5, 80], [1, 140]],
+  });
+  const reparsed = parseModMatrix(serializeModMatrix(matrix));
+  assert.deepEqual(reparsed.routes[0].curvePoints, [[0, 25], [0.5, 80], [1, 140]]);
+});
+
+test('legacy relative routes migrate to equivalent absolute value curves', () => {
+  const legacy = createModRoute({
+    source: 'pressure',
+    target: 'seek',
+    amount: 0.5,
+    curve: 'linear',
+    combine: 'sum',
+  });
+  const migrated = migrateModRouteToAbsolute(legacy, 0.2);
+  assert.equal(migrated.valueMode, 'absolute');
+  assert.equal(migrated.curveMode, 'custom');
+  for (const pressure of [0, 0.25, 0.5, 0.75, 1]) {
+    const oldValue = run(matrixOf(legacy), { params: { seek: 0.2 }, features: { pressure } }).params.seek;
+    const newValue = run(matrixOf(migrated), { params: { seek: 0.9 }, features: { pressure } }).params.seek;
+    assert.ok(Math.abs(oldValue - newValue) < 0.002, `pressure ${pressure}: ${oldValue} vs ${newValue}`);
+  }
+});
+
+test('higher-priority absolute route exclusively controls a shared target', () => {
+  const matrix = matrixOf(
+    { id: 'low', source: 'constant', target: 'seek', valueMode: 'absolute', curvePoints: [[0, 0.2], [1, 0.2]], priority: 0 },
+    { id: 'high', source: 'constant', target: 'seek', valueMode: 'absolute', curvePoints: [[0, 0.7], [1, 0.7]], priority: 10 },
+  );
+  const { evaluation, params } = run(matrix, { params: { seek: 0.4 } });
+  assert.equal(params.seek, 0.7);
+  assert.equal(evaluation.diagnostics.routes.find(route => route.id === 'low').reason, 'higher-priority-route-controls-target');
+});
 
 const ALL_CAPS = Object.values(INPUT_CAPABILITIES);
 

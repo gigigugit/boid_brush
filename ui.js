@@ -14,26 +14,25 @@ import {
   normalizeLibrary,
   normalizePreset,
 } from './settings-library.js';
-import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-07-input-modulation-modal-2';
+import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-08-absolute-modulation-curves';
 import {
   DEFAULT_MOD_CURVE_POINTS,
   FEATURE_CHANNELS,
   MAX_CHANNEL_DEADZONE,
   MAX_CHANNEL_SMOOTHING,
-  MOD_COMBINE_MODES,
   MOD_CONDITION_OPS,
   MOD_CURVE_POINT_LIMIT,
-  MOD_CURVES,
   MOD_TARGETS,
   createModRoute,
   emptyModMatrix,
-  evaluateModCurvePoints,
+  evaluateModValueCurvePoints,
   getFeatureChannel,
   getInputSource,
+  migrateModRouteToAbsolute,
   modMatrixToControlValue,
   parseModMatrix,
   resolveModTarget,
-} from './boid-input-modulation.js?v=2026-09-07-input-modulation-modal-2';
+} from './boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
 
 // =============================================================================
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
@@ -553,8 +552,6 @@ function _modSelect(dataAttrs, options, selected) {
 
 const _MOD_CHANNEL_OPTIONS = FEATURE_CHANNELS.map(channel => ({ value: channel.id, label: channel.label }));
 const _MOD_TARGET_OPTIONS = MOD_TARGETS.map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
-const _MOD_CURVE_OPTIONS = MOD_CURVES.map(curve => ({ value: curve.id, label: curve.label }));
-const _MOD_COMBINE_OPTIONS = MOD_COMBINE_MODES.map(mode => ({ value: mode.id, label: mode.label }));
 const _MOD_CONDITION_OPTIONS = MOD_CONDITION_OPS.map(op => ({ value: op.id, label: op.label }));
 
 const _MOD_CARD_STYLE = 'margin:6px 0;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);';
@@ -597,17 +594,31 @@ function _buildModConditionRow(route, condition, index) {
   `;
 }
 
-/** Bipolar curve editor markup for a single route. Only rendered when the
- *  route opts into `curveMode: 'custom'`; visually and structurally modeled
- *  on `_pressureCurveMarkup()`/`_wirePressureCurveEditors()` (draggable
- *  points on a canvas, add on click, remove on double-click), but the y axis
- *  spans -1..1 instead of 0..1 so the path can cross zero. */
-function _buildModCurveEditorMarkup(route, index) {
+function _formatModTargetValue(target, value) {
+  if (!target) return Number(value).toFixed(2);
+  if (target.integer) return String(Math.round(value));
+  const span = target.max - target.min;
+  return value.toFixed(span <= 0.2 ? 3 : span <= 2 ? 2 : span <= 20 ? 1 : 0);
+}
+
+function _modTargetStep(target) {
+  if (!target || target.integer) return 1;
+  const span = target.max - target.min;
+  return span <= 0.2 ? 0.001 : span <= 2 ? 0.01 : span <= 20 ? 0.1 : 1;
+}
+
+/** Absolute target-value curve editor for one route. The stored y coordinate is
+ * normalized, while labels and point inputs use the target's native units. */
+function _buildModCurveEditorMarkup(route, index, target) {
   return `
     <div class="mod-curve-editor" data-mod-curve-editor="${route.id}">
-      <canvas class="mod-curve-canvas" width="240" height="118" aria-label="Route ${index + 1} bipolar modulation curve"></canvas>
-      <div class="mod-curve-axis"><span>Low signal</span><span>0 = no effect</span><span>High signal</span></div>
-      <span class="slider-desc">Maps the source channel (0…1) to signed modulation strength (−1…+1). Drag a point below the centre line to make that part of the range push the target down instead of up; drag a point to add one, double-click an inner point to remove it.</span>
+      <canvas class="mod-curve-canvas" width="240" height="150" aria-label="Route ${index + 1} target value curve"></canvas>
+      <div class="mod-curve-axis"><span>Input 0</span><span>${target ? `${_formatModTargetValue(target, target.min)} … ${_formatModTargetValue(target, target.max)} ${target.label}` : 'Target value'}</span><span>Input 1</span></div>
+      <div class="mod-curve-point-fields">
+        <label>Selected input <input type="number" min="0" max="1" step="0.01" data-mod-point-input></label>
+        <label>${target?.label || 'Target'} value <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-point-value></label>
+      </div>
+      <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, select it for an exact value, and double-click an inner point to remove it.</span>
       <button type="button" class="mod-curve-reset" data-mod-route="${route.id}" data-mod-action="reset-curve" style="margin-top:4px;">Reset Curve</button>
     </div>
   `;
@@ -617,10 +628,28 @@ function _buildModRouteCard(route, index, report) {
   const target = resolveModTarget(route.target);
   const channel = getFeatureChannel(route.source);
   const statusText = report?.applied
-    ? `active · signal ${report.signal.toFixed(2)} · contrib ${report.contribution >= 0 ? '+' : ''}${report.contribution.toFixed(2)}`
+    ? `active · input ${report.signal.toFixed(2)}${Number.isFinite(report.value) ? ` · value ${report.value.toFixed(target?.integer ? 0 : 3)}` : ''}`
     : (report?.reason ? `idle · ${report.reason}` : 'idle');
   const statusColor = report?.applied ? '#7fe0a0' : '#8b98aa';
-  const customCurve = route.curveMode === 'custom';
+  const editorBody = route.valueMode === 'absolute'
+    ? `
+      ${_buildModCurveEditorMarkup(route, index, target)}
+      <div class="mod-route-row" style="${_MOD_ROW_STYLE}">
+        <span style="flex:1;">When multiple routes target ${target?.label || 'this setting'}, higher priority wins.</span>
+        <span style="flex:0 0 auto;">Priority</span>
+        <input type="number" min="-99" max="99" step="1" value="${route.priority}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="priority" aria-label="Route ${index + 1} priority">
+      </div>
+      ${channel?.capability ? `<span class="slider-desc">Requires ${channel.capability} input support.</span>` : ''}
+      ${route.conditions.map((condition, conditionIndex) => _buildModConditionRow(route, condition, conditionIndex)).join('')}
+      ${route.conditions.length < MOD_CONDITION_LIMIT
+        ? `<button type="button" data-mod-route="${route.id}" data-mod-action="add-condition" style="width:100%;margin-top:4px;font-size:10px;">+ Condition</button>`
+        : ''}`
+    : `
+      <div class="mod-legacy-route">
+        <strong>Legacy modulation route</strong>
+        <span>This route still uses the previous amount-based behavior so saved work remains unchanged. Convert it to approximate its current response with editable target-value points; stepped legacy shapes may need adjustment afterward.</span>
+        <button type="button" data-mod-route="${route.id}" data-mod-action="convert-route">Convert to Value Curve</button>
+      </div>`;
   return `
     <div class="mod-route-card" data-mod-route-card="${route.id}" style="${_MOD_CARD_STYLE}${route.enabled ? '' : 'opacity:0.55;'}">
       <div class="mod-route-header" style="display:flex;align-items:center;gap:6px;margin:0 0 4px;">
@@ -637,40 +666,7 @@ function _buildModRouteCard(route, index, report) {
         <span style="flex:0 0 40px;text-align:right;">Target</span>
         ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _MOD_TARGET_OPTIONS, route.target)}
       </div>
-      <label style="margin:4px 0 0 0;">Amount <span data-mod-readout="${route.id}:amount">${route.amount.toFixed(2)}</span>
-        <input type="range" min="-100" max="100" value="${Math.round(route.amount * 100)}" data-mod-route="${route.id}" data-mod-prop="amount">
-      </label>
-      <span class="slider-desc">${target ? `Fraction of the ${target.label} range (${target.min}…${target.max}) this route can move.` : 'Fraction of the target range this route can move.'}</span>
-      <div class="mod-route-row mod-curve-row" style="${_MOD_ROW_STYLE}">
-        <span style="flex:0 0 44px;">Curve</span>
-        ${customCurve
-          ? '<span style="flex:1;min-width:0;color:#9fb0c6;">Custom bipolar curve (edit below)</span>'
-          : _modSelect(`data-mod-route="${route.id}" data-mod-prop="curve"`, _MOD_CURVE_OPTIONS, route.curve)}
-        <label style="margin:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;">Invert
-          <input type="checkbox" ${route.invert ? 'checked' : ''} data-mod-route="${route.id}" data-mod-prop="invert" aria-label="Invert route ${index + 1}">
-        </label>
-        <label style="margin:0;display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;">Custom
-          <input type="checkbox" ${customCurve ? 'checked' : ''} data-mod-route="${route.id}" data-mod-prop="curveMode" aria-label="Use a custom bipolar curve for route ${index + 1}">
-        </label>
-      </div>
-      ${customCurve ? _buildModCurveEditorMarkup(route, index) : ''}
-      <div class="mod-route-row mod-combine-row" style="${_MOD_ROW_STYLE}">
-        <span style="flex:0 0 44px;">Combine</span>
-        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="combine"`, _MOD_COMBINE_OPTIONS, route.combine)}
-        <span style="flex:0 0 auto;">Priority</span>
-        <input type="number" min="-99" max="99" step="1" value="${route.priority}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="priority" aria-label="Route ${index + 1} priority">
-      </div>
-      <div class="mod-route-row mod-clamp-row" style="${_MOD_ROW_STYLE}">
-        <span style="flex:0 0 44px;">Clamp</span>
-        <input type="number" min="0" max="1" step="0.05" value="${route.clampMin}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="clampMin" aria-label="Route ${index + 1} clamp minimum">
-        <span style="flex:0 0 auto;">…</span>
-        <input type="number" min="0" max="1" step="0.05" value="${route.clampMax}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="clampMax" aria-label="Route ${index + 1} clamp maximum">
-        <span style="flex:1;min-width:0;">of the target range${channel?.capability ? ` · needs ${channel.capability}` : ''}</span>
-      </div>
-      ${route.conditions.map((condition, conditionIndex) => _buildModConditionRow(route, condition, conditionIndex)).join('')}
-      ${route.conditions.length < MOD_CONDITION_LIMIT
-        ? `<button type="button" data-mod-route="${route.id}" data-mod-action="add-condition" style="width:100%;margin-top:4px;font-size:10px;">+ Condition</button>`
-        : ''}
+      ${editorBody}
     </div>
   `;
 }
@@ -721,22 +717,33 @@ function _renderModRouteDetail(app) {
   const reports = new Map();
   for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
   container.innerHTML = _buildModRouteCard(route, index, reports.get(route.id));
-  if (route.curveMode === 'custom') _wireModRouteCurveEditor(app, container, route.id);
+  if (route.valueMode === 'absolute') _wireModRouteCurveEditor(app, container, route.id);
 }
 
-/** Wire the draggable bipolar curve canvas for one route. Structurally the
- *  same interaction model as `_wirePressureCurveEditors()` — drag to move a
- *  point, click empty space to add one, double-click an inner point to
- *  remove it — but the y axis is -1..1 and there is no backing `<input>`:
- *  edits mutate `route.curvePoints` directly through the same
- *  read-matrix/write-matrix seam every other route control uses. */
+/** Wire a route's normalized curve storage to native target-value editing. */
 function _wireModRouteCurveEditor(app, container, routeId) {
   const editor = container.querySelector(`[data-mod-curve-editor="${routeId}"]`);
   const canvas = editor?.querySelector('.mod-curve-canvas');
   if (!canvas) return;
   const startRoute = _readModMatrix().routes.find(entry => entry.id === routeId);
   let points = (startRoute?.curvePoints || DEFAULT_MOD_CURVE_POINTS).map(point => [...point]);
-  let activeIndex = -1;
+  const target = resolveModTarget(startRoute?.target);
+  const targetMin = target?.min ?? 0;
+  const targetMax = target?.max ?? 1;
+  const targetSpan = targetMax - targetMin || 1;
+  const inputField = editor.querySelector('[data-mod-point-input]');
+  const valueField = editor.querySelector('[data-mod-point-value]');
+  let activeIndex = 0;
+
+  const syncPointFields = () => {
+    const point = points[activeIndex];
+    if (!point) return;
+    if (inputField) {
+      inputField.value = point[0].toFixed(2);
+      inputField.disabled = activeIndex === 0 || activeIndex === points.length - 1;
+    }
+    if (valueField) valueField.value = _formatModTargetValue(target, point[1]);
+  };
 
   const commit = () => {
     const matrix = _readModMatrix();
@@ -750,7 +757,7 @@ function _wireModRouteCurveEditor(app, container, routeId) {
   const draw = () => {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const width = Math.max(180, Math.round(canvas.getBoundingClientRect().width || 240));
-    const height = 118;
+    const height = 150;
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -769,15 +776,6 @@ function _wireModRouteCurveEditor(app, container, routeId) {
       ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, height - pad); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
     }
-    // The zero line is drawn distinctly (dashed, warm tint) so it is obvious
-    // when a dragged point crosses from negative to positive modulation.
-    const zeroY = pad + graphH / 2;
-    ctx.strokeStyle = 'rgba(255,180,120,.55)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath(); ctx.moveTo(pad, zeroY); ctx.lineTo(width - pad, zeroY); ctx.stroke();
-    ctx.setLineDash([]);
-
     ctx.strokeStyle = '#6d9cff';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -785,15 +783,15 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     for (let index = 0; index <= curveSamples; index += 1) {
       const x = index / curveSamples;
       const px = pad + x * graphW;
-      const value = Math.max(-1, Math.min(1, evaluateModCurvePoints(points, x)));
-      const py = pad + (1 - (value + 1) / 2) * graphH;
+      const value = evaluateModValueCurvePoints(points, x, target);
+      const py = pad + (1 - (value - targetMin) / targetSpan) * graphH;
       if (index) ctx.lineTo(px, py);
       else ctx.moveTo(px, py);
     }
     ctx.stroke();
     points.forEach(([x, y], index) => {
       ctx.beginPath();
-      ctx.arc(pad + x * graphW, pad + (1 - (y + 1) / 2) * graphH, index === activeIndex ? 6 : 5, 0, Math.PI * 2);
+      ctx.arc(pad + x * graphW, pad + (1 - (y - targetMin) / targetSpan) * graphH, index === activeIndex ? 6 : 5, 0, Math.PI * 2);
       ctx.fillStyle = index === activeIndex ? '#fff' : '#8bb3ff';
       ctx.fill();
       ctx.strokeStyle = '#17233a';
@@ -806,15 +804,13 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     const pad = 12;
     const x = Math.max(0, Math.min(1, (event.clientX - rect.left - pad) / Math.max(1, rect.width - pad * 2)));
     const yNorm = Math.max(0, Math.min(1, 1 - (event.clientY - rect.top - pad) / Math.max(1, rect.height - pad * 2)));
-    return [x, yNorm * 2 - 1];
+    return [x, targetMin + yNorm * targetSpan];
   };
   const nearestIndex = (x, y, maxDistance) => {
     let nearest = -1;
     let nearestDistance = maxDistance;
     points.forEach((point, index) => {
-      // y spans twice the domain of x (-1..1 vs 0..1), so halve it before
-      // comparing distances in the same units as x.
-      const distance = Math.hypot(point[0] - x, (point[1] - y) / 2);
+      const distance = Math.hypot(point[0] - x, (point[1] - y) / targetSpan);
       if (distance < nearestDistance) { nearest = index; nearestDistance = distance; }
     });
     return nearest;
@@ -832,6 +828,7 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     }
     activeIndex = nearest;
     canvas.setPointerCapture(event.pointerId);
+    syncPointFields();
     draw();
   });
   canvas.addEventListener('pointermove', event => {
@@ -843,11 +840,12 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     const maxX = activeIndex < points.length - 1 ? points[activeIndex + 1][0] - 0.002 : 1;
     points[activeIndex] = [isEndpoint ? (activeIndex === 0 ? 0 : 1) : Math.max(minX, Math.min(maxX, x)), y];
     commit();
+    syncPointFields();
     draw();
   }, { passive: false });
   const release = event => {
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    activeIndex = -1;
+    syncPointFields();
     draw();
   };
   canvas.addEventListener('pointerup', release);
@@ -857,17 +855,39 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     const nearest = nearestIndex(x, y, 0.12);
     if (nearest > 0 && nearest < points.length - 1) {
       points.splice(nearest, 1);
+      activeIndex = Math.max(0, Math.min(activeIndex, points.length - 1));
       commit();
+      syncPointFields();
       draw();
     }
   });
   editor.querySelector('[data-mod-action="reset-curve"]')?.addEventListener('click', () => {
-    points = DEFAULT_MOD_CURVE_POINTS.map(point => [...point]);
+    points = [[0, targetMin], [1, targetMax]];
+    activeIndex = 0;
     commit();
+    syncPointFields();
+    draw();
+  });
+  inputField?.addEventListener('change', () => {
+    if (activeIndex <= 0 || activeIndex >= points.length - 1) return;
+    const minX = points[activeIndex - 1][0] + 0.002;
+    const maxX = points[activeIndex + 1][0] - 0.002;
+    points[activeIndex][0] = Math.max(minX, Math.min(maxX, Number(inputField.value)));
+    commit();
+    syncPointFields();
+    draw();
+  });
+  valueField?.addEventListener('change', () => {
+    if (!target || !points[activeIndex]) return;
+    const nativeValue = Math.max(target.min, Math.min(target.max, Number(valueField.value)));
+    points[activeIndex][1] = nativeValue;
+    commit();
+    syncPointFields();
     draw();
   });
   _modCurveResizeObserver = new ResizeObserver(draw);
   _modCurveResizeObserver.observe(canvas);
+  syncPointFields();
   draw();
 }
 
@@ -983,7 +1003,7 @@ function _refreshModulationDiagnostics(app) {
   const applied = app.getCurrentBrush?.()?.getModulationApplied?.() || null;
   for (const report of snapshot.diagnostics.routes) {
     const statusText = report.applied
-      ? `active · signal ${report.signal.toFixed(2)} · contrib ${report.contribution >= 0 ? '+' : ''}${report.contribution.toFixed(2)}`
+      ? `active · input ${report.signal.toFixed(2)}${Number.isFinite(report.value) ? ` · value ${report.value.toFixed(3)}` : ''}`
       : `idle · ${report.reason || 'inactive'}`;
     const statusColor = report.applied ? '#7fe0a0' : '#8b98aa';
     // Both the chip's status dot and the (optional, selected-only) detail
@@ -1002,7 +1022,7 @@ function _refreshModulationDiagnostics(app) {
     if (!report.applied) return `· ${report.id} ${arrow} — ${report.reason}`;
     const written = applied?.[report.target];
     const resolved = written ? ` ⇒ ${written.base.toFixed(3)} → ${written.value.toFixed(3)}` : '';
-    return `✓ ${report.id} ${arrow} [${report.combine} p${report.priority}] sig ${report.signal.toFixed(2)}${resolved}`;
+    return `✓ ${report.id} ${arrow} [p${report.priority}] input ${report.signal.toFixed(2)}${resolved}`;
   });
   lines.push(`— ${snapshot.diagnostics.active} active / ${snapshot.diagnostics.skipped} skipped`);
   panel.textContent = lines.join('\n');
@@ -1029,6 +1049,7 @@ function _syncModMatrixUi(app) {
     _renderModChannelTuning(app);
     return;
   }
+
   if (normalized !== raw) control.value = normalized;
   _renderModSummary(app);
   _renderModRouteList(app);
@@ -1823,16 +1844,18 @@ export function buildSidebar(app) {
       const condition = route.conditions[conditionIndex];
       if (!condition) return false;
       condition[prop] = prop === 'channel' || prop === 'op' ? target.value : Number(target.value);
-    } else if (prop === 'enabled' || prop === 'invert') {
+    } else if (prop === 'enabled') {
       route[prop] = !!target.checked;
-    } else if (prop === 'curveMode') {
-      route.curveMode = target.checked ? 'custom' : 'preset';
-    } else if (prop === 'amount') {
-      route.amount = Number(target.value) / 100;
     } else if (prop === 'priority') {
       route.priority = Number(target.value);
     } else if (prop === 'clampMin' || prop === 'clampMax') {
       route[prop] = Number(target.value);
+    } else if (prop === 'target' && route.valueMode === 'absolute') {
+      route.target = target.value;
+      const spec = resolveModTarget(route.target);
+      const current = app.getP()[route.target];
+      const value = spec ? Math.max(spec.min, Math.min(spec.max, current)) : 0;
+      route.curvePoints = [[0, value], [1, value]];
     } else {
       route[prop] = target.value;
     }
@@ -1860,7 +1883,7 @@ export function buildSidebar(app) {
   modModal?.addEventListener('change', event => {
     const target = event.target;
     if (!target?.dataset?.modProp) return;
-    // Structural edits (source/target/curve/curve-mode/combine/condition op)
+    // Structural edits (source/target/condition op)
     // change which controls are relevant, so re-render; value edits do not.
     const structural = target.tagName === 'SELECT' || target.type === 'checkbox';
     _modApplyControlEdit(target, { rerender: structural });
@@ -1888,6 +1911,10 @@ export function buildSidebar(app) {
       route.conditions.push({ channel: route.source, op: 'gt', value: 0.5, value2: 1 });
     } else if (button.dataset.modAction === 'remove-condition' && route) {
       route.conditions.splice(Number(button.dataset.modCond), 1);
+    } else if (button.dataset.modAction === 'convert-route' && route) {
+      const params = app.getP();
+      const routeIndex = matrix.routes.indexOf(route);
+      matrix.routes[routeIndex] = migrateModRouteToAbsolute(route, params[route.target]);
     } else {
       // 'reset-curve' is handled by its own listener in
       // _wireModRouteCurveEditor(), which needs the canvas's live in-memory
@@ -1911,15 +1938,22 @@ export function buildSidebar(app) {
       app.showToast(`Modulation is limited to ${MOD_ROUTE_LIMIT} routes`);
       return;
     }
-    // New routes default to amount 0 so adding one never changes the painting
-    // until an amount is dialed in.
+    const target = resolveModTarget('cohesion');
+    const base = app.getP().cohesion;
+    const initialValue = target ? Math.max(target.min, Math.min(target.max, base)) : 0;
+    const priority = Math.min(99, Math.max(-1, ...matrix.routes
+      .filter(route => route.target === 'cohesion')
+      .map(route => route.priority)) + 1);
     const id = `r${Date.now().toString(36)}`;
     matrix.routes.push(createModRoute({
       id,
       source: 'pressure',
       target: 'cohesion',
-      amount: 0,
-      combine: 'sum',
+      valueMode: 'absolute',
+      curveMode: 'custom',
+      curvePoints: [[0, initialValue], [1, initialValue]],
+      combine: 'priority',
+      priority,
     }));
     _modSelectedRouteId = id;
     _writeModMatrix(app, matrix);

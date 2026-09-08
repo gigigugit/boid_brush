@@ -16,7 +16,7 @@
  * be unit tested without a DOM.
  */
 
-import { evaluateSplineCurve } from './pressure-curve.js?v=2026-09-07-input-modulation-modal-2';
+import { evaluateSplineCurve } from './pressure-curve.js?v=2026-09-08-absolute-modulation-curves';
 
 export const MOD_MATRIX_FORMAT = 'modMatrix.v1';
 export const MOD_MATRIX_VERSION = 1;
@@ -204,7 +204,7 @@ export function applyCurve(curveId, value) {
   return clamp01(curve.fn(clamp01(finite(value, 0))));
 }
 
-// ── Bipolar custom curve (per-route, optional) ──────────────
+// ── Route curves ─────────────────────────────────────────────
 // A route's shaping is normally one of the bounded presets above (always
 // unipolar 0..1). `curveMode: 'custom'` instead lets a route own a small
 // draggable spline — the same monotone-Hermite math the stylus pressure
@@ -226,6 +226,18 @@ export const MOD_CURVE_MODE_IDS = Object.freeze(MOD_CURVE_MODES.map(mode => mode
  *  an identity passthrough so a corrupted document degrades safely. */
 export function evaluateModCurvePoints(points, value) {
   return evaluateSplineCurve(points, value, { clampMin: -1, clampMax: 1, fallback: v => v });
+}
+
+/** Evaluate an absolute-value route curve in the target's native units. */
+export function evaluateModValueCurvePoints(points, value, target = null) {
+  const spec = typeof target === 'string' ? resolveModTarget(target) : target;
+  const min = spec?.min ?? 0;
+  const max = spec?.max ?? 1;
+  return evaluateSplineCurve(points, value, {
+    clampMin: min,
+    clampMax: max,
+    fallback: v => min + v * (max - min),
+  });
 }
 
 // ── Combine modes ───────────────────────────────────────────
@@ -506,6 +518,7 @@ const DEFAULT_ROUTE = Object.freeze({
   combine: 'sum',
   priority: 0,
   conditions: [],
+  valueMode: 'relative',
 });
 
 // Legacy shape written by the first fixed six-field implementation:
@@ -540,16 +553,18 @@ function _normalizeConditions(candidate) {
  *  deduplicated, and forced to span the full 0..1 domain — mirroring the
  *  `_normalizePressureCurve` sanitizer the stylus pressure editors use in
  *  ui.js. Falls back to the identity curve rather than throwing. */
-function _normalizeCurvePoints(candidate) {
+function _normalizeCurvePoints(candidate, valueMode = 'relative', target = null) {
   const dropped = [];
-  const fallback = () => DEFAULT_ROUTE.curvePoints.map(point => [...point]);
+  const fallback = () => valueMode === 'absolute' && target
+    ? [[0, target.min], [1, target.max]]
+    : DEFAULT_ROUTE.curvePoints.map(point => [...point]);
   if (candidate === undefined) return { points: fallback(), dropped };
   if (!Array.isArray(candidate)) return { points: fallback(), dropped: ['curvePoints:not-an-array'] };
   const sliced = candidate.slice(0, MOD_CURVE_POINT_LIMIT);
   const points = sliced
     .map(raw => [Number(raw?.[0]), Number(raw?.[1])])
     .filter(point => point.every(Number.isFinite))
-    .map(([x, y]) => [clamp01(x), clamp(y, -1, 1)])
+    .map(([x, y]) => [clamp01(x), valueMode === 'absolute' && target ? clamp(y, target.min, target.max) : clamp(y, -1, 1)])
     .sort((a, b) => a[0] - b[0]);
   if (points.length !== sliced.length) dropped.push('curvePoints:invalid-entries');
   if (candidate.length > MOD_CURVE_POINT_LIMIT) dropped.push('curvePoints:truncated');
@@ -578,7 +593,13 @@ export function normalizeModRoute(candidate, index = 0) {
   if (candidate.curve !== undefined && curve !== candidate.curve) dropped.push(`curve:${String(candidate.curve)}`);
   const curveMode = candidate.curveMode === 'custom' ? 'custom' : 'preset';
   if (candidate.curveMode !== undefined && curveMode !== candidate.curveMode) dropped.push(`curveMode:${String(candidate.curveMode)}`);
-  const curvePointsResult = _normalizeCurvePoints(candidate.curvePoints);
+  // Documents written before absolute value curves have no valueMode and keep
+  // their original relative evaluation until the editor migrates them.
+  const valueMode = candidate.valueMode === 'absolute' ? 'absolute' : 'relative';
+  if (candidate.valueMode !== undefined && !['absolute', 'relative'].includes(candidate.valueMode)) {
+    dropped.push(`valueMode:${String(candidate.valueMode)}`);
+  }
+  const curvePointsResult = _normalizeCurvePoints(candidate.curvePoints, valueMode, resolveModTarget(target));
   dropped.push(...curvePointsResult.dropped);
   const combine = MOD_COMBINE_IDS.includes(candidate.combine) ? candidate.combine : DEFAULT_ROUTE.combine;
   if (candidate.combine !== undefined && combine !== candidate.combine) dropped.push(`combine:${String(candidate.combine)}`);
@@ -605,10 +626,54 @@ export function normalizeModRoute(candidate, index = 0) {
       combine,
       priority: clamp(Math.round(finite(candidate.priority, 0)), -99, 99),
       conditions: conditionResult.conditions,
+      valueMode,
     },
     dropped,
     unresolvedTarget: !target && candidate.target !== undefined,
   };
+}
+
+/** Convert one legacy relative route to an absolute target-value curve while
+ * preserving its result against the supplied current base value. */
+export function migrateModRouteToAbsolute(candidate, baseValue) {
+  const route = normalizeModRoute(candidate).route;
+  const spec = resolveModTarget(route.target);
+  if (!spec || route.valueMode === 'absolute') return route;
+  const span = spec.max - spec.min;
+  const base = clamp(finite(baseValue, spec.min), spec.min, spec.max);
+  const points = [];
+  for (let index = 0; index < MOD_CURVE_POINT_LIMIT; index++) {
+    const signal = index / (MOD_CURVE_POINT_LIMIT - 1);
+    let oriented;
+    if (route.curveMode === 'custom') {
+      const bipolar = clamp(evaluateModCurvePoints(route.curvePoints, signal), -1, 1);
+      oriented = route.invert ? -bipolar : bipolar;
+    } else {
+      const shaped = applyCurve(route.curve, signal);
+      oriented = route.invert ? 1 - shaped : shaped;
+    }
+    const contribution = clamp(route.amount * oriented, -1, 1);
+    let value = route.combine === 'mul'
+      ? base * (1 + contribution)
+      : base + contribution * span;
+    const windowMin = spec.min + route.clampMin * span;
+    const windowMax = spec.min + route.clampMax * span;
+    value = clamp(value, Math.min(windowMin, windowMax), Math.max(windowMin, windowMax));
+    value = clamp(value, spec.min, spec.max);
+    points.push([signal, value]);
+  }
+  return normalizeModRoute({
+    ...route,
+    valueMode: 'absolute',
+    curveMode: 'custom',
+    curvePoints: points,
+    amount: 0,
+    curve: 'linear',
+    invert: false,
+    clampMin: 0,
+    clampMax: 1,
+    combine: 'priority',
+  }).route;
 }
 
 function _normalizeChannelConfig(candidate) {
@@ -802,6 +867,7 @@ export function evaluateModMatrix({ matrix, features, capabilities } = {}) {
       reason: '',
       signal: 0,
       contribution: 0,
+      value: null,
     };
     if (!route.enabled) { report.reason = 'disabled'; routeReports.push(report); skipped++; continue; }
     if (!spec) { report.reason = 'target-not-allowlisted'; routeReports.push(report); skipped++; continue; }
@@ -831,6 +897,37 @@ export function evaluateModMatrix({ matrix, features, capabilities } = {}) {
     }
 
     const signal = clamp01(finite(channels[route.source], 0));
+    if (route.valueMode === 'absolute') {
+      const value = evaluateModValueCurvePoints(route.curvePoints, signal, spec);
+      const valueNorm = (value - spec.min) / (spec.max - spec.min);
+      const bucket = targets[route.target] || (targets[route.target] = {
+        target: route.target,
+        sumOffsetNorm: 0,
+        maxOffsetNorm: 0,
+        hasMax: false,
+        priorityOffsetNorm: 0,
+        hasPriority: false,
+        gain: 1,
+        clampMin: 0,
+        clampMax: 1,
+        absoluteNorm: null,
+        routeIds: [],
+      });
+      if (bucket.routeIds.length) {
+        report.reason = 'higher-priority-route-controls-target';
+        routeReports.push(report);
+        skipped++;
+        continue;
+      }
+      bucket.absoluteNorm = valueNorm;
+      bucket.routeIds.push(route.id);
+      report.signal = signal;
+      report.value = value;
+      report.applied = true;
+      routeReports.push(report);
+      active++;
+      continue;
+    }
     // Preset curves are unipolar (0..1), so `invert` mirrors around the
     // midpoint (`1 - shaped`). A custom curve is already bipolar (-1..1) and
     // may itself cross zero, so `invert` there just flips its sign.
@@ -856,8 +953,15 @@ export function evaluateModMatrix({ matrix, features, capabilities } = {}) {
       gain: 1,
       clampMin: 0,
       clampMax: 1,
+      absoluteNorm: null,
       routeIds: [],
     });
+    if (bucket.absoluteNorm !== null) {
+      report.reason = 'absolute-route-controls-target';
+      routeReports.push(report);
+      skipped++;
+      continue;
+    }
 
     if (route.combine === 'priority') {
       if (bucket.hasPriority) {
@@ -919,12 +1023,22 @@ export function applyModTargets(params, evaluation) {
     const span = spec.max - spec.min;
     const windowMin = spec.min + bucket.clampMin * span;
     const windowMax = spec.min + bucket.clampMax * span;
-    let value = (base + bucket.offsetNorm * span) * bucket.gain;
+    const hasAbsoluteValue = Number.isFinite(bucket.absoluteNorm);
+    let value = hasAbsoluteValue
+      ? spec.min + bucket.absoluteNorm * span
+      : (base + bucket.offsetNorm * span) * bucket.gain;
     value = clamp(value, Math.min(windowMin, windowMax), Math.max(windowMin, windowMax));
     value = clamp(value, spec.min, spec.max);
     if (spec.integer) value = Math.round(value);
     params[targetId] = value;
-    applied[targetId] = { base, value, offsetNorm: bucket.offsetNorm, gain: bucket.gain, routeIds: [...bucket.routeIds] };
+    applied[targetId] = {
+      base,
+      value,
+      offsetNorm: bucket.offsetNorm,
+      gain: bucket.gain,
+      absolute: hasAbsoluteValue,
+      routeIds: [...bucket.routeIds],
+    };
   }
   return { params, applied };
 }

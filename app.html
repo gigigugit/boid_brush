@@ -687,8 +687,14 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .mod-route-chip-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:#8b98aa;}
 .mod-route-chip-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .mod-route-chip button{flex:0 0 auto;padding:0 5px;}
-#modInputEditorModal .mod-curve-canvas{display:block;width:100%;height:118px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;margin-top:4px;}
+#modInputEditorModal .mod-curve-canvas{display:block;width:100%;height:150px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;margin-top:4px;}
 #modInputEditorModal .mod-curve-axis{display:flex;justify-content:space-between;font-size:8px;color:var(--ink-3);margin-top:2px;}
+#modInputEditorModal .mod-curve-point-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0 5px;}
+#modInputEditorModal .mod-curve-point-fields label{display:grid;grid-template-columns:auto minmax(70px,1fr);align-items:center;gap:7px;margin:0;color:#aebbd0;font-size:10px;}
+#modInputEditorModal .mod-curve-point-fields input{width:100%;box-sizing:border-box;}
+#modInputEditorModal .mod-legacy-route{display:grid;gap:7px;margin-top:8px;padding:10px;border:1px solid rgba(232,160,48,.3);border-radius:8px;background:rgba(232,160,48,.08);color:#bdc8da;font-size:10px;line-height:1.45;}
+#modInputEditorModal .mod-legacy-route strong{color:#f3d49b;font-size:11px;}
+#modInputEditorModal .mod-legacy-route button{justify-self:start;}
 @media(max-width:640px){
   #modInputEditorModal .mod-editor-panel{width:96vw;max-width:96vw;max-height:94vh;}
   #modInputEditorModal .mod-editor-header{padding:14px 40px 10px 14px;}
@@ -696,6 +702,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
   #modInputEditorModal .mod-editor-list{flex:0 0 auto;max-height:150px;border-right:0;border-bottom:1px solid rgba(255,255,255,0.08);}
   #modInputEditorModal .mod-editor-detail{padding:10px 12px;}
   #modInputEditorModal .mod-editor-footer{padding:8px 12px;}
+  #modInputEditorModal .mod-curve-point-fields{grid-template-columns:1fr;}
 }
 #simExportModal{display:none;position:fixed;inset:0;z-index:201;align-items:center;justify-content:center;}
 #simExportModal.open{display:flex;}
@@ -1602,7 +1609,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <div class="mod-editor-header">
       <div>
         <h2 id="modInputEditorTitle">Input Modulation</h2>
-        <p>Route live input channels (pressure, tilt, twist, speed, curvature…) onto allow-listed boid parameters. Select a route on the left to edit its source, target, curve, and clamps.</p>
+        <p>Map live input channels (pressure, tilt, twist, speed, curvature…) directly to final boid-setting values. Each curve point stores the exact target value for that input level.</p>
       </div>
       <button class="ai-modal-close" id="modInputEditorClose" type="button">✕</button>
     </div>
@@ -1797,7 +1804,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-07-input-modulation-modal-2';
+const assetVersion = '2026-09-08-absolute-modulation-curves';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`
