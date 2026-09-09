@@ -7,7 +7,7 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-08-absolute-modulation-curves';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-08-absolute-modulation-curves';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -345,13 +345,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   perfWakeLockEnabled: false,
   showSimulationOverlayControls: false,
   showSimulationSelectionOverlay: true,
-  edgeOverlayPlacement: 'left',
-  edgeOverlayShowBrushScale: true,
-  edgeOverlayShowStampOpacity: true,
-  edgeOverlayShowStampSize: false,
-  edgeOverlayShowSeek: false,
-  edgeOverlayShowWander: false,
-  edgeOverlayShowFlowField: false,
+  ...Object.fromEntries(EDGE_OVERLAY_CONTROLS.map(control => [control.placementId, control.defaultPlacement])),
   spawnShape: 'circle',
   boidHoverAction: 'spawn',
   boidTouchAction: 'spawn',
@@ -21390,7 +21384,22 @@ export class App {
   }
 
   _applyControlState(controls = {}) {
-    for (const [id, val] of Object.entries(controls)) {
+    const normalizedControls = { ...controls };
+    const hasLegacyEdgeOverlayState = Object.prototype.hasOwnProperty.call(controls, 'edgeOverlayPlacement')
+      || EDGE_OVERLAY_CONTROLS.some(control =>
+        Object.prototype.hasOwnProperty.call(controls, control.legacyVisibilityId)
+      );
+    if (hasLegacyEdgeOverlayState) {
+      const legacyPlacement = controls.edgeOverlayPlacement === 'right' ? 'right' : 'left';
+      for (const control of EDGE_OVERLAY_CONTROLS) {
+        if (Object.prototype.hasOwnProperty.call(controls, control.placementId)) continue;
+        const visible = Object.prototype.hasOwnProperty.call(controls, control.legacyVisibilityId)
+          ? !!controls[control.legacyVisibilityId]
+          : control.defaultPlacement !== 'hidden';
+        normalizedControls[control.placementId] = visible ? legacyPlacement : 'hidden';
+      }
+    }
+    for (const [id, val] of Object.entries(normalizedControls)) {
       if (id === '_docSized' || id === '_docW' || id === '_docH') continue;
       if (id === '_view') continue;
       if (id === '_canvasTextureState') continue;

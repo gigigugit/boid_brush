@@ -2145,7 +2145,13 @@ export function buildSidebar(app) {
 
 function _workspaceSettingsMarkup() {
   const edgeControlChoices = EDGE_OVERLAY_CONTROLS.map(control => `
-        <label>${escapeHtml(control.label)} <input type="checkbox" id="${control.visibilityId}"${control.defaultVisible ? ' checked' : ''}></label>
+        <label>${escapeHtml(control.label)}
+          <select id="${control.placementId}">
+            <option value="hidden"${control.defaultPlacement === 'hidden' ? ' selected' : ''}>Hidden</option>
+            <option value="left"${control.defaultPlacement === 'left' ? ' selected' : ''}>Left</option>
+            <option value="right"${control.defaultPlacement === 'right' ? ' selected' : ''}>Right</option>
+          </select>
+        </label>
   `).join('');
   return `
     <div class="section-header" data-section="appSettings">Settings <span class="chevron">▼</span></div>
@@ -2184,14 +2190,7 @@ function _workspaceSettingsMarkup() {
     </div>
     <div class="section-header" data-section="edgeOverlaySettings">Edge Overlay <span class="chevron">▼</span></div>
     <div class="section-body">
-      <label>Placement
-        <select id="edgeOverlayPlacement">
-          <option value="left">Left</option>
-          <option value="right">Right</option>
-          <option value="both">Both</option>
-        </select>
-      </label>
-      <span class="slider-desc">Choose which draggable quick controls appear and the canvas edge where they are placed.</span>
+      <span class="slider-desc">Choose a canvas edge for each draggable quick control, or hide it.</span>
       ${edgeControlChoices}
     </div>
   `;
@@ -2255,7 +2254,7 @@ function _wireWorkspaceSettingsPanel(app, panel) {
     app._closeSimulationFormatMenuPopover?.({ rerender: false });
     app._renderSimulationInspector?.();
   });
-  panel.querySelectorAll('#edgeOverlayPlacement, [id^="edgeOverlayShow"]').forEach(control => {
+  panel.querySelectorAll('[id^="edgeOverlay"][id$="Placement"]').forEach(control => {
     control.addEventListener('change', () => syncEdgeSliders(app));
   });
 
@@ -3471,25 +3470,24 @@ LEADER_OVERRIDE_FIELDS.forEach(field => {
 let _edgeSliderApp = null;
 
 export const EDGE_OVERLAY_CONTROLS = Object.freeze([
-  Object.freeze({ key: 'brushScale', paramId: 'brushScale', visibilityId: 'edgeOverlayShowBrushScale', label: 'Scale', min: 10, max: 300, defaultVisible: true }),
-  Object.freeze({ key: 'stampOpacity', paramId: 'stampOpacity', visibilityId: 'edgeOverlayShowStampOpacity', label: 'Opacity', min: 1, max: 100, defaultVisible: true }),
-  Object.freeze({ key: 'stampSize', paramId: 'stampSize', visibilityId: 'edgeOverlayShowStampSize', label: 'Stamp Size', min: 1, max: 40, defaultVisible: false }),
-  Object.freeze({ key: 'seek', paramId: 'seek', visibilityId: 'edgeOverlayShowSeek', label: 'Seek', min: 0, max: 100, simVar: 'seek', simVarScale: 0.01, defaultVisible: false }),
-  Object.freeze({ key: 'wander', paramId: 'wander', visibilityId: 'edgeOverlayShowWander', label: 'Wander', min: 0, max: 100, defaultVisible: false }),
-  Object.freeze({ key: 'flowField', paramId: 'flowField', visibilityId: 'edgeOverlayShowFlowField', label: 'Flow', min: 0, max: 100, defaultVisible: false }),
+  Object.freeze({ key: 'brushScale', paramId: 'brushScale', placementId: 'edgeOverlayBrushScalePlacement', legacyVisibilityId: 'edgeOverlayShowBrushScale', label: 'Scale', min: 10, max: 300, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'stampOpacity', paramId: 'stampOpacity', placementId: 'edgeOverlayStampOpacityPlacement', legacyVisibilityId: 'edgeOverlayShowStampOpacity', label: 'Opacity', min: 1, max: 100, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'stampSize', paramId: 'stampSize', placementId: 'edgeOverlayStampSizePlacement', legacyVisibilityId: 'edgeOverlayShowStampSize', label: 'Stamp Size', min: 1, max: 40, defaultPlacement: 'hidden' }),
+  Object.freeze({ key: 'seek', paramId: 'seek', placementId: 'edgeOverlaySeekPlacement', legacyVisibilityId: 'edgeOverlayShowSeek', label: 'Seek', min: 0, max: 100, simVar: 'seek', simVarScale: 0.01, defaultPlacement: 'hidden' }),
+  Object.freeze({ key: 'wander', paramId: 'wander', placementId: 'edgeOverlayWanderPlacement', legacyVisibilityId: 'edgeOverlayShowWander', label: 'Wander', min: 0, max: 100, defaultPlacement: 'hidden' }),
+  Object.freeze({ key: 'flowField', paramId: 'flowField', placementId: 'edgeOverlayFlowFieldPlacement', legacyVisibilityId: 'edgeOverlayShowFlowField', label: 'Flow', min: 0, max: 100, defaultPlacement: 'hidden' }),
 ]);
 
-export function resolveEdgeOverlayLayout({ placement = 'left', visible = {} } = {}) {
-  const resolvedPlacement = ['left', 'right', 'both'].includes(placement) ? placement : 'left';
-  const controls = EDGE_OVERLAY_CONTROLS.filter(control =>
-    Object.prototype.hasOwnProperty.call(visible, control.key)
-      ? !!visible[control.key]
-      : control.defaultVisible
-  );
-  return {
-    left: resolvedPlacement === 'left' || resolvedPlacement === 'both' ? controls : [],
-    right: resolvedPlacement === 'right' || resolvedPlacement === 'both' ? controls : [],
-  };
+export function resolveEdgeOverlayLayout({ placements = {} } = {}) {
+  const layout = { left: [], right: [] };
+  for (const control of EDGE_OVERLAY_CONTROLS) {
+    const requested = Object.prototype.hasOwnProperty.call(placements, control.key)
+      ? placements[control.key]
+      : control.defaultPlacement;
+    const placement = requested === 'left' || requested === 'right' ? requested : 'hidden';
+    if (placement !== 'hidden') layout[placement].push(control);
+  }
+  return layout;
 }
 
 // ── Layer list renderer ─────────────────────────────────────
@@ -4437,14 +4435,11 @@ function _renderSettingsCatalogResults(app) {
 
 // ── Edge slider sync ────────────────────────────────────────
 function _readEdgeOverlayLayout() {
-  const visible = Object.fromEntries(EDGE_OVERLAY_CONTROLS.map(control => [
+  const placements = Object.fromEntries(EDGE_OVERLAY_CONTROLS.map(control => [
     control.key,
-    document.getElementById(control.visibilityId)?.checked ?? control.defaultVisible,
+    document.getElementById(control.placementId)?.value || control.defaultPlacement,
   ]));
-  return resolveEdgeOverlayLayout({
-    placement: document.getElementById('edgeOverlayPlacement')?.value || 'left',
-    visible,
-  });
+  return resolveEdgeOverlayLayout({ placements });
 }
 
 function _edgeSliderMarkup(control, edge) {

@@ -8,7 +8,7 @@ test('edge overlay registry exposes every supported control exactly once', () =>
     EDGE_OVERLAY_CONTROLS.map(control => control.key),
     ['brushScale', 'stampOpacity', 'stampSize', 'seek', 'wander', 'flowField']
   );
-  assert.equal(new Set(EDGE_OVERLAY_CONTROLS.map(control => control.visibilityId)).size, EDGE_OVERLAY_CONTROLS.length);
+  assert.equal(new Set(EDGE_OVERLAY_CONTROLS.map(control => control.placementId)).size, EDGE_OVERLAY_CONTROLS.length);
 });
 
 test('edge overlay defaults preserve Scale and Opacity on the left', () => {
@@ -17,19 +17,29 @@ test('edge overlay defaults preserve Scale and Opacity on the left', () => {
   assert.deepEqual(layout.right, []);
 });
 
-test('edge overlay selection can be placed on both sides', () => {
+test('edge overlay controls choose their sides independently', () => {
   const layout = resolveEdgeOverlayLayout({
-    placement: 'both',
-    visible: {
-      brushScale: false,
-      stampOpacity: false,
-      stampSize: true,
-      seek: true,
-      wander: true,
-      flowField: true,
+    placements: {
+      brushScale: 'right',
+      stampOpacity: 'hidden',
+      stampSize: 'left',
+      seek: 'right',
+      wander: 'hidden',
+      flowField: 'left',
     },
   });
-  const expected = ['stampSize', 'seek', 'wander', 'flowField'];
-  assert.deepEqual(layout.left.map(control => control.key), expected);
-  assert.deepEqual(layout.right.map(control => control.key), expected);
+  assert.deepEqual(layout.left.map(control => control.key), ['stampSize', 'flowField']);
+  assert.deepEqual(layout.right.map(control => control.key), ['brushScale', 'seek']);
+  assert.deepEqual(
+    layout.left.filter(control => layout.right.includes(control)),
+    []
+  );
+});
+
+test('invalid placement is hidden rather than duplicated', () => {
+  const layout = resolveEdgeOverlayLayout({
+    placements: { brushScale: 'both' },
+  });
+  assert.equal(layout.left.some(control => control.key === 'brushScale'), false);
+  assert.equal(layout.right.some(control => control.key === 'brushScale'), false);
 });
