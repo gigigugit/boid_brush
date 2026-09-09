@@ -843,11 +843,12 @@ function _orderedRoutes(routes) {
  *
  * @returns {{targets: Object, diagnostics: {routes: Array, active: number, skipped: number}}}
  */
-export function evaluateModMatrix({ matrix, features, capabilities } = {}) {
+export function evaluateModMatrix({ matrix, features, rawFeatures, capabilities } = {}) {
   // Always normalize: evaluation must never trust hand-built or imported
   // route objects, so the allowlist and the value clamps apply unconditionally.
   const normalized = normalizeModMatrix(matrix);
   const channels = isObject(features) ? features : {};
+  const rawChannels = isObject(rawFeatures) ? rawFeatures : {};
   const available = new Set(Array.isArray(capabilities) ? capabilities : []);
   const targets = {};
   const routeReports = [];
@@ -896,8 +897,13 @@ export function evaluateModMatrix({ matrix, features, capabilities } = {}) {
       continue;
     }
 
-    const signal = clamp01(finite(channels[route.source], 0));
+    let signal = clamp01(finite(channels[route.source], 0));
     if (route.valueMode === 'absolute') {
+      // Smoothing remains useful through the interior of a curve, but an exact
+      // hardware endpoint must reach the endpoint value selected in the editor
+      // immediately rather than only approaching it asymptotically via EMA.
+      const rawSignal = rawChannels[route.source];
+      if (rawSignal === 0 || rawSignal === 1) signal = rawSignal;
       const value = evaluateModValueCurvePoints(route.curvePoints, signal, spec);
       const valueNorm = (value - spec.min) / (spec.max - spec.min);
       const bucket = targets[route.target] || (targets[route.target] = {

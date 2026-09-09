@@ -17843,6 +17843,7 @@ export class App {
     const evaluation = evaluateModMatrix({
       matrix,
       features: features.channels,
+      rawFeatures: features.raw,
       capabilities: features.capabilities,
     });
     this._modSnapshot = { features, matrix, ...evaluation };

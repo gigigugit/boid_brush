@@ -157,3 +157,60 @@ test('BoidBrush still applies input modulation outside simulation mode', () => {
   assert.notEqual(params.seek, 0.25);
   assert.ok(brush._modApplied.seek);
 });
+
+test('active seek modulation remains authoritative over a leader seek override', () => {
+  const brush = Object.create(BoidBrush.prototype);
+  brush.app = {
+    simulation: { enabled: false },
+    getModulationSnapshot() {
+      return {
+        targets: {
+          seek: {
+            absoluteNorm: 0.25,
+            offsetNorm: 0,
+            gain: 1,
+            clampMin: 0,
+            clampMax: 1,
+            routeIds: ['seek-route'],
+          },
+        },
+      };
+    },
+  };
+  const params = {
+    seek: 0.75,
+    count: 10,
+    leaderConfig: {
+      count: 2,
+      pull: 0,
+      overrides: { seek: { enabled: true, value: 0.9 } },
+    },
+  };
+
+  const resolved = brush._applySimVars(params);
+  assert.equal(resolved.seek, 0.25);
+  assert.equal(resolved.leader.seek, 0.25);
+});
+
+test('leader seek override remains active when no seek route is applied', () => {
+  const brush = Object.create(BoidBrush.prototype);
+  brush.app = {
+    simulation: { enabled: false },
+    getModulationSnapshot() {
+      return { targets: {}, diagnostics: { routes: [], active: 0, skipped: 0 } };
+    },
+  };
+  const params = {
+    seek: 0.75,
+    count: 10,
+    leaderConfig: {
+      count: 2,
+      pull: 0,
+      overrides: { seek: { enabled: true, value: 0.9 } },
+    },
+  };
+
+  const resolved = brush._applySimVars(params);
+  assert.equal(resolved.seek, 0.75);
+  assert.equal(resolved.leader.seek, 0.9);
+});

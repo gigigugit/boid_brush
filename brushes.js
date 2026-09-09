@@ -250,7 +250,7 @@ function _syncSimulationSpawnAppearance(brush, spawns, resolveConfig, p) {
   brush._agentSpawnOpacity = nextOpacity;
 }
 
-function _resolveLeaderParams(p) {
+function _resolveLeaderParams(p, modApplied = null) {
   const leaderConfig = p?.leaderConfig;
   const leader = {
     count: Math.max(0, Math.min(Math.round(leaderConfig?.count || 0), Math.round(p?.count || 0))),
@@ -258,7 +258,12 @@ function _resolveLeaderParams(p) {
   };
   for (const field of LEADER_OVERRIDE_FIELDS) {
     const override = leaderConfig?.overrides?.[field.key];
-    leader[field.key] = override?.enabled ? override.value : p[field.key];
+    // An active input-modulation route defines the final target value for the
+    // whole swarm. Leader overrides remain useful otherwise, but must not
+    // silently replace a value the modulation editor reports as applied.
+    leader[field.key] = modApplied?.[field.key]
+      ? p[field.key]
+      : (override?.enabled ? override.value : p[field.key]);
   }
   return leader;
 }
@@ -1521,7 +1526,7 @@ export class BoidBrush {
       }
     }
     this._applyInputModulation(next);
-    next.leader = _resolveLeaderParams(next);
+    next.leader = _resolveLeaderParams(next, this._modApplied);
     return next;
   }
 

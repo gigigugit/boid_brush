@@ -610,6 +610,9 @@ function _modTargetStep(target) {
 /** Absolute target-value curve editor for one route. The stored y coordinate is
  * normalized, while labels and point inputs use the target's native units. */
 function _buildModCurveEditorMarkup(route, index, target) {
+  const forceVariationNote = ['seek', 'cohesion', 'separation'].includes(target?.id)
+    ? ' Force Variance and Individuality still apply intentional per-agent variation after this shared value.'
+    : '';
   return `
     <div class="mod-curve-editor" data-mod-curve-editor="${route.id}">
       <canvas class="mod-curve-canvas" width="240" height="150" aria-label="Route ${index + 1} target value curve"></canvas>
@@ -618,7 +621,7 @@ function _buildModCurveEditorMarkup(route, index, target) {
         <label>Selected input <input type="number" min="0" max="1" step="0.01" data-mod-point-input></label>
         <label>${target?.label || 'Target'} value <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-point-value></label>
       </div>
-      <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, select it for an exact value, and double-click an inner point to remove it.</span>
+      <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, select it for an exact value, and double-click an inner point to remove it.${forceVariationNote}</span>
       <button type="button" class="mod-curve-reset" data-mod-route="${route.id}" data-mod-action="reset-curve" style="margin-top:4px;">Reset Curve</button>
     </div>
   `;
