@@ -9,7 +9,7 @@ const WORKSPACE_SHARED_SECTIONS = Object.freeze([
 ]);
 
 const WORKSPACE_BRUSH_SECTIONS = Object.freeze({
-  boid: ['spawn', 'swarm', 'forces', 'quorum', 'variance', 'motion', 'leaders', 'visual', 'sensing', 'antPheromone'],
+  boid: ['spawn', 'swarm', 'forces', 'quorum', 'variance', 'motion', 'leaders', 'inputModulation', 'visual', 'sensing', 'antPheromone'],
   ant: ['spawn', 'swarm', 'forces', 'variance', 'motion', 'visual', 'sensing', 'antPheromone'],
   bristle: ['bristleShape', 'bristlePhysics', 'bristleVariance', 'bristleVisual'],
   simple: [],

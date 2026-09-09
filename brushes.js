@@ -12,6 +12,7 @@ import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
+import { applyModTargets, summarizeModulation } from './boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
 import { evaluatePressureCurve } from './pressure-curve.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
@@ -249,7 +250,7 @@ function _syncSimulationSpawnAppearance(brush, spawns, resolveConfig, p) {
   brush._agentSpawnOpacity = nextOpacity;
 }
 
-function _resolveLeaderParams(p) {
+function _resolveLeaderParams(p, modApplied = null) {
   const leaderConfig = p?.leaderConfig;
   const leader = {
     count: Math.max(0, Math.min(Math.round(leaderConfig?.count || 0), Math.round(p?.count || 0))),
@@ -257,7 +258,12 @@ function _resolveLeaderParams(p) {
   };
   for (const field of LEADER_OVERRIDE_FIELDS) {
     const override = leaderConfig?.overrides?.[field.key];
-    leader[field.key] = override?.enabled ? override.value : p[field.key];
+    // An active input-modulation route defines the final target value for the
+    // whole swarm. Leader overrides remain useful otherwise, but must not
+    // silently replace a value the modulation editor reports as applied.
+    leader[field.key] = modApplied?.[field.key]
+      ? p[field.key]
+      : (override?.enabled ? override.value : p[field.key]);
   }
   return leader;
 }
@@ -1206,6 +1212,10 @@ export class BoidBrush {
     this._lastSpawnX = 0;
     this._lastSpawnY = 0;
     this._boidsSpawned = false;
+    // Boid Input Modulation Framework — the target values written by the last
+    // `_applySimVars()` pass, or null when no route applied. Read only by the
+    // status line and the sidebar diagnostics panel.
+    this._modApplied = null;
     // Hover state — Apple Pencil hover preview
     this._hoverSpawned = false;
     // Flat-stroke (wet buffer) canvases
@@ -1515,7 +1525,33 @@ export class BoidBrush {
         next.sensingRules = [rule0, ...next.sensingRules.slice(1)];
       }
     }
-    next.leader = _resolveLeaderParams(next);
+    this._applyInputModulation(next);
+    next.leader = _resolveLeaderParams(next, this._modApplied);
+    return next;
+  }
+
+  /** Boid Input Modulation Framework — the only runtime consumer.
+   *
+   *  The app owns evaluation (`App.getModulationSnapshot()`), which is a pure
+   *  function of the matrix plus the current FeatureFrame and therefore knows
+   *  nothing about base parameter values. Application happens *here*, after
+   *  simulation-var overrides have landed on `next`. Simulation mode bypasses
+   *  input modulation entirely because it has no drawing-input lifecycle;
+   *  simulation vars remain authoritative there. `applyModTargets` only writes
+   *  ids in the module's target allowlist and clamps each write to that target's
+   *  spec — an imported route can never reach an arbitrary property.
+   *
+   *  Runs before `_resolveLeaderParams`, so leaders inherit modulated values
+   *  unless a Leader Boids override pins that field. Boid-only: `_applySimVars`
+   *  is the single gate every boid `writeParams()` call passes through
+   *  (stroke, hover, and simulation mode). */
+  _applyInputModulation(next) {
+    this._modApplied = null;
+    if (this.app.simulation?.enabled) return next;
+    const snapshot = this.app.getModulationSnapshot?.();
+    if (!snapshot) return next;
+    const { applied } = applyModTargets(next, snapshot);
+    this._modApplied = applied;
     return next;
   }
 
@@ -2889,7 +2925,24 @@ export class BoidBrush {
     const legacyReason = this._renderBackend === 'legacy'
       ? (this._getBatchRendererSupport(this.app.getP(), this._flatActive).reason || this.renderer.legacyReason || this._renderLegacyReason)
       : '';
-    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}`;
+    return `Boid | Agents: ${count} | Sim: ${this.sim?.mode || 'wasm'} | Render: ${this._renderBackend}${legacyReason ? ` (${legacyReason})` : ''}${this._getModulationStatusSuffix()}`;
+  }
+
+  /** Debug aid for the Input Modulation Framework: appends a compact
+   *  "Mod: cohesion 0.42, wander 0.18" suffix listing the resolved values of
+   *  the targets modulation actually wrote on the last frame, so the live
+   *  effect is visible without opening the sidebar. Empty string when no route
+   *  applied (the default for every existing document), leaving the status
+   *  line byte-identical to before the framework existed. */
+  _getModulationStatusSuffix() {
+    const summary = summarizeModulation(this._modApplied);
+    return summary ? ` | Mod: ${summary}` : '';
+  }
+
+  /** Read-only view of the last applied modulation, for the sidebar
+   *  diagnostics panel. */
+  getModulationApplied() {
+    return this._modApplied || null;
   }
 
   onActiveLayerCleared(layer) {

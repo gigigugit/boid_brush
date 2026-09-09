@@ -8,7 +8,7 @@
 :root {
   --topbar-h: clamp(44px, 6.2vw, 56px);
   --status-h: 24px;
-  --sidebar-w: 280px;
+  --sidebar-w: 380px;
   --right-panel-open-w: var(--sidebar-w);
   --layers-w: 230px;
   --panel-top: var(--topbar-h);
@@ -33,10 +33,10 @@
   --tap-min: 40px;
 }
 @media (max-width: 1100px) {
-  :root { --sidebar-w: 244px; --layers-w: 210px; --tap-min: 44px; }
+  :root { --sidebar-w: min(42vw, 350px); --layers-w: 210px; --tap-min: 44px; }
 }
 @media (max-width: 760px) {
-  :root { --sidebar-w: min(86vw, 232px); --layers-w: min(76vw, 220px); --topbar-h: 54px; --tap-min: 44px; }
+  :root { --sidebar-w: min(96vw, 360px); --layers-w: min(76vw, 220px); --topbar-h: 54px; --tap-min: 44px; }
 }
 *{margin:0;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;box-sizing:border-box;}
 html,body{overflow:hidden;width:100%;height:100%;
@@ -164,6 +164,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #rightPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
 #sidebar,#favoritesPanel,#settingsPanel,#jsonPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
+#rightPanel .panel-view,#rightPanel .section-body,#rightPanel label{min-width:0;}
 #jsonPanel{overflow-x:hidden;overflow-y:auto;}
 #jsonPanel.panel-view.active{display:flex;flex-direction:column;}
 
@@ -215,12 +216,12 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #rightPanel .pressure-curve-canvas{display:block;width:100%;height:118px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;}
 .pressure-curve-axis{display:flex;justify-content:space-between;font-size:8px;color:var(--ink-3);}
 .pressure-curve-value{display:none;}
-#sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:92px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:clamp(92px,38%,132px);max-width:100%;min-width:0;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
 #sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#guidesPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
 #sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#guidesPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
 #sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb,#guidesPanel input[type="range"]::-moz-range-thumb,#favoritesPanel input[type="range"]::-moz-range-thumb,#settingsPanel input[type="range"]::-moz-range-thumb,#simulationControlsPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
 #sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track,#guidesPanel input[type="range"]::-moz-range-track,#favoritesPanel input[type="range"]::-moz-range-track,#settingsPanel input[type="range"]::-moz-range-track,#simulationControlsPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
-#sidebar select,#layersPanel select,#guidesPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:105px;cursor:pointer;min-height:34px;color-scheme:dark;}
+#sidebar select,#layersPanel select,#guidesPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:clamp(105px,42%,148px);max-width:100%;min-width:0;cursor:pointer;min-height:34px;color-scheme:dark;}
 #sidebar select:hover,#layersPanel select:hover,#guidesPanel select:hover,#favoritesPanel select:hover,#settingsPanel select:hover,#simulationControlsPanel select:hover{border-color:rgba(255,255,255,0.2);}
 #sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup,#guidesPanel select option,#guidesPanel select optgroup,#favoritesPanel select option,#favoritesPanel select optgroup,#settingsPanel select option,#settingsPanel select optgroup,#simulationControlsPanel select option,#simulationControlsPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
 #sidebar button,#layersPanel button,#guidesPanel button,#favoritesPanel button,#settingsPanel button,#simulationControlsPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
@@ -228,6 +229,30 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #sidebar input[type="checkbox"],#layersPanel input[type="checkbox"],#guidesPanel input[type="checkbox"],#favoritesPanel input[type="checkbox"],#settingsPanel input[type="checkbox"],#simulationControlsPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
 #sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked,#guidesPanel input[type="checkbox"]:checked,#favoritesPanel input[type="checkbox"]:checked,#settingsPanel input[type="checkbox"]:checked,#simulationControlsPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
 #sidebar input[type="checkbox"]:checked::after,#guidesPanel input[type="checkbox"]:checked::after,#favoritesPanel input[type="checkbox"]:checked::after,#settingsPanel input[type="checkbox"]:checked::after,#simulationControlsPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+
+/* Dense Input Modulation rows stay contained without changing their control model. */
+#modRouteEditor,#modRouteEditor *{max-width:100%;}
+.mod-route-card{min-width:0;overflow:hidden;}
+.mod-route-header{flex-wrap:wrap;}
+.mod-route-header [data-mod-route-status]{flex:1 1 130px;min-width:0;overflow-wrap:anywhere;}
+.mod-source-target-row{display:grid!important;grid-template-columns:44px minmax(0,1fr) 40px minmax(0,1fr);}
+.mod-curve-row{display:grid!important;grid-template-columns:44px minmax(0,1fr) auto;}
+.mod-combine-row{display:grid!important;grid-template-columns:44px minmax(0,1fr) auto 52px;}
+.mod-clamp-row{display:grid!important;grid-template-columns:44px 52px auto 52px minmax(0,1fr);}
+.mod-condition-row{display:grid!important;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) 52px auto;}
+.mod-condition-row>input:nth-of-type(2){grid-column:4;}
+.mod-condition-row>button{grid-column:5;grid-row:1;}
+.mod-route-card select{width:100%!important;}
+.mod-route-card input[type="number"]{min-width:0;}
+
+@media (max-width:760px){
+  #sidebar,#favoritesPanel,#settingsPanel,#jsonPanel{padding:8px;}
+  #rightPanel .section-header{padding-inline:10px;}
+  #rightPanel .section-body{padding:7px;}
+  #sidebar input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"]{width:clamp(88px,40%,124px);}
+  .mod-route-card{padding:7px!important;}
+  .mod-route-row{gap:5px!important;}
+}
 .save-btn{background:rgba(42,110,63,0.7)!important;border:1px solid rgba(52,199,89,0.3)!important;}
 .save-btn:hover{background:rgba(52,199,89,0.5)!important;}
 .reset-btn{background:rgba(139,58,58,0.7)!important;border:1px solid rgba(255,59,48,0.3)!important;}
@@ -639,6 +664,46 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .boid-dist-delBtn:disabled{opacity:0.35;cursor:default;}
 #boidColorDistAdd{padding:7px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#ccc;font-size:11px;cursor:pointer;}
 #boidColorDistAdd:hover{background:rgba(255,255,255,0.12);color:#fff;}
+
+/* Input Modulation Editor Modal — visual route list + curve editor */
+#modInputEditorModal{display:none;position:fixed;inset:0;z-index:204;align-items:center;justify-content:center;}
+#modInputEditorModal.open{display:flex;}
+#modInputEditorModal .mod-editor-panel{width:min(900px,94vw);max-width:94vw;max-height:88vh;padding:0;overflow:hidden;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(21,25,36,0.99),rgba(12,16,25,0.99));border-color:rgba(126,156,220,0.18);}
+#modInputEditorModal .mod-editor-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 44px 14px 22px;border-bottom:1px solid rgba(255,255,255,0.08);}
+#modInputEditorModal .mod-editor-header h2{margin:0 0 4px;font-size:16px;color:#f3f6ff;font-weight:600;}
+#modInputEditorModal .mod-editor-header p{margin:0;color:#9cabca;font-size:11px;line-height:1.45;max-width:640px;}
+#modInputEditorModal .mod-editor-body{display:grid;grid-template-columns:230px 1fr;gap:0;overflow:hidden;flex:1;min-height:0;}
+#modInputEditorModal .mod-editor-list{border-right:1px solid rgba(255,255,255,0.08);overflow-y:auto;padding:10px;background:rgba(6,11,20,0.35);}
+#modInputEditorModal .mod-editor-detail{overflow-y:auto;padding:14px 18px;}
+#modInputEditorModal .mod-editor-footer{display:flex;align-items:center;gap:10px;padding:10px 18px;border-top:1px solid rgba(255,255,255,0.08);}
+#modInputEditorModal .mod-editor-footer .ai-modal-footer{margin:0;}
+#modInputEditorModal button{padding:6px 9px;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:rgba(255,255,255,0.08);color:var(--ink-1);font:inherit;cursor:pointer;}
+#modInputEditorModal button:hover{background:rgba(255,255,255,0.14);color:#fff;}
+#modInputEditorModal select,#modInputEditorModal input[type="number"]{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:5px 7px;font-size:11px;color-scheme:dark;}
+#modInputEditorModal input[type="checkbox"]{width:16px;height:16px;flex:0 0 auto;accent-color:var(--accent-a);}
+.mod-route-chip{display:flex;align-items:center;gap:6px;padding:7px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);margin-bottom:6px;cursor:pointer;font-size:10px;color:#cbd7e6;}
+.mod-route-chip:hover{background:rgba(255,255,255,0.06);}
+.mod-route-chip.active{border-color:#3a6ae8;background:rgba(58,106,232,0.16);}
+.mod-route-chip-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:#8b98aa;}
+.mod-route-chip-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mod-route-chip button{flex:0 0 auto;padding:0 5px;}
+#modInputEditorModal .mod-curve-canvas{display:block;width:100%;height:150px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;margin-top:4px;}
+#modInputEditorModal .mod-curve-axis{display:flex;justify-content:space-between;font-size:8px;color:var(--ink-3);margin-top:2px;}
+#modInputEditorModal .mod-curve-point-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0 5px;}
+#modInputEditorModal .mod-curve-point-fields label{display:grid;grid-template-columns:auto minmax(70px,1fr);align-items:center;gap:7px;margin:0;color:#aebbd0;font-size:10px;}
+#modInputEditorModal .mod-curve-point-fields input{width:100%;box-sizing:border-box;}
+#modInputEditorModal .mod-legacy-route{display:grid;gap:7px;margin-top:8px;padding:10px;border:1px solid rgba(232,160,48,.3);border-radius:8px;background:rgba(232,160,48,.08);color:#bdc8da;font-size:10px;line-height:1.45;}
+#modInputEditorModal .mod-legacy-route strong{color:#f3d49b;font-size:11px;}
+#modInputEditorModal .mod-legacy-route button{justify-self:start;}
+@media(max-width:640px){
+  #modInputEditorModal .mod-editor-panel{width:96vw;max-width:96vw;max-height:94vh;}
+  #modInputEditorModal .mod-editor-header{padding:14px 40px 10px 14px;}
+  #modInputEditorModal .mod-editor-body{display:flex;flex-direction:column;}
+  #modInputEditorModal .mod-editor-list{flex:0 0 auto;max-height:150px;border-right:0;border-bottom:1px solid rgba(255,255,255,0.08);}
+  #modInputEditorModal .mod-editor-detail{padding:10px 12px;}
+  #modInputEditorModal .mod-editor-footer{padding:8px 12px;}
+  #modInputEditorModal .mod-curve-point-fields{grid-template-columns:1fr;}
+}
 #simExportModal{display:none;position:fixed;inset:0;z-index:201;align-items:center;justify-content:center;}
 #simExportModal.open{display:flex;}
 .sim-export-panel{width:min(468px,92vw);}
@@ -1531,6 +1596,43 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   </div>
 </div>
 
+<!-- ══════════ Input Modulation Editor Modal ══════════ -->
+<!-- Full editor for the boid input-modulation matrix. Opened from the compact
+     "Input Modulation" sidebar section (#modOpenEditorBtn); the hidden
+     source-of-truth control (#boidModMatrix) itself stays in that sidebar
+     section so the settings catalog keeps indexing it — this modal only
+     hosts the dynamic route list / detail / channel-tuning / diagnostics
+     views ui.js renders into the containers below. -->
+<div id="modInputEditorModal">
+  <div class="ai-modal-backdrop" id="modInputEditorBackdrop"></div>
+  <div class="ai-modal-panel mod-editor-panel" role="dialog" aria-modal="true" aria-labelledby="modInputEditorTitle">
+    <div class="mod-editor-header">
+      <div>
+        <h2 id="modInputEditorTitle">Input Modulation</h2>
+        <p>Map live input channels (pressure, tilt, twist, speed, curvature…) directly to final boid-setting values. Each curve point stores the exact target value for that input level.</p>
+      </div>
+      <button class="ai-modal-close" id="modInputEditorClose" type="button">✕</button>
+    </div>
+    <div class="mod-editor-body">
+      <div class="mod-editor-list">
+        <div id="modRouteList"></div>
+        <button id="modAddRouteBtn" type="button" style="width:100%;margin-top:4px;">+ Add Route</button>
+      </div>
+      <div class="mod-editor-detail">
+        <div id="modRouteDetail"></div>
+        <div style="font-weight:600;color:#cbd7e6;margin:14px 0 2px;">Channel Tuning</div>
+        <div id="modChannelTuning"></div>
+        <div style="font-weight:600;color:#cbd7e6;margin:14px 0 2px;">Diagnostics</div>
+        <pre id="modDiagnostics" class="slider-desc" style="margin:0;white-space:pre-wrap;font-size:10px;line-height:1.4;">No active routes.</pre>
+      </div>
+    </div>
+    <div class="mod-editor-footer">
+      <span style="flex:1;min-width:0;color:#8b98aa;font-size:10px;">Changes apply live — there is no separate Save step.</span>
+      <button id="modInputEditorDone" class="ai-save-btn" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════ Motion Path Editor ══════════ -->
 <div id="motionPathEditor">
   <div class="motion-path-editor-backdrop" id="motionPathEditorBackdrop"></div>
@@ -1702,8 +1804,11 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
+const assetVersion = '2026-09-08-absolute-modulation-curves';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
-const appModuleUrl = reloadToken ? `./app.js?bb_reload=${encodeURIComponent(reloadToken)}` : './app.js';
+const appModuleUrl = reloadToken
+  ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`
+  : `./app.js?v=${assetVersion}`;
 const { App } = await import(appModuleUrl);
 const app = new App();
 window._app = app; // expose for debugging

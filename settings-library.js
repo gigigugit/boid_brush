@@ -61,7 +61,17 @@ export function createPreset({
   return preset;
 }
 
-export function filterPresetParameters(values, scope, catalog, { strict = false } = {}) {
+/**
+ * @param {object} options
+ * @param {boolean} [options.strict]
+ * @param {(id: string, value: string|number|boolean, scope: object) => any} [options.normalizeValue]
+ *   Optional per-control sanitizer applied after the scalar check. Controls
+ *   that carry structured state as a JSON string (the pressure curves, the boid
+ *   modulation matrix) use this to re-validate their payload on every import,
+ *   export, and apply without this module needing to know the domain. Returning
+ *   `undefined` drops the value.
+ */
+export function filterPresetParameters(values, scope, catalog, { strict = false, normalizeValue } = {}) {
   if (!object(values)) {
     if (strict) throw new Error('Preset values must be an object');
     return { values: {}, dropped: [] };
@@ -80,12 +90,17 @@ export function filterPresetParameters(values, scope, catalog, { strict = false 
       dropped.push(candidateId);
       continue;
     }
-    filtered[id] = value;
+    const normalized = normalizeValue ? normalizeValue(id, value, scope) : value;
+    if (normalized === undefined) {
+      dropped.push(candidateId);
+      continue;
+    }
+    filtered[id] = normalized;
   }
   return { values: filtered, dropped };
 }
 
-export function normalizePreset(candidate, { catalog, fallbackName = 'Imported', fallbackBrush = 'boid' } = {}) {
+export function normalizePreset(candidate, { catalog, fallbackName = 'Imported', fallbackBrush = 'boid', normalizeValue } = {}) {
   if (!object(candidate)) throw new Error('Invalid preset');
   if (candidate.format && candidate.format !== PRESET_FORMAT) throw new Error('Unsupported preset format');
   if (candidate.format === PRESET_FORMAT && candidate.version !== PRESET_VERSION) {
@@ -105,7 +120,7 @@ export function normalizePreset(candidate, { catalog, fallbackName = 'Imported',
   let dropped = [];
   if (scope.kind === 'simulation') {
     if (!object(rawValues)) throw new Error('Invalid simulation preset values');
-    const filtered = filterPresetParameters(rawValues.parameters || {}, scope, catalog);
+    const filtered = filterPresetParameters(rawValues.parameters || {}, scope, catalog, { normalizeValue });
     values = {
       parameters: filtered.values,
       authoredContent: object(rawValues.authoredContent) ? {
@@ -118,7 +133,7 @@ export function normalizePreset(candidate, { catalog, fallbackName = 'Imported',
     };
     dropped = filtered.dropped;
   } else {
-    const filtered = filterPresetParameters(rawValues, scope, catalog);
+    const filtered = filterPresetParameters(rawValues, scope, catalog, { normalizeValue });
     values = filtered.values;
     dropped = filtered.dropped;
   }
@@ -154,19 +169,21 @@ export function normalizePreset(candidate, { catalog, fallbackName = 'Imported',
   };
 }
 
-export function capturePresetValues(root, catalog, scope) {
+export function capturePresetValues(root, catalog, scope, { normalizeValue } = {}) {
   const values = {};
   for (const entry of catalog.values()) {
     if (!catalogEntryApplies(entry, scope.brush, scope.kind)) continue;
-    const value = readControlValue(root.getElementById?.(entry.id) || root.querySelector?.(`#${CSS.escape(entry.id)}`));
+    const raw = readControlValue(root.getElementById?.(entry.id) || root.querySelector?.(`#${CSS.escape(entry.id)}`));
+    if (raw === undefined) continue;
+    const value = normalizeValue ? normalizeValue(entry.id, raw, scope) : raw;
     if (value !== undefined) values[entry.id] = value;
   }
   return values;
 }
 
-export function applyPresetValues(root, catalog, preset) {
+export function applyPresetValues(root, catalog, preset, { normalizeValue } = {}) {
   const source = preset.scope.kind === 'simulation' ? preset.values.parameters : preset.values;
-  const filtered = filterPresetParameters(source, preset.scope, catalog);
+  const filtered = filterPresetParameters(source, preset.scope, catalog, { normalizeValue });
   let applied = 0;
   for (const [id, value] of Object.entries(filtered.values)) {
     const control = root.getElementById?.(id) || root.querySelector?.(`#${CSS.escape(id)}`);

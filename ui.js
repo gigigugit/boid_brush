@@ -14,7 +14,25 @@ import {
   normalizeLibrary,
   normalizePreset,
 } from './settings-library.js';
-import { evaluatePressureCurve } from './pressure-curve.js';
+import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-08-absolute-modulation-curves';
+import {
+  DEFAULT_MOD_CURVE_POINTS,
+  FEATURE_CHANNELS,
+  MAX_CHANNEL_DEADZONE,
+  MAX_CHANNEL_SMOOTHING,
+  MOD_CONDITION_OPS,
+  MOD_CURVE_POINT_LIMIT,
+  MOD_TARGETS,
+  createModRoute,
+  emptyModMatrix,
+  evaluateModValueCurvePoints,
+  getFeatureChannel,
+  getInputSource,
+  migrateModRouteToAbsolute,
+  modMatrixToControlValue,
+  parseModMatrix,
+  resolveModTarget,
+} from './boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
 
 // =============================================================================
 // ui.js — Sidebar UI: collapsible sections, sliders, presets, layers
@@ -66,6 +84,7 @@ function loadPresetLibrary() {
     const current = localStorage.getItem(PRESET_LIBRARY_KEY);
     if (current) {
       const normalized = normalizeLibrary(JSON.parse(current), {
+        normalizeValue: _normalizePresetControlValue,
         catalog: _settingsCatalog,
         skipInvalidEntries: true,
       });
@@ -76,6 +95,7 @@ function loadPresetLibrary() {
     }
     const legacy = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}');
     const normalized = normalizeLibrary(legacy, {
+      normalizeValue: _normalizePresetControlValue,
       catalog: _settingsCatalog,
       skipInvalidEntries: true,
     });
@@ -474,6 +494,594 @@ function _syncLeaderOverrideUI() {
   LEADER_OVERRIDE_FIELDS.forEach(_syncLeaderOverrideControlState);
 }
 
+// ── Boid Input Modulation Framework ─────────────────────────
+// Boid-only. The whole modulation matrix lives in ONE hidden JSON control
+// (`#boidModMatrix`) so it rides through the scalar-only preset catalog filter
+// as a string. The sidebar section itself stays compact (intro + live channel
+// monitor + a one-line summary); the full editor — a visual route list plus a
+// detail pane for whichever route is selected — lives in the
+// `#modInputEditorModal` overlay so the sidebar never turns into a wall of
+// per-route controls.
+//
+// Ownership: the hidden text input is the single source of truth. Every editor
+// control reads it, mutates the parsed matrix, and writes it back — there is no
+// second store to keep in sync, and preset/workspace/session plumbing needs no
+// special-casing beyond the normalization pass in `_syncModMatrixUi`. The
+// currently-selected route id (`_modSelectedRouteId`) is the only piece of
+// editor-local UI state, and it is derived back to a valid route (or null)
+// every render, so it can never point at a route that no longer exists.
+const MOD_ROUTE_LIMIT = 24;
+const MOD_CONDITION_LIMIT = 3;
+const MOD_MATRIX_MAX_JSON_LENGTH = 24000;
+
+let _modSelectedRouteId = null;
+let _modCurveResizeObserver = null;
+
+function _modMatrixControl() {
+  return document.getElementById('boidModMatrix');
+}
+
+/** Read the current matrix from the hidden control (never throws). */
+function _readModMatrix() {
+  return parseModMatrix(_modMatrixControl()?.value || '');
+}
+
+/** Write a matrix back to the hidden control and refresh dependent state.
+ *  `rerender` is false while dragging a slider so focus is not stolen. */
+function _writeModMatrix(app, matrix, { rerender = true } = {}) {
+  const control = _modMatrixControl();
+  if (!control) return;
+  control.value = modMatrixToControlValue(matrix);
+  app.invalidateParams();
+  // The summary line is a plain textContent update — cheap, and never steals
+  // focus — so it stays current even mid-drag.
+  _renderModSummary(app);
+  // Re-rendering the list/detail replaces innerHTML, which would steal focus
+  // mid-drag or mid-keystroke, so value-only edits skip it and structural
+  // edits (add/remove route or condition, source/target/curve-mode change) opt in.
+  if (!rerender) return;
+  _renderModRouteList(app);
+  _renderModRouteDetail(app);
+  _renderModChannelTuning(app);
+}
+
+function _modSelect(dataAttrs, options, selected) {
+  const html = options.map(option => `<option value="${option.value}"${option.value === selected ? ' selected' : ''}>${option.label}</option>`).join('');
+  return `<select ${dataAttrs} style="flex:1;min-width:0;">${html}</select>`;
+}
+
+const _MOD_CHANNEL_OPTIONS = FEATURE_CHANNELS.map(channel => ({ value: channel.id, label: channel.label }));
+const _MOD_TARGET_OPTIONS = MOD_TARGETS.map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
+const _MOD_CONDITION_OPTIONS = MOD_CONDITION_OPS.map(op => ({ value: op.id, label: op.label }));
+
+const _MOD_CARD_STYLE = 'margin:6px 0;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);';
+const _MOD_ROW_STYLE = 'display:flex;align-items:center;gap:6px;margin:4px 0;font-size:10px;color:#9fb0c6;';
+const _MOD_NUM_STYLE = 'width:52px;flex:0 0 auto;';
+
+function _modRouteLabel(route) {
+  const sourceLabel = getFeatureChannel(route.source)?.label || route.source;
+  const targetLabel = resolveModTarget(route.target)?.label || route.target;
+  return `${sourceLabel} → ${targetLabel}`;
+}
+
+/** Compact, clickable route selector — the "visual route selection" list
+ *  shown in the modal's left column. Each chip is a whole route at a glance
+ *  (enabled state, source → target, live status dot); clicking one makes it
+ *  the route shown in the detail pane. */
+function _buildModRouteChip(route, index, report, selected) {
+  const statusColor = report?.applied ? '#7fe0a0' : '#8b98aa';
+  const statusTitle = report?.applied ? 'active' : (report?.reason ? `idle · ${report.reason}` : 'idle');
+  return `
+    <div class="mod-route-chip${selected ? ' active' : ''}" data-mod-route-chip="${route.id}" role="button" tabindex="0" aria-pressed="${selected ? 'true' : 'false'}" title="${statusTitle}">
+      <span class="mod-route-chip-dot" data-mod-route-dot="${route.id}" style="background:${statusColor};"></span>
+      <span class="mod-route-chip-label"${route.enabled ? '' : ' style="opacity:.55;"'}>${index + 1}. ${_modRouteLabel(route)}</span>
+      <button type="button" data-mod-route="${route.id}" data-mod-action="remove-route" title="Delete route ${index + 1}" tabindex="-1">✕</button>
+    </div>
+  `;
+}
+
+function _buildModConditionRow(route, condition, index) {
+  const needsSecond = condition.op === 'between' || condition.op === 'outside';
+  return `
+    <div class="mod-route-row mod-condition-row" style="${_MOD_ROW_STYLE}">
+      <span style="flex:0 0 auto;">When</span>
+      ${_modSelect(`data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-prop="channel"`, _MOD_CHANNEL_OPTIONS, condition.channel)}
+      ${_modSelect(`data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-prop="op"`, _MOD_CONDITION_OPTIONS, condition.op)}
+      <input type="number" min="0" max="1" step="0.05" value="${condition.value}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-prop="value" aria-label="Condition threshold">
+      <input type="number" min="0" max="1" step="0.05" value="${condition.value2}" style="${_MOD_NUM_STYLE}${needsSecond ? '' : 'visibility:hidden;'}" data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-prop="value2" aria-label="Condition upper threshold">
+      <button type="button" data-mod-route="${route.id}" data-mod-cond="${index}" data-mod-action="remove-condition" title="Remove condition" style="flex:0 0 auto;padding:0 6px;">✕</button>
+    </div>
+  `;
+}
+
+function _formatModTargetValue(target, value) {
+  if (!target) return Number(value).toFixed(2);
+  if (target.integer) return String(Math.round(value));
+  const span = target.max - target.min;
+  return value.toFixed(span <= 0.2 ? 3 : span <= 2 ? 2 : span <= 20 ? 1 : 0);
+}
+
+function _modTargetStep(target) {
+  if (!target || target.integer) return 1;
+  const span = target.max - target.min;
+  return span <= 0.2 ? 0.001 : span <= 2 ? 0.01 : span <= 20 ? 0.1 : 1;
+}
+
+/** Absolute target-value curve editor for one route. The stored y coordinate is
+ * normalized, while labels and point inputs use the target's native units. */
+function _buildModCurveEditorMarkup(route, index, target) {
+  const forceVariationNote = ['seek', 'cohesion', 'separation'].includes(target?.id)
+    ? ' Force Variance and Individuality still apply intentional per-agent variation after this shared value.'
+    : '';
+  return `
+    <div class="mod-curve-editor" data-mod-curve-editor="${route.id}">
+      <canvas class="mod-curve-canvas" width="240" height="150" aria-label="Route ${index + 1} target value curve"></canvas>
+      <div class="mod-curve-axis"><span>Input 0</span><span>${target ? `${_formatModTargetValue(target, target.min)} … ${_formatModTargetValue(target, target.max)} ${target.label}` : 'Target value'}</span><span>Input 1</span></div>
+      <div class="mod-curve-point-fields">
+        <label>Selected input <input type="number" min="0" max="1" step="0.01" data-mod-point-input></label>
+        <label>${target?.label || 'Target'} value <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-point-value></label>
+      </div>
+      <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, select it for an exact value, and double-click an inner point to remove it.${forceVariationNote}</span>
+      <button type="button" class="mod-curve-reset" data-mod-route="${route.id}" data-mod-action="reset-curve" style="margin-top:4px;">Reset Curve</button>
+    </div>
+  `;
+}
+
+function _buildModRouteCard(route, index, report) {
+  const target = resolveModTarget(route.target);
+  const channel = getFeatureChannel(route.source);
+  const statusText = report?.applied
+    ? `active · input ${report.signal.toFixed(2)}${Number.isFinite(report.value) ? ` · value ${report.value.toFixed(target?.integer ? 0 : 3)}` : ''}`
+    : (report?.reason ? `idle · ${report.reason}` : 'idle');
+  const statusColor = report?.applied ? '#7fe0a0' : '#8b98aa';
+  const editorBody = route.valueMode === 'absolute'
+    ? `
+      ${_buildModCurveEditorMarkup(route, index, target)}
+      <div class="mod-route-row" style="${_MOD_ROW_STYLE}">
+        <span style="flex:1;">When multiple routes target ${target?.label || 'this setting'}, higher priority wins.</span>
+        <span style="flex:0 0 auto;">Priority</span>
+        <input type="number" min="-99" max="99" step="1" value="${route.priority}" style="${_MOD_NUM_STYLE}" data-mod-route="${route.id}" data-mod-prop="priority" aria-label="Route ${index + 1} priority">
+      </div>
+      ${channel?.capability ? `<span class="slider-desc">Requires ${channel.capability} input support.</span>` : ''}
+      ${route.conditions.map((condition, conditionIndex) => _buildModConditionRow(route, condition, conditionIndex)).join('')}
+      ${route.conditions.length < MOD_CONDITION_LIMIT
+        ? `<button type="button" data-mod-route="${route.id}" data-mod-action="add-condition" style="width:100%;margin-top:4px;font-size:10px;">+ Condition</button>`
+        : ''}`
+    : `
+      <div class="mod-legacy-route">
+        <strong>Legacy modulation route</strong>
+        <span>This route still uses the previous amount-based behavior so saved work remains unchanged. Convert it to approximate its current response with editable target-value points; stepped legacy shapes may need adjustment afterward.</span>
+        <button type="button" data-mod-route="${route.id}" data-mod-action="convert-route">Convert to Value Curve</button>
+      </div>`;
+  return `
+    <div class="mod-route-card" data-mod-route-card="${route.id}" style="${_MOD_CARD_STYLE}${route.enabled ? '' : 'opacity:0.55;'}">
+      <div class="mod-route-header" style="display:flex;align-items:center;gap:6px;margin:0 0 4px;">
+        <span style="font-weight:600;color:#eef3ff;flex:1;">Route ${index + 1}</span>
+        <span style="font-size:10px;color:${statusColor};" data-mod-route-status="${route.id}">${statusText}</span>
+        <label style="margin:0;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#9fb0c6;">On
+          <input type="checkbox" ${route.enabled ? 'checked' : ''} data-mod-route="${route.id}" data-mod-prop="enabled" aria-label="Enable route ${index + 1}">
+        </label>
+        <button type="button" data-mod-route="${route.id}" data-mod-action="remove-route" title="Delete route" style="flex:0 0 auto;padding:0 6px;">✕</button>
+      </div>
+      <div class="mod-route-row mod-source-target-row" style="${_MOD_ROW_STYLE}">
+        <span style="flex:0 0 44px;">Source</span>
+        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="source"`, _MOD_CHANNEL_OPTIONS, route.source)}
+        <span style="flex:0 0 40px;text-align:right;">Target</span>
+        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _MOD_TARGET_OPTIONS, route.target)}
+      </div>
+      ${editorBody}
+    </div>
+  `;
+}
+
+/** Reconcile `_modSelectedRouteId` against the current matrix: keeps the
+ *  selection if the route still exists, otherwise falls back to the first
+ *  route, or null when there are none. */
+function _modReconcileSelection(matrix) {
+  if (matrix.routes.some(route => route.id === _modSelectedRouteId)) return;
+  _modSelectedRouteId = matrix.routes[0]?.id || null;
+}
+
+/** Rebuild the compact route-selection list (modal, left column). */
+function _renderModRouteList(app) {
+  const container = document.getElementById('modRouteList');
+  if (!container) return;
+  const matrix = _readModMatrix();
+  _modReconcileSelection(matrix);
+  const reports = new Map();
+  // Only reach into the app for live route status when routes exist, so the
+  // default (empty) document never pulls getP() during initial sidebar build.
+  if (matrix.routes.length) {
+    for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
+  }
+  container.innerHTML = matrix.routes.length
+    ? matrix.routes.map((route, index) => _buildModRouteChip(route, index, reports.get(route.id), route.id === _modSelectedRouteId)).join('')
+    : '<span class="slider-desc">No routes. Add one to drive a boid parameter from a live input channel.</span>';
+  const addBtn = document.getElementById('modAddRouteBtn');
+  if (addBtn) addBtn.disabled = matrix.routes.length >= MOD_ROUTE_LIMIT;
+}
+
+/** Rebuild the detail pane (modal, right column) for whichever route is
+ *  currently selected. Wires the bipolar curve canvas when the route uses
+ *  a custom curve. */
+function _renderModRouteDetail(app) {
+  const container = document.getElementById('modRouteDetail');
+  if (!container) return;
+  _modCurveResizeObserver?.disconnect();
+  _modCurveResizeObserver = null;
+  const matrix = _readModMatrix();
+  _modReconcileSelection(matrix);
+  const index = matrix.routes.findIndex(route => route.id === _modSelectedRouteId);
+  const route = index >= 0 ? matrix.routes[index] : null;
+  if (!route) {
+    container.innerHTML = '<span class="slider-desc">Select a route on the left, or add a new one, to edit its source, target, curve, and clamps.</span>';
+    return;
+  }
+  const reports = new Map();
+  for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
+  container.innerHTML = _buildModRouteCard(route, index, reports.get(route.id));
+  if (route.valueMode === 'absolute') _wireModRouteCurveEditor(app, container, route.id);
+}
+
+/** Wire a route's normalized curve storage to native target-value editing. */
+function _wireModRouteCurveEditor(app, container, routeId) {
+  const editor = container.querySelector(`[data-mod-curve-editor="${routeId}"]`);
+  const canvas = editor?.querySelector('.mod-curve-canvas');
+  if (!canvas) return;
+  const startRoute = _readModMatrix().routes.find(entry => entry.id === routeId);
+  let points = (startRoute?.curvePoints || DEFAULT_MOD_CURVE_POINTS).map(point => [...point]);
+  const target = resolveModTarget(startRoute?.target);
+  const targetMin = target?.min ?? 0;
+  const targetMax = target?.max ?? 1;
+  const targetSpan = targetMax - targetMin || 1;
+  const inputField = editor.querySelector('[data-mod-point-input]');
+  const valueField = editor.querySelector('[data-mod-point-value]');
+  let activeIndex = 0;
+
+  const syncPointFields = () => {
+    const point = points[activeIndex];
+    if (!point) return;
+    if (inputField) {
+      inputField.value = point[0].toFixed(2);
+      inputField.disabled = activeIndex === 0 || activeIndex === points.length - 1;
+    }
+    if (valueField) valueField.value = _formatModTargetValue(target, point[1]);
+  };
+
+  const commit = () => {
+    const matrix = _readModMatrix();
+    const route = matrix.routes.find(entry => entry.id === routeId);
+    if (!route) return;
+    route.curvePoints = points.map(([x, y]) => [Number(x.toFixed(4)), Number(y.toFixed(4))]);
+    // Structural re-renders would tear down this very canvas mid-drag, so
+    // curve edits always skip rerender — exactly like a dragged slider.
+    _writeModMatrix(app, matrix, { rerender: false });
+  };
+  const draw = () => {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const width = Math.max(180, Math.round(canvas.getBoundingClientRect().width || 240));
+    const height = 150;
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const pad = 12;
+    const graphW = width - pad * 2;
+    const graphH = height - pad * 2;
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const x = pad + graphW * i / 4;
+      const y = pad + graphH * i / 4;
+      ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, height - pad); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
+    }
+    ctx.strokeStyle = '#6d9cff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const curveSamples = Math.max(96, Math.round(graphW));
+    for (let index = 0; index <= curveSamples; index += 1) {
+      const x = index / curveSamples;
+      const px = pad + x * graphW;
+      const value = evaluateModValueCurvePoints(points, x, target);
+      const py = pad + (1 - (value - targetMin) / targetSpan) * graphH;
+      if (index) ctx.lineTo(px, py);
+      else ctx.moveTo(px, py);
+    }
+    ctx.stroke();
+    points.forEach(([x, y], index) => {
+      ctx.beginPath();
+      ctx.arc(pad + x * graphW, pad + (1 - (y - targetMin) / targetSpan) * graphH, index === activeIndex ? 6 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = index === activeIndex ? '#fff' : '#8bb3ff';
+      ctx.fill();
+      ctx.strokeStyle = '#17233a';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+  };
+  const pointFromEvent = event => {
+    const rect = canvas.getBoundingClientRect();
+    const pad = 12;
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left - pad) / Math.max(1, rect.width - pad * 2)));
+    const yNorm = Math.max(0, Math.min(1, 1 - (event.clientY - rect.top - pad) / Math.max(1, rect.height - pad * 2)));
+    return [x, targetMin + yNorm * targetSpan];
+  };
+  const nearestIndex = (x, y, maxDistance) => {
+    let nearest = -1;
+    let nearestDistance = maxDistance;
+    points.forEach((point, index) => {
+      const distance = Math.hypot(point[0] - x, (point[1] - y) / targetSpan);
+      if (distance < nearestDistance) { nearest = index; nearestDistance = distance; }
+    });
+    return nearest;
+  };
+  canvas.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    const [x, y] = pointFromEvent(event);
+    let nearest = nearestIndex(x, y, 0.12);
+    if (nearest < 0) {
+      if (points.length >= MOD_CURVE_POINT_LIMIT) { draw(); return; }
+      points.push([x, y]);
+      points.sort((a, b) => a[0] - b[0]);
+      nearest = points.findIndex(point => point[0] === x && point[1] === y);
+      commit();
+    }
+    activeIndex = nearest;
+    canvas.setPointerCapture(event.pointerId);
+    syncPointFields();
+    draw();
+  });
+  canvas.addEventListener('pointermove', event => {
+    if (activeIndex < 0 || !canvas.hasPointerCapture(event.pointerId)) return;
+    event.preventDefault();
+    const [x, y] = pointFromEvent(event);
+    const isEndpoint = activeIndex === 0 || activeIndex === points.length - 1;
+    const minX = activeIndex > 0 ? points[activeIndex - 1][0] + 0.002 : 0;
+    const maxX = activeIndex < points.length - 1 ? points[activeIndex + 1][0] - 0.002 : 1;
+    points[activeIndex] = [isEndpoint ? (activeIndex === 0 ? 0 : 1) : Math.max(minX, Math.min(maxX, x)), y];
+    commit();
+    syncPointFields();
+    draw();
+  }, { passive: false });
+  const release = event => {
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    syncPointFields();
+    draw();
+  };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('dblclick', event => {
+    const [x, y] = pointFromEvent(event);
+    const nearest = nearestIndex(x, y, 0.12);
+    if (nearest > 0 && nearest < points.length - 1) {
+      points.splice(nearest, 1);
+      activeIndex = Math.max(0, Math.min(activeIndex, points.length - 1));
+      commit();
+      syncPointFields();
+      draw();
+    }
+  });
+  editor.querySelector('[data-mod-action="reset-curve"]')?.addEventListener('click', () => {
+    points = [[0, targetMin], [1, targetMax]];
+    activeIndex = 0;
+    commit();
+    syncPointFields();
+    draw();
+  });
+  inputField?.addEventListener('change', () => {
+    if (activeIndex <= 0 || activeIndex >= points.length - 1) return;
+    const minX = points[activeIndex - 1][0] + 0.002;
+    const maxX = points[activeIndex + 1][0] - 0.002;
+    points[activeIndex][0] = Math.max(minX, Math.min(maxX, Number(inputField.value)));
+    commit();
+    syncPointFields();
+    draw();
+  });
+  valueField?.addEventListener('change', () => {
+    if (!target || !points[activeIndex]) return;
+    const nativeValue = Math.max(target.min, Math.min(target.max, Number(valueField.value)));
+    points[activeIndex][1] = nativeValue;
+    commit();
+    syncPointFields();
+    draw();
+  });
+  _modCurveResizeObserver = new ResizeObserver(draw);
+  _modCurveResizeObserver.observe(canvas);
+  syncPointFields();
+  draw();
+}
+
+/** One-line sidebar summary ("N routes · N active") so the compact section
+ *  gives an at-a-glance read without opening the modal. */
+function _renderModSummary(app) {
+  const el = document.getElementById('modSummary');
+  if (!el) return;
+  const matrix = _readModMatrix();
+  if (!matrix.routes.length) {
+    el.textContent = 'No routes yet — modulation is inactive.';
+    return;
+  }
+  const reports = new Map();
+  for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
+  const active = matrix.routes.filter(route => reports.get(route.id)?.applied).length;
+  const total = matrix.routes.length;
+  el.textContent = `${total} route${total === 1 ? '' : 's'} · ${active} active`;
+}
+
+/** Channel tuning (EMA smoothing + deadzone) for the channels actually in use.
+ *  Kept scoped to in-use channels so the editor never grows into a wall of
+ *  controls that map to nothing. */
+function _renderModChannelTuning(app) {
+  const container = document.getElementById('modChannelTuning');
+  if (!container) return;
+  const matrix = _readModMatrix();
+  const inUse = new Set();
+  for (const route of matrix.routes) {
+    inUse.add(route.source);
+    for (const condition of route.conditions) inUse.add(condition.channel);
+  }
+  const rows = FEATURE_CHANNELS.filter(channel => inUse.has(channel.id) && channel.id !== 'constant');
+  if (!rows.length) {
+    container.innerHTML = '<span class="slider-desc">Channel smoothing and deadzones appear here once a route uses a channel.</span>';
+    return;
+  }
+  container.innerHTML = rows.map(channel => {
+    const tuning = matrix.channels[channel.id] || { smoothing: channel.smoothing, deadzone: channel.deadzone };
+    return `
+      <div style="${_MOD_ROW_STYLE}">
+        <span style="flex:1;min-width:0;color:#cbd7e6;">${channel.label}</span>
+        <span style="flex:0 0 auto;">Smooth</span>
+        <input type="number" min="0" max="${MAX_CHANNEL_SMOOTHING}" step="0.05" value="${tuning.smoothing}" style="${_MOD_NUM_STYLE}" data-mod-channel="${channel.id}" data-mod-prop="smoothing" aria-label="${channel.label} smoothing">
+        <span style="flex:0 0 auto;">Dead</span>
+        <input type="number" min="0" max="${MAX_CHANNEL_DEADZONE}" step="0.02" value="${tuning.deadzone}" style="${_MOD_NUM_STYLE}" data-mod-channel="${channel.id}" data-mod-prop="deadzone" aria-label="${channel.label} deadzone">
+      </div>
+    `;
+  }).join('');
+}
+
+/** Static skeleton for the live channel monitor; values are filled in by
+ *  `_refreshModulationDebugUi` on the frame loop. Stays in the sidebar
+ *  (rather than the modal) since it is a glanceable meter, not a control
+ *  surface, and is useful while actively painting. */
+function _buildModChannelMonitor() {
+  return FEATURE_CHANNELS.map(channel => `
+    <div style="display:flex;align-items:center;gap:6px;margin:2px 0;font-size:10px;" data-mod-monitor-row="${channel.id}" title="${channel.description}">
+      <span style="flex:0 0 88px;color:#9fb0c6;">${channel.label}</span>
+      <span style="flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;">
+        <span data-mod-monitor-bar="${channel.id}" style="display:block;height:100%;width:0%;background:#3a6ae8;"></span>
+      </span>
+      <span data-mod-monitor-value="${channel.id}" style="flex:0 0 34px;text-align:right;color:#cbd7e6;font-variant-numeric:tabular-nums;">0.00</span>
+    </div>
+  `).join('');
+}
+
+/** Per-frame refresh installed on `app._refreshModulationDebugUi`. Early-exits
+ *  unless the boid section is expanded, so the frame loop pays one DOM lookup
+ *  in the common case. */
+function _refreshModulationDebugUi(app) {
+  const monitor = document.getElementById('modChannelMonitor');
+  // `.brush-hidden` is display:none (offsetParent null) but `.collapsed` only
+  // zeroes max-height, so both checks are needed to stay off the frame budget.
+  if (!monitor || !monitor.offsetParent) return;
+  if (monitor.closest('.section-body')?.classList.contains('collapsed')) return;
+  const features = app.getInputFeatureFrame?.();
+  if (!features) return;
+  const available = new Set(features.capabilities || []);
+  for (const channel of FEATURE_CHANNELS) {
+    const value = Math.max(0, Math.min(1, features.channels[channel.id] || 0));
+    const supported = !channel.capability || available.has(channel.capability);
+    const bar = monitor.querySelector(`[data-mod-monitor-bar="${channel.id}"]`);
+    const label = monitor.querySelector(`[data-mod-monitor-value="${channel.id}"]`);
+    const row = monitor.querySelector(`[data-mod-monitor-row="${channel.id}"]`);
+    if (bar) {
+      bar.style.width = `${(supported ? value : 0) * 100}%`;
+      bar.style.background = supported ? '#3a6ae8' : '#4a5568';
+    }
+    if (label) label.textContent = supported ? value.toFixed(2) : '—';
+    if (row) row.style.opacity = supported ? '1' : '0.45';
+  }
+  const sourceEl = document.getElementById('modMonitorSource');
+  if (sourceEl) {
+    sourceEl.textContent = `${getInputSource(features.sourceId).label} · ${(features.capabilities || []).join(', ') || 'no capabilities yet'}`;
+  }
+  _renderModSummary(app);
+  // The modal's diagnostics/status text only need refreshing while it is
+  // actually open and on-screen.
+  if (document.getElementById('modInputEditorModal')?.classList.contains('open')) {
+    _refreshModulationDiagnostics(app);
+  }
+}
+
+function _refreshModulationDiagnostics(app) {
+  const panel = document.getElementById('modDiagnostics');
+  if (!panel) return;
+  const snapshot = app.getModulationSnapshot?.();
+  if (!snapshot) {
+    panel.textContent = 'No active routes.';
+    return;
+  }
+  const applied = app.getCurrentBrush?.()?.getModulationApplied?.() || null;
+  for (const report of snapshot.diagnostics.routes) {
+    const statusText = report.applied
+      ? `active · input ${report.signal.toFixed(2)}${Number.isFinite(report.value) ? ` · value ${report.value.toFixed(3)}` : ''}`
+      : `idle · ${report.reason || 'inactive'}`;
+    const statusColor = report.applied ? '#7fe0a0' : '#8b98aa';
+    // Both the chip's status dot and the (optional, selected-only) detail
+    // header text share the route id, so update every match rather than
+    // just the first one `querySelector` would find.
+    document.querySelectorAll(`[data-mod-route-status="${report.id}"]`).forEach(status => {
+      status.textContent = statusText;
+      status.style.color = statusColor;
+    });
+    document.querySelectorAll(`[data-mod-route-dot="${report.id}"]`).forEach(dot => {
+      dot.style.background = statusColor;
+    });
+  }
+  const lines = snapshot.diagnostics.routes.map(report => {
+    const arrow = `${report.source} → ${report.target}`;
+    if (!report.applied) return `· ${report.id} ${arrow} — ${report.reason}`;
+    const written = applied?.[report.target];
+    const resolved = written ? ` ⇒ ${written.base.toFixed(3)} → ${written.value.toFixed(3)}` : '';
+    return `✓ ${report.id} ${arrow} [p${report.priority}] input ${report.signal.toFixed(2)}${resolved}`;
+  });
+  lines.push(`— ${snapshot.diagnostics.active} active / ${snapshot.diagnostics.skipped} skipped`);
+  panel.textContent = lines.join('\n');
+}
+
+/** Normalize the hidden control and rebuild the editor. Called from `syncUI`,
+ *  so every entry path (preset apply, workspace restore, session load, legacy
+ *  import) is normalized through the same seam. */
+function _syncModMatrixUi(app) {
+  const control = _modMatrixControl();
+  if (!control) return;
+  const raw = control.value || '';
+  let normalized = '';
+  try {
+    normalized = modMatrixToControlValue(parseModMatrix(raw, { strict: !!raw.trim() }));
+    _setModMatrixError('');
+  } catch (error) {
+    // Keep whatever the user/preset supplied visible so it can be fixed, but
+    // fall back to "no modulation" for the runtime read path.
+    _setModMatrixError(error.message);
+    _renderModSummary(app);
+    _renderModRouteList(app);
+    _renderModRouteDetail(app);
+    _renderModChannelTuning(app);
+    return;
+  }
+
+  if (normalized !== raw) control.value = normalized;
+  _renderModSummary(app);
+  _renderModRouteList(app);
+  _renderModRouteDetail(app);
+  _renderModChannelTuning(app);
+}
+
+/** Structured-state sanitizer handed to the preset pipeline. Runs on capture,
+ *  normalize (import), and apply, so an exported preset, a hand-edited JSON
+ *  file, and a legacy workspace bundle all converge on the same validated
+ *  modMatrix.v1 document. Unknown ids pass through untouched, which keeps this
+ *  seam usable for any future structured control. */
+function _normalizePresetControlValue(id, value) {
+  if (id !== 'boidModMatrix') return value;
+  if (typeof value !== 'string') return '';
+  // Bound the payload before parsing so a hostile preset cannot push an
+  // unbounded string through JSON.parse or into localStorage.
+  if (value.length > MOD_MATRIX_MAX_JSON_LENGTH) return '';
+  return modMatrixToControlValue(parseModMatrix(value));
+}
+
+function _setModMatrixError(message) {
+  const el = document.getElementById('modMatrixError');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.display = message ? '' : 'none';
+}
+
+
 // ── Build sidebar DOM ───────────────────────────────────────
 export function buildSidebar(app) {
   const sb = document.getElementById('sidebar');
@@ -608,6 +1216,39 @@ export function buildSidebar(app) {
       ${sliderRow('leaderPull', 'Leader Pull', 0, 100, 35, v => (v / 100).toFixed(2), 'Extra pull followers feel toward nearby leaders')}
       <span class="slider-desc">The first N boids in each spawned batch become leaders. Enable an override to decouple that leader setting from the main boid controls.</span>
       ${_buildLeaderOverrideRows()}
+    </div>
+
+    <!-- Input Modulation (boid only) — compact: the sidebar only shows a live
+         channel monitor and a one-line summary; the full route editor (visual
+         route list + curve editor) opens in #modInputEditorModal so this
+         section never grows into a wall of per-route controls. -->
+    <div class="section-header closed" data-brushes="boid" data-section="inputModulation">Input Modulation <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid">
+      <span class="slider-desc">Route live input channels (pressure, tilt, twist, speed, curvature…) onto allow-listed boid parameters. No routes = no modulation, so existing brushes and presets behave exactly as before.</span>
+
+      <div style="font-weight:600;color:#cbd7e6;margin:8px 0 2px;">Live Channels</div>
+      <div id="modMonitorSource" class="slider-desc" style="margin:0 0 4px;">No input sampled yet</div>
+      <div id="modChannelMonitor">${_buildModChannelMonitor()}</div>
+
+      <div id="modSummary" class="slider-desc" style="margin:10px 0 4px;">No routes yet — modulation is inactive.</div>
+      <button id="modOpenEditorBtn" type="button" style="width:100%;">✎ Edit Modulation Routes…</button>
+
+      <div style="display:flex;gap:4px;margin-top:6px;">
+        <button id="modShowJsonBtn" type="button" style="flex:1;">Show JSON</button>
+        <button id="modResetBtn" type="button" style="flex:1;">Reset Routes</button>
+      </div>
+      <span id="modMatrixError" class="slider-desc" style="display:none;color:#ff9d9d;"></span>
+      <!-- Single structured-state control, following the same convention as
+           the pressure-curve editors: a real (non-hidden-type) text input
+           holding JSON. That keeps it inside every existing pipe unchanged —
+           settings catalog, brush/simulation preset capture and apply, session
+           autosave, and workspace export — while the scalar-only preset filter
+           sees an ordinary string. It stays in the sidebar section body (not
+           the modal) so the settings catalog, which only indexes controls
+           inside a section-body container, keeps finding it. -->
+      <label id="modMatrixJsonRow" style="display:none;">Modulation Matrix (JSON)
+        <input type="text" id="boidModMatrix" value="" spellcheck="false" aria-label="Boid modulation matrix JSON" style="width:100%;font-family:ui-monospace,monospace;font-size:10px;">
+      </label>
     </div>
 
     <!-- Motion Path Graph -->
@@ -1178,6 +1819,195 @@ export function buildSidebar(app) {
     });
   });
   _syncLeaderOverrideUI();
+
+  // ── Boid Input Modulation Framework ──
+  // One delegated listener per event type over the whole modal: dynamic
+  // route/condition/channel controls carry `data-mod-*` attributes instead of
+  // ids, so they never enter the settings catalog and never collide with
+  // preset keys. The hidden `#boidModMatrix` control lives outside the modal
+  // (in the sidebar section body, so the settings catalog keeps indexing it)
+  // and is watched separately below.
+  const modModal = document.getElementById('modInputEditorModal');
+  const _modApplyControlEdit = (target, { rerender }) => {
+    const prop = target.dataset.modProp;
+    if (!prop) return false;
+    const matrix = _readModMatrix();
+    if (target.dataset.modChannel) {
+      const channel = getFeatureChannel(target.dataset.modChannel);
+      if (!channel) return false;
+      const current = matrix.channels[channel.id] || { smoothing: channel.smoothing, deadzone: channel.deadzone };
+      matrix.channels[channel.id] = { ...current, [prop]: Number(target.value) };
+      _writeModMatrix(app, matrix, { rerender: false });
+      return true;
+    }
+    const route = matrix.routes.find(entry => entry.id === target.dataset.modRoute);
+    if (!route) return false;
+    const conditionIndex = target.dataset.modCond === undefined ? -1 : Number(target.dataset.modCond);
+    if (conditionIndex >= 0) {
+      const condition = route.conditions[conditionIndex];
+      if (!condition) return false;
+      condition[prop] = prop === 'channel' || prop === 'op' ? target.value : Number(target.value);
+    } else if (prop === 'enabled') {
+      route[prop] = !!target.checked;
+    } else if (prop === 'priority') {
+      route.priority = Number(target.value);
+    } else if (prop === 'clampMin' || prop === 'clampMax') {
+      route[prop] = Number(target.value);
+    } else if (prop === 'target' && route.valueMode === 'absolute') {
+      route.target = target.value;
+      const spec = resolveModTarget(route.target);
+      const current = app.getP()[route.target];
+      const value = spec ? Math.max(spec.min, Math.min(spec.max, current)) : 0;
+      route.curvePoints = [[0, value], [1, value]];
+    } else {
+      route[prop] = target.value;
+    }
+    _writeModMatrix(app, matrix, { rerender });
+    return true;
+  };
+
+  modModal?.addEventListener('input', event => {
+    const target = event.target;
+    if (!target?.dataset?.modProp) return;
+    // Live-drag path: update the readout only so the slider keeps focus.
+    if (target.type === 'range') {
+      const readout = modModal.querySelector(`[data-mod-readout="${target.dataset.modRoute}:${target.dataset.modProp}"]`);
+      if (readout) readout.textContent = (Number(target.value) / 100).toFixed(2);
+      _modApplyControlEdit(target, { rerender: false });
+      return;
+    }
+    if (target.tagName === 'SELECT' || target.type === 'checkbox') return;
+    // Half-typed number fields read as '' → Number('') === 0, which would
+    // briefly slam a clamp to zero. Wait for `change` (blur/commit) instead.
+    if (target.value === '') return;
+    _modApplyControlEdit(target, { rerender: false });
+  });
+
+  modModal?.addEventListener('change', event => {
+    const target = event.target;
+    if (!target?.dataset?.modProp) return;
+    // Structural edits (source/target/condition op)
+    // change which controls are relevant, so re-render; value edits do not.
+    const structural = target.tagName === 'SELECT' || target.type === 'checkbox';
+    _modApplyControlEdit(target, { rerender: structural });
+  });
+
+  modModal?.addEventListener('click', event => {
+    // Visual route selection: clicking a chip (but not its delete button)
+    // makes that route the one shown in the detail pane.
+    const chip = event.target.closest('[data-mod-route-chip]');
+    if (chip && !event.target.closest('[data-mod-action]')) {
+      _modSelectedRouteId = chip.dataset.modRouteChip;
+      _renderModRouteList(app);
+      _renderModRouteDetail(app);
+      return;
+    }
+    const button = event.target.closest('[data-mod-action]');
+    if (!button) return;
+    const matrix = _readModMatrix();
+    const route = matrix.routes.find(entry => entry.id === button.dataset.modRoute);
+    if (button.dataset.modAction === 'remove-route') {
+      matrix.routes = matrix.routes.filter(entry => entry.id !== button.dataset.modRoute);
+      if (_modSelectedRouteId === button.dataset.modRoute) _modSelectedRouteId = null;
+    } else if (button.dataset.modAction === 'add-condition' && route) {
+      if (route.conditions.length >= MOD_CONDITION_LIMIT) return;
+      route.conditions.push({ channel: route.source, op: 'gt', value: 0.5, value2: 1 });
+    } else if (button.dataset.modAction === 'remove-condition' && route) {
+      route.conditions.splice(Number(button.dataset.modCond), 1);
+    } else if (button.dataset.modAction === 'convert-route' && route) {
+      const params = app.getP();
+      const routeIndex = matrix.routes.indexOf(route);
+      matrix.routes[routeIndex] = migrateModRouteToAbsolute(route, params[route.target]);
+    } else {
+      // 'reset-curve' is handled by its own listener in
+      // _wireModRouteCurveEditor(), which needs the canvas's live in-memory
+      // points array; nothing else to do here.
+      return;
+    }
+    _writeModMatrix(app, matrix);
+  });
+  modModal?.addEventListener('keydown', event => {
+    const chip = event.target.closest('[data-mod-route-chip]');
+    if (!chip || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    _modSelectedRouteId = chip.dataset.modRouteChip;
+    _renderModRouteList(app);
+    _renderModRouteDetail(app);
+  });
+
+  document.getElementById('modAddRouteBtn')?.addEventListener('click', () => {
+    const matrix = _readModMatrix();
+    if (matrix.routes.length >= MOD_ROUTE_LIMIT) {
+      app.showToast(`Modulation is limited to ${MOD_ROUTE_LIMIT} routes`);
+      return;
+    }
+    const target = resolveModTarget('cohesion');
+    const base = app.getP().cohesion;
+    const initialValue = target ? Math.max(target.min, Math.min(target.max, base)) : 0;
+    const priority = Math.min(99, Math.max(-1, ...matrix.routes
+      .filter(route => route.target === 'cohesion')
+      .map(route => route.priority)) + 1);
+    const id = `r${Date.now().toString(36)}`;
+    matrix.routes.push(createModRoute({
+      id,
+      source: 'pressure',
+      target: 'cohesion',
+      valueMode: 'absolute',
+      curveMode: 'custom',
+      curvePoints: [[0, initialValue], [1, initialValue]],
+      combine: 'priority',
+      priority,
+    }));
+    _modSelectedRouteId = id;
+    _writeModMatrix(app, matrix);
+  });
+
+  document.getElementById('modResetBtn')?.addEventListener('click', () => {
+    _modSelectedRouteId = null;
+    _writeModMatrix(app, emptyModMatrix());
+    _setModMatrixError('');
+    app.showToast('Modulation routes cleared');
+  });
+
+  document.getElementById('modShowJsonBtn')?.addEventListener('click', event => {
+    const row = document.getElementById('modMatrixJsonRow');
+    if (!row) return;
+    const showing = row.style.display === 'none';
+    row.style.display = showing ? '' : 'none';
+    event.currentTarget.textContent = showing ? 'Hide JSON' : 'Show JSON';
+  });
+
+  // Hand-editing the raw JSON control (visible via "Show JSON") re-syncs the
+  // whole editor through the same normalization pass as a preset/workspace
+  // load, so a typo degrades to "no modulation" instead of a stale view.
+  _modMatrixControl()?.addEventListener('change', () => {
+    _syncModMatrixUi(app);
+    app.invalidateParams();
+  });
+
+  const _openModInputEditor = () => {
+    if (!modModal) return;
+    const matrix = _readModMatrix();
+    _modReconcileSelection(matrix);
+    _renderModRouteList(app);
+    _renderModRouteDetail(app);
+    _renderModChannelTuning(app);
+    _refreshModulationDiagnostics(app);
+    modModal.classList.add('open');
+  };
+  const _closeModInputEditor = () => modModal?.classList.remove('open');
+  document.getElementById('modOpenEditorBtn')?.addEventListener('click', _openModInputEditor);
+  document.getElementById('modInputEditorClose')?.addEventListener('click', _closeModInputEditor);
+  document.getElementById('modInputEditorDone')?.addEventListener('click', _closeModInputEditor);
+  document.getElementById('modInputEditorBackdrop')?.addEventListener('click', _closeModInputEditor);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !modModal?.classList.contains('open')) return;
+    _closeModInputEditor();
+  });
+
+  app._refreshModulationDebugUi = () => _refreshModulationDebugUi(app);
+  _syncModMatrixUi(app);
+
 
   // ── Canvas texture upload ──
   const _texFileInput = document.createElement('input');
@@ -2377,6 +3207,7 @@ export function syncUI(app) {
   syncStampImageUI(app);
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
+  _syncModMatrixUi(app);
   _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
   app._refreshSensingRulesSummary?.();
@@ -2954,7 +3785,7 @@ function _renderBuiltinPresets(app) {
     const fallbackBrush = values._activeBrush || 'boid';
     let preset;
     try {
-      preset = normalizePreset(values, { catalog: _settingsCatalog, fallbackName: name, fallbackBrush }).preset;
+      preset = normalizePreset(values, { catalog: _settingsCatalog, fallbackName: name, fallbackBrush, normalizeValue: _normalizePresetControlValue }).preset;
     } catch {
       continue;
     }
@@ -3008,6 +3839,7 @@ function _renderUserPresets(app) {
       try {
         const candidate = normalizeLibrary(app._pendingLegacyWorkspacePresets, {
           catalog: _settingsCatalog,
+          normalizeValue: _normalizePresetControlValue,
           fallbackBrush: app.activeBrush,
           skipInvalidEntries: true,
         });
@@ -3096,7 +3928,7 @@ function _applyPreset(app, preset) {
     _advanceSimulationNextId(app);
     app._ensureSimulationSpawns?.(preset.scope.brush);
   }
-  const result = applyPresetValues(document, _settingsCatalog, preset);
+  const result = applyPresetValues(document, _settingsCatalog, preset, { normalizeValue: _normalizePresetControlValue });
   app.invalidateParams();
   syncUI(app);
   app._renderSimulationInspector?.();
@@ -3106,7 +3938,7 @@ function _applyPreset(app, preset) {
 
 function _captureCurrentPreset(app, kind, name) {
   const scope = { kind, brush: app.activeBrush };
-  const parameters = capturePresetValues(document, _settingsCatalog, scope);
+  const parameters = capturePresetValues(document, _settingsCatalog, scope, { normalizeValue: _normalizePresetControlValue });
   if (kind === 'brush') return createPreset({ name, kind, brush: app.activeBrush, values: parameters });
   const authoredContent = {
     brushData: structuredClone(app.simulation?.brushData?.[app.activeBrush] || {}),
@@ -3168,6 +4000,7 @@ function _importPreset(app) {
       const parsed = JSON.parse(await file.text());
       const versioned = parsed?.format === PRESET_FORMAT || parsed?.format === PRESET_LIBRARY_FORMAT;
       const candidate = normalizeLibrary(parsed, {
+        normalizeValue: _normalizePresetControlValue,
         catalog: _settingsCatalog,
         fallbackBrush: app.activeBrush,
         skipInvalidEntries: !versioned,
