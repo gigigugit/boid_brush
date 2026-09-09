@@ -507,15 +507,17 @@ function _syncLeaderOverrideUI() {
 // control reads it, mutates the parsed matrix, and writes it back — there is no
 // second store to keep in sync, and preset/workspace/session plumbing needs no
 // special-casing beyond the normalization pass in `_syncModMatrixUi`. The
-// currently-selected route id (`_modSelectedRouteId`) is the only piece of
-// editor-local UI state, and it is derived back to a valid route (or null)
-// every render, so it can never point at a route that no longer exists.
+// selected input channel is the only editor-local UI state. Routes remain
+// owned by the matrix; the selection only controls which source group is
+// visible in the workspace.
 const MOD_ROUTE_LIMIT = 24;
 const MOD_CONDITION_LIMIT = 3;
 const MOD_MATRIX_MAX_JSON_LENGTH = 24000;
 
-let _modSelectedRouteId = null;
-let _modCurveResizeObserver = null;
+let _modSelectedSourceId = 'pressure';
+let _modCurveResizeObservers = [];
+let _modCurvePopupCleanup = null;
+let _modCurvePopupSession = null;
 
 function _modMatrixControl() {
   return document.getElementById('boidModMatrix');
@@ -553,30 +555,21 @@ function _modSelect(dataAttrs, options, selected) {
 const _MOD_CHANNEL_OPTIONS = FEATURE_CHANNELS.map(channel => ({ value: channel.id, label: channel.label }));
 const _MOD_TARGET_OPTIONS = MOD_TARGETS.map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
 const _MOD_CONDITION_OPTIONS = MOD_CONDITION_OPS.map(op => ({ value: op.id, label: op.label }));
+const _MOD_EDITOR_CHANNEL_IDS = ['pressure', 'speed', 'acceleration', 'curvature', 'tilt', 'direction', 'altitude', 'azimuth', 'twist', 'contactSize', 'touchCount', 'constant'];
+const _MOD_EDITOR_CHANNELS = _MOD_EDITOR_CHANNEL_IDS.map(getFeatureChannel).filter(Boolean);
 
 const _MOD_CARD_STYLE = 'margin:6px 0;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);';
 const _MOD_ROW_STYLE = 'display:flex;align-items:center;gap:6px;margin:4px 0;font-size:10px;color:#9fb0c6;';
 const _MOD_NUM_STYLE = 'width:52px;flex:0 0 auto;';
 
-function _modRouteLabel(route) {
-  const sourceLabel = getFeatureChannel(route.source)?.label || route.source;
-  const targetLabel = resolveModTarget(route.target)?.label || route.target;
-  return `${sourceLabel} → ${targetLabel}`;
-}
-
-/** Compact, clickable route selector — the "visual route selection" list
- *  shown in the modal's left column. Each chip is a whole route at a glance
- *  (enabled state, source → target, live status dot); clicking one makes it
- *  the route shown in the detail pane. */
-function _buildModRouteChip(route, index, report, selected) {
-  const statusColor = report?.applied ? '#7fe0a0' : '#8b98aa';
-  const statusTitle = report?.applied ? 'active' : (report?.reason ? `idle · ${report.reason}` : 'idle');
+/** Input-channel navigation for the modal's left column. */
+function _buildModSourceChip(channel, count, selected) {
   return `
-    <div class="mod-route-chip${selected ? ' active' : ''}" data-mod-route-chip="${route.id}" role="button" tabindex="0" aria-pressed="${selected ? 'true' : 'false'}" title="${statusTitle}">
-      <span class="mod-route-chip-dot" data-mod-route-dot="${route.id}" style="background:${statusColor};"></span>
-      <span class="mod-route-chip-label"${route.enabled ? '' : ' style="opacity:.55;"'}>${index + 1}. ${_modRouteLabel(route)}</span>
-      <button type="button" data-mod-route="${route.id}" data-mod-action="remove-route" title="Delete route ${index + 1}" tabindex="-1">✕</button>
-    </div>
+    <button class="mod-source-chip${selected ? ' active' : ''}" type="button" data-mod-source-chip="${channel.id}" aria-pressed="${selected ? 'true' : 'false'}">
+      <span class="mod-source-chip-icon">${channel.label.charAt(0)}</span>
+      <span class="mod-source-chip-copy"><strong>${channel.label}</strong><small>${channel.description}</small></span>
+      <span class="mod-source-chip-count">${count}</span>
+    </button>
   `;
 }
 
@@ -607,6 +600,37 @@ function _modTargetStep(target) {
   return span <= 0.2 ? 0.001 : span <= 2 ? 0.01 : span <= 20 ? 0.1 : 1;
 }
 
+const _MOD_TARGET_UI_SCALE = Object.freeze({
+  seek: 100, cohesion: 100, separation: 100, alignment: 100, jitter: 100,
+  wander: 100, wanderSpeed: 100, flowField: 100, flowScale: 1000,
+  individuality: 100, quorumCompositeStrength: 100, maxSpeed: 2,
+  damping: 100, sensingStrength: 100, sensingThreshold: 100,
+});
+const _MOD_TARGET_CONTROL_ID = Object.freeze({
+  neighborRadius: 'am_neighborRadius',
+  separationRadius: 'am_separationRadius',
+});
+
+function _readModTargetBaseValue(app, target) {
+  const control = document.getElementById(_MOD_TARGET_CONTROL_ID[target?.id] || target?.id);
+  const scale = _MOD_TARGET_UI_SCALE[target?.id] || 1;
+  const controlValue = Number(control?.value) / scale;
+  const value = Number.isFinite(controlValue) ? controlValue : Number(app.getP?.()?.[target?.id]);
+  return Number.isFinite(value) ? Math.max(target.min, Math.min(target.max, value)) : target.min;
+}
+
+function _writeModTargetBaseValue(app, target, value) {
+  const control = document.getElementById(_MOD_TARGET_CONTROL_ID[target?.id] || target?.id);
+  if (!control) return false;
+  const scale = _MOD_TARGET_UI_SCALE[target.id] || 1;
+  const uiValue = Math.max(Number(control.min), Math.min(Number(control.max), value * scale));
+  control.value = String(uiValue);
+  control.dispatchEvent(new Event('input', { bubbles: true }));
+  control.dispatchEvent(new Event('change', { bubbles: true }));
+  app.invalidateParams();
+  return true;
+}
+
 /** Absolute target-value curve editor for one route. The stored y coordinate is
  * normalized, while labels and point inputs use the target's native units. */
 function _buildModCurveEditorMarkup(route, index, target) {
@@ -618,12 +642,21 @@ function _buildModCurveEditorMarkup(route, index, target) {
       <canvas class="mod-curve-canvas" width="240" height="150" aria-label="Route ${index + 1} target value curve"></canvas>
       <div class="mod-curve-axis"><span>Input 0</span><span>${target ? `${_formatModTargetValue(target, target.min)} … ${_formatModTargetValue(target, target.max)} ${target.label}` : 'Target value'}</span><span>Input 1</span></div>
       <div class="mod-curve-point-fields">
-        <label>Selected input <input type="number" min="0" max="1" step="0.01" data-mod-point-input></label>
-        <label>${target?.label || 'Target'} value <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-point-value></label>
+        <label>Start output (${target?.label || 'Target'}) <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-endpoint="start"></label>
+        <label>End output (${target?.label || 'Target'}) <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-endpoint="end"></label>
       </div>
-      <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, select it for an exact value, and double-click an inner point to remove it.${forceVariationNote}</span>
+      <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, and double-click an inner point to remove it. Drag the dashed current-setting line by its handle to update the Boid Brush setting.${forceVariationNote}</span>
       <button type="button" class="mod-curve-reset" data-mod-route="${route.id}" data-mod-action="reset-curve" style="margin-top:4px;">Reset Curve</button>
     </div>
+  `;
+}
+
+function _buildModCurvePreviewMarkup(route, index, target) {
+  return `
+    <button type="button" class="mod-curve-preview" data-open-mod-curve="${route.id}" aria-label="Edit ${getFeatureChannel(route.source)?.label || route.source} to ${target?.label || route.target} curve">
+      <canvas class="mod-curve-canvas" width="240" height="153" aria-hidden="true"></canvas>
+      <span class="mod-curve-preview-cue">Edit curve</span>
+    </button>
   `;
 }
 
@@ -634,9 +667,8 @@ function _buildModRouteCard(route, index, report) {
     ? `active · input ${report.signal.toFixed(2)}${Number.isFinite(report.value) ? ` · value ${report.value.toFixed(target?.integer ? 0 : 3)}` : ''}`
     : (report?.reason ? `idle · ${report.reason}` : 'idle');
   const statusColor = report?.applied ? '#7fe0a0' : '#8b98aa';
-  const editorBody = route.valueMode === 'absolute'
+  const routeControls = route.valueMode === 'absolute'
     ? `
-      ${_buildModCurveEditorMarkup(route, index, target)}
       <div class="mod-route-row" style="${_MOD_ROW_STYLE}">
         <span style="flex:1;">When multiple routes target ${target?.label || 'this setting'}, higher priority wins.</span>
         <span style="flex:0 0 auto;">Priority</span>
@@ -646,86 +678,91 @@ function _buildModRouteCard(route, index, report) {
       ${route.conditions.map((condition, conditionIndex) => _buildModConditionRow(route, condition, conditionIndex)).join('')}
       ${route.conditions.length < MOD_CONDITION_LIMIT
         ? `<button type="button" data-mod-route="${route.id}" data-mod-action="add-condition" style="width:100%;margin-top:4px;font-size:10px;">+ Condition</button>`
-        : ''}`
-    : `
-      <div class="mod-legacy-route">
+      : ''}` : '';
+  const routeVisual = route.valueMode === 'absolute'
+    ? _buildModCurvePreviewMarkup(route, index, target)
+    : `<div class="mod-legacy-route">
         <strong>Legacy modulation route</strong>
         <span>This route still uses the previous amount-based behavior so saved work remains unchanged. Convert it to approximate its current response with editable target-value points; stepped legacy shapes may need adjustment afterward.</span>
         <button type="button" data-mod-route="${route.id}" data-mod-action="convert-route">Convert to Value Curve</button>
       </div>`;
   return `
     <div class="mod-route-card" data-mod-route-card="${route.id}" style="${_MOD_CARD_STYLE}${route.enabled ? '' : 'opacity:0.55;'}">
-      <div class="mod-route-header" style="display:flex;align-items:center;gap:6px;margin:0 0 4px;">
-        <span style="font-weight:600;color:#eef3ff;flex:1;">Route ${index + 1}</span>
-        <span style="font-size:10px;color:${statusColor};" data-mod-route-status="${route.id}">${statusText}</span>
-        <label style="margin:0;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#9fb0c6;">On
-          <input type="checkbox" ${route.enabled ? 'checked' : ''} data-mod-route="${route.id}" data-mod-prop="enabled" aria-label="Enable route ${index + 1}">
-        </label>
-        <button type="button" data-mod-route="${route.id}" data-mod-action="remove-route" title="Delete route" style="flex:0 0 auto;padding:0 6px;">✕</button>
+      <div class="mod-route-main">
+        <div class="mod-route-info">
+          <div class="mod-route-header" style="display:flex;align-items:center;gap:6px;margin:0 0 4px;">
+            <strong style="color:#eef3ff;flex:1;font-size:12px;">${target?.label || route.target}</strong>
+            <span style="font-size:10px;color:${statusColor};" data-mod-route-status="${route.id}">${statusText}</span>
+            <label style="margin:0;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#9fb0c6;">On
+              <input type="checkbox" ${route.enabled ? 'checked' : ''} data-mod-route="${route.id}" data-mod-prop="enabled" aria-label="Enable ${target?.label || `route ${index + 1}`}">
+            </label>
+            <button type="button" data-mod-route="${route.id}" data-mod-action="remove-route" title="Delete route" style="flex:0 0 auto;padding:0 6px;">✕</button>
+          </div>
+          <div class="mod-route-row mod-source-target-row" style="${_MOD_ROW_STYLE}">
+            <span style="flex:0 0 44px;">Source</span>
+            ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="source"`, _MOD_CHANNEL_OPTIONS, route.source)}
+            <span style="flex:0 0 40px;text-align:right;">Target</span>
+            ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _MOD_TARGET_OPTIONS, route.target)}
+          </div>
+          ${routeControls}
+        </div>
+        <div class="mod-route-visual">${routeVisual}</div>
       </div>
-      <div class="mod-route-row mod-source-target-row" style="${_MOD_ROW_STYLE}">
-        <span style="flex:0 0 44px;">Source</span>
-        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="source"`, _MOD_CHANNEL_OPTIONS, route.source)}
-        <span style="flex:0 0 40px;text-align:right;">Target</span>
-        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _MOD_TARGET_OPTIONS, route.target)}
-      </div>
-      ${editorBody}
     </div>
   `;
 }
 
-/** Reconcile `_modSelectedRouteId` against the current matrix: keeps the
- *  selection if the route still exists, otherwise falls back to the first
- *  route, or null when there are none. */
-function _modReconcileSelection(matrix) {
-  if (matrix.routes.some(route => route.id === _modSelectedRouteId)) return;
-  _modSelectedRouteId = matrix.routes[0]?.id || null;
+function _modReconcileSelection() {
+  if (FEATURE_CHANNELS.some(channel => channel.id === _modSelectedSourceId)) return;
+  _modSelectedSourceId = _MOD_EDITOR_CHANNELS[0]?.id || '';
 }
 
-/** Rebuild the compact route-selection list (modal, left column). */
+/** Rebuild the input-channel navigation (modal, left column). */
 function _renderModRouteList(app) {
   const container = document.getElementById('modRouteList');
   if (!container) return;
   const matrix = _readModMatrix();
-  _modReconcileSelection(matrix);
-  const reports = new Map();
-  // Only reach into the app for live route status when routes exist, so the
-  // default (empty) document never pulls getP() during initial sidebar build.
-  if (matrix.routes.length) {
-    for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
-  }
-  container.innerHTML = matrix.routes.length
-    ? matrix.routes.map((route, index) => _buildModRouteChip(route, index, reports.get(route.id), route.id === _modSelectedRouteId)).join('')
-    : '<span class="slider-desc">No routes. Add one to drive a boid parameter from a live input channel.</span>';
+  _modReconcileSelection();
+  container.innerHTML = _MOD_EDITOR_CHANNELS.map(channel => _buildModSourceChip(
+    channel,
+    matrix.routes.filter(route => route.source === channel.id).length,
+    channel.id === _modSelectedSourceId,
+  )).join('');
   const addBtn = document.getElementById('modAddRouteBtn');
   if (addBtn) addBtn.disabled = matrix.routes.length >= MOD_ROUTE_LIMIT;
 }
 
-/** Rebuild the detail pane (modal, right column) for whichever route is
- *  currently selected. Wires the bipolar curve canvas when the route uses
- *  a custom curve. */
+/** Show every real route belonging to the selected input channel. */
 function _renderModRouteDetail(app) {
   const container = document.getElementById('modRouteDetail');
   if (!container) return;
-  _modCurveResizeObserver?.disconnect();
-  _modCurveResizeObserver = null;
+  _modCurveResizeObservers.forEach(observer => observer.disconnect());
+  _modCurveResizeObservers = [];
   const matrix = _readModMatrix();
-  _modReconcileSelection(matrix);
-  const index = matrix.routes.findIndex(route => route.id === _modSelectedRouteId);
-  const route = index >= 0 ? matrix.routes[index] : null;
-  if (!route) {
-    container.innerHTML = '<span class="slider-desc">Select a route on the left, or add a new one, to edit its source, target, curve, and clamps.</span>';
-    return;
-  }
+  _modReconcileSelection();
+  const channel = getFeatureChannel(_modSelectedSourceId);
+  const title = document.getElementById('modEditorSourceTitle');
+  const description = document.getElementById('modEditorSourceDescription');
+  if (title) title.textContent = channel?.label || _modSelectedSourceId;
+  if (description) description.textContent = channel?.description || '';
+  const routes = matrix.routes
+    .map((route, index) => ({ route, index }))
+    .filter(entry => entry.route.source === _modSelectedSourceId);
   const reports = new Map();
   for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
-  container.innerHTML = _buildModRouteCard(route, index, reports.get(route.id));
-  if (route.valueMode === 'absolute') _wireModRouteCurveEditor(app, container, route.id);
+  container.innerHTML = routes.length
+    ? routes.map(({ route, index }) => _buildModRouteCard(route, index, reports.get(route.id))).join('')
+    : '';
+  routes.forEach(({ route }) => {
+    if (route.valueMode === 'absolute') _wireModRouteCurveEditor(app, container, route.id, { editable: false });
+  });
 }
 
 /** Wire a route's normalized curve storage to native target-value editing. */
-function _wireModRouteCurveEditor(app, container, routeId) {
-  const editor = container.querySelector(`[data-mod-curve-editor="${routeId}"]`);
+function _wireModRouteCurveEditor(app, container, routeId, { editable = true, onChange = null } = {}) {
+  const editor = container.querySelector(editable
+    ? `[data-mod-curve-editor="${routeId}"]`
+    : `[data-open-mod-curve="${routeId}"]`);
   const canvas = editor?.querySelector('.mod-curve-canvas');
   if (!canvas) return;
   const startRoute = _readModMatrix().routes.find(entry => entry.id === routeId);
@@ -734,18 +771,16 @@ function _wireModRouteCurveEditor(app, container, routeId) {
   const targetMin = target?.min ?? 0;
   const targetMax = target?.max ?? 1;
   const targetSpan = targetMax - targetMin || 1;
-  const inputField = editor.querySelector('[data-mod-point-input]');
-  const valueField = editor.querySelector('[data-mod-point-value]');
+  const startOutputField = editor.querySelector('[data-mod-endpoint="start"]');
+  const endOutputField = editor.querySelector('[data-mod-endpoint="end"]');
   let activeIndex = 0;
+  let baselineValue = _readModTargetBaseValue(app, target);
+  let baselineHovered = false;
+  let baselineDragging = false;
 
-  const syncPointFields = () => {
-    const point = points[activeIndex];
-    if (!point) return;
-    if (inputField) {
-      inputField.value = point[0].toFixed(2);
-      inputField.disabled = activeIndex === 0 || activeIndex === points.length - 1;
-    }
-    if (valueField) valueField.value = _formatModTargetValue(target, point[1]);
+  const syncEndpointFields = () => {
+    if (startOutputField) startOutputField.value = _formatModTargetValue(target, points[0][1]);
+    if (endOutputField) endOutputField.value = _formatModTargetValue(target, points.at(-1)[1]);
   };
 
   const commit = () => {
@@ -756,11 +791,12 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     // Structural re-renders would tear down this very canvas mid-drag, so
     // curve edits always skip rerender — exactly like a dragged slider.
     _writeModMatrix(app, matrix, { rerender: false });
+    onChange?.();
   };
   const draw = () => {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const width = Math.max(180, Math.round(canvas.getBoundingClientRect().width || 240));
-    const height = 150;
+    const height = Math.max(100, Math.round(canvas.getBoundingClientRect().height || (editable ? 360 : 153)));
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -771,6 +807,8 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     const pad = 12;
     const graphW = width - pad * 2;
     const graphH = height - pad * 2;
+    baselineValue = editable && baselineDragging ? baselineValue : _readModTargetBaseValue(app, target);
+    const baselineY = pad + (1 - (baselineValue - targetMin) / targetSpan) * graphH;
     ctx.strokeStyle = 'rgba(255,255,255,.08)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
@@ -778,6 +816,33 @@ function _wireModRouteCurveEditor(app, container, routeId) {
       const y = pad + graphH * i / 4;
       ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, height - pad); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
+    }
+    ctx.save();
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = editable && baselineHovered ? 'rgba(190,211,255,.9)' : 'rgba(139,179,255,.62)';
+    ctx.lineWidth = editable && baselineHovered ? 2 : 1.5;
+    ctx.beginPath();
+    ctx.moveTo(pad, baselineY);
+    ctx.lineTo(width - pad, baselineY);
+    ctx.stroke();
+    ctx.restore();
+    if (editable && baselineHovered) {
+      const handleX = width - pad - 19;
+      ctx.fillStyle = '#d9e7ff';
+      ctx.strokeStyle = '#3a6ae8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(handleX - 15, baselineY - 10, 30, 20, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = '#17315f';
+      ctx.lineWidth = 1.5;
+      for (const offset of [-4, 0, 4]) {
+        ctx.beginPath();
+        ctx.moveTo(handleX - 7, baselineY + offset);
+        ctx.lineTo(handleX + 7, baselineY + offset);
+        ctx.stroke();
+      }
     }
     ctx.strokeStyle = '#6d9cff';
     ctx.lineWidth = 2;
@@ -794,13 +859,33 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     ctx.stroke();
     points.forEach(([x, y], index) => {
       ctx.beginPath();
-      ctx.arc(pad + x * graphW, pad + (1 - (y - targetMin) / targetSpan) * graphH, index === activeIndex ? 6 : 5, 0, Math.PI * 2);
-      ctx.fillStyle = index === activeIndex ? '#fff' : '#8bb3ff';
+      ctx.arc(pad + x * graphW, pad + (1 - (y - targetMin) / targetSpan) * graphH, editable && index === activeIndex ? 6 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = editable && index === activeIndex ? '#fff' : '#8bb3ff';
       ctx.fill();
       ctx.strokeStyle = '#17233a';
       ctx.lineWidth = 2;
       ctx.stroke();
     });
+  };
+  const resizeObserver = new ResizeObserver(draw);
+  resizeObserver.observe(canvas);
+  _modCurveResizeObservers.push(resizeObserver);
+  draw();
+  if (!editable) return () => resizeObserver.disconnect();
+  const baselineYFromValue = () => {
+    const rect = canvas.getBoundingClientRect();
+    const pad = 12;
+    return rect.top + pad + (1 - (baselineValue - targetMin) / targetSpan) * Math.max(1, rect.height - pad * 2);
+  };
+  const setBaselineFromPointer = event => {
+    const rect = canvas.getBoundingClientRect();
+    const pad = 12;
+    const normalized = Math.max(0, Math.min(1, 1 - (event.clientY - rect.top - pad) / Math.max(1, rect.height - pad * 2)));
+    baselineValue = targetMin + normalized * targetSpan;
+    if (target.integer) baselineValue = Math.round(baselineValue);
+    _writeModTargetBaseValue(app, target, baselineValue);
+    onChange?.();
+    draw();
   };
   const pointFromEvent = event => {
     const rect = canvas.getBoundingClientRect();
@@ -820,6 +905,13 @@ function _wireModRouteCurveEditor(app, container, routeId) {
   };
   canvas.addEventListener('pointerdown', event => {
     event.preventDefault();
+    if (Math.abs(event.clientY - baselineYFromValue()) <= 12) {
+      baselineDragging = true;
+      baselineHovered = true;
+      canvas.setPointerCapture(event.pointerId);
+      setBaselineFromPointer(event);
+      return;
+    }
     const [x, y] = pointFromEvent(event);
     let nearest = nearestIndex(x, y, 0.12);
     if (nearest < 0) {
@@ -831,11 +923,25 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     }
     activeIndex = nearest;
     canvas.setPointerCapture(event.pointerId);
-    syncPointFields();
+    syncEndpointFields();
     draw();
   });
   canvas.addEventListener('pointermove', event => {
-    if (activeIndex < 0 || !canvas.hasPointerCapture(event.pointerId)) return;
+    if (baselineDragging && canvas.hasPointerCapture(event.pointerId)) {
+      event.preventDefault();
+      setBaselineFromPointer(event);
+      return;
+    }
+    if (!canvas.hasPointerCapture(event.pointerId)) {
+      const hovered = Math.abs(event.clientY - baselineYFromValue()) <= 10;
+      if (hovered !== baselineHovered) {
+        baselineHovered = hovered;
+        canvas.style.cursor = hovered ? 'ns-resize' : 'crosshair';
+        draw();
+      }
+      return;
+    }
+    if (activeIndex < 0) return;
     event.preventDefault();
     const [x, y] = pointFromEvent(event);
     const isEndpoint = activeIndex === 0 || activeIndex === points.length - 1;
@@ -843,12 +949,13 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     const maxX = activeIndex < points.length - 1 ? points[activeIndex + 1][0] - 0.002 : 1;
     points[activeIndex] = [isEndpoint ? (activeIndex === 0 ? 0 : 1) : Math.max(minX, Math.min(maxX, x)), y];
     commit();
-    syncPointFields();
+    syncEndpointFields();
     draw();
   }, { passive: false });
   const release = event => {
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    syncPointFields();
+    baselineDragging = false;
+    syncEndpointFields();
     draw();
   };
   canvas.addEventListener('pointerup', release);
@@ -860,7 +967,7 @@ function _wireModRouteCurveEditor(app, container, routeId) {
       points.splice(nearest, 1);
       activeIndex = Math.max(0, Math.min(activeIndex, points.length - 1));
       commit();
-      syncPointFields();
+      syncEndpointFields();
       draw();
     }
   });
@@ -868,30 +975,110 @@ function _wireModRouteCurveEditor(app, container, routeId) {
     points = [[0, targetMin], [1, targetMax]];
     activeIndex = 0;
     commit();
-    syncPointFields();
+    syncEndpointFields();
     draw();
   });
-  inputField?.addEventListener('change', () => {
-    if (activeIndex <= 0 || activeIndex >= points.length - 1) return;
-    const minX = points[activeIndex - 1][0] + 0.002;
-    const maxX = points[activeIndex + 1][0] - 0.002;
-    points[activeIndex][0] = Math.max(minX, Math.min(maxX, Number(inputField.value)));
+  const updateEndpoint = (field, endpoint) => field?.addEventListener('change', () => {
+    const index = endpoint === 'start' ? 0 : points.length - 1;
+    const nativeValue = Math.max(targetMin, Math.min(targetMax, Number(field.value)));
+    points[index][1] = target?.integer ? Math.round(nativeValue) : nativeValue;
     commit();
-    syncPointFields();
+    syncEndpointFields();
     draw();
   });
-  valueField?.addEventListener('change', () => {
-    if (!target || !points[activeIndex]) return;
-    const nativeValue = Math.max(target.min, Math.min(target.max, Number(valueField.value)));
-    points[activeIndex][1] = nativeValue;
-    commit();
-    syncPointFields();
+  updateEndpoint(startOutputField, 'start');
+  updateEndpoint(endOutputField, 'end');
+  canvas.addEventListener('pointerleave', () => {
+    if (baselineDragging || !baselineHovered) return;
+    baselineHovered = false;
+    canvas.style.cursor = 'crosshair';
     draw();
   });
-  _modCurveResizeObserver = new ResizeObserver(draw);
-  _modCurveResizeObserver.observe(canvas);
-  syncPointFields();
+  syncEndpointFields();
   draw();
+  return () => resizeObserver.disconnect();
+}
+
+function _openModCurveEditor(app, routeId) {
+  const matrix = _readModMatrix();
+  const index = matrix.routes.findIndex(route => route.id === routeId);
+  const route = matrix.routes[index];
+  if (!route || route.valueMode !== 'absolute') return;
+  const target = resolveModTarget(route.target);
+  const modal = document.getElementById('modCurveEditorModal');
+  const content = document.getElementById('modCurveEditorContent');
+  const title = document.getElementById('modCurveEditorTitle');
+  if (!modal || !content) return;
+  _modCurvePopupCleanup?.();
+  _modCurvePopupSession = {
+    app,
+    routeId,
+    target,
+    matrixValue: modMatrixToControlValue(matrix),
+    targetValue: _readModTargetBaseValue(app, target),
+  };
+  if (title) title.textContent = `${getFeatureChannel(route.source)?.label || route.source} to ${target?.label || route.target}`;
+  content.innerHTML = _buildModCurveEditorMarkup(route, index, target);
+  modal.classList.add('open');
+  _modCurvePopupCleanup = _wireModRouteCurveEditor(app, content, route.id, { onChange: _refreshModCurveSaveState });
+  _refreshModCurveSaveState();
+}
+
+function _closeModCurveEditor() {
+  const modal = document.getElementById('modCurveEditorModal');
+  modal?.classList.remove('open');
+  _modCurvePopupCleanup?.();
+  _modCurvePopupCleanup = null;
+  _modCurvePopupSession = null;
+  const content = document.getElementById('modCurveEditorContent');
+  if (content) content.innerHTML = '';
+}
+
+function _modCurveSessionIsDirty() {
+  const session = _modCurvePopupSession;
+  if (!session) return false;
+  const matrixChanged = (_modMatrixControl()?.value || '') !== session.matrixValue;
+  const targetChanged = Math.abs(_readModTargetBaseValue(session.app, session.target) - session.targetValue) > 1e-6;
+  return matrixChanged || targetChanged;
+}
+
+function _refreshModCurveSaveState() {
+  const dirty = _modCurveSessionIsDirty();
+  const state = document.getElementById('modCurveEditorSaveState');
+  if (state) state.textContent = dirty ? 'Unsaved changes' : 'No unsaved changes';
+  const discard = document.getElementById('modCurveEditorDiscard');
+  const apply = document.getElementById('modCurveEditorApply');
+  if (discard) discard.disabled = !dirty;
+  if (apply) apply.disabled = !dirty;
+}
+
+function _applyModCurveChanges(app, { close = false } = {}) {
+  const session = _modCurvePopupSession;
+  if (!session) return;
+  const changed = _modCurveSessionIsDirty();
+  session.matrixValue = _modMatrixControl()?.value || session.matrixValue;
+  session.targetValue = _readModTargetBaseValue(app, session.target);
+  _refreshModCurveSaveState();
+  if (changed) app.showToast('Curve changes applied');
+  if (close) {
+    _closeModCurveEditor();
+    _renderModRouteDetail(app);
+  }
+}
+
+function _discardModCurveChanges() {
+  const session = _modCurvePopupSession;
+  if (!session) return;
+  const changed = _modCurveSessionIsDirty();
+  const { app, target, matrixValue, targetValue } = session;
+  _modCurvePopupCleanup?.();
+  _modCurvePopupCleanup = null;
+  if (changed) {
+    _writeModMatrix(app, parseModMatrix(matrixValue));
+    _writeModTargetBaseValue(app, target, targetValue);
+  }
+  _closeModCurveEditor();
+  if (changed) app.showToast('Curve changes discarded');
 }
 
 /** One-line sidebar summary ("N routes · N active") so the compact section
@@ -1861,6 +2048,7 @@ export function buildSidebar(app) {
       route.curvePoints = [[0, value], [1, value]];
     } else {
       route[prop] = target.value;
+      if (prop === 'source') _modSelectedSourceId = target.value;
     }
     _writeModMatrix(app, matrix, { rerender });
     return true;
@@ -1893,11 +2081,14 @@ export function buildSidebar(app) {
   });
 
   modModal?.addEventListener('click', event => {
-    // Visual route selection: clicking a chip (but not its delete button)
-    // makes that route the one shown in the detail pane.
-    const chip = event.target.closest('[data-mod-route-chip]');
-    if (chip && !event.target.closest('[data-mod-action]')) {
-      _modSelectedRouteId = chip.dataset.modRouteChip;
+    const curvePreview = event.target.closest('[data-open-mod-curve]');
+    if (curvePreview) {
+      _openModCurveEditor(app, curvePreview.dataset.openModCurve);
+      return;
+    }
+    const sourceChip = event.target.closest('[data-mod-source-chip]');
+    if (sourceChip) {
+      _modSelectedSourceId = sourceChip.dataset.modSourceChip;
       _renderModRouteList(app);
       _renderModRouteDetail(app);
       return;
@@ -1908,7 +2099,6 @@ export function buildSidebar(app) {
     const route = matrix.routes.find(entry => entry.id === button.dataset.modRoute);
     if (button.dataset.modAction === 'remove-route') {
       matrix.routes = matrix.routes.filter(entry => entry.id !== button.dataset.modRoute);
-      if (_modSelectedRouteId === button.dataset.modRoute) _modSelectedRouteId = null;
     } else if (button.dataset.modAction === 'add-condition' && route) {
       if (route.conditions.length >= MOD_CONDITION_LIMIT) return;
       route.conditions.push({ channel: route.source, op: 'gt', value: 0.5, value2: 1 });
@@ -1926,14 +2116,6 @@ export function buildSidebar(app) {
     }
     _writeModMatrix(app, matrix);
   });
-  modModal?.addEventListener('keydown', event => {
-    const chip = event.target.closest('[data-mod-route-chip]');
-    if (!chip || (event.key !== 'Enter' && event.key !== ' ')) return;
-    event.preventDefault();
-    _modSelectedRouteId = chip.dataset.modRouteChip;
-    _renderModRouteList(app);
-    _renderModRouteDetail(app);
-  });
 
   document.getElementById('modAddRouteBtn')?.addEventListener('click', () => {
     const matrix = _readModMatrix();
@@ -1950,7 +2132,7 @@ export function buildSidebar(app) {
     const id = `r${Date.now().toString(36)}`;
     matrix.routes.push(createModRoute({
       id,
-      source: 'pressure',
+      source: _modSelectedSourceId,
       target: 'cohesion',
       valueMode: 'absolute',
       curveMode: 'custom',
@@ -1958,12 +2140,10 @@ export function buildSidebar(app) {
       combine: 'priority',
       priority,
     }));
-    _modSelectedRouteId = id;
     _writeModMatrix(app, matrix);
   });
 
   document.getElementById('modResetBtn')?.addEventListener('click', () => {
-    _modSelectedRouteId = null;
     _writeModMatrix(app, emptyModMatrix());
     _setModMatrixError('');
     app.showToast('Modulation routes cleared');
@@ -1987,8 +2167,7 @@ export function buildSidebar(app) {
 
   const _openModInputEditor = () => {
     if (!modModal) return;
-    const matrix = _readModMatrix();
-    _modReconcileSelection(matrix);
+    _modReconcileSelection();
     _renderModRouteList(app);
     _renderModRouteDetail(app);
     _renderModChannelTuning(app);
@@ -2000,8 +2179,18 @@ export function buildSidebar(app) {
   document.getElementById('modInputEditorClose')?.addEventListener('click', _closeModInputEditor);
   document.getElementById('modInputEditorDone')?.addEventListener('click', _closeModInputEditor);
   document.getElementById('modInputEditorBackdrop')?.addEventListener('click', _closeModInputEditor);
+  document.getElementById('modCurveEditorClose')?.addEventListener('click', _discardModCurveChanges);
+  document.getElementById('modCurveEditorBackdrop')?.addEventListener('click', _discardModCurveChanges);
+  document.getElementById('modCurveEditorDiscard')?.addEventListener('click', _discardModCurveChanges);
+  document.getElementById('modCurveEditorApply')?.addEventListener('click', () => _applyModCurveChanges(app));
+  document.getElementById('modCurveEditorApplyClose')?.addEventListener('click', () => _applyModCurveChanges(app, { close: true }));
   document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape' || !modModal?.classList.contains('open')) return;
+    if (event.key !== 'Escape') return;
+    if (document.getElementById('modCurveEditorModal')?.classList.contains('open')) {
+      _discardModCurveChanges();
+      return;
+    }
+    if (!modModal?.classList.contains('open')) return;
     _closeModInputEditor();
   });
 
