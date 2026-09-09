@@ -2144,6 +2144,15 @@ export function buildSidebar(app) {
 }
 
 function _workspaceSettingsMarkup() {
+  const edgeControlChoices = EDGE_OVERLAY_CONTROLS.map(control => `
+        <label>${escapeHtml(control.label)}
+          <select id="${control.placementId}">
+            <option value="hidden"${control.defaultPlacement === 'hidden' ? ' selected' : ''}>Hidden</option>
+            <option value="left"${control.defaultPlacement === 'left' ? ' selected' : ''}>Left</option>
+            <option value="right"${control.defaultPlacement === 'right' ? ' selected' : ''}>Right</option>
+          </select>
+        </label>
+  `).join('');
   return `
     <div class="section-header" data-section="appSettings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
@@ -2178,6 +2187,11 @@ function _workspaceSettingsMarkup() {
     <div class="section-body">
       <label>Show Selected Overlay <input type="checkbox" id="showSimulationSelectionOverlay"></label>
       <span class="slider-desc">Show or hide the draggable spawn/guide format bar that appears when a simulation item is selected.</span>
+    </div>
+    <div class="section-header" data-section="edgeOverlaySettings">Edge Overlay <span class="chevron">▼</span></div>
+    <div class="section-body">
+      <span class="slider-desc">Choose a canvas edge for each draggable quick control, or hide it.</span>
+      ${edgeControlChoices}
     </div>
   `;
 }
@@ -2239,6 +2253,9 @@ function _wireWorkspaceSettingsPanel(app, panel) {
   document.getElementById('showSimulationSelectionOverlay')?.addEventListener('change', () => {
     app._closeSimulationFormatMenuPopover?.({ rerender: false });
     app._renderSimulationInspector?.();
+  });
+  panel.querySelectorAll('[id^="edgeOverlay"][id$="Placement"]').forEach(control => {
+    control.addEventListener('change', () => syncEdgeSliders(app));
   });
 
   const autoSaveCb = document.getElementById('autoSaveSession');
@@ -3452,6 +3469,27 @@ LEADER_OVERRIDE_FIELDS.forEach(field => {
 
 let _edgeSliderApp = null;
 
+export const EDGE_OVERLAY_CONTROLS = Object.freeze([
+  Object.freeze({ key: 'brushScale', paramId: 'brushScale', placementId: 'edgeOverlayBrushScalePlacement', legacyVisibilityId: 'edgeOverlayShowBrushScale', label: 'Scale', min: 10, max: 300, defaultPlacement: 'hidden' }),
+  Object.freeze({ key: 'stampOpacity', paramId: 'stampOpacity', placementId: 'edgeOverlayStampOpacityPlacement', legacyVisibilityId: 'edgeOverlayShowStampOpacity', label: 'Opacity', min: 1, max: 100, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'stampSize', paramId: 'stampSize', placementId: 'edgeOverlayStampSizePlacement', legacyVisibilityId: 'edgeOverlayShowStampSize', label: 'Stamp Size', min: 1, max: 40, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'seek', paramId: 'seek', placementId: 'edgeOverlaySeekPlacement', legacyVisibilityId: 'edgeOverlayShowSeek', label: 'Seek', min: 0, max: 100, simVar: 'seek', simVarScale: 0.01, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'wander', paramId: 'wander', placementId: 'edgeOverlayWanderPlacement', legacyVisibilityId: 'edgeOverlayShowWander', label: 'Wander', min: 0, max: 100, defaultPlacement: 'hidden' }),
+  Object.freeze({ key: 'flowField', paramId: 'flowField', placementId: 'edgeOverlayFlowFieldPlacement', legacyVisibilityId: 'edgeOverlayShowFlowField', label: 'Flow', min: 0, max: 100, defaultPlacement: 'hidden' }),
+]);
+
+export function resolveEdgeOverlayLayout({ placements = {} } = {}) {
+  const layout = { left: [], right: [] };
+  for (const control of EDGE_OVERLAY_CONTROLS) {
+    const requested = Object.prototype.hasOwnProperty.call(placements, control.key)
+      ? placements[control.key]
+      : control.defaultPlacement;
+    const placement = requested === 'left' || requested === 'right' ? requested : 'hidden';
+    if (placement !== 'hidden') layout[placement].push(control);
+  }
+  return layout;
+}
+
 // ── Layer list renderer ─────────────────────────────────────
 let _dragSrcIdx = null;
 
@@ -4396,28 +4434,67 @@ function _renderSettingsCatalogResults(app) {
 }
 
 // ── Edge slider sync ────────────────────────────────────────
-export function syncEdgeSliders(app = _edgeSliderApp) {
-  document.querySelectorAll('.edge-slider').forEach(slider => {
-    const simOnly = slider.dataset.simOnly === '1';
-    const showSimOnly = !!(app?.simulation?.enabled && app?._isMotionBrush?.());
-    if (simOnly) {
-      slider.hidden = !showSimOnly;
-      slider.style.display = showSimOnly ? '' : 'none';
-    } else {
-      slider.style.display = '';
+function _readEdgeOverlayLayout() {
+  const placements = Object.fromEntries(EDGE_OVERLAY_CONTROLS.map(control => [
+    control.key,
+    document.getElementById(control.placementId)?.value || control.defaultPlacement,
+  ]));
+  return resolveEdgeOverlayLayout({ placements });
+}
+
+function _edgeSliderMarkup(control, edge) {
+  const simAttrs = control.simVar
+    ? ` data-sim-var="${control.simVar}" data-sim-var-scale="${control.simVarScale || 1}"`
+    : '';
+  return `
+    <div class="edge-slider" data-edge="${edge}" data-control-key="${control.key}" data-param="${control.paramId}"${simAttrs} data-min="${control.min}" data-max="${control.max}">
+      <div class="edge-slider-track">
+        <div class="edge-slider-fill"></div>
+        <div class="edge-slider-thumb"></div>
+      </div>
+      <div class="edge-slider-label">${escapeHtml(control.label)}</div>
+      <div class="edge-slider-value"></div>
+    </div>
+  `;
+}
+
+function _renderEdgeSliderLayout() {
+  const root = document.getElementById('edgeSliders');
+  if (!root) return;
+  const layout = _readEdgeOverlayLayout();
+  for (const edge of ['left', 'right']) {
+    let bank = root.querySelector(`.edge-slider-bank[data-edge="${edge}"]`);
+    if (!bank) {
+      bank = document.createElement('div');
+      bank.className = 'edge-slider-bank';
+      bank.dataset.edge = edge;
+      root.appendChild(bank);
     }
+    const signature = layout[edge].map(control => control.key).join(',');
+    if (bank.dataset.signature !== signature) {
+      bank.innerHTML = layout[edge].map(control => _edgeSliderMarkup(control, edge)).join('');
+      bank.dataset.signature = signature;
+    }
+    bank.hidden = layout[edge].length === 0;
+  }
+  root.hidden = !layout.left.length && !layout.right.length;
+}
+
+export function syncEdgeSliders(app = _edgeSliderApp) {
+  _renderEdgeSliderLayout();
+  document.querySelectorAll('.edge-slider').forEach(slider => {
     const paramId = slider.dataset.param;
     const simVarId = slider.dataset.simVar;
     const simVarScale = parseFloat(slider.dataset.simVarScale || '1');
+    const useSimVar = !!(simVarId && app?.simulation?.enabled && app?._isMotionBrush?.());
     const min = +slider.dataset.min;
     const max = +slider.dataset.max;
     const fill = slider.querySelector('.edge-slider-fill');
     const thumb = slider.querySelector('.edge-slider-thumb');
     const valueEl = slider.querySelector('.edge-slider-value');
-    const sidebarSlider = simVarId ? null : document.getElementById(paramId);
-    if (slider.hidden) return;
+    const sidebarSlider = document.getElementById(paramId);
     let val = min;
-    if (simVarId) {
+    if (useSimVar) {
       const simVarValue = app?.simulation?.vars?.[simVarId];
       val = Number.isFinite(simVarValue) ? (simVarValue / simVarScale) : min;
     } else {
@@ -4435,43 +4512,52 @@ export function syncEdgeSliders(app = _edgeSliderApp) {
 // ── Initialize edge slider drag behavior ────────────────────
 export function initEdgeSliders(app) {
   _edgeSliderApp = app;
-  document.querySelectorAll('.edge-slider').forEach(slider => {
+  const root = document.getElementById('edgeSliders');
+  if (!root || root.dataset.dragWired === '1') {
+    syncEdgeSliders(app);
+    return;
+  }
+  root.dataset.dragWired = '1';
+
+  const setFromPointer = (slider, clientY) => {
     const track = slider.querySelector('.edge-slider-track');
     const paramId = slider.dataset.param;
     const simVarId = slider.dataset.simVar;
     const simVarScale = parseFloat(slider.dataset.simVarScale || '1');
+    const useSimVar = !!(simVarId && app?.simulation?.enabled && app?._isMotionBrush?.());
     const min = +slider.dataset.min;
     const max = +slider.dataset.max;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const pct = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const val = Math.round(min + pct * (max - min));
+    if (useSimVar) {
+      if (!app?.simulation?.vars) return;
+      app.simulation.vars[simVarId] = val * simVarScale;
+      app._maybeAutoSaveSession?.();
+      syncEdgeSliders(app);
+    } else {
+      const sidebarSlider = document.getElementById(paramId);
+      if (!sidebarSlider) return;
+      sidebarSlider.value = val;
+      sidebarSlider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
 
-    const setFromY = (clientY) => {
-      const rect = track.getBoundingClientRect();
-      const pct = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-      const val = Math.round(min + pct * (max - min));
-      if (simVarId) {
-        if (!app?.simulation?.vars) return;
-        app.simulation.vars[simVarId] = val * simVarScale;
-        syncEdgeSliders(app);
-      } else {
-        const sidebarSlider = document.getElementById(paramId);
-        if (!sidebarSlider) return;
-        sidebarSlider.value = val;
-        sidebarSlider.dispatchEvent(new Event('input'));
-      }
-    };
+  root.addEventListener('pointerdown', event => {
+    const slider = event.target.closest('.edge-slider');
+    if (!slider) return;
+    event.preventDefault();
+    event.stopPropagation();
+    slider.setPointerCapture(event.pointerId);
+    setFromPointer(slider, event.clientY);
+  });
 
-    slider.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      slider.setPointerCapture(e.pointerId);
-      setFromY(e.clientY);
-    });
-
-    slider.addEventListener('pointermove', e => {
-      if (slider.hasPointerCapture(e.pointerId)) {
-        e.preventDefault();
-        setFromY(e.clientY);
-      }
-    });
+  root.addEventListener('pointermove', event => {
+    const slider = event.target.closest('.edge-slider');
+    if (!slider?.hasPointerCapture(event.pointerId)) return;
+    event.preventDefault();
+    setFromPointer(slider, event.clientY);
   });
 
   syncEdgeSliders(app);
