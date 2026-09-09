@@ -11,9 +11,9 @@ test('edge overlay registry exposes every supported control exactly once', () =>
   assert.equal(new Set(EDGE_OVERLAY_CONTROLS.map(control => control.placementId)).size, EDGE_OVERLAY_CONTROLS.length);
 });
 
-test('edge overlay defaults preserve Scale and Opacity on the left', () => {
+test('edge overlay defaults show Opacity, Stamp Size, and Seek on the left', () => {
   const layout = resolveEdgeOverlayLayout();
-  assert.deepEqual(layout.left.map(control => control.key), ['brushScale', 'stampOpacity']);
+  assert.deepEqual(layout.left.map(control => control.key), ['stampOpacity', 'stampSize', 'seek']);
   assert.deepEqual(layout.right, []);
 });
 

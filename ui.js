@@ -3470,10 +3470,10 @@ LEADER_OVERRIDE_FIELDS.forEach(field => {
 let _edgeSliderApp = null;
 
 export const EDGE_OVERLAY_CONTROLS = Object.freeze([
-  Object.freeze({ key: 'brushScale', paramId: 'brushScale', placementId: 'edgeOverlayBrushScalePlacement', legacyVisibilityId: 'edgeOverlayShowBrushScale', label: 'Scale', min: 10, max: 300, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'brushScale', paramId: 'brushScale', placementId: 'edgeOverlayBrushScalePlacement', legacyVisibilityId: 'edgeOverlayShowBrushScale', label: 'Scale', min: 10, max: 300, defaultPlacement: 'hidden' }),
   Object.freeze({ key: 'stampOpacity', paramId: 'stampOpacity', placementId: 'edgeOverlayStampOpacityPlacement', legacyVisibilityId: 'edgeOverlayShowStampOpacity', label: 'Opacity', min: 1, max: 100, defaultPlacement: 'left' }),
-  Object.freeze({ key: 'stampSize', paramId: 'stampSize', placementId: 'edgeOverlayStampSizePlacement', legacyVisibilityId: 'edgeOverlayShowStampSize', label: 'Stamp Size', min: 1, max: 40, defaultPlacement: 'hidden' }),
-  Object.freeze({ key: 'seek', paramId: 'seek', placementId: 'edgeOverlaySeekPlacement', legacyVisibilityId: 'edgeOverlayShowSeek', label: 'Seek', min: 0, max: 100, simVar: 'seek', simVarScale: 0.01, defaultPlacement: 'hidden' }),
+  Object.freeze({ key: 'stampSize', paramId: 'stampSize', placementId: 'edgeOverlayStampSizePlacement', legacyVisibilityId: 'edgeOverlayShowStampSize', label: 'Stamp Size', min: 1, max: 40, defaultPlacement: 'left' }),
+  Object.freeze({ key: 'seek', paramId: 'seek', placementId: 'edgeOverlaySeekPlacement', legacyVisibilityId: 'edgeOverlayShowSeek', label: 'Seek', min: 0, max: 100, simVar: 'seek', simVarScale: 0.01, defaultPlacement: 'left' }),
   Object.freeze({ key: 'wander', paramId: 'wander', placementId: 'edgeOverlayWanderPlacement', legacyVisibilityId: 'edgeOverlayShowWander', label: 'Wander', min: 0, max: 100, defaultPlacement: 'hidden' }),
   Object.freeze({ key: 'flowField', paramId: 'flowField', placementId: 'edgeOverlayFlowFieldPlacement', legacyVisibilityId: 'edgeOverlayShowFlowField', label: 'Flow', min: 0, max: 100, defaultPlacement: 'hidden' }),
 ]);
