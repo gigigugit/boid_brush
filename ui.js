@@ -552,8 +552,10 @@ function _modSelect(dataAttrs, options, selected) {
 
 const _MOD_CHANNEL_OPTIONS = FEATURE_CHANNELS.map(channel => ({ value: channel.id, label: channel.label }));
 const _isQuorumTarget = target => target?.id === 'quorumThreshold' || target?.id === 'quorumCompositeStrength';
+const _alphaFeaturesVisible = () => !!document.getElementById('showAlphaFeatures')?.checked;
+const _isAlphaBrush = brush => ['ant', 'motionPath', 'fluid', 'fluid3d'].includes(brush);
 const _modTargetOptions = () => MOD_TARGETS
-  .filter(target => document.getElementById('showAlphaFeatures')?.checked || !_isQuorumTarget(target))
+  .filter(target => _alphaFeaturesVisible() || !_isQuorumTarget(target))
   .map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
 const _MOD_CONDITION_OPTIONS = MOD_CONDITION_OPS.map(op => ({ value: op.id, label: op.label }));
 
@@ -681,7 +683,7 @@ function _buildModRouteCard(route, index, report) {
  *  selection if the route still exists, otherwise falls back to the first
  *  route, or null when there are none. */
 function _modReconcileSelection(matrix) {
-  const routes = matrix.routes.filter(route => document.getElementById('showAlphaFeatures')?.checked || !_isQuorumTarget(resolveModTarget(route.target)));
+  const routes = matrix.routes.filter(route => _alphaFeaturesVisible() || !_isQuorumTarget(resolveModTarget(route.target)));
   if (routes.some(route => route.id === _modSelectedRouteId)) return;
   _modSelectedRouteId = routes[0]?.id || null;
 }
@@ -2277,6 +2279,10 @@ function _wireWorkspaceSettingsPanel(app, panel) {
       app.setAlphaFeaturesVisible?.(showAlphaFeatures.checked);
       _renderModRouteList(app);
       _renderModRouteDetail(app);
+      _renderSettingsCatalogResults(app);
+      _renderFavorites(app);
+      _renderBuiltinPresets(app);
+      _renderUserPresets(app);
     });
   }
   panel.querySelectorAll('[id^="edgeOverlay"][id$="Placement"]').forEach(control => {
@@ -3852,6 +3858,7 @@ function _renderBuiltinPresets(app) {
     } catch {
       continue;
     }
+    if (!_alphaFeaturesVisible() && _isAlphaBrush(preset.scope.brush)) continue;
     const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
     const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
     if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
@@ -3920,6 +3927,7 @@ function _renderUserPresets(app) {
   const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
   const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
   for (const preset of library.entries) {
+    if (!_alphaFeaturesVisible() && _isAlphaBrush(preset.scope.brush)) continue;
     if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
     if (search && !`${preset.name} ${preset.scope.kind} ${preset.scope.brush}`.toLowerCase().includes(search)) continue;
     const row = document.createElement('div');
@@ -4282,6 +4290,8 @@ function _renderFavorites(app) {
       container.appendChild(row);
       continue;
     }
+    const sourceControl = document.getElementById(entry.id);
+    if (!_alphaFeaturesVisible() && sourceControl?.closest('[data-alpha-feature]')) continue;
     if (!catalogEntryApplies(entry, app.activeBrush, 'favorite')) continue;
     const key = entry.section || entry.scope.kind;
     if (!grouped.has(key)) grouped.set(key, []);
@@ -4424,6 +4434,8 @@ function _renderSettingsCatalogResults(app) {
   const favorites = _favoriteIds(app.activeBrush);
   container.innerHTML = '';
   const entries = [..._settingsCatalog.values()].filter(entry => {
+    const sourceControl = document.getElementById(entry.id);
+    if (!_alphaFeaturesVisible() && sourceControl?.closest('[data-alpha-feature]')) return false;
     if (scope === 'active' && !catalogEntryApplies(entry, app.activeBrush, 'favorite')) return false;
     if (scope === 'simulation' && !catalogEntryApplies(entry, app.activeBrush, 'simulation')) return false;
     if (scope === 'shared' && entry.scope.kind !== 'shared') return false;
