@@ -1526,6 +1526,21 @@ export class BoidBrush {
       }
     }
     this._applyInputModulation(next);
+    if (this.app._areAlphaFeaturesEnabled?.() === false) {
+      next.quorumThreshold = 0;
+      next.quorumCompositeStrength = 0;
+      const overrides = next.leaderConfig?.overrides;
+      if (overrides) {
+        next.leaderConfig = {
+          ...next.leaderConfig,
+          overrides: {
+            ...overrides,
+            quorumThreshold: { ...overrides.quorumThreshold, enabled: false },
+            quorumCompositeStrength: { ...overrides.quorumCompositeStrength, enabled: false },
+          },
+        };
+      }
+    }
     next.leader = _resolveLeaderParams(next, this._modApplied);
     return next;
   }
@@ -1551,10 +1566,6 @@ export class BoidBrush {
     const snapshot = this.app.getModulationSnapshot?.();
     if (!snapshot) return next;
     const { applied } = applyModTargets(next, snapshot);
-    if (!this.app._areAlphaFeaturesEnabled?.()) {
-      next.quorumThreshold = 0;
-      next.quorumCompositeStrength = 0;
-    }
     this._modApplied = applied;
     return next;
   }

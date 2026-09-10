@@ -130,6 +130,34 @@ test('BoidBrush bypasses input modulation completely in simulation mode', () => 
   assert.equal(brush._modApplied, null);
 });
 
+test('alpha-off simulation suppresses quorum values and leader overrides', () => {
+  const brush = Object.create(BoidBrush.prototype);
+  brush.app = {
+    simulation: { enabled: true, vars: {} },
+    _areAlphaFeaturesEnabled: () => false,
+  };
+  const params = {
+    count: 10,
+    quorumThreshold: 5,
+    quorumCompositeStrength: 0.8,
+    leaderConfig: {
+      count: 1,
+      pull: 0.2,
+      overrides: {
+        quorumThreshold: { enabled: true, value: 7 },
+        quorumCompositeStrength: { enabled: true, value: 0.9 },
+      },
+    },
+  };
+
+  const result = brush._applySimVars(params);
+
+  assert.equal(result.quorumThreshold, 0);
+  assert.equal(result.quorumCompositeStrength, 0);
+  assert.equal(result.leader.quorumThreshold, 0);
+  assert.equal(result.leader.quorumCompositeStrength, 0);
+});
+
 test('BoidBrush still applies input modulation outside simulation mode', () => {
   let snapshotReads = 0;
   const brush = Object.create(BoidBrush.prototype);
