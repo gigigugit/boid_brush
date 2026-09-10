@@ -60,51 +60,51 @@ test('absolute value curves interpolate directly within every target native rang
       curvePoints: [[0, low], [1, high]],
       priority: 5,
     });
-
-    test('absolute seek reaches exact raw input endpoints despite channel smoothing', () => {
-      const matrix = matrixOf({
-        source: 'pressure',
-        target: 'seek',
-        valueMode: 'absolute',
-        curvePoints: [[0, 0.25], [1, 0.65]],
-      });
-      const high = run(matrix, {
-        params: { seek: 0 },
-        features: { pressure: 0.75 },
-        rawFeatures: { pressure: 1 },
-      });
-      const low = run(matrix, {
-        params: { seek: 1 },
-        features: { pressure: 0.25 },
-        rawFeatures: { pressure: 0 },
-      });
-      assert.equal(high.params.seek, 0.65);
-      assert.equal(high.evaluation.diagnostics.routes[0].signal, 1);
-      assert.equal(low.params.seek, 0.25);
-      assert.equal(low.evaluation.diagnostics.routes[0].signal, 0);
-    });
-
-    test('absolute seek keeps the smoothed signal for interior raw input', () => {
-      const matrix = matrixOf({
-        source: 'pressure',
-        target: 'seek',
-        valueMode: 'absolute',
-        curvePoints: [[0, 0.2], [1, 1]],
-      });
-      const { evaluation, params } = run(matrix, {
-        params: { seek: 0 },
-        features: { pressure: 0.4 },
-        rawFeatures: { pressure: 0.8 },
-      });
-      assert.equal(evaluation.diagnostics.routes[0].signal, 0.4);
-      assert.ok(Math.abs(params.seek - 0.52) < 1e-9);
-    });
     const params = { [targetId]: spec.min };
     const { evaluation, params: result } = run(matrix, { params, features: { pressure: 0.5 } });
     const expected = evaluateModValueCurvePoints([[0, low], [1, high]], 0.5, spec);
     assert.equal(result[targetId], spec.integer ? Math.round(expected) : expected, targetId);
     assert.equal(evaluation.diagnostics.routes[0].value, expected);
   }
+});
+
+test('absolute seek reaches exact raw input endpoints despite channel smoothing', () => {
+  const matrix = matrixOf({
+    source: 'pressure',
+    target: 'seek',
+    valueMode: 'absolute',
+    curvePoints: [[0, 0.25], [1, 0.65]],
+  });
+  const high = run(matrix, {
+    params: { seek: 0 },
+    features: { pressure: 0.75 },
+    rawFeatures: { pressure: 1 },
+  });
+  const low = run(matrix, {
+    params: { seek: 1 },
+    features: { pressure: 0.25 },
+    rawFeatures: { pressure: 0 },
+  });
+  assert.equal(high.params.seek, 0.65);
+  assert.equal(high.evaluation.diagnostics.routes[0].signal, 1);
+  assert.equal(low.params.seek, 0.25);
+  assert.equal(low.evaluation.diagnostics.routes[0].signal, 0);
+});
+
+test('absolute seek keeps the smoothed signal for interior raw input', () => {
+  const matrix = matrixOf({
+    source: 'pressure',
+    target: 'seek',
+    valueMode: 'absolute',
+    curvePoints: [[0, 0.2], [1, 1]],
+  });
+  const { evaluation, params } = run(matrix, {
+    params: { seek: 0 },
+    features: { pressure: 0.4 },
+    rawFeatures: { pressure: 0.8 },
+  });
+  assert.equal(evaluation.diagnostics.routes[0].signal, 0.4);
+  assert.ok(Math.abs(params.seek - 0.52) < 1e-9);
 });
 
 test('absolute route output is independent of the base setting value', () => {
