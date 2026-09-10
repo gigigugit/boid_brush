@@ -1551,6 +1551,10 @@ export class BoidBrush {
     const snapshot = this.app.getModulationSnapshot?.();
     if (!snapshot) return next;
     const { applied } = applyModTargets(next, snapshot);
+    if (!this.app._areAlphaFeaturesEnabled?.()) {
+      next.quorumThreshold = 0;
+      next.quorumCompositeStrength = 0;
+    }
     this._modApplied = applied;
     return next;
   }

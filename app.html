@@ -184,6 +184,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .panel-tab--favorites:hover,.panel-tab--favorites.active{color:var(--favorite-accent);}
 .panel-tab--favorites.active{border-color:rgba(40,222,192,0.38);box-shadow:0 0 12px rgba(40,222,192,0.16);}
 .panel-tab-hidden{display:none!important;}
+.alpha-feature-hidden{display:none!important;}
 .panel-view{display:none;flex:1;min-height:0;overflow-y:auto;}
 .panel-view.active{display:block;}
 
@@ -1043,11 +1044,11 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <!-- Brush dropdown (outside topbar to avoid backdrop-filter clipping) -->
 <div id="brushDropdown">
   <button data-brush="boid" class="selected">🐦 Boid</button>
-  <button data-brush="ant">🐜 Ant</button>
+  <button data-brush="ant" data-alpha-feature data-alpha-brush>🐜 Ant</button>
   <button data-brush="bristle">🖊 Bristle</button>
-  <button data-brush="motionPath">🧭 Motion Path</button>
-  <button data-brush="fluid">🌊 LBM Fluid</button>
-  <button data-brush="fluid3d">💧 3D Fluid</button>
+  <button data-brush="motionPath" data-alpha-feature data-alpha-brush>🧭 Motion Path</button>
+  <button data-brush="fluid" data-alpha-feature data-alpha-brush>🌊 LBM Fluid</button>
+  <button data-brush="fluid3d" data-alpha-feature data-alpha-brush>💧 3D Fluid</button>
   <button data-brush="simple">🖌 Simple</button>
   <button data-brush="eraser">◻ Eraser</button>
 </div>
@@ -1191,7 +1192,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button class="panel-tab active" data-panel-view="brush" data-panel-target="rightPanel">Brush</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="simulation" data-panel-target="rightPanel">Simulation</button>
   <button class="panel-tab" data-panel-view="settings" data-panel-target="rightPanel">Settings</button>
-  <button class="panel-tab" data-panel-view="json" data-panel-target="rightPanel">JSON</button>
+  <button class="panel-tab panel-tab-hidden" data-panel-view="json" data-panel-target="rightPanel">JSON</button>
 </div>
 <aside id="rightPanel">
   <div id="favoritesPanel" class="panel-view" data-panel-view="favorites"></div>

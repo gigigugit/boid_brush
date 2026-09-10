@@ -460,7 +460,7 @@ function _buildLeaderOverrideControl(field) {
 
 function _buildLeaderOverrideRows() {
   return LEADER_OVERRIDE_FIELDS.map(field => `
-    <div data-leader-field="${field.key}" style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
+    <div data-leader-field="${field.key}"${field.key.startsWith('quorum') ? ' data-alpha-feature' : ''} style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
       <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;">
         <span>${field.label}</span>
         <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#9fb0c6;">Override <input type="checkbox" id="${field.overrideId}" data-leader-target="${field.id}" data-leader-source="${field.sourceId}"></span>
@@ -551,7 +551,10 @@ function _modSelect(dataAttrs, options, selected) {
 }
 
 const _MOD_CHANNEL_OPTIONS = FEATURE_CHANNELS.map(channel => ({ value: channel.id, label: channel.label }));
-const _MOD_TARGET_OPTIONS = MOD_TARGETS.map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
+const _isQuorumTarget = target => target?.id === 'quorumThreshold' || target?.id === 'quorumCompositeStrength';
+const _modTargetOptions = () => MOD_TARGETS
+  .filter(target => document.getElementById('showAlphaFeatures')?.checked || !_isQuorumTarget(target))
+  .map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
 const _MOD_CONDITION_OPTIONS = MOD_CONDITION_OPS.map(op => ({ value: op.id, label: op.label }));
 
 const _MOD_CARD_STYLE = 'margin:6px 0;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);';
@@ -667,7 +670,7 @@ function _buildModRouteCard(route, index, report) {
         <span style="flex:0 0 44px;">Source</span>
         ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="source"`, _MOD_CHANNEL_OPTIONS, route.source)}
         <span style="flex:0 0 40px;text-align:right;">Target</span>
-        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _MOD_TARGET_OPTIONS, route.target)}
+        ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _modTargetOptions(), route.target)}
       </div>
       ${editorBody}
     </div>
@@ -678,8 +681,9 @@ function _buildModRouteCard(route, index, report) {
  *  selection if the route still exists, otherwise falls back to the first
  *  route, or null when there are none. */
 function _modReconcileSelection(matrix) {
-  if (matrix.routes.some(route => route.id === _modSelectedRouteId)) return;
-  _modSelectedRouteId = matrix.routes[0]?.id || null;
+  const routes = matrix.routes.filter(route => document.getElementById('showAlphaFeatures')?.checked || !_isQuorumTarget(resolveModTarget(route.target)));
+  if (routes.some(route => route.id === _modSelectedRouteId)) return;
+  _modSelectedRouteId = routes[0]?.id || null;
 }
 
 /** Rebuild the compact route-selection list (modal, left column). */
@@ -688,14 +692,15 @@ function _renderModRouteList(app) {
   if (!container) return;
   const matrix = _readModMatrix();
   _modReconcileSelection(matrix);
+  const routes = matrix.routes.filter(route => document.getElementById('showAlphaFeatures')?.checked || !_isQuorumTarget(resolveModTarget(route.target)));
   const reports = new Map();
   // Only reach into the app for live route status when routes exist, so the
   // default (empty) document never pulls getP() during initial sidebar build.
   if (matrix.routes.length) {
     for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
   }
-  container.innerHTML = matrix.routes.length
-    ? matrix.routes.map((route, index) => _buildModRouteChip(route, index, reports.get(route.id), route.id === _modSelectedRouteId)).join('')
+  container.innerHTML = routes.length
+    ? routes.map((route, index) => _buildModRouteChip(route, index, reports.get(route.id), route.id === _modSelectedRouteId)).join('')
     : '<span class="slider-desc">No routes. Add one to drive a boid parameter from a live input channel.</span>';
   const addBtn = document.getElementById('modAddRouteBtn');
   if (addBtn) addBtn.disabled = matrix.routes.length >= MOD_ROUTE_LIMIT;
@@ -1185,8 +1190,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Quorum (boid only) -->
-    <div class="section-header closed" data-brushes="boid" data-section="quorum">Quorum <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid">
+    <div class="section-header closed" data-brushes="boid" data-section="quorum" data-alpha-feature>Quorum <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid" data-alpha-feature>
       ${sliderRow('quorumThreshold', 'Threshold', 0, 100, 0, v => v === 0 ? 'off' : v, 'Neighbors required before a local boid group becomes a quorum')}
       ${sliderRow('quorumCompositeStrength', 'Composite', 0, 100, 35, v => (v/100).toFixed(2), 'How strongly quorum groups affect outgroup boids as one composite')}
     </div>
@@ -1601,8 +1606,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Taper -->
-    <div class="section-header" data-section="taper">Taper <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="taper" data-alpha-feature>Taper <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       ${sliderRow('taperLength', 'Length', 0, 120, 20, v => +v === 0 ? 'off' : v + ' frames')}
       ${sliderRow('taperCurve', 'Curve', 10, 300, 100, v => (v/100).toFixed(1))}
       <label>Taper Size <input type="checkbox" id="taperSize" checked></label>
@@ -1653,23 +1658,23 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Trail Blur -->
-    <div class="section-header" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="trailBlur" data-alpha-feature>Trail Blur <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
       ${sliderRow('trailFlow', 'Texture Flow', 0, 100, 0, v => (v / 100).toFixed(2), 'Bias blur diffusion toward lower-height canvas texture areas (requires texture)')}
     </div>
 
     <!-- Pigment Mix / KM -->
-    <div class="section-header" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="kmMix" data-alpha-feature>Pigment Mix <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       <label>Enable <input type="checkbox" id="kmMix"></label>
       <span class="slider-desc">Physically-based subtractive pigment mixing (blue+yellow→green)</span>
       ${sliderRow('kmStrength', 'Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'How strongly the brush pigment mixes into existing paint')}
     </div>
 
     <!-- Impasto -->
-    <div class="section-header" data-section="impasto">Impasto <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="impasto" data-alpha-feature>Impasto <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       <label>Enable <input type="checkbox" id="impasto"></label>
       <span class="slider-desc">Build up paint height — directional lighting reveals 3D ridges</span>
       ${sliderRow('impastoStrength', 'Strength', 0, 100, 60, v => (v / 100).toFixed(2))}
@@ -2157,6 +2162,8 @@ function _workspaceSettingsMarkup() {
     <div class="section-header" data-section="appSettings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Always show tabs <input type="checkbox" id="alwaysShowTabs" checked></label>
+      <label>Show JSON tab <input type="checkbox" id="showJsonTab"></label>
+      <label>Show Alpha Features <input type="checkbox" id="showAlphaFeatures"></label>
       <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
       <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
       <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
@@ -2254,6 +2261,24 @@ function _wireWorkspaceSettingsPanel(app, panel) {
     app._closeSimulationFormatMenuPopover?.({ rerender: false });
     app._renderSimulationInspector?.();
   });
+  const showJsonTab = document.getElementById('showJsonTab');
+  if (showJsonTab) {
+    showJsonTab.checked = localStorage.getItem('bb_showJsonTab') === 'true';
+    app.setJsonTabVisible?.(showJsonTab.checked, { persist: false });
+    showJsonTab.addEventListener('change', () => {
+      app.setJsonTabVisible?.(showJsonTab.checked);
+    });
+  }
+  const showAlphaFeatures = document.getElementById('showAlphaFeatures');
+  if (showAlphaFeatures) {
+    showAlphaFeatures.checked = localStorage.getItem('bb_showAlphaFeatures') === 'true';
+    app.setAlphaFeaturesVisible?.(showAlphaFeatures.checked, { persist: false });
+    showAlphaFeatures.addEventListener('change', () => {
+      app.setAlphaFeaturesVisible?.(showAlphaFeatures.checked);
+      _renderModRouteList(app);
+      _renderModRouteDetail(app);
+    });
+  }
   panel.querySelectorAll('[id^="edgeOverlay"][id$="Placement"]').forEach(control => {
     control.addEventListener('change', () => syncEdgeSliders(app));
   });
