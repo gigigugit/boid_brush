@@ -4319,34 +4319,35 @@ export class App {
       leftTabs.classList.toggle('panel-tabs--open', !!leftOpen);
     }
 
-    _areAlphaFeaturesEnabled() {
-      const checkbox = document.getElementById('showAlphaFeatures');
-      return checkbox ? checkbox.checked : localStorage.getItem('bb_showAlphaFeatures') === 'true';
-    }
-
-    setAlphaFeaturesVisible(enabled, { persist = true } = {}) {
-      const visible = !!enabled;
-      if (persist) localStorage.setItem('bb_showAlphaFeatures', String(visible));
-      document.querySelectorAll('[data-alpha-feature]').forEach(element => {
-        element.classList.toggle('alpha-feature-hidden', !visible);
-      });
-      if (!visible && ['ant', 'motionPath', 'fluid', 'fluid3d'].includes(this.activeBrush)) {
-        this.setBrush('boid');
-      }
-      this.invalidateParams();
-    }
-
-    setJsonTabVisible(enabled, { persist = true } = {}) {
-      const visible = !!enabled;
-      if (persist) localStorage.setItem('bb_showJsonTab', String(visible));
-      document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="json"]')
-        ?.classList.toggle('panel-tab-hidden', !visible);
-      this._updateTabVisibility();
-    }
     if (rightTabs) {
       rightTabs.classList.toggle('panel-tabs--visible', alwaysShow || rightOpen);
       rightTabs.classList.toggle('panel-tabs--open', !!rightOpen);
     }
+  }
+
+  _areAlphaFeaturesEnabled() {
+    const checkbox = document.getElementById('showAlphaFeatures');
+    return checkbox ? checkbox.checked : localStorage.getItem('bb_showAlphaFeatures') === 'true';
+  }
+
+  setAlphaFeaturesVisible(enabled, { persist = true } = {}) {
+    const visible = !!enabled;
+    if (persist) localStorage.setItem('bb_showAlphaFeatures', String(visible));
+    document.querySelectorAll('[data-alpha-feature]').forEach(element => {
+      element.classList.toggle('alpha-feature-hidden', !visible);
+    });
+    if (!visible && ['ant', 'motionPath', 'fluid', 'fluid3d'].includes(this.activeBrush)) {
+      this.setBrush('boid');
+    }
+    this.invalidateParams();
+  }
+
+  setJsonTabVisible(enabled, { persist = true } = {}) {
+    const visible = !!enabled;
+    if (persist) localStorage.setItem('bb_showJsonTab', String(visible));
+    document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="json"]')
+      ?.classList.toggle('panel-tab-hidden', !visible);
+    this._updateTabVisibility();
   }
 
   _isSimulationOverlayHudEnabled() {
