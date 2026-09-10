@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Boid Brush - Input Modulation Prototype</title>
+<style>
+:root{
+  --ink-0:#f2f4f8;--ink-1:#cdd2de;--ink-2:#9ea7b8;--ink-3:#778298;
+  --line-0:rgba(255,255,255,.08);--line-1:rgba(255,255,255,.14);
+  --panel-0:rgba(10,12,18,.96);--panel-1:#111722;--panel-2:#0b1019;
+  --accent-a:#3a6ae8;--accent-b:#5b8af0;--accent-c:#8bb3ff;
+  --scroll-track:#080c13;--scroll-thumb:#354157;--scroll-thumb-hover:#4f6fae;
+  --ok:#41c98b;--warn:#e2ad54;--danger:#e16a6a;--shadow:0 24px 70px rgba(0,0,0,.56);
+}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#090c12;color:var(--ink-1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:12px}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+.app{position:fixed;inset:0;background:
+  linear-gradient(rgba(255,255,255,.015) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(255,255,255,.015) 1px,transparent 1px),
+  radial-gradient(circle at 35% 45%,rgba(58,106,232,.14),transparent 34%),#0b0f16;background-size:32px 32px,32px 32px,auto}
+.app-bar{height:50px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line-0);background:rgba(17,20,28,.9)}
+.app-bar span{width:76px;height:28px;border-radius:7px;background:rgba(255,255,255,.055)}
+.app-side{position:absolute;right:0;top:50px;bottom:24px;width:280px;border-left:1px solid var(--line-0);background:rgba(10,12,18,.78)}
+.app-side:before,.app-side:after{content:"";display:block;height:112px;margin:18px 14px;border-radius:8px;background:rgba(255,255,255,.035)}
+.scrim{position:absolute;inset:0;background:rgba(3,5,9,.72);backdrop-filter:blur(5px)}
+.modal{position:absolute;inset:clamp(14px,4vh,42px) clamp(12px,5vw,72px);max-width:1160px;margin:auto;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--panel-0);border:1px solid var(--line-1);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.modal-header,.modal-footer{display:flex;align-items:center;gap:12px;padding:14px 18px;background:rgba(255,255,255,.022)}
+.modal-header{justify-content:space-between;border-bottom:1px solid var(--line-0)}
+.title h1{margin:0;color:var(--ink-0);font-size:18px;letter-spacing:0}
+.title p{margin:4px 0 0;color:var(--ink-3);font-size:10px}
+.header-actions{display:flex;align-items:center;gap:10px}
+.segmented{display:flex;padding:3px;border-radius:8px;background:#080c13;border:1px solid var(--line-0)}
+.segmented button{min-height:30px;padding:0 11px;border:0;border-radius:5px;background:transparent;color:var(--ink-3);font-weight:650}
+.segmented button.active{background:rgba(91,138,240,.2);color:var(--ink-0);box-shadow:inset 0 0 0 1px rgba(91,138,240,.3)}
+.icon-btn{width:34px;height:34px;border:1px solid var(--line-0);border-radius:7px;background:rgba(255,255,255,.05);font-size:17px}
+.modal-body{min-height:0;display:grid;grid-template-columns:194px minmax(0,1fr)}
+.source-nav{padding:14px 10px;border-right:1px solid var(--line-0);background:rgba(0,0,0,.16);overflow:auto}
+.nav-label{padding:0 9px 8px;color:var(--ink-3);font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.1em}
+.source-btn{width:100%;min-height:42px;display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:8px;margin:2px 0;padding:7px 9px;border:0;border-radius:7px;background:transparent;text-align:left;color:var(--ink-2)}
+.source-btn:hover{background:rgba(255,255,255,.045);color:var(--ink-0)}
+.source-btn.active{background:rgba(58,106,232,.18);color:var(--ink-0);box-shadow:inset 2px 0 var(--accent-b)}
+.source-icon{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,.06);font-weight:800;color:var(--accent-c)}
+.source-btn.active .source-icon{background:var(--accent-a);color:white}
+.source-copy strong{display:block;font-size:11px}.source-copy small{display:block;margin-top:2px;color:var(--ink-3);font-size:9px}
+.count{min-width:20px;text-align:center;padding:2px 5px;border-radius:9px;background:rgba(255,255,255,.06);color:var(--ink-3);font-size:9px}
+.workspace{min-width:0;padding:16px 18px;overflow:auto}
+.workspace-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:12px}
+.workspace-head h2{margin:0;color:var(--ink-0);font-size:15px}.workspace-head p{margin:4px 0 0;color:var(--ink-3);font-size:10px}
+.input-meter{display:grid;grid-template-columns:auto 120px 34px;align-items:center;gap:8px;color:var(--ink-3);font-size:9px}
+.meter-track,.result-track{height:5px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden}
+.meter-fill,.result-fill{height:100%;width:64%;border-radius:inherit;background:linear-gradient(90deg,var(--accent-a),var(--accent-c))}
+.route-list{--route-card-height:clamp(183px,21.53vh,220px);--curve-canvas-height:clamp(153px,18vh,183.93px);--curve-preview-height:calc(var(--curve-canvas-height) + 2px);display:grid;gap:9px}
+.route-card{height:var(--route-card-height);display:grid;grid-template-columns:minmax(180px,1fr) minmax(230px,1.12fr);align-items:center;gap:16px;padding:13px 14px;border:1px solid var(--line-0);border-radius:9px;background:rgba(255,255,255,.025);transition:border-color .15s,background .15s}
+.route-card:hover{border-color:rgba(255,255,255,.13);background:rgba(255,255,255,.035)}
+.route-card.disabled{opacity:.52}
+.route-info{min-width:0;display:grid;align-content:start;gap:10px}
+.route-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.route-title{min-width:0}.route-title strong{display:block;color:var(--ink-0);font-size:12px}
+.switch{position:relative;width:32px;height:18px;flex:none}.switch input{position:absolute;opacity:0}.switch span{position:absolute;inset:0;border-radius:12px;background:#343b49;transition:.15s}.switch span:after{content:"";position:absolute;width:14px;height:14px;left:2px;top:2px;border-radius:50%;background:#c9cfda;transition:.15s}.switch input:checked+span{background:var(--accent-a)}.switch input:checked+span:after{transform:translateX(14px);background:white}
+.compact-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.field{display:grid;gap:4px;color:var(--ink-3);font-size:9px;white-space:nowrap}.field input,.field select{width:100%;height:30px;padding:0 8px;border:1px solid var(--line-0);border-radius:6px;background:var(--panel-2);outline:none}.field input:focus,.field select:focus{border-color:rgba(91,138,240,.7)}
+.result{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;color:var(--ink-3);font-size:9px}.result output{color:var(--ink-0);font-variant-numeric:tabular-nums}
+.route-visual{min-width:0;height:var(--curve-preview-height);display:grid}
+.curve-preview{position:relative;height:100%;min-height:0;padding:0;border:1px solid var(--line-0);border-radius:8px;background:var(--panel-2);overflow:hidden;cursor:pointer}
+.curve-preview:hover{border-color:rgba(91,138,240,.65);box-shadow:0 0 0 2px rgba(58,106,232,.1)}
+.curve-preview canvas{display:block;width:100%;height:100%}.curve-preview .edit-cue{position:absolute;right:8px;top:8px;padding:4px 7px;border-radius:5px;background:rgba(8,12,19,.78);color:var(--ink-1);font-size:9px;pointer-events:none}
+.add-route{min-height:40px;border:1px dashed rgba(139,179,255,.32);border-radius:8px;background:rgba(58,106,232,.05);color:var(--accent-c);font-weight:650}
+.modal-footer{justify-content:space-between;border-top:1px solid var(--line-0)}
+.footer-group{display:flex;align-items:center;gap:7px}.btn{min-height:34px;padding:0 13px;border:1px solid var(--line-0);border-radius:7px;background:rgba(255,255,255,.055);font-weight:650}.btn:hover{background:rgba(255,255,255,.1)}.btn.primary{border-color:rgba(117,162,255,.5);background:linear-gradient(135deg,var(--accent-a),var(--accent-b));color:white}.btn.quiet{background:transparent}.btn.danger{color:#ffb4b4}
+.curve-modal{position:fixed;inset:0;z-index:5;display:none;place-items:center;padding:20px;background:rgba(2,4,8,.76);backdrop-filter:blur(7px)}
+.curve-modal.open{display:grid}
+.curve-shell{width:min(820px,94vw);max-height:92vh;display:grid;grid-template-rows:auto minmax(0,1fr) auto;border:1px solid var(--line-1);border-radius:13px;background:#0d121b;box-shadow:var(--shadow);overflow:hidden}
+.curve-head,.curve-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 16px;background:rgba(255,255,255,.025)}.curve-head{border-bottom:1px solid var(--line-0)}.curve-head h2{margin:0;color:var(--ink-0);font-size:15px}.curve-head p{margin:3px 0 0;color:var(--ink-3);font-size:9px}.curve-foot{border-top:1px solid var(--line-0)}
+.curve-body{min-height:0;padding:16px;overflow:auto}
+.editor-wrap{position:relative;height:min(46vh,360px);min-height:250px;border:1px solid var(--line-1);border-radius:9px;background:#080c13;overflow:hidden}
+#curveEditor{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+.editor-readout{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}.editor-readout .field input{height:34px}
+.curve-tools{display:flex;gap:6px;flex-wrap:wrap}.live-dot{display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.toast{position:fixed;z-index:10;left:50%;bottom:30px;transform:translate(-50%,12px);padding:9px 13px;border:1px solid var(--line-1);border-radius:7px;background:#171e2b;color:var(--ink-0);opacity:0;pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(hover:hover) and (pointer:fine){
+  :is(.source-nav,.workspace,.curve-body){scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) var(--scroll-track)}
+  :is(.source-nav,.workspace,.curve-body)::-webkit-scrollbar{width:10px;height:10px}
+  :is(.source-nav,.workspace,.curve-body)::-webkit-scrollbar-track{background:var(--scroll-track)}
+  :is(.source-nav,.workspace,.curve-body)::-webkit-scrollbar-thumb{min-height:34px;border:2px solid var(--scroll-track);border-radius:8px;background:var(--scroll-thumb)}
+  :is(.source-nav,.workspace,.curve-body)::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
+  :is(.source-nav,.workspace,.curve-body)::-webkit-scrollbar-corner{background:var(--scroll-track)}
+}
+@media(max-width:760px){
+  .modal{inset:0;border-radius:0}.modal-header{padding:11px 12px}.title p{display:none}.header-actions{gap:5px}.segmented button{padding:0 8px}.modal-body{grid-template-columns:74px minmax(0,1fr)}
+  .source-nav{padding:8px 5px}.nav-label{display:none}.source-btn{grid-template-columns:1fr;justify-items:center;padding:6px 2px}.source-copy small,.count{display:none}.source-copy strong{font-size:9px;text-align:center}.workspace{padding:12px 10px}.workspace-head{align-items:flex-start;flex-direction:column}.input-meter{width:100%;grid-template-columns:auto 1fr 34px}
+  .route-card{grid-template-columns:minmax(0,1fr) minmax(0,1.12fr);gap:8px;padding:13px 8px}.modal-footer{padding:10px}.footer-group .btn{padding:0 9px}.footer-group:first-child .btn:not(:first-child){display:none}
+  .editor-readout{grid-template-columns:1fr}.curve-head,.curve-foot{padding:11px}.curve-foot{align-items:stretch;flex-direction:column}.curve-foot .footer-group{justify-content:flex-end}
+}
+/* Production modal control model */
+.modal.production-mod{inset:clamp(24px,6vh,54px) clamp(12px,8vw,110px);max-width:900px}
+.production-mod .modal-header{align-items:flex-start;padding:18px 44px 14px 22px}
+.production-mod .title p{max-width:680px;line-height:1.45}
+.production-mod .modal-body{width:100%;min-width:0;max-width:100%;grid-template-columns:230px minmax(0,1fr);overflow:hidden}
+.route-pane{min-width:0;padding:10px;border-right:1px solid var(--line-0);background:rgba(6,11,20,.35);overflow:auto}
+.detail-pane{min-width:0;padding:14px 18px;overflow:auto}
+.route-chip{width:100%;display:flex;align-items:center;gap:7px;margin:0 0 6px;padding:8px;border:1px solid var(--line-0);border-radius:8px;background:rgba(255,255,255,.03);text-align:left;color:var(--ink-1)}
+.route-chip:hover{background:rgba(255,255,255,.06)}.route-chip.active{border-color:var(--accent-a);background:rgba(58,106,232,.16)}
+.route-chip-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--ok)}
+.route-chip-label{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
+.route-chip-delete,.route-delete,.condition-delete{flex:none;padding:1px 6px!important}
+.production-mod .add-route{width:100%;margin-top:4px}
+.detail-card{display:grid;gap:8px;padding:10px;border:1px solid var(--line-0);border-radius:8px;background:rgba(255,255,255,.03)}
+.detail-head,.detail-row,.condition-row,.channel-row{display:flex;align-items:center;gap:7px}
+.detail-head strong{flex:1;color:var(--ink-0)}.route-status{color:var(--ok);font-size:10px}
+.on-check{display:flex;align-items:center;gap:4px;color:var(--ink-2);font-size:10px}.on-check input{width:16px;height:16px;accent-color:var(--accent-a)}
+.detail-row,.condition-row,.channel-row{font-size:10px;color:var(--ink-2)}
+.detail-row>span:first-child{flex:0 0 44px}.detail-row select,.condition-row select{min-width:0;flex:1}
+.detail-row input[type=number],.condition-row input[type=number],.channel-row input{width:58px;flex:none}
+.production-mod select,.production-mod input[type=number]{height:30px;padding:0 7px;border:1px solid var(--line-1);border-radius:6px;background:var(--panel-2);color:var(--ink-1);color-scheme:dark}
+.inline-curve{display:block;width:100%;height:150px;margin-top:4px;border:1px solid var(--line-1);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none}
+.curve-axis{display:flex;justify-content:space-between;color:var(--ink-3);font-size:8px}
+.point-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.point-fields label{display:grid;grid-template-columns:auto minmax(70px,1fr);align-items:center;gap:7px;color:var(--ink-2);font-size:10px}.point-fields input{width:100%!important}
+.detail-note{color:var(--ink-3);font-size:9px;line-height:1.45}.curve-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.condition-list,.channel-list{display:grid;gap:6px}.condition-row>span{flex:none}
+.section-label{margin:14px 0 5px;color:var(--ink-1);font-weight:650}.channel-row>span:first-child{min-width:0;flex:1;color:var(--ink-1)}
+.diagnostics{margin:0;padding:9px;border:1px solid var(--line-0);border-radius:7px;background:var(--panel-2);color:var(--ink-2);white-space:pre-wrap;font:10px/1.45 ui-monospace,Consolas,monospace}
+.production-mod .modal-footer{justify-content:flex-end}.live-copy{min-width:0;flex:1;color:var(--ink-3);font-size:10px}
+@media(hover:hover) and (pointer:fine){:is(.route-pane,.detail-pane){scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) var(--scroll-track)}:is(.route-pane,.detail-pane)::-webkit-scrollbar{width:10px}:is(.route-pane,.detail-pane)::-webkit-scrollbar-track{background:var(--scroll-track)}:is(.route-pane,.detail-pane)::-webkit-scrollbar-thumb{border:2px solid var(--scroll-track);border-radius:8px;background:var(--scroll-thumb)}}
+@media(max-width:640px){.modal.production-mod{inset:0;max-width:none;border-radius:0}.production-mod .modal-header{padding:14px 40px 10px 14px}.production-mod .title p{display:block}.production-mod .modal-body{display:flex;flex-direction:column}.route-pane,.detail-pane{width:100%;max-width:100%}.route-pane{max-height:150px;border-right:0;border-bottom:1px solid var(--line-0)}.detail-pane{padding:10px 12px}.detail-row{flex-wrap:wrap}.detail-row>span:first-child{flex-basis:40px}.detail-row select{flex:1 1 calc(100% - 54px)}.point-fields{grid-template-columns:1fr}.condition-row{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<main class="app" aria-hidden="true"><div class="app-bar"><span></span><span></span><span></span><span></span></div><div class="app-side"></div><div class="scrim"></div></main>
+
+<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <header class="modal-header">
+    <div class="title"><h1 id="modalTitle">Input Modulation</h1><p>Map live input signals to brush and boid parameters</p></div>
+    <div class="header-actions">
+      <div class="segmented" aria-label="Arrange routes"><button class="active" data-view="input">By input</button><button data-view="parameter">By parameter</button></div>
+      <button class="icon-btn" type="button" aria-label="Close" title="Close">&times;</button>
+    </div>
+  </header>
+  <div class="modal-body">
+    <nav class="source-nav" aria-label="Modulation inputs"><div class="nav-label">Inputs</div><div id="sourceNav"></div></nav>
+    <section class="workspace">
+      <div class="workspace-head">
+        <div><h2 id="workspaceTitle">Pressure</h2><p id="workspaceSubtitle">Stylus or touch pressure</p></div>
+        <div class="input-meter"><span>Live input</span><div class="meter-track"><div class="meter-fill" id="inputFill"></div></div><output id="inputValue">0.64</output></div>
+      </div>
+      <div class="route-list" id="routeList"></div>
+    </section>
+  </div>
+  <footer class="modal-footer">
+    <div class="footer-group"><button class="btn danger" id="resetInput">Reset input</button><button class="btn quiet" id="resetAll">Reset all</button></div>
+    <div class="footer-group"><button class="btn" id="exportBtn">Export</button><button class="btn quiet" id="cancelBtn">Cancel</button><button class="btn primary" id="saveBtn">Save</button></div>
+  </footer>
+</section>
+
+<section class="curve-modal" id="curveModal" role="dialog" aria-modal="true" aria-labelledby="curveTitle">
+  <div class="curve-shell">
+    <header class="curve-head"><div><h2 id="curveTitle">Pressure to Size</h2><p>Input signal to absolute target value</p></div><button class="icon-btn" id="curveClose" aria-label="Close">&times;</button></header>
+    <div class="curve-body">
+      <div class="editor-wrap"><canvas id="curveEditor"></canvas></div>
+      <div class="editor-readout">
+        <label class="field">Selected input<input id="pointX" type="number" min="0" max="1" step="0.01"></label>
+        <label class="field">Selected output<input id="pointY" type="number" step="0.01"></label>
+        <label class="field">Live result<input id="curveLiveResult" readonly></label>
+      </div>
+    </div>
+    <footer class="curve-foot">
+      <div class="curve-tools"><button class="btn danger" id="curveReset">Reset curve</button><button class="btn" id="curveAdd">Add point</button><button class="btn" id="curveDelete">Delete point</button></div>
+      <div class="footer-group"><button class="btn quiet" id="curveCancel">Cancel</button><button class="btn primary" id="curveApply">Apply curve</button></div>
+    </footer>
+  </div>
+</section>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const sources=[
+  {id:'pressure',label:'Pressure',icon:'P',desc:'Stylus / touch',value:.64,routes:[
+    {id:'pressure-size',target:'Size',unit:'px',min:2,max:96,low:8,high:54,smoothing:.75,enabled:true,points:[[0,8],[.3,18],[.72,44],[1,54]]},
+    {id:'pressure-opacity',target:'Opacity',unit:'%',min:0,max:100,low:12,high:100,smoothing:.75,enabled:true,points:[[0,12],[.22,26],[.68,82],[1,100]]},
+    {id:'pressure-cohesion',target:'Cohesion',unit:'',min:0,max:1,low:.08,high:.72,smoothing:.75,enabled:true,points:[[0,.08],[.4,.22],[1,.72]]}
+  ]},
+  {id:'speed',label:'Speed',icon:'S',desc:'Pointer velocity',value:.38,routes:[
+    {id:'speed-seek',target:'Seek',unit:'',min:0,max:1,low:.16,high:.9,smoothing:.75,enabled:true,points:[[0,.16],[.35,.5],[1,.9]]},
+    {id:'speed-maxSpeed',target:'Max Speed',unit:'',min:.5,max:15,low:2.5,high:12,smoothing:.75,enabled:true,points:[[0,2.5],[.5,7],[1,12]]}
+  ]},
+  {id:'acceleration',label:'Acceleration',icon:'A',desc:'Velocity change',value:.21,routes:[{id:'acc-jitter',target:'Jitter',unit:'',min:0,max:1,low:.02,high:.66,smoothing:.8,enabled:true,points:[[0,.02],[.62,.18],[1,.66]]}]},
+  {id:'curvature',label:'Curvature',icon:'C',desc:'Stroke turning',value:.48,routes:[{id:'curve-wander',target:'Wander',unit:'',min:0,max:1,low:.1,high:.85,smoothing:.8,enabled:true,points:[[0,.1],[.4,.25],[1,.85]]}]},
+  {id:'tilt',label:'Tilt',icon:'T',desc:'Pen angle',value:.31,routes:[{id:'tilt-alignment',target:'Alignment',unit:'',min:0,max:1,low:.15,high:.78,smoothing:.7,enabled:true,points:[[0,.15],[.5,.58],[1,.78]]}]},
+  {id:'direction',label:'Direction',icon:'D',desc:'Stroke heading',value:.72,routes:[{id:'direction-flow',target:'Flow Field',unit:'',min:0,max:1,low:0,high:.8,smoothing:.65,enabled:false,points:[[0,0],[.5,.45],[1,.8]]}]},
+  {id:'twist',label:'Twist',icon:'W',desc:'Barrel rotation',value:.12,routes:[{id:'twist-individuality',target:'Individuality',unit:'',min:0,max:1,low:0,high:1,smoothing:.7,enabled:false,points:[[0,0],[1,1]]}]}
+];
+const factorySources=JSON.parse(JSON.stringify(sources));
+let savedSources=JSON.parse(JSON.stringify(sources));
+let activeSource=sources[0],activeRoute=null,draftPoints=[],selectedPoint=0,toastTimer;
+const $=id=>document.getElementById(id);
+const clonePoints=points=>points.map(point=>[...point]);
+const format=(value,route)=>route.unit==='px'?`${value.toFixed(1)} px`:route.unit==='%'?`${Math.round(value)}%`:value.toFixed(2);
+function interpolate(points,x){
+  const sorted=[...points].sort((a,b)=>a[0]-b[0]);
+  if(x<=sorted[0][0])return sorted[0][1];if(x>=sorted.at(-1)[0])return sorted.at(-1)[1];
+  for(let i=1;i<sorted.length;i++)if(x<=sorted[i][0]){const a=sorted[i-1],b=sorted[i],t=(x-a[0])/(b[0]-a[0]);return a[1]+(b[1]-a[1])*t}
+  return sorted.at(-1)[1];
+}
+function showToast(message){$('toast').textContent=message;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),1600)}
+function restoreSources(snapshot){
+  const activeId=activeSource.id;
+  sources.splice(0,sources.length,...JSON.parse(JSON.stringify(snapshot)));
+  activeSource=sources.find(source=>source.id===activeId)||sources[0];
+  render();
+}
+function renderNav(){
+  $('sourceNav').innerHTML=sources.map(source=>`<button class="source-btn ${source===activeSource?'active':''}" data-source="${source.id}"><span class="source-icon">${source.icon}</span><span class="source-copy"><strong>${source.label}</strong><small>${source.desc}</small></span><span class="count">${source.routes.length}</span></button>`).join('');
+  document.querySelectorAll('[data-source]').forEach(button=>button.onclick=()=>{activeSource=sources.find(source=>source.id===button.dataset.source);render()});
+}
+function routeCard(route){
+  const value=interpolate(route.points,activeSource.value);
+  return `<article class="route-card ${route.enabled?'':'disabled'}" data-route="${route.id}">
+    <div class="route-info">
+      <div class="route-heading"><div class="route-title"><strong>${route.target}</strong></div><label class="switch" title="Enable route"><input class="route-enable" type="checkbox" ${route.enabled?'checked':''}><span></span></label></div>
+      <div class="compact-controls">
+        <label class="field">Output low<input class="route-low" type="number" min="${route.min}" max="${route.max}" step="${route.max<=1?.01:1}" value="${route.low}"></label>
+        <label class="field">Output high<input class="route-high" type="number" min="${route.min}" max="${route.max}" step="${route.max<=1?.01:1}" value="${route.high}"></label>
+        <label class="field">Smoothing<input class="route-smoothing" type="number" min="0" max=".95" step=".05" value="${route.smoothing}"></label>
+        <label class="field">Mode<select><option>Absolute</option><option>Relative</option></select></label>
+      </div>
+      <div class="result"><span>Live</span><div class="result-track"><div class="result-fill" style="width:${Math.max(0,Math.min(100,(value-route.min)/(route.max-route.min)*100))}%"></div></div><output>${format(value,route)}</output></div>
+    </div>
+    <div class="route-visual"><button class="curve-preview" data-open-curve="${route.id}" aria-label="Edit ${activeSource.label} to ${route.target} curve"><canvas></canvas><span class="edit-cue">Edit curve</span></button></div>
+  </article>`;
+}
+function bindRoutes(){
+  document.querySelectorAll('[data-route]').forEach(card=>{
+    const route=activeSource.routes.find(item=>item.id===card.dataset.route);
+    card.querySelector('.route-enable').onchange=event=>{route.enabled=event.target.checked;renderRoutes()};
+    for(const [selector,key] of [['.route-low','low'],['.route-high','high'],['.route-smoothing','smoothing']])card.querySelector(selector).onchange=event=>{route[key]=Number(event.target.value);if(key==='low')route.points[0][1]=route.low;if(key==='high')route.points.at(-1)[1]=route.high;renderRoutes()};
+  });
+  document.querySelectorAll('[data-open-curve]').forEach(button=>button.onclick=()=>openCurve(activeSource.routes.find(route=>route.id===button.dataset.openCurve)));
+  drawPreviews();
+}
+function renderRoutes(){
+  $('routeList').innerHTML=activeSource.routes.map(routeCard).join('')+'<button class="add-route" id="addRoute">+ Add route</button>';
+  bindRoutes();$('addRoute').onclick=()=>showToast('Route picker would open here');
+}
+function render(){renderNav();$('workspaceTitle').textContent=activeSource.label;$('workspaceSubtitle').textContent=activeSource.desc;$('inputValue').textContent=activeSource.value.toFixed(2);$('inputFill').style.width=`${activeSource.value*100}%`;renderRoutes()}
+function setupCanvas(canvas,height){const dpr=Math.max(1,devicePixelRatio||1),rect=canvas.getBoundingClientRect(),width=Math.max(100,rect.width);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return{ctx,width,height}}
+function drawCurve(canvas,route,points=route.points,large=false){
+  const height=canvas.getBoundingClientRect().height||112,{ctx,width}=setupCanvas(canvas,height),pad=large?34:12,innerW=width-pad*2,innerH=height-pad*2;
+  ctx.clearRect(0,0,width,height);ctx.strokeStyle='rgba(255,255,255,.055)';ctx.lineWidth=1;
+  for(let i=1;i<4;i++){ctx.beginPath();ctx.moveTo(pad,pad+innerH*i/4);ctx.lineTo(width-pad,pad+innerH*i/4);ctx.stroke();ctx.beginPath();ctx.moveTo(pad+innerW*i/4,pad);ctx.lineTo(pad+innerW*i/4,height-pad);ctx.stroke()}
+  const yOf=value=>pad+innerH-(value-route.min)/(route.max-route.min)*innerH,xOf=value=>pad+value*innerW;
+  ctx.beginPath();for(let step=0;step<=120;step++){const x=step/120,y=interpolate(points,x);step?ctx.lineTo(xOf(x),yOf(y)):ctx.moveTo(xOf(x),yOf(y))}ctx.strokeStyle='#72a0ff';ctx.lineWidth=large?3:2;ctx.stroke();
+  const liveX=xOf(activeSource.value),liveY=yOf(interpolate(points,activeSource.value));ctx.setLineDash([3,4]);ctx.strokeStyle='rgba(139,179,255,.4)';ctx.beginPath();ctx.moveTo(liveX,height-pad);ctx.lineTo(liveX,liveY);ctx.stroke();ctx.setLineDash([]);
+  points.forEach((point,index)=>{ctx.beginPath();ctx.arc(xOf(point[0]),yOf(point[1]),large?(index===selectedPoint?7:5):3.5,0,Math.PI*2);ctx.fillStyle=large&&index===selectedPoint?'#fff':'#8bb3ff';ctx.fill();if(large&&index===selectedPoint){ctx.strokeStyle='#3a6ae8';ctx.lineWidth=3;ctx.stroke()}});
+  if(large){ctx.fillStyle='#778298';ctx.font='10px Segoe UI';ctx.fillText('0',pad,height-11);ctx.fillText('1',width-pad-5,height-11);ctx.fillText(format(route.max,route),7,pad+3);ctx.fillText(format(route.min,route),7,height-pad+3)}
+}
+function drawPreviews(){document.querySelectorAll('[data-open-curve]').forEach(button=>{const route=activeSource.routes.find(item=>item.id===button.dataset.openCurve);drawCurve(button.querySelector('canvas'),route)})}
+function openCurve(route){activeRoute=route;draftPoints=clonePoints(route.points);selectedPoint=Math.min(1,draftPoints.length-1);$('curveTitle').textContent=`${activeSource.label} to ${route.target}`;$('curveModal').classList.add('open');syncCurveEditor()}
+function syncCurveEditor(){if(!activeRoute)return;drawCurve($('curveEditor'),activeRoute,draftPoints,true);const point=draftPoints[selectedPoint];$('pointX').value=point[0].toFixed(2);$('pointY').value=point[1].toFixed(activeRoute.max<=1?2:1);$('curveLiveResult').value=format(interpolate(draftPoints,activeSource.value),activeRoute);$('curveDelete').disabled=draftPoints.length<=2||selectedPoint===0||selectedPoint===draftPoints.length-1}
+function closeCurve(){ $('curveModal').classList.remove('open');activeRoute=null }
+function canvasPoint(event){const canvas=$('curveEditor'),rect=canvas.getBoundingClientRect(),pad=34,x=Math.max(0,Math.min(1,(event.clientX-rect.left-pad)/(rect.width-pad*2))),normalizedY=Math.max(0,Math.min(1,1-(event.clientY-rect.top-pad)/(rect.height-pad*2)));return[x,activeRoute.min+normalizedY*(activeRoute.max-activeRoute.min)]}
+let dragging=false;
+$('curveEditor').addEventListener('pointerdown',event=>{if(!activeRoute)return;const [x,y]=canvasPoint(event);let closest=0,distance=Infinity;draftPoints.forEach((point,index)=>{const next=Math.hypot((point[0]-x)*2,(point[1]-y)/(activeRoute.max-activeRoute.min));if(next<distance){distance=next;closest=index}});selectedPoint=closest;dragging=true;$('curveEditor').setPointerCapture(event.pointerId);syncCurveEditor()});
+$('curveEditor').addEventListener('pointermove',event=>{if(!dragging||!activeRoute)return;let[x,y]=canvasPoint(event);if(selectedPoint===0)x=0;else if(selectedPoint===draftPoints.length-1)x=1;else{x=Math.max(draftPoints[selectedPoint-1][0]+.02,Math.min(draftPoints[selectedPoint+1][0]-.02,x))}draftPoints[selectedPoint]=[x,y];syncCurveEditor()});
+$('curveEditor').addEventListener('pointerup',()=>dragging=false);
+for(const [id,index] of [['pointX',0],['pointY',1]])$(id).onchange=event=>{let value=Number(event.target.value);if(index===0){if(selectedPoint===0)value=0;else if(selectedPoint===draftPoints.length-1)value=1;else value=Math.max(draftPoints[selectedPoint-1][0]+.02,Math.min(draftPoints[selectedPoint+1][0]-.02,value))}else value=Math.max(activeRoute.min,Math.min(activeRoute.max,value));draftPoints[selectedPoint][index]=value;syncCurveEditor()};
+$('curveAdd').onclick=()=>{if(draftPoints.length>=8)return showToast('Maximum 8 points');const x=.5,y=interpolate(draftPoints,x);draftPoints.push([x,y]);draftPoints.sort((a,b)=>a[0]-b[0]);selectedPoint=draftPoints.findIndex(point=>point[0]===x&&point[1]===y);syncCurveEditor()};
+$('curveDelete').onclick=()=>{if(selectedPoint>0&&selectedPoint<draftPoints.length-1){draftPoints.splice(selectedPoint,1);selectedPoint=Math.max(0,selectedPoint-1);syncCurveEditor()}};
+$('curveReset').onclick=()=>{draftPoints=[[0,activeRoute.low],[1,activeRoute.high]];selectedPoint=0;syncCurveEditor()};
+$('curveApply').onclick=()=>{activeRoute.points=clonePoints(draftPoints);activeRoute.low=activeRoute.points[0][1];activeRoute.high=activeRoute.points.at(-1)[1];closeCurve();renderRoutes();showToast('Curve applied')};
+$('curveCancel').onclick=$('curveClose').onclick=closeCurve;
+$('resetInput').onclick=()=>{const factory=factorySources.find(source=>source.id===activeSource.id);activeSource.routes=JSON.parse(JSON.stringify(factory.routes));renderRoutes();showToast(`${activeSource.label} restored to defaults`)};
+$('resetAll').onclick=()=>{restoreSources(factorySources);showToast('All routes restored to defaults')};
+$('cancelBtn').onclick=()=>{restoreSources(savedSources);showToast('Changes discarded')};
+$('saveBtn').onclick=()=>{savedSources=JSON.parse(JSON.stringify(sources));showToast('Modulation settings saved')};
+$('curveModal').addEventListener('click',event=>{if(event.target===$('curveModal'))closeCurve()});
+document.querySelector('.modal-header .icon-btn').onclick=()=>showToast('Prototype modal closed');
+$('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({format:'modMatrix.prototype',sources},null,2)],{type:'application/json'}),link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='boid-brush-input-modulation.json';link.click();URL.revokeObjectURL(link.href);showToast('Configuration exported')};
+document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{document.querySelectorAll('[data-view]').forEach(item=>item.classList.toggle('active',item===button));showToast(button.dataset.view==='parameter'?'Parameter view preview':'Input view preview')});
+window.addEventListener('resize',()=>{drawPreviews();if(activeRoute)syncCurveEditor()});
+render();
+</script>
+<script>
+const productionChannels=[
+  ['constant','Constant'],['pressure','Pressure'],['speed','Speed'],['acceleration','Acceleration'],['curvature','Curvature'],['direction','Direction'],['tilt','Tilt'],['altitude','Altitude'],['azimuth','Azimuth'],['twist','Twist'],['contactSize','Contact Size'],['touchCount','Touch Count']
+];
+const productionTargets=[
+  ['seek','Seek','Forces',0,1],['cohesion','Cohesion','Forces',0,1],['separation','Separation','Forces',0,1],['alignment','Alignment','Forces',0,1],['jitter','Jitter','Forces',0,1],['wander','Wander','Forces',0,1],['wanderSpeed','Wander Speed','Forces',.01,1],['flowField','Flow Field','Forces',0,1],['flowScale','Flow Scale','Forces',.001,.1],['fleeRadius','Flee Radius','Forces',0,150],['fov','Field of View','Forces',30,360],['individuality','Individuality','Forces',0,1],['maxSpeed','Max Speed','Motion',.5,15],['damping','Damping','Motion',.8,1],['neighborRadius','Neighbor Radius','Motion',10,200],['separationRadius','Separation Radius','Motion',5,100],['quorumThreshold','Quorum Threshold','Quorum',0,100],['quorumCompositeStrength','Quorum Composite','Quorum',0,1],['sensingStrength','Sensing Strength','Sensing',0,1],['sensingRadius','Sensing Radius','Sensing',5,80],['sensingThreshold','Sensing Threshold','Sensing',0,1]
+].map(([id,label,section,min,max])=>({id,label,section,min,max}));
+const productionOps=[['gt','>'],['lt','<'],['between','between'],['outside','outside']];
+const channelDefaults={constant:[0,0],pressure:[.75,0],speed:[.75,.02],acceleration:[.8,.04],curvature:[.8,.04],direction:[.65,0],tilt:[.7,0],altitude:[.7,0],azimuth:[.7,0],twist:[.7,0],contactSize:[.7,0],touchCount:[0,0]};
+let productionRoutes=[
+  {id:'r-pressure-cohesion',enabled:true,source:'pressure',target:'cohesion',priority:0,points:[[0,.08],[.4,.22],[1,.72]],conditions:[]},
+  {id:'r-speed-max-speed',enabled:true,source:'speed',target:'maxSpeed',priority:0,points:[[0,2.5],[.5,7],[1,12]],conditions:[]}
+];
+let selectedProductionRoute=productionRoutes[0].id;
+const channelTuning={};
+const targetSpec=id=>productionTargets.find(target=>target.id===id);
+const channelLabel=id=>productionChannels.find(channel=>channel[0]===id)?.[1]||id;
+const optionMarkup=(items,selected)=>items.map(item=>`<option value="${item[0]}"${item[0]===selected?' selected':''}>${item[1]}</option>`).join('');
+const targetOptions=selected=>productionTargets.map(target=>`<option value="${target.id}"${target.id===selected?' selected':''}>${target.section} · ${target.label}</option>`).join('');
+const nativeStep=target=>target.max-target.min<=.2?.001:target.max-target.min<=2?.01:target.max-target.min<=20?.1:1;
+const nativeFormat=(target,value)=>Number(value).toFixed(target.max-target.min<=.2?3:target.max-target.min<=2?2:target.max-target.min<=20?1:0);
+
+const productionModal=document.querySelector('.modal');
+productionModal.classList.add('production-mod');
+productionModal.innerHTML=`
+  <header class="modal-header"><div class="title"><h1>Input Modulation</h1><p>Map live input channels directly to final boid-setting values. Each curve point stores the exact target value for that input level.</p></div><button class="icon-btn" id="productionClose" type="button" aria-label="Close">&times;</button></header>
+  <div class="modal-body"><aside class="route-pane"><div id="productionRouteList"></div><button class="add-route" id="productionAddRoute" type="button">+ Add Route</button></aside><section class="detail-pane"><div id="productionDetail"></div><div class="section-label">Channel Tuning</div><div class="channel-list" id="productionChannels"></div><div class="section-label">Diagnostics</div><pre class="diagnostics" id="productionDiagnostics"></pre></section></div>
+  <footer class="modal-footer"><span class="live-copy">Changes apply live - there is no separate Save step.</span><button class="btn primary" id="productionDone" type="button">Done</button></footer>`;
+document.querySelector('.curve-modal')?.remove();
+
+function renderProductionRouteList(){
+  const list=document.getElementById('productionRouteList');
+  list.innerHTML=productionRoutes.length?productionRoutes.map((route,index)=>`<button class="route-chip${route.id===selectedProductionRoute?' active':''}" data-select-route="${route.id}" type="button"><span class="route-chip-dot"></span><span class="route-chip-label">${index+1}. ${channelLabel(route.source)} → ${targetSpec(route.target).label}</span><span class="route-chip-delete" data-delete-route="${route.id}" title="Delete route">&times;</span></button>`).join(''):'<span class="detail-note">No routes. Add one to drive a boid parameter from a live input channel.</span>';
+}
+function conditionMarkup(route,condition,index){
+  const second=condition.op==='between'||condition.op==='outside';
+  return `<div class="condition-row"><span>When</span><select data-condition="${index}" data-condition-prop="channel">${optionMarkup(productionChannels,condition.channel)}</select><select data-condition="${index}" data-condition-prop="op">${optionMarkup(productionOps,condition.op)}</select><input type="number" min="0" max="1" step=".05" value="${condition.value}" data-condition="${index}" data-condition-prop="value" aria-label="Condition threshold">${second?`<input type="number" min="0" max="1" step=".05" value="${condition.value2}" data-condition="${index}" data-condition-prop="value2" aria-label="Condition upper threshold">`:''}<button class="condition-delete" data-delete-condition="${index}" type="button" title="Remove condition">&times;</button></div>`;
+}
+function renderProductionDetail(){
+  const route=productionRoutes.find(item=>item.id===selectedProductionRoute);
+  const detail=document.getElementById('productionDetail');
+  if(!route){detail.innerHTML='<span class="detail-note">Select a route on the left, or add a new one, to edit its source, target, curve, and priority.</span>';renderProductionTuning();renderProductionDiagnostics();return}
+  const index=productionRoutes.indexOf(route),target=targetSpec(route.target),point=route.points[route.activePoint||0];
+  detail.innerHTML=`<div class="detail-card" data-production-route="${route.id}">
+    <div class="detail-head"><strong>Route ${index+1}</strong><span class="route-status">active · input 0.64 · value ${nativeFormat(target,interpolate(route.points,.64))}</span><label class="on-check">On <input id="productionEnabled" type="checkbox"${route.enabled?' checked':''}></label><button class="route-delete" data-delete-route="${route.id}" type="button" title="Delete route">&times;</button></div>
+    <div class="detail-row"><span>Source</span><select id="productionSource">${optionMarkup(productionChannels,route.source)}</select><span>Target</span><select id="productionTarget">${targetOptions(route.target)}</select></div>
+    <canvas class="inline-curve" id="productionCurve" width="520" height="300" aria-label="Route ${index+1} target value curve"></canvas>
+    <div class="curve-axis"><span>Input 0</span><span>${nativeFormat(target,target.min)} … ${nativeFormat(target,target.max)} ${target.label}</span><span>Input 1</span></div>
+    <div class="point-fields"><label>Selected input <input id="productionPointInput" type="number" min="0" max="1" step=".01" value="${point[0].toFixed(2)}"${(route.activePoint||0)===0||(route.activePoint||0)===route.points.length-1?' disabled':''}></label><label>${target.label} value <input id="productionPointValue" type="number" min="${target.min}" max="${target.max}" step="${nativeStep(target)}" value="${nativeFormat(target,point[1])}"></label></div>
+    <span class="detail-note">The curve directly sets ${target.label} in its normal range. Drag or tap to add a point, select it for an exact value, and double-click an inner point to remove it.</span>
+    <div class="curve-actions"><button class="btn" id="productionResetCurve" type="button">Reset Curve</button><div class="detail-row"><span>Priority</span><input id="productionPriority" type="number" min="-99" max="99" step="1" value="${route.priority}"></div></div>
+    <div class="condition-list">${route.conditions.map((condition,conditionIndex)=>conditionMarkup(route,condition,conditionIndex)).join('')}</div>${route.conditions.length<3?'<button class="btn" id="productionAddCondition" type="button">+ Condition</button>':''}
+  </div>`;
+  wireProductionDetail(route);renderProductionTuning();renderProductionDiagnostics();drawProductionCurve(route);
+}
+function drawProductionCurve(route){
+  const canvas=document.getElementById('productionCurve');if(!canvas)return;const target=targetSpec(route.target),dpr=Math.max(1,devicePixelRatio||1),width=Math.max(180,canvas.getBoundingClientRect().width),height=150,pad=12;
+  canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);const context=canvas.getContext('2d');context.setTransform(dpr,0,0,dpr,0,0);context.clearRect(0,0,width,height);const graphW=width-pad*2,graphH=height-pad*2,xOf=x=>pad+x*graphW,yOf=y=>pad+(1-(y-target.min)/(target.max-target.min))*graphH;
+  context.strokeStyle='rgba(255,255,255,.08)';context.lineWidth=1;for(let i=0;i<=4;i++){const x=pad+graphW*i/4,y=pad+graphH*i/4;context.beginPath();context.moveTo(x,pad);context.lineTo(x,height-pad);context.stroke();context.beginPath();context.moveTo(pad,y);context.lineTo(width-pad,y);context.stroke()}
+  context.beginPath();for(let i=0;i<=120;i++){const x=i/120,y=interpolate(route.points,x);i?context.lineTo(xOf(x),yOf(y)):context.moveTo(xOf(x),yOf(y))}context.strokeStyle='#6d9cff';context.lineWidth=2;context.stroke();route.points.forEach(([x,y],index)=>{context.beginPath();context.arc(xOf(x),yOf(y),index===(route.activePoint||0)?6:5,0,Math.PI*2);context.fillStyle=index===(route.activePoint||0)?'#fff':'#8bb3ff';context.fill();context.strokeStyle='#17233a';context.lineWidth=2;context.stroke()});
+}
+function curvePoint(event,route){const rect=event.currentTarget.getBoundingClientRect(),target=targetSpec(route.target),pad=12,x=Math.max(0,Math.min(1,(event.clientX-rect.left-pad)/(rect.width-pad*2))),normal=Math.max(0,Math.min(1,1-(event.clientY-rect.top-pad)/(rect.height-pad*2)));return[x,target.min+normal*(target.max-target.min)]}
+function wireProductionDetail(route){
+  document.getElementById('productionEnabled').onchange=event=>{route.enabled=event.target.checked;renderProductionRouteList();renderProductionDiagnostics()};
+  document.getElementById('productionSource').onchange=event=>{route.source=event.target.value;renderProduction()};
+  document.getElementById('productionTarget').onchange=event=>{route.target=event.target.value;const target=targetSpec(route.target);route.points=[[0,target.min],[1,target.max]];route.activePoint=0;renderProduction()};
+  document.getElementById('productionPriority').onchange=event=>{route.priority=Math.max(-99,Math.min(99,Number(event.target.value)));renderProductionDiagnostics()};
+  document.getElementById('productionResetCurve').onclick=()=>{const target=targetSpec(route.target);route.points=[[0,target.min],[1,target.max]];route.activePoint=0;renderProductionDetail()};
+  document.getElementById('productionAddCondition')?.addEventListener('click',()=>{route.conditions.push({channel:route.source,op:'gt',value:.5,value2:1});renderProductionDetail()});
+  document.querySelectorAll('[data-condition-prop]').forEach(control=>control.onchange=event=>{const condition=route.conditions[Number(event.target.dataset.condition)],prop=event.target.dataset.conditionProp;condition[prop]=prop==='channel'||prop==='op'?event.target.value:Number(event.target.value);renderProductionDetail()});
+  document.querySelectorAll('[data-delete-condition]').forEach(button=>button.onclick=()=>{route.conditions.splice(Number(button.dataset.deleteCondition),1);renderProductionDetail()});
+  const updatePoint=(coordinate,value)=>{const index=route.activePoint||0,target=targetSpec(route.target);if(coordinate===0&&index>0&&index<route.points.length-1)route.points[index][0]=Math.max(route.points[index-1][0]+.002,Math.min(route.points[index+1][0]-.002,value));if(coordinate===1)route.points[index][1]=Math.max(target.min,Math.min(target.max,value));renderProductionDetail()};
+  document.getElementById('productionPointInput').onchange=event=>updatePoint(0,Number(event.target.value));document.getElementById('productionPointValue').onchange=event=>updatePoint(1,Number(event.target.value));
+  const canvas=document.getElementById('productionCurve');canvas.onpointerdown=event=>{const [x,y]=curvePoint(event,route);let nearest=0,distance=Infinity;route.points.forEach((point,index)=>{const next=Math.hypot(point[0]-x,(point[1]-y)/(targetSpec(route.target).max-targetSpec(route.target).min));if(next<distance){nearest=index;distance=next}});if(distance>.12&&route.points.length<8){route.points.push([x,y]);route.points.sort((a,b)=>a[0]-b[0]);nearest=route.points.findIndex(point=>point[0]===x&&point[1]===y)}route.activePoint=nearest;renderProductionDetail()};
+  canvas.ondblclick=event=>{const [x,y]=curvePoint(event,route);let nearest=-1,distance=.12;route.points.forEach((point,index)=>{const next=Math.hypot(point[0]-x,(point[1]-y)/(targetSpec(route.target).max-targetSpec(route.target).min));if(next<distance){nearest=index;distance=next}});if(nearest>0&&nearest<route.points.length-1){route.points.splice(nearest,1);route.activePoint=0;renderProductionDetail()}};
+}
+function renderProductionTuning(){
+  const used=[...new Set(productionRoutes.flatMap(route=>[route.source,...route.conditions.map(condition=>condition.channel)]).filter(id=>id!=='constant'))];
+  document.getElementById('productionChannels').innerHTML=used.length?used.map(id=>{const defaults=channelDefaults[id],tuning=channelTuning[id]||{smoothing:defaults[0],deadzone:defaults[1]};return `<div class="channel-row"><span>${channelLabel(id)}</span><span>Smooth</span><input type="number" min="0" max=".95" step=".05" value="${tuning.smoothing}" data-channel="${id}" data-tuning="smoothing"><span>Dead</span><input type="number" min="0" max=".9" step=".02" value="${tuning.deadzone}" data-channel="${id}" data-tuning="deadzone"></div>`}).join(''):'<span class="detail-note">Channel smoothing and deadzones appear here once a route uses a channel.</span>';
+  document.querySelectorAll('[data-tuning]').forEach(input=>input.onchange=event=>{const id=event.target.dataset.channel,defaults=channelDefaults[id];channelTuning[id]||={smoothing:defaults[0],deadzone:defaults[1]};channelTuning[id][event.target.dataset.tuning]=Number(event.target.value)});
+}
+function renderProductionDiagnostics(){const lines=productionRoutes.map(route=>`${route.enabled?'✓':'·'} ${route.id} ${route.source} → ${route.target} [p${route.priority}] ${route.enabled?'input 0.64':'disabled'}`);lines.push(`— ${productionRoutes.filter(route=>route.enabled).length} active / ${productionRoutes.filter(route=>!route.enabled).length} skipped`);document.getElementById('productionDiagnostics').textContent=lines.join('\n')}
+function renderProduction(){if(!productionRoutes.some(route=>route.id===selectedProductionRoute))selectedProductionRoute=productionRoutes[0]?.id||null;renderProductionRouteList();renderProductionDetail()}
+productionModal.onclick=event=>{const deleteButton=event.target.closest('[data-delete-route]');if(deleteButton){productionRoutes=productionRoutes.filter(route=>route.id!==deleteButton.dataset.deleteRoute);renderProduction();return}const chip=event.target.closest('[data-select-route]');if(chip){selectedProductionRoute=chip.dataset.selectRoute;renderProduction()}};
+document.getElementById('productionAddRoute').onclick=()=>{const id=`r${Date.now().toString(36)}`;productionRoutes.push({id,enabled:true,source:'pressure',target:'cohesion',priority:Math.max(-1,...productionRoutes.filter(route=>route.target==='cohesion').map(route=>route.priority))+1,points:[[0,.5],[1,.5]],conditions:[]});selectedProductionRoute=id;renderProduction()};
+document.getElementById('productionDone').onclick=document.getElementById('productionClose').onclick=()=>showToast('Prototype modal closed');
+window.addEventListener('resize',()=>{const route=productionRoutes.find(item=>item.id===selectedProductionRoute);if(route)drawProductionCurve(route)});
+renderProduction();
+</script>
+</body>
+</html>

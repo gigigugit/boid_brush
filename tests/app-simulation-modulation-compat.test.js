@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 
 import { App } from '../app.js';
 import { BoidBrush } from '../brushes.js';
-import { FeatureTracker, MOD_MATRIX_FORMAT, MOD_MATRIX_VERSION, createModRoute } from '../boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
+import { FeatureTracker, MOD_MATRIX_FORMAT, MOD_MATRIX_VERSION, createModRoute } from '../boid-input-modulation.js?v=2026-09-10-edge-overlay-cache-bust';
 
 /** One-route matrix gating on a Pencil-only channel (pressure), matching how
  *  a user would wire "boid cohesion follows stylus pressure". */
