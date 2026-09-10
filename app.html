@@ -626,11 +626,15 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
   .sim-distribute-grid{grid-template-columns:1fr;}
 }
 
-/* Edge sliders - left side quick controls */
+/* Edge sliders - configurable quick controls on either canvas edge */
 #edgeSliders,#edgeSliders *{touch-action:none;}
-#edgeSliders{position:fixed;left:0;top:var(--topbar-h);bottom:var(--status-h);z-index:15;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:16px;pointer-events:none;padding-left:8px;}
+#edgeSliders{position:fixed;inset:var(--topbar-h) 0 var(--status-h);z-index:15;pointer-events:none;}
+.edge-slider-bank{position:absolute;top:50%;display:grid;grid-auto-flow:column;grid-template-rows:repeat(4,max-content);gap:8px;transform:translateY(-50%);pointer-events:none;}
+.edge-slider-bank[data-edge="left"]{left:8px;}
+.edge-slider-bank[data-edge="right"]{right:8px;}
 .edge-slider{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:36px;background:rgba(0,0,0,0.35);border-radius:0 10px 10px 0;padding:10px 6px 6px;cursor:pointer;}
-.edge-slider-track{width:4px;height:120px;background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
+.edge-slider-bank[data-edge="right"] .edge-slider{border-radius:10px 0 0 10px;}
+.edge-slider-track{width:4px;height:clamp(64px,11vh,120px);background:rgba(255,255,255,0.1);border-radius:2px;position:relative;pointer-events:none;}
 .edge-slider-fill{position:absolute;bottom:0;left:0;right:0;background:rgba(200,210,255,0.4);border-radius:2px;pointer-events:none;}
 .edge-slider-thumb{position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;left:50%;transform:translate(-50%,50%);box-shadow:0 1px 4px rgba(0,0,0,0.5);pointer-events:none;}
 .edge-slider-label{font-size:8px;color:var(--ink-2);text-transform:uppercase;letter-spacing:0.5px;text-align:center;margin-top:2px;pointer-events:none;font-weight:600;}
@@ -1216,33 +1220,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <span class="sim-status sim-force-viz-status" id="simForceVizStatus" style="display:none;"></span>
 </div>
 
-<!-- Left Edge Sliders -->
-<div id="edgeSliders">
-  <div class="edge-slider" data-param="brushScale" data-min="10" data-max="300">
-    <div class="edge-slider-track">
-      <div class="edge-slider-fill"></div>
-      <div class="edge-slider-thumb"></div>
-    </div>
-    <div class="edge-slider-label">Scale</div>
-    <div class="edge-slider-value">1.0</div>
-  </div>
-  <div class="edge-slider" data-param="stampOpacity" data-min="1" data-max="100">
-    <div class="edge-slider-track">
-      <div class="edge-slider-fill"></div>
-      <div class="edge-slider-thumb"></div>
-    </div>
-    <div class="edge-slider-label">Opacity</div>
-    <div class="edge-slider-value">0.15</div>
-  </div>
-  <div class="edge-slider" data-param="seek" data-sim-var="seek" data-sim-var-scale="0.01" data-min="0" data-max="100" data-sim-only="1" hidden>
-    <div class="edge-slider-track">
-      <div class="edge-slider-fill"></div>
-      <div class="edge-slider-thumb"></div>
-    </div>
-    <div class="edge-slider-label">Seek</div>
-    <div class="edge-slider-value">0.75</div>
-  </div>
-</div>
+<!-- Configurable Edge Overlay Controls (rendered from ui.js) -->
+<div id="edgeSliders" aria-label="Edge overlay controls"></div>
 
 <!-- ══════════ Layers Panel (left) ══════════ -->
 <div class="panel-tabs panel-tabs--left" id="leftPanelTabs">
