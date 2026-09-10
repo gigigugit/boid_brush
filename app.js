@@ -7,7 +7,7 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-08-absolute-modulation-curves';
+import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -18,11 +18,11 @@ import {
   evaluateModMatrix,
   isEmptyModMatrix,
   parseModMatrix,
-} from './boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
+} from './boid-input-modulation.js?v=2026-09-10-edge-overlay-cache-bust';
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-08-absolute-modulation-curves';
+const APP_BUILD_ID = '2026-09-10-edge-overlay-cache-bust';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
