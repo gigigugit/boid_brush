@@ -460,7 +460,7 @@ function _buildLeaderOverrideControl(field) {
 
 function _buildLeaderOverrideRows() {
   return LEADER_OVERRIDE_FIELDS.map(field => `
-    <div data-leader-field="${field.key}" style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
+    <div data-leader-field="${field.key}"${field.key.startsWith('quorum') ? ' data-alpha-feature' : ''} style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
       <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;">
         <span>${field.label}</span>
         <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#9fb0c6;">Override <input type="checkbox" id="${field.overrideId}" data-leader-target="${field.id}" data-leader-source="${field.sourceId}"></span>
@@ -553,7 +553,12 @@ function _modSelect(dataAttrs, options, selected) {
 }
 
 const _MOD_CHANNEL_OPTIONS = FEATURE_CHANNELS.map(channel => ({ value: channel.id, label: channel.label }));
-const _MOD_TARGET_OPTIONS = MOD_TARGETS.map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
+const _isQuorumTarget = target => target?.id === 'quorumThreshold' || target?.id === 'quorumCompositeStrength';
+const _alphaFeaturesVisible = () => !!document.getElementById('showAlphaFeatures')?.checked;
+const _isAlphaBrush = brush => ['ant', 'motionPath', 'fluid', 'fluid3d'].includes(brush);
+const _modTargetOptions = () => MOD_TARGETS
+  .filter(target => _alphaFeaturesVisible() || !_isQuorumTarget(target))
+  .map(target => ({ value: target.id, label: `${target.section} · ${target.label}` }));
 const _MOD_CONDITION_OPTIONS = MOD_CONDITION_OPS.map(op => ({ value: op.id, label: op.label }));
 const _MOD_EDITOR_CHANNEL_IDS = ['pressure', 'speed', 'acceleration', 'curvature', 'tilt', 'direction', 'altitude', 'azimuth', 'twist', 'contactSize', 'touchCount', 'constant'];
 const _MOD_EDITOR_CHANNELS = _MOD_EDITOR_CHANNEL_IDS.map(getFeatureChannel).filter(Boolean);
@@ -702,7 +707,7 @@ function _buildModRouteCard(route, index, report) {
             <span style="flex:0 0 44px;">Source</span>
             ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="source"`, _MOD_CHANNEL_OPTIONS, route.source)}
             <span style="flex:0 0 40px;text-align:right;">Target</span>
-            ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _MOD_TARGET_OPTIONS, route.target)}
+            ${_modSelect(`data-mod-route="${route.id}" data-mod-prop="target"`, _modTargetOptions(), route.target)}
           </div>
           ${routeControls}
         </div>
@@ -725,7 +730,8 @@ function _renderModRouteList(app) {
   _modReconcileSelection();
   container.innerHTML = _MOD_EDITOR_CHANNELS.map(channel => _buildModSourceChip(
     channel,
-    matrix.routes.filter(route => route.source === channel.id).length,
+    matrix.routes.filter(route => route.source === channel.id
+      && (_alphaFeaturesVisible() || !_isQuorumTarget(resolveModTarget(route.target)))).length,
     channel.id === _modSelectedSourceId,
   )).join('');
   const addBtn = document.getElementById('modAddRouteBtn');
@@ -747,7 +753,8 @@ function _renderModRouteDetail(app) {
   if (description) description.textContent = channel?.description || '';
   const routes = matrix.routes
     .map((route, index) => ({ route, index }))
-    .filter(entry => entry.route.source === _modSelectedSourceId);
+    .filter(entry => entry.route.source === _modSelectedSourceId
+      && (_alphaFeaturesVisible() || !_isQuorumTarget(resolveModTarget(entry.route.target))));
   const reports = new Map();
   for (const report of app?.getModulationSnapshot?.()?.diagnostics?.routes || []) reports.set(report.id, report);
   container.innerHTML = routes.length
@@ -1372,8 +1379,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Quorum (boid only) -->
-    <div class="section-header closed" data-brushes="boid" data-section="quorum">Quorum <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid">
+    <div class="section-header closed" data-brushes="boid" data-section="quorum" data-alpha-feature>Quorum <span class="chevron">▼</span></div>
+    <div class="section-body collapsed" data-brushes="boid" data-alpha-feature>
       ${sliderRow('quorumThreshold', 'Threshold', 0, 100, 0, v => v === 0 ? 'off' : v, 'Neighbors required before a local boid group becomes a quorum')}
       ${sliderRow('quorumCompositeStrength', 'Composite', 0, 100, 35, v => (v/100).toFixed(2), 'How strongly quorum groups affect outgroup boids as one composite')}
     </div>
@@ -1788,8 +1795,8 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Taper -->
-    <div class="section-header" data-section="taper">Taper <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="taper" data-alpha-feature>Taper <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       ${sliderRow('taperLength', 'Length', 0, 120, 20, v => +v === 0 ? 'off' : v + ' frames')}
       ${sliderRow('taperCurve', 'Curve', 10, 300, 100, v => (v/100).toFixed(1))}
       <label>Taper Size <input type="checkbox" id="taperSize" checked></label>
@@ -1840,23 +1847,23 @@ export function buildSidebar(app) {
     </div>
 
     <!-- Trail Blur -->
-    <div class="section-header" data-section="trailBlur">Trail Blur <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="trailBlur" data-alpha-feature>Trail Blur <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       ${sliderRow('trailBlur', 'Trail Blur', 0, 20, 0, null, 'Softly diffuse wet ink trails outward after each frame')}
       ${sliderRow('trailFlow', 'Texture Flow', 0, 100, 0, v => (v / 100).toFixed(2), 'Bias blur diffusion toward lower-height canvas texture areas (requires texture)')}
     </div>
 
     <!-- Pigment Mix / KM -->
-    <div class="section-header" data-section="kmMix">Pigment Mix <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="kmMix" data-alpha-feature>Pigment Mix <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       <label>Enable <input type="checkbox" id="kmMix"></label>
       <span class="slider-desc">Physically-based subtractive pigment mixing (blue+yellow→green)</span>
       ${sliderRow('kmStrength', 'Strength', 0, 100, 50, v => (v / 100).toFixed(2), 'How strongly the brush pigment mixes into existing paint')}
     </div>
 
     <!-- Impasto -->
-    <div class="section-header" data-section="impasto">Impasto <span class="chevron">▼</span></div>
-    <div class="section-body">
+    <div class="section-header" data-section="impasto" data-alpha-feature>Impasto <span class="chevron">▼</span></div>
+    <div class="section-body" data-alpha-feature>
       <label>Enable <input type="checkbox" id="impasto"></label>
       <span class="slider-desc">Build up paint height — directional lighting reveals 3D ridges</span>
       ${sliderRow('impastoStrength', 'Strength', 0, 100, 60, v => (v / 100).toFixed(2))}
@@ -2346,6 +2353,8 @@ function _workspaceSettingsMarkup() {
     <div class="section-header" data-section="appSettings">Settings <span class="chevron">▼</span></div>
     <div class="section-body">
       <label>Always show tabs <input type="checkbox" id="alwaysShowTabs" checked></label>
+      <label>Show JSON tab <input type="checkbox" id="showJsonTab"></label>
+      <label>Show Alpha Features <input type="checkbox" id="showAlphaFeatures"></label>
       <label>Auto-save session <input type="checkbox" id="autoSaveSession"></label>
       <label>Perf telemetry <input type="checkbox" id="perfTelemetryEnabled"></label>
       <label>Request wake lock <input type="checkbox" id="perfWakeLockEnabled"></label>
@@ -2443,6 +2452,28 @@ function _wireWorkspaceSettingsPanel(app, panel) {
     app._closeSimulationFormatMenuPopover?.({ rerender: false });
     app._renderSimulationInspector?.();
   });
+  const showJsonTab = document.getElementById('showJsonTab');
+  if (showJsonTab) {
+    showJsonTab.checked = localStorage.getItem('bb_showJsonTab') === 'true';
+    app.setJsonTabVisible?.(showJsonTab.checked, { persist: false });
+    showJsonTab.addEventListener('change', () => {
+      app.setJsonTabVisible?.(showJsonTab.checked);
+    });
+  }
+  const showAlphaFeatures = document.getElementById('showAlphaFeatures');
+  if (showAlphaFeatures) {
+    showAlphaFeatures.checked = localStorage.getItem('bb_showAlphaFeatures') === 'true';
+    app.setAlphaFeaturesVisible?.(showAlphaFeatures.checked, { persist: false });
+    showAlphaFeatures.addEventListener('change', () => {
+      app.setAlphaFeaturesVisible?.(showAlphaFeatures.checked);
+      _renderModRouteList(app);
+      _renderModRouteDetail(app);
+      _renderSettingsCatalogResults(app);
+      _renderFavorites(app);
+      _renderBuiltinPresets(app);
+      _renderUserPresets(app);
+    });
+  }
   panel.querySelectorAll('[id^="edgeOverlay"][id$="Placement"]').forEach(control => {
     control.addEventListener('change', () => syncEdgeSliders(app));
   });
@@ -4016,6 +4047,7 @@ function _renderBuiltinPresets(app) {
     } catch {
       continue;
     }
+    if (!_alphaFeaturesVisible() && _isAlphaBrush(preset.scope.brush)) continue;
     const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
     const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
     if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
@@ -4084,6 +4116,7 @@ function _renderUserPresets(app) {
   const activeOnly = document.getElementById('presetLibraryScope')?.value !== 'all';
   const search = document.getElementById('presetLibrarySearch')?.value?.trim().toLowerCase() || '';
   for (const preset of library.entries) {
+    if (!_alphaFeaturesVisible() && _isAlphaBrush(preset.scope.brush)) continue;
     if (activeOnly && preset.scope.brush !== app.activeBrush) continue;
     if (search && !`${preset.name} ${preset.scope.kind} ${preset.scope.brush}`.toLowerCase().includes(search)) continue;
     const row = document.createElement('div');
@@ -4446,6 +4479,8 @@ function _renderFavorites(app) {
       container.appendChild(row);
       continue;
     }
+    const sourceControl = document.getElementById(entry.id);
+    if (!_alphaFeaturesVisible() && sourceControl?.closest('[data-alpha-feature]')) continue;
     if (!catalogEntryApplies(entry, app.activeBrush, 'favorite')) continue;
     const key = entry.section || entry.scope.kind;
     if (!grouped.has(key)) grouped.set(key, []);
@@ -4588,6 +4623,8 @@ function _renderSettingsCatalogResults(app) {
   const favorites = _favoriteIds(app.activeBrush);
   container.innerHTML = '';
   const entries = [..._settingsCatalog.values()].filter(entry => {
+    const sourceControl = document.getElementById(entry.id);
+    if (!_alphaFeaturesVisible() && sourceControl?.closest('[data-alpha-feature]')) return false;
     if (scope === 'active' && !catalogEntryApplies(entry, app.activeBrush, 'favorite')) return false;
     if (scope === 'simulation' && !catalogEntryApplies(entry, app.activeBrush, 'simulation')) return false;
     if (scope === 'shared' && entry.scope.kind !== 'shared') return false;

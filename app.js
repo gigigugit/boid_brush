@@ -78,12 +78,16 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
 // single source of truth and restore can't silently desync checkbox vs behavior.
 const SELF_PERSISTED_CONTROL_IDS = new Set([
   'alwaysShowTabs',       // bb_alwaysShowTabs
+  'showJsonTab',          // bb_showJsonTab
+  'showAlphaFeatures',    // bb_showAlphaFeatures
   'autoSaveSession',      // bb_autosave (AUTOSAVE_STORAGE_KEY)
   'perfTelemetryEnabled', // bb_perfTelemetry (PERF_TELEMETRY_KEY)
   'perfWakeLockEnabled',  // bb_perfWakeLock (PERF_WAKE_LOCK_KEY)
 ]);
 const SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS = new Set([
   'alwaysShowTabs',
+  'showJsonTab',
+  'showAlphaFeatures',
   'autoSaveSession',
   'perfTelemetryEnabled',
   'perfWakeLockEnabled',
@@ -4314,10 +4318,36 @@ export class App {
       leftTabs.classList.toggle('panel-tabs--visible', alwaysShow || leftOpen || simDrawerAvailable);
       leftTabs.classList.toggle('panel-tabs--open', !!leftOpen);
     }
+
     if (rightTabs) {
       rightTabs.classList.toggle('panel-tabs--visible', alwaysShow || rightOpen);
       rightTabs.classList.toggle('panel-tabs--open', !!rightOpen);
     }
+  }
+
+  _areAlphaFeaturesEnabled() {
+    const checkbox = document.getElementById('showAlphaFeatures');
+    return checkbox ? checkbox.checked : localStorage.getItem('bb_showAlphaFeatures') === 'true';
+  }
+
+  setAlphaFeaturesVisible(enabled, { persist = true } = {}) {
+    const visible = !!enabled;
+    if (persist) localStorage.setItem('bb_showAlphaFeatures', String(visible));
+    document.querySelectorAll('[data-alpha-feature]').forEach(element => {
+      element.classList.toggle('alpha-feature-hidden', !visible);
+    });
+    if (!visible && ['ant', 'motionPath', 'fluid', 'fluid3d'].includes(this.activeBrush)) {
+      this.setBrush('boid');
+    }
+    this.invalidateParams();
+  }
+
+  setJsonTabVisible(enabled, { persist = true } = {}) {
+    const visible = !!enabled;
+    if (persist) localStorage.setItem('bb_showJsonTab', String(visible));
+    document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="json"]')
+      ?.classList.toggle('panel-tab-hidden', !visible);
+    this._updateTabVisibility();
   }
 
   _isSimulationOverlayHudEnabled() {
@@ -6108,6 +6138,7 @@ export class App {
 
     const scale = val('brushScale') / 100;
     const stampImageAllowed = !STAMP_IMAGE_DISABLED_BRUSHES.has(this.activeBrush);
+    const alphaFeaturesEnabled = this._areAlphaFeaturesEnabled();
 
     this._cachedP = {
       // Brush scale
@@ -6137,8 +6168,8 @@ export class App {
       flowScale: val('flowScale') / 1000,
       fleeRadius: val('fleeRadius'),
       individuality: val('individuality') / 100,
-      quorumThreshold: Math.max(0, Math.round(val('quorumThreshold') || 0)),
-      quorumCompositeStrength: val('quorumCompositeStrength') / 100,
+      quorumThreshold: alphaFeaturesEnabled ? Math.max(0, Math.round(val('quorumThreshold') || 0)) : 0,
+      quorumCompositeStrength: alphaFeaturesEnabled ? val('quorumCompositeStrength') / 100 : 0,
       // Boid Input Modulation Framework (boid only; consumed by BoidBrush via
       // App.getModulationSnapshot()).
       modMatrix: _readBoidModMatrix(sel),
@@ -6205,7 +6236,7 @@ export class App {
       symmetryCenterX: (val('symmetryCenterX') || 50) / 100,
       symmetryCenterY: (val('symmetryCenterY') || 50) / 100,
       // Taper
-      taperLength: val('taperLength'),
+      taperLength: alphaFeaturesEnabled ? val('taperLength') : 0,
       taperCurve: val('taperCurve') / 100,
       taperSize: chk('taperSize'),
       taperOpacity: chk('taperOpacity'),
@@ -6330,13 +6361,13 @@ export class App {
       color: this.primaryEl.value,
       colorDist: this._getBoidColorDistForParams(),
       // Trail blur
-      trailBlur: val('trailBlur') || 0,
-      trailFlow: val('trailFlow') / 100,
+      trailBlur: alphaFeaturesEnabled ? (val('trailBlur') || 0) : 0,
+      trailFlow: alphaFeaturesEnabled ? val('trailFlow') / 100 : 0,
       // Kubelka-Munk pigment mixing
-      kmMix: chk('kmMix'),
+      kmMix: alphaFeaturesEnabled && chk('kmMix'),
       kmStrength: val('kmStrength') / 100,
       // Heightmap impasto
-      impasto: chk('impasto'),
+      impasto: alphaFeaturesEnabled && chk('impasto'),
       impastoStrength: val('impastoStrength') / 100,
       impastoLightAngle: val('impastoLightAngle') * Math.PI / 180,
       impastoLightElevation: val('impastoLightElevation') * Math.PI / 180,
@@ -6366,6 +6397,10 @@ export class App {
       simMotionPathMode: sel('simMotionPathMode') === 'forces' ? 'forces' : 'path',
       leaderConfig: _readLeaderOverrideConfig({ val, chk, sel }),
     };
+    if (!alphaFeaturesEnabled) {
+      this._cachedP.leaderConfig.overrides.quorumThreshold.enabled = false;
+      this._cachedP.leaderConfig.overrides.quorumCompositeStrength.enabled = false;
+    }
     // Multi-rule sensing: rule 0 mirrors the flat controls; extra rules come
     // from the Sensing Rules modal state.
     this._cachedP.sensingRules = this._composeSensingRules(this._cachedP);
@@ -16691,6 +16726,7 @@ export class App {
 
   setBrush(name) {
     if (!this.brushes[name]) return;
+    if (['ant', 'motionPath', 'fluid', 'fluid3d'].includes(name) && !this._areAlphaFeaturesEnabled()) return;
     if (this.activeBrush !== name && this._simulationExport.recording) void this._stopSimulationRecording({ announce: false });
     if (this.activeBrush !== name && (this.simulation.running || this.simulation.paused)) this.stopSimulation(false);
     this.setTool('brush'); // restore brush mode when changing brush type
