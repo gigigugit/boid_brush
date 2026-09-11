@@ -121,8 +121,11 @@ function packGuideMeta(pointCount, pathTargetCount) {
   return raw;
 }
 
-function isSupportedByGpu(p) {
-  return true;
+export function isSupportedByGpu(p) {
+  // Corral containment currently mutates the synchronous simulation buffer
+  // after each step. Avoid uploading a stale asynchronous GPU readback over
+  // the live flock whenever one agent reaches the boundary.
+  return !p?.corralEnabled;
 }
 
 export class WebGPUBoidSim {

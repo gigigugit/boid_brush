@@ -8,6 +8,7 @@ import {
   pointInCorral,
   smoothClosedCorral,
 } from '../corral.js';
+import { isSupportedByGpu } from '../webgpu-boid-sim.js';
 
 const square = [
   { x: 0, y: 0 },
@@ -41,6 +42,23 @@ test('corral constraint leaves central agents unchanged', () => {
   const buffer = new Float32Array([50, 50, 1, 2]);
   assert.equal(constrainAgentsToCorral({ buffer, count: 1, stride: 4 }, compiled, 1), false);
   assert.deepEqual([...buffer], [50, 50, 1, 2]);
+});
+
+test('corral constraint redirects only agents near the boundary', () => {
+  const compiled = compileCorral(square);
+  const buffer = new Float32Array([
+    99, 50, 4, 0,
+    50, 50, 1, 2,
+  ]);
+  constrainAgentsToCorral({ buffer, count: 2, stride: 4 }, compiled, 1);
+  assert.ok(buffer[2] < 4);
+  assert.deepEqual([...buffer.slice(4)], [50, 50, 1, 2]);
+});
+
+test('active corral uses synchronous simulation state', () => {
+  assert.equal(isSupportedByGpu({ corralEnabled: true }), false);
+  assert.equal(isSupportedByGpu({ corralEnabled: false }), true);
+  assert.equal(isSupportedByGpu({}), true);
 });
 
 test('corral SVG export emits one closed path and the canvas viewBox', () => {
