@@ -15,6 +15,17 @@ test('corral overlay exposes persistent visibility and collapse controls', () =>
   assert.match(html, /#corralHud\.collapsed \.corral-body\{display:none;\}/);
 });
 
+test('corral toolbar is centered, single-line, and below panel tabs', () => {
+  assert.match(html, /#corralHud\{[^}]*left:50%;[^}]*z-index:19;[^}]*transform:translateX\(-50%\)/);
+  assert.match(html, /\.corral-card\{[^}]*justify-content:center;[^}]*width:max-content;[^}]*overflow-x:auto/);
+  assert.match(html, /\.corral-body\{[^}]*flex-wrap:nowrap/);
+  assert.match(html, /\.panel-tabs\{[^}]*z-index:21/);
+});
+
+test('corral control delivery uses the current cache token', () => {
+  assert.match(html, /const assetVersion = '2026-09-11-corral-toolbar'/);
+});
+
 test('enabled corral keeps controls visible outside editor mode', () => {
   assert.match(app, /const showHud = available && \(this\.corral\.enabled \|\| this\.corral\.editing\)/);
   assert.match(app, /hud\?\.classList\.toggle\('open', showHud\)/);

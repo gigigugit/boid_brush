@@ -334,13 +334,12 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-pill-icon svg{display:block;width:18px;height:18px;fill:currentColor;}
 .sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
 .sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
-#corralHud{position:fixed;left:14px;top:calc(var(--topbar-h) + 14px);z-index:32;display:none;pointer-events:none;}
+#corralHud{position:fixed;left:50%;top:calc(var(--topbar-h) + 14px);z-index:19;display:none;max-width:calc(100vw - 112px);transform:translateX(-50%);pointer-events:none;}
 #corralHud.open{display:block;}
-.corral-card{pointer-events:auto;max-width:min(680px,calc(100vw - 28px));padding:8px 10px;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
-.corral-header,.corral-body{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.corral-header{justify-content:space-between;}
+.corral-card{pointer-events:auto;display:flex;align-items:center;justify-content:center;gap:8px;width:max-content;max-width:100%;padding:8px 10px;overflow-x:auto;overflow-y:hidden;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);scrollbar-width:thin;}
+.corral-header{display:contents;}
 .corral-header-actions{display:flex;align-items:center;gap:6px;}
-.corral-body{margin-top:8px;}
+.corral-body{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
 #corralHud.collapsed .corral-body{display:none;}
 .corral-title{color:#ff8bea;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;}
 .corral-strength{display:flex;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
@@ -349,7 +348,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .corral-toggle{display:flex;align-items:center;gap:5px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
 #corralBtn.active{background:linear-gradient(135deg,#bd299f,#f044cc);border-color:rgba(255,107,224,.55);color:#fff;box-shadow:0 0 10px rgba(255,43,214,.3);}
 body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px);}
-@media (max-width:760px){body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 116px);}}
+@media (max-width:760px){#corralHud{max-width:calc(100vw - 88px);}body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px);}}
 #simPlaybackBar{position:fixed;left:50%;bottom:calc(var(--status-h) + 14px);transform:translate(-50%,12px);z-index:19;display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:min(94vw,960px);padding:9px 12px;border:1px solid var(--line-0);border-radius:16px;background:rgba(14,18,28,0.92);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);}
 #simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
 #simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
@@ -1179,7 +1178,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <span class="corral-title">Corral</span>
       <div class="corral-header-actions">
         <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
-        <button class="sim-pill" id="corralCollapseBtn" type="button" aria-expanded="true" aria-controls="corralHudBody">Collapse</button>
+        <button class="sim-pill" id="corralCollapseBtn" type="button" aria-expanded="true" aria-controls="corralHudBody">Collapse Overlay</button>
       </div>
     </div>
     <div class="corral-body" id="corralHudBody">
@@ -1897,7 +1896,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-10-edge-overlay-cache-bust';
+const assetVersion = '2026-09-11-corral-toolbar';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

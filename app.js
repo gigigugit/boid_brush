@@ -16869,7 +16869,7 @@ export class App {
       visibilityButton.setAttribute('aria-pressed', this.corral.visible ? 'false' : 'true');
     }
     if (collapseButton) {
-      collapseButton.textContent = this.corral.overlayCollapsed ? 'Expand' : 'Collapse';
+      collapseButton.textContent = this.corral.overlayCollapsed ? 'Expand Overlay' : 'Collapse Overlay';
       collapseButton.setAttribute('aria-expanded', this.corral.overlayCollapsed ? 'false' : 'true');
     }
     this._layoutTopbarOverflow?.();
