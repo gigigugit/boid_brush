@@ -336,15 +336,20 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
 #corralHud{position:fixed;left:14px;top:calc(var(--topbar-h) + 14px);z-index:32;display:none;pointer-events:none;}
 #corralHud.open{display:block;}
-.corral-card{pointer-events:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:min(680px,calc(100vw - 28px));padding:8px 10px;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
+.corral-card{pointer-events:auto;max-width:min(680px,calc(100vw - 28px));padding:8px 10px;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
+.corral-header,.corral-body{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.corral-header{justify-content:space-between;}
+.corral-header-actions{display:flex;align-items:center;gap:6px;}
+.corral-body{margin-top:8px;}
+#corralHud.collapsed .corral-body{display:none;}
 .corral-title{color:#ff8bea;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;}
 .corral-strength{display:flex;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
 .corral-strength input{width:110px;accent-color:#ff2bd6;}
 .corral-strength output{min-width:34px;color:#ffc4f4;font-variant-numeric:tabular-nums;}
 .corral-toggle{display:flex;align-items:center;gap:5px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
 #corralBtn.active{background:linear-gradient(135deg,#bd299f,#f044cc);border-color:rgba(255,107,224,.55);color:#fff;box-shadow:0 0 10px rgba(255,43,214,.3);}
-body.corral-editor-open #simHud{top:calc(var(--topbar-h) + 76px);}
-@media (max-width:760px){body.corral-editor-open #simHud{top:calc(var(--topbar-h) + 116px);}}
+body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px);}
+@media (max-width:760px){body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 116px);}}
 #simPlaybackBar{position:fixed;left:50%;bottom:calc(var(--status-h) + 14px);transform:translate(-50%,12px);z-index:19;display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:min(94vw,960px);padding:9px 12px;border:1px solid var(--line-0);border-radius:16px;background:rgba(14,18,28,0.92);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);}
 #simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
 #simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
@@ -1170,17 +1175,25 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <div id="corralHud" aria-label="Corral controls">
   <div class="corral-card">
-    <span class="corral-title">Corral</span>
-    <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
-    <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
-    <label class="corral-strength" for="corralEdgeStrength">Edge
-      <input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100">
-      <output id="corralEdgeStrengthValue" for="corralEdgeStrength">1.00</output>
-    </label>
-    <button class="sim-pill" id="corralExportBtn" type="button">Export SVG</button>
-    <button class="sim-pill" id="corralLoadBtn" type="button">Load SVG</button>
-    <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
-    <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
+    <div class="corral-header">
+      <span class="corral-title">Corral</span>
+      <div class="corral-header-actions">
+        <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
+        <button class="sim-pill" id="corralCollapseBtn" type="button" aria-expanded="true" aria-controls="corralHudBody">Collapse</button>
+      </div>
+    </div>
+    <div class="corral-body" id="corralHudBody">
+      <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
+      <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
+      <label class="corral-strength" for="corralEdgeStrength">Edge
+        <input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100">
+        <output id="corralEdgeStrengthValue" for="corralEdgeStrength">1.00</output>
+      </label>
+      <button class="sim-pill" id="corralExportBtn" type="button">Export SVG</button>
+      <button class="sim-pill" id="corralLoadBtn" type="button">Load SVG</button>
+      <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
+      <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
+    </div>
   </div>
 </div>
 

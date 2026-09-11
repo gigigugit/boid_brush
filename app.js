@@ -2232,6 +2232,8 @@ export class App {
       editing: false,
       drawing: false,
       enabled: true,
+      visible: true,
+      overlayCollapsed: false,
       edgeStrength: 1,
       rawPoints: [],
       points: [],
@@ -16851,13 +16853,25 @@ export class App {
     const enabled = document.getElementById('corralEnabled');
     const strength = document.getElementById('corralEdgeStrength');
     const output = document.getElementById('corralEdgeStrengthValue');
+    const visibilityButton = document.getElementById('corralVisibilityBtn');
+    const collapseButton = document.getElementById('corralCollapseBtn');
+    const showHud = available && (this.corral.enabled || this.corral.editing);
     button?.classList.toggle('active', available && this.corral.editing);
     if (button) button.style.display = available ? '' : 'none';
-    hud?.classList.toggle('open', available && this.corral.editing);
-    document.body.classList.toggle('corral-editor-open', available && this.corral.editing);
+    hud?.classList.toggle('open', showHud);
+    hud?.classList.toggle('collapsed', this.corral.overlayCollapsed);
+    document.body.classList.toggle('corral-overlay-open', showHud);
     if (enabled) enabled.checked = this.corral.enabled;
     if (strength) strength.value = String(Math.round(this.corral.edgeStrength * 100));
     if (output) output.value = this.corral.edgeStrength.toFixed(2);
+    if (visibilityButton) {
+      visibilityButton.textContent = this.corral.visible ? 'Hide Corral' : 'Show Corral';
+      visibilityButton.setAttribute('aria-pressed', this.corral.visible ? 'false' : 'true');
+    }
+    if (collapseButton) {
+      collapseButton.textContent = this.corral.overlayCollapsed ? 'Expand' : 'Collapse';
+      collapseButton.setAttribute('aria-expanded', this.corral.overlayCollapsed ? 'false' : 'true');
+    }
     this._layoutTopbarOverflow?.();
   }
 
@@ -16927,7 +16941,7 @@ export class App {
 
   _drawCorralOverlay(ctx) {
     const points = this.corral.drawing ? this.corral.rawPoints : this.corral.points;
-    if (this.activeBrush !== 'boid' || points.length < 2) return;
+    if (!this.corral.visible || this.activeBrush !== 'boid' || points.length < 2) return;
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
@@ -17073,6 +17087,16 @@ export class App {
     document.getElementById('tilingBtn')?.addEventListener('click', () => this.toggleTiling());
     document.getElementById('alphaLockBtn')?.addEventListener('click', () => this.toggleAlphaLock());
     document.getElementById('corralBtn')?.addEventListener('click', () => this._toggleCorralEditor());
+    document.getElementById('corralVisibilityBtn')?.addEventListener('click', () => {
+      this.corral.visible = !this.corral.visible;
+      this.saveSession();
+      this._syncCorralUI();
+    });
+    document.getElementById('corralCollapseBtn')?.addEventListener('click', () => {
+      this.corral.overlayCollapsed = !this.corral.overlayCollapsed;
+      this.saveSession();
+      this._syncCorralUI();
+    });
     document.getElementById('corralResetBtn')?.addEventListener('click', () => this._resetCorral());
     document.getElementById('corralExitBtn')?.addEventListener('click', () => this._toggleCorralEditor(false));
     document.getElementById('corralExportBtn')?.addEventListener('click', () => this._exportCorralSvg());
@@ -21086,6 +21110,8 @@ export class App {
     controls._colorHistory = this._colorHistory;
     controls._tilingMode = this.tilingMode;
     controls.corralEnabled = this.corral.enabled;
+    controls.corralVisible = this.corral.visible;
+    controls.corralOverlayCollapsed = this.corral.overlayCollapsed;
     controls.corralEdgeStrength = Math.round(this.corral.edgeStrength * 100);
     controls._corral = {
       rawPoints: this.corral.rawPoints,
@@ -21656,6 +21682,14 @@ export class App {
         this.corral.enabled = val !== false && val !== 'false';
         const input = document.getElementById('corralEnabled');
         if (input) input.checked = this.corral.enabled;
+        continue;
+      }
+      if (id === 'corralVisible') {
+        this.corral.visible = val !== false && val !== 'false';
+        continue;
+      }
+      if (id === 'corralOverlayCollapsed') {
+        this.corral.overlayCollapsed = val === true || val === 'true';
         continue;
       }
       if (id === 'corralEdgeStrength') {
