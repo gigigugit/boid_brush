@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   compileCorral,
   constrainAgentsToCorral,
+  corralForceWeight,
   corralRepulsionWeight,
   corralToSvg,
   extractClosedSvgPath,
@@ -77,6 +78,47 @@ test('repulsion radius and force strength are independent', () => {
   assert.ok(insideBand[2] < 0);
   const zeroForce = new Float32Array([99, 50, 0, 0]);
   assert.equal(constrainAgentsToCorral({ buffer: zeroForce, count: 1, stride: 4 }, compiled, 0, 30), false);
+});
+
+test('midpoint adjustment preserves smooth zero-slope hard-edge transition', () => {
+  assert.equal(corralForceWeight(0, 40, 1), 1);
+  assert.equal(corralForceWeight(20, 40, 1), 1);
+  assert.equal(corralForceWeight(40, 40, 1), 0);
+  const epsilon = 0.001;
+  const wallSlope = (corralForceWeight(epsilon, 40, 1) - corralForceWeight(0, 40, 1)) / epsilon;
+  assert.ok(Math.abs(wallSlope) < 0.001);
+});
+
+test('advanced edge forces add tangent steering and local velocity damping', () => {
+  const compiled = compileCorral(square);
+  const tangent = new Float32Array([99, 50, 0, 0]);
+  constrainAgentsToCorral({ buffer: tangent, count: 1, stride: 4 }, compiled, {
+    edgeStrength: 0,
+    repulsionRadius: 20,
+    tangentialForce: 1,
+  });
+  assert.ok(Math.abs(tangent[3]) > 0.9);
+
+  const damped = new Float32Array([99, 50, 2, 3]);
+  constrainAgentsToCorral({ buffer: damped, count: 1, stride: 4 }, compiled, {
+    edgeStrength: 0,
+    repulsionRadius: 20,
+    normalDamping: 1,
+    tangentialFriction: 1,
+  });
+  assert.ok(Math.hypot(damped[2], damped[3]) < 0.1);
+});
+
+test('hard edge can be disabled independently of interior repulsion', () => {
+  const compiled = compileCorral(square);
+  const buffer = new Float32Array([105, 50, 0, 0]);
+  constrainAgentsToCorral({ buffer, count: 1, stride: 4 }, compiled, {
+    hardEdge: false,
+    edgeStrength: 1,
+    repulsionRadius: 20,
+  });
+  assert.equal(buffer[0], 105);
+  assert.ok(buffer[2] < 0);
 });
 
 test('active corral uses synchronous simulation state', () => {

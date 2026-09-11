@@ -125,10 +125,31 @@ export function corralRepulsionWeight(distance, radius) {
   return u * u * (3 - 2 * u);
 }
 
-export function constrainAgentsToCorral(read, compiled, strength = 1, radius = 32) {
+export function corralForceWeight(distance, radius, midpoint = 0.5, falloff = 'smooth') {
+  const influenceRadius = Math.max(0, Number(radius) || 0);
+  if (influenceRadius <= 0 || distance >= influenceRadius) return 0;
+  const t = clamp(Math.max(0, distance) / influenceRadius, 0, 1);
+  if (falloff === 'linear') return 1 - t;
+  if (falloff === 'quadratic') return (1 - t) ** 2;
+  const base = corralRepulsionWeight(distance, influenceRadius);
+  const midpointCorrection = (clamp(Number(midpoint) || 0, 0, 1.5) - 0.5)
+    * 16 * t * t * (1 - t) * (1 - t);
+  return Math.max(0, base + midpointCorrection);
+}
+
+export function constrainAgentsToCorral(read, compiled, options = {}, legacyRadius = 32) {
   if (!compiled || !read?.buffer || !read.count || read.stride < 4) return false;
-  const response = clamp(Number(strength) || 0, 0, 2);
-  const influenceRadius = clamp(Number(radius) || 0, 0, 300);
+  const legacy = typeof options === 'number';
+  const config = legacy
+    ? { edgeStrength: options, repulsionRadius: legacyRadius }
+    : options;
+  const response = clamp(Number(config.edgeStrength) || 0, 0, 2);
+  const influenceRadius = clamp(Number(config.repulsionRadius) || 0, 0, 300);
+  const hardEdge = config.hardEdge !== false;
+  const tangentialForce = clamp(Number(config.tangentialForce) || 0, -2, 2);
+  const midpointForce = clamp(Number(config.midpointForce ?? 0.5), 0, 1.5);
+  const normalDamping = clamp(Number(config.normalDamping) || 0, 0, 1);
+  const tangentialFriction = clamp(Number(config.tangentialFriction) || 0, 0, 1);
   let changed = false;
   for (let i = 0; i < read.count; i++) {
     const base = i * read.stride;
@@ -140,7 +161,7 @@ export function constrainAgentsToCorral(read, compiled, strength = 1, radius = 3
     const edgeLength = Math.hypot(nearest.dx, nearest.dy) || 1;
     const nx = compiled.winding * -nearest.dy / edgeLength;
     const ny = compiled.winding * nearest.dx / edgeLength;
-    if (!inside) {
+    if (!inside && hardEdge) {
       x = nearest.x + nx * 0.75;
       y = nearest.y + ny * 0.75;
       read.buffer[base] = x;
@@ -148,19 +169,25 @@ export function constrainAgentsToCorral(read, compiled, strength = 1, radius = 3
       changed = true;
     }
     const profile = inside
-      ? corralRepulsionWeight(nearest.distance, influenceRadius)
+      ? corralForceWeight(nearest.distance, influenceRadius, midpointForce, config.falloff)
       : 1;
-    if (!inside || profile > 0) {
+    if ((!inside && hardEdge) || profile > 0) {
       const push = response * profile;
       let vx = read.buffer[base + 2];
       let vy = read.buffer[base + 3];
       const outwardVelocity = vx * -nx + vy * -ny;
-      if (outwardVelocity > 0) {
+      if (hardEdge && outwardVelocity > 0) {
         vx += nx * outwardVelocity * (1 + Math.min(1, response));
         vy += ny * outwardVelocity * (1 + Math.min(1, response));
       }
-      const nextVx = vx + nx * push;
-      const nextVy = vy + ny * push;
+      const tx = -ny;
+      const ty = nx;
+      const normalVelocity = vx * nx + vy * ny;
+      const tangentVelocity = vx * tx + vy * ty;
+      const dampedNormal = normalVelocity * (1 - profile * normalDamping);
+      const dampedTangent = tangentVelocity * (1 - profile * tangentialFriction);
+      const nextVx = nx * (dampedNormal + push) + tx * (dampedTangent + tangentialForce * profile);
+      const nextVy = ny * (dampedNormal + push) + ty * (dampedTangent + tangentialForce * profile);
       if (nextVx !== read.buffer[base + 2] || nextVy !== read.buffer[base + 3]) {
         read.buffer[base + 2] = nextVx;
         read.buffer[base + 3] = nextVy;

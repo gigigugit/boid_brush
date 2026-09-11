@@ -14,6 +14,7 @@ import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 import { workspaceControlBelongsToBrush } from './settings-catalog.js';
 import { compileCorral, corralToSvg, extractClosedSvgPath, smoothClosedCorral } from './corral.js';
+import { CorralFileWorkspace } from './workspace-files.js';
 import {
   FeatureTracker,
   evaluateModMatrix,
@@ -2236,10 +2237,21 @@ export class App {
       overlayCollapsed: false,
       edgeStrength: 1,
       repulsionRadius: 32,
+      midpointForce: 0.5,
+      tangentialForce: 0,
+      normalDamping: 0,
+      tangentialFriction: 0,
+      hardEdge: true,
+      falloff: 'smooth',
+      shapeSmoothing: 2,
+      physicsDrawerOpen: false,
+      svgDrawerOpen: false,
       rawPoints: [],
       points: [],
       compiled: null,
     };
+    this.corralFiles = new CorralFileWorkspace();
+    this._corralFileEntries = [];
     this.simulation = {
       enabled: false,
       starting: false,
@@ -2719,6 +2731,7 @@ export class App {
     // Events
     this._bindEvents();
     this._initTopbarOverflow();
+    void this._restoreCorralDirectory();
 
     // Make the canvas and controls interactive before optional brush engines
     // finish probing GPU/WASM backends.
@@ -6171,6 +6184,12 @@ export class App {
       corralEnabled: this.activeBrush === 'boid' && this.corral.enabled && !!this.corral.compiled,
       corralEdgeStrength: this.corral.edgeStrength,
       corralRepulsionRadius: this.corral.repulsionRadius,
+      corralMidpointForce: this.corral.midpointForce,
+      corralTangentialForce: this.corral.tangentialForce,
+      corralNormalDamping: this.corral.normalDamping,
+      corralTangentialFriction: this.corral.tangentialFriction,
+      corralHardEdge: this.corral.hardEdge,
+      corralFalloff: this.corral.falloff,
       corralCompiled: this.corral.compiled,
       // Forces
       seek: val('seek') / 100,
@@ -16870,6 +16889,23 @@ export class App {
     if (output) output.value = this.corral.edgeStrength.toFixed(2);
     if (radius) radius.value = String(Math.round(this.corral.repulsionRadius));
     if (radiusOutput) radiusOutput.value = `${Math.round(this.corral.repulsionRadius)}px`;
+    const syncRange = (id, outputId, value, formatted) => {
+      const input = document.getElementById(id);
+      const rangeOutput = document.getElementById(outputId);
+      if (input) input.value = String(value);
+      if (rangeOutput) rangeOutput.value = formatted;
+    };
+    syncRange('corralMidpointForce', 'corralMidpointForceValue', Math.round(this.corral.midpointForce * 100), `${Math.round(this.corral.midpointForce * 100)}%`);
+    syncRange('corralTangentialForce', 'corralTangentialForceValue', Math.round(this.corral.tangentialForce * 100), this.corral.tangentialForce.toFixed(2));
+    syncRange('corralNormalDamping', 'corralNormalDampingValue', Math.round(this.corral.normalDamping * 100), `${Math.round(this.corral.normalDamping * 100)}%`);
+    syncRange('corralTangentialFriction', 'corralTangentialFrictionValue', Math.round(this.corral.tangentialFriction * 100), `${Math.round(this.corral.tangentialFriction * 100)}%`);
+    syncRange('corralShapeSmoothing', 'corralShapeSmoothingValue', this.corral.shapeSmoothing, String(this.corral.shapeSmoothing));
+    const hardEdge = document.getElementById('corralHardEdge');
+    const falloff = document.getElementById('corralFalloff');
+    if (hardEdge) hardEdge.checked = this.corral.hardEdge;
+    if (falloff) falloff.value = this.corral.falloff;
+    this._syncCorralDrawer('physics');
+    this._syncCorralDrawer('svg');
     if (visibilityButton) {
       visibilityButton.textContent = this.corral.visible ? 'Hide Corral' : 'Show Corral';
       visibilityButton.setAttribute('aria-pressed', this.corral.visible ? 'false' : 'true');
@@ -16879,6 +16915,32 @@ export class App {
       collapseButton.setAttribute('aria-expanded', this.corral.overlayCollapsed ? 'false' : 'true');
     }
     this._layoutTopbarOverflow?.();
+  }
+
+  _syncCorralDrawer(name) {
+    const isPhysics = name === 'physics';
+    const open = isPhysics ? this.corral.physicsDrawerOpen : this.corral.svgDrawerOpen;
+    const drawer = document.getElementById(isPhysics ? 'corralPhysicsDrawer' : 'corralSvgDrawer');
+    const tab = document.getElementById(isPhysics ? 'corralPhysicsDrawerTab' : 'corralSvgDrawerTab');
+    const label = isPhysics ? 'Physics' : 'SVG & Files';
+    drawer?.classList.toggle('open', open);
+    if (tab) {
+      tab.textContent = `${label} ${open ? '▲' : '▼'}`;
+      tab.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+  }
+
+  _toggleCorralDrawer(name) {
+    const physics = name === 'physics';
+    if (physics) this.corral.physicsDrawerOpen = !this.corral.physicsDrawerOpen;
+    else this.corral.svgDrawerOpen = !this.corral.svgDrawerOpen;
+    if (window.matchMedia?.('(max-width: 760px)').matches) {
+      if (physics && this.corral.physicsDrawerOpen) this.corral.svgDrawerOpen = false;
+      if (!physics && this.corral.svgDrawerOpen) this.corral.physicsDrawerOpen = false;
+    }
+    this._syncCorralDrawer('physics');
+    this._syncCorralDrawer('svg');
+    this.saveSession();
   }
 
   _toggleCorralEditor(force = !this.corral.editing) {
@@ -16931,7 +16993,7 @@ export class App {
     if (!previous || Math.hypot(x - previous.x, y - previous.y) >= 2) {
       this.corral.rawPoints.push({ x, y });
     }
-    this.corral.points = smoothClosedCorral(this.corral.rawPoints, 2);
+    this.corral.points = smoothClosedCorral(this.corral.rawPoints, this.corral.shapeSmoothing);
     this.corral.compiled = compileCorral(this.corral.points);
     if (!this.corral.compiled) {
       this.corral.rawPoints = [];
@@ -16973,10 +17035,32 @@ export class App {
   }
 
   async _loadCorralSvgFile(file) {
+    if (!file || file.size > 1024 * 1024) {
+      this.showToast('⚠ SVG file is too large');
+      return;
+    }
+    await this._loadCorralSvgText(await file.text(), file.name || 'SVG');
+  }
+
+  async _loadCorralSvgText(text, label = 'SVG') {
     let svg = null;
     try {
-      if (!file || file.size > 1024 * 1024) throw new Error('SVG file is too large');
-      const { d, viewBox } = extractClosedSvgPath(await file.text());
+      const { d, viewBox } = extractClosedSvgPath(text);
+      await this._applyCorralSvgPath(d, viewBox);
+      const pathInput = document.getElementById('corralSvgPathInput');
+      if (pathInput) pathInput.value = d;
+      this.showToast(`◯ ${label} loaded`);
+    } catch (error) {
+      console.error('Corral SVG import failed:', error);
+      this.showToast(`⚠ ${error.message || 'Could not load corral SVG'}`);
+    } finally {
+      svg?.remove();
+    }
+  }
+
+  async _applyCorralSvgPath(d, viewBox = [0, 0, this.W, this.H]) {
+    let svg = null;
+    try {
       svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       svg.setAttribute('width', '1');
@@ -17001,7 +17085,7 @@ export class App {
         });
       }
       this.corral.rawPoints = rawPoints;
-      this.corral.points = smoothClosedCorral(rawPoints, 1);
+      this.corral.points = smoothClosedCorral(rawPoints, this.corral.shapeSmoothing);
       this.corral.compiled = compileCorral(this.corral.points);
       if (!this.corral.compiled) throw new Error('SVG path could not form a corral');
       this.corral.enabled = true;
@@ -17009,12 +17093,89 @@ export class App {
       this.invalidateParams();
       this.saveSession();
       this._syncCorralUI();
-      this.showToast('◯ Corral SVG loaded');
-    } catch (error) {
-      console.error('Corral SVG import failed:', error);
-      this.showToast(`⚠ ${error.message || 'Could not load corral SVG'}`);
     } finally {
       svg?.remove();
+    }
+  }
+
+  _renderCorralFileWorkspace(result) {
+    const status = document.getElementById('corralFileStatus');
+    const tree = document.getElementById('corralFileTree');
+    this._corralFileEntries = Array.isArray(result?.files) ? result.files : [];
+    if (status) {
+      status.textContent = result?.permission === 'granted'
+        ? `${this._corralFileEntries.length} SVG file${this._corralFileEntries.length === 1 ? '' : 's'} available`
+        : result?.permission === 'unsupported'
+          ? 'Folder access is unavailable here; Import and Download remain available.'
+          : 'Folder permission is not active. Click Reconnect to request it.';
+    }
+    if (!tree) return;
+    tree.replaceChildren();
+    if (!this._corralFileEntries.length) {
+      const empty = document.createElement('span');
+      empty.className = 'corral-file-status';
+      empty.textContent = 'No SVG files found';
+      tree.appendChild(empty);
+      return;
+    }
+    this._corralFileEntries.forEach((entry, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'corral-file-item';
+      button.textContent = entry.path || entry.name;
+      button.style.paddingLeft = `${7 + (entry.depth || 0) * 12}px`;
+      button.addEventListener('click', () => void this._loadCorralWorkspaceEntry(index));
+      tree.appendChild(button);
+    });
+  }
+
+  async _restoreCorralDirectory() {
+    this._renderCorralFileWorkspace(await this.corralFiles.restore().catch(() => ({ permission: 'prompt', files: [] })));
+  }
+
+  async _chooseCorralDirectory() {
+    try {
+      this._renderCorralFileWorkspace(await this.corralFiles.choose());
+    } catch (error) {
+      if (error?.name !== 'AbortError') this.showToast(`⚠ ${error.message || 'Could not open folder'}`);
+    }
+  }
+
+  async _reconnectCorralDirectory() {
+    try {
+      this._renderCorralFileWorkspace(await this.corralFiles.reconnect());
+    } catch (error) {
+      this.showToast(`⚠ ${error.message || 'Could not reconnect folder'}`);
+    }
+  }
+
+  async _refreshCorralDirectory() {
+    this._renderCorralFileWorkspace(await this.corralFiles.refresh().catch(() => ({ permission: 'prompt', files: [] })));
+  }
+
+  async _loadCorralWorkspaceEntry(index) {
+    const entry = this._corralFileEntries[index];
+    if (!entry) return;
+    try {
+      await this._loadCorralSvgText(await this.corralFiles.read(entry.handle), entry.name);
+      const filename = document.getElementById('corralFileName');
+      if (filename) filename.value = entry.name;
+    } catch (error) {
+      this.showToast(`⚠ ${error.message || 'Could not load SVG'}`);
+    }
+  }
+
+  async _saveCorralToDirectory() {
+    if (!this.corral.compiled) return this.showToast('⚠ Draw a corral before saving');
+    const filename = document.getElementById('corralFileName')?.value.trim() || 'boid-corral.svg';
+    try {
+      const saved = await this.corralFiles.write(filename, corralToSvg(this.corral.points, this.W, this.H));
+      if (saved) {
+        this.showToast(`◯ ${filename} saved`);
+        await this._refreshCorralDirectory();
+      }
+    } catch (error) {
+      this.showToast(`⚠ ${error.message || 'Could not save SVG'}`);
     }
   }
 
@@ -17103,6 +17264,8 @@ export class App {
       this.saveSession();
       this._syncCorralUI();
     });
+    document.getElementById('corralPhysicsDrawerTab')?.addEventListener('click', () => this._toggleCorralDrawer('physics'));
+    document.getElementById('corralSvgDrawerTab')?.addEventListener('click', () => this._toggleCorralDrawer('svg'));
     document.getElementById('corralResetBtn')?.addEventListener('click', () => this._resetCorral());
     document.getElementById('corralExitBtn')?.addEventListener('click', () => this._toggleCorralEditor(false));
     document.getElementById('corralExportBtn')?.addEventListener('click', () => this._exportCorralSvg());
@@ -17130,6 +17293,50 @@ export class App {
       this._syncCorralUI();
     });
     document.getElementById('corralRepulsionRadius')?.addEventListener('change', () => this.saveSession());
+    const bindCorralPercent = (id, key, min, max) => {
+      document.getElementById(id)?.addEventListener('input', event => {
+        this.corral[key] = Math.max(min, Math.min(max, (Number(event.target.value) || 0) / 100));
+        this.invalidateParams();
+        this._syncCorralUI();
+      });
+      document.getElementById(id)?.addEventListener('change', () => this.saveSession());
+    };
+    bindCorralPercent('corralMidpointForce', 'midpointForce', 0, 1.5);
+    bindCorralPercent('corralTangentialForce', 'tangentialForce', -2, 2);
+    bindCorralPercent('corralNormalDamping', 'normalDamping', 0, 1);
+    bindCorralPercent('corralTangentialFriction', 'tangentialFriction', 0, 1);
+    document.getElementById('corralHardEdge')?.addEventListener('change', event => {
+      this.corral.hardEdge = !!event.target.checked;
+      this.invalidateParams();
+      this.saveSession();
+    });
+    document.getElementById('corralFalloff')?.addEventListener('change', event => {
+      this.corral.falloff = ['linear', 'quadratic'].includes(event.target.value) ? event.target.value : 'smooth';
+      this.invalidateParams();
+      this.saveSession();
+    });
+    document.getElementById('corralShapeSmoothing')?.addEventListener('input', event => {
+      this.corral.shapeSmoothing = Math.max(0, Math.min(3, Math.round(Number(event.target.value) || 0)));
+      this.corral.points = smoothClosedCorral(this.corral.rawPoints, this.corral.shapeSmoothing);
+      this.corral.compiled = compileCorral(this.corral.points);
+      this.invalidateParams();
+      this._syncCorralUI();
+    });
+    document.getElementById('corralShapeSmoothing')?.addEventListener('change', () => this.saveSession());
+    document.getElementById('corralApplyPathBtn')?.addEventListener('click', () => {
+      const d = document.getElementById('corralSvgPathInput')?.value.trim();
+      if (!d) return this.showToast('⚠ Enter a closed SVG path');
+      if (!/^[MmZzLlHhVvCcSsQqTtAaEe0-9+\-.,\s]+$/.test(d) || !/[zZ]\s*$/.test(d)) {
+        return this.showToast('⚠ Enter one valid closed SVG path');
+      }
+      void this._applyCorralSvgPath(d)
+        .then(() => this.showToast('◯ SVG path applied'))
+        .catch(error => this.showToast(`⚠ ${error.message || 'Could not apply SVG path'}`));
+    });
+    document.getElementById('corralChooseDirectoryBtn')?.addEventListener('click', () => void this._chooseCorralDirectory());
+    document.getElementById('corralReconnectDirectoryBtn')?.addEventListener('click', () => void this._reconnectCorralDirectory());
+    document.getElementById('corralRefreshDirectoryBtn')?.addEventListener('click', () => void this._refreshCorralDirectory());
+    document.getElementById('corralSaveToDirectoryBtn')?.addEventListener('click', () => void this._saveCorralToDirectory());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       const rp = document.getElementById('rightPanel');
       const open = rp?.classList.toggle('open');
@@ -21126,6 +21333,15 @@ export class App {
     controls.corralOverlayCollapsed = this.corral.overlayCollapsed;
     controls.corralEdgeStrength = Math.round(this.corral.edgeStrength * 100);
     controls.corralRepulsionRadius = Math.round(this.corral.repulsionRadius);
+    controls.corralMidpointForce = Math.round(this.corral.midpointForce * 100);
+    controls.corralTangentialForce = Math.round(this.corral.tangentialForce * 100);
+    controls.corralNormalDamping = Math.round(this.corral.normalDamping * 100);
+    controls.corralTangentialFriction = Math.round(this.corral.tangentialFriction * 100);
+    controls.corralHardEdge = this.corral.hardEdge;
+    controls.corralFalloff = this.corral.falloff;
+    controls.corralShapeSmoothing = this.corral.shapeSmoothing;
+    controls.corralPhysicsDrawerOpen = this.corral.physicsDrawerOpen;
+    controls.corralSvgDrawerOpen = this.corral.svgDrawerOpen;
     controls._corral = {
       rawPoints: this.corral.rawPoints,
       points: this.corral.points,
@@ -21717,6 +21933,42 @@ export class App {
         this.corral.repulsionRadius = value;
         const input = document.getElementById('corralRepulsionRadius');
         if (input) input.value = String(value);
+        continue;
+      }
+      if (id === 'corralMidpointForce') {
+        this.corral.midpointForce = Math.max(0, Math.min(1.5, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralTangentialForce') {
+        this.corral.tangentialForce = Math.max(-2, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralNormalDamping') {
+        this.corral.normalDamping = Math.max(0, Math.min(1, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralTangentialFriction') {
+        this.corral.tangentialFriction = Math.max(0, Math.min(1, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralHardEdge') {
+        this.corral.hardEdge = val !== false && val !== 'false';
+        continue;
+      }
+      if (id === 'corralFalloff') {
+        this.corral.falloff = ['linear', 'quadratic'].includes(val) ? val : 'smooth';
+        continue;
+      }
+      if (id === 'corralShapeSmoothing') {
+        this.corral.shapeSmoothing = Math.max(0, Math.min(3, Math.round(Number(val) || 0)));
+        continue;
+      }
+      if (id === 'corralPhysicsDrawerOpen') {
+        this.corral.physicsDrawerOpen = val === true || val === 'true';
+        continue;
+      }
+      if (id === 'corralSvgDrawerOpen') {
+        this.corral.svgDrawerOpen = val === true || val === 'true';
         continue;
       }
       if (id === 'primaryColor' || id === '_primaryColor') { this.setColorValue('primary', val); continue; }

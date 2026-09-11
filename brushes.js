@@ -1038,12 +1038,16 @@ function _syncSimulationGuidesToGpu(brush, guideState) {
 
 function _applyCorral(brush, p, read) {
   if (!p.corralEnabled || !p.corralCompiled) return false;
-  return constrainAgentsToCorral(
-    read,
-    p.corralCompiled,
-    p.corralEdgeStrength,
-    p.corralRepulsionRadius,
-  );
+  return constrainAgentsToCorral(read, p.corralCompiled, {
+    edgeStrength: p.corralEdgeStrength,
+    repulsionRadius: p.corralRepulsionRadius,
+    midpointForce: p.corralMidpointForce,
+    tangentialForce: p.corralTangentialForce,
+    normalDamping: p.corralNormalDamping,
+    tangentialFriction: p.corralTangentialFriction,
+    hardEdge: p.corralHardEdge,
+    falloff: p.corralFalloff,
+  });
 }
 
 function _applySimulationGuides(brush, p, read, guideState = _collectSimulationGuides(brush, p), gpuSupport = {}) {

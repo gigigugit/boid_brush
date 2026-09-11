@@ -336,19 +336,37 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
 #corralHud{position:fixed;left:50%;top:calc(var(--topbar-h) + 14px);z-index:19;display:none;max-width:calc(100vw - 112px);transform:translateX(-50%);pointer-events:none;}
 #corralHud.open{display:block;}
-.corral-card{pointer-events:auto;display:flex;align-items:center;justify-content:center;gap:8px;width:max-content;max-width:100%;padding:8px 10px;overflow-x:auto;overflow-y:hidden;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);scrollbar-width:thin;}
+.corral-card{pointer-events:auto;display:flex;flex-direction:column;align-items:center;width:max-content;max-width:100%;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
+.corral-main{display:flex;align-items:center;justify-content:center;gap:8px;max-width:100%;padding:8px 10px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;}
 .corral-header{display:contents;}
 .corral-header-actions{display:flex;align-items:center;gap:6px;}
 .corral-body{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
-#corralHud.collapsed .corral-body{display:none;}
+#corralHud.collapsed .corral-body,#corralHud.collapsed .corral-drawers{display:none;}
 .corral-title{color:#ff8bea;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;}
 .corral-strength{display:flex;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
 .corral-strength input{width:110px;accent-color:#ff2bd6;}
 .corral-strength output{min-width:34px;color:#ffc4f4;font-variant-numeric:tabular-nums;}
 .corral-toggle{display:flex;align-items:center;gap:5px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
+.corral-drawers{display:grid;grid-template-columns:1fr 1fr;align-items:start;width:100%;border-top:1px solid rgba(255,255,255,.06);}
+.corral-drawer{display:flex;flex-direction:column;min-width:0;}
+.corral-drawer:first-child{border-right:1px solid rgba(255,255,255,.06);}
+.corral-drawer-content{display:none;flex-direction:column;gap:9px;max-height:min(52vh,430px);padding:10px;overflow:auto;background:rgba(7,9,15,.42);}
+.corral-drawer.open .corral-drawer-content{display:flex;}
+.corral-drawer-tab{align-self:stretch;min-height:25px;padding:3px 8px;border:0;border-top:1px solid rgba(255,255,255,.08);border-radius:0 0 12px 12px;background:rgba(255,255,255,.055);color:#d8b4d1;font-size:10px;font-weight:700;cursor:pointer;}
+.corral-drawer-tab:hover{background:rgba(255,43,214,.12);color:#ffd8f7;}
+.corral-setting{display:grid;grid-template-columns:minmax(92px,1fr) 112px 42px;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;}
+.corral-setting input[type="range"]{width:112px;accent-color:#ff2bd6;}
+.corral-setting output{color:#ffc4f4;text-align:right;font-variant-numeric:tabular-nums;}
+.corral-setting select,.corral-file-name,.corral-path-input{min-height:30px;background:rgba(4,7,12,.82);color:var(--ink-0);border:1px solid var(--line-1);border-radius:6px;padding:5px 7px;font-size:10px;}
+.corral-path-input{min-height:62px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+.corral-drawer-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.corral-file-tree{display:flex;flex-direction:column;gap:3px;min-height:52px;max-height:150px;padding:6px;border:1px solid var(--line-0);border-radius:7px;background:rgba(3,5,9,.5);overflow:auto;}
+.corral-file-item{padding:5px 7px;text-align:left;border:0;border-radius:5px;background:transparent;color:var(--ink-1);font-size:10px;cursor:pointer;}
+.corral-file-item:hover{background:rgba(255,43,214,.1);color:#ffd8f7;}
+.corral-file-status{font-size:9px;color:#8994a8;line-height:1.35;}
 #corralBtn.active{background:linear-gradient(135deg,#bd299f,#f044cc);border-color:rgba(255,107,224,.55);color:#fff;box-shadow:0 0 10px rgba(255,43,214,.3);}
 body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px);}
-@media (max-width:760px){#corralHud{max-width:calc(100vw - 88px);}body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px);}}
+@media (max-width:760px){#corralHud{max-width:calc(100vw - 88px)}.corral-drawers{grid-template-columns:1fr}.corral-drawer:first-child{border-right:0;border-bottom:1px solid rgba(255,255,255,.06)}.corral-drawer-content{max-height:38vh}body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px)}}
 #simPlaybackBar{position:fixed;left:50%;bottom:calc(var(--status-h) + 14px);transform:translate(-50%,12px);z-index:19;display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:min(94vw,960px);padding:9px 12px;border:1px solid var(--line-0);border-radius:16px;background:rgba(14,18,28,0.92);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);}
 #simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
 #simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
@@ -1174,28 +1192,58 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <div id="corralHud" aria-label="Corral controls">
   <div class="corral-card">
-    <div class="corral-header">
-      <span class="corral-title">Corral</span>
-      <div class="corral-header-actions">
-        <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
-        <button class="sim-pill" id="corralCollapseBtn" type="button" aria-expanded="true" aria-controls="corralHudBody">Collapse Overlay</button>
+    <div class="corral-main">
+      <div class="corral-header">
+        <span class="corral-title">Corral</span>
+        <div class="corral-header-actions">
+          <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
+          <button class="sim-pill" id="corralCollapseBtn" type="button" aria-expanded="true" aria-controls="corralHudBody">Collapse Overlay</button>
+        </div>
+      </div>
+      <div class="corral-body" id="corralHudBody">
+        <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
+        <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
+        <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
       </div>
     </div>
-    <div class="corral-body" id="corralHudBody">
-      <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
-      <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
-      <label class="corral-strength" for="corralEdgeStrength" title="Inward force at the hard edge">Force
-        <input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100">
-        <output id="corralEdgeStrengthValue" for="corralEdgeStrength">1.00</output>
-      </label>
-      <label class="corral-strength" for="corralRepulsionRadius" title="Interior distance over which the edge smoothly repels boids">Radius
-        <input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32">
-        <output id="corralRepulsionRadiusValue" for="corralRepulsionRadius">32px</output>
-      </label>
-      <button class="sim-pill" id="corralExportBtn" type="button">Export SVG</button>
-      <button class="sim-pill" id="corralLoadBtn" type="button">Load SVG</button>
-      <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
-      <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
+    <div class="corral-drawers">
+      <section class="corral-drawer" id="corralPhysicsDrawer">
+        <div class="corral-drawer-content">
+          <label class="corral-toggle"><input id="corralHardEdge" type="checkbox" checked> Hard edge containment</label>
+          <label class="corral-setting"><span>Repulsion force</span><input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100"><output id="corralEdgeStrengthValue">1.00</output></label>
+          <label class="corral-setting"><span>Repulsion radius</span><input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32"><output id="corralRepulsionRadiusValue">32px</output></label>
+          <label class="corral-setting"><span>Midpoint force</span><input id="corralMidpointForce" type="range" min="0" max="150" step="1" value="50"><output id="corralMidpointForceValue">50%</output></label>
+          <label class="corral-setting"><span>Tangential force</span><input id="corralTangentialForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralTangentialForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Normal damping</span><input id="corralNormalDamping" type="range" min="0" max="100" step="1" value="0"><output id="corralNormalDampingValue">0%</output></label>
+          <label class="corral-setting"><span>Edge friction</span><input id="corralTangentialFriction" type="range" min="0" max="100" step="1" value="0"><output id="corralTangentialFrictionValue">0%</output></label>
+          <label class="corral-setting"><span>Shape smoothing</span><input id="corralShapeSmoothing" type="range" min="0" max="3" step="1" value="2"><output id="corralShapeSmoothingValue">2</output></label>
+          <label class="corral-setting"><span>Falloff</span><select id="corralFalloff"><option value="smooth">Smooth</option><option value="linear">Linear</option><option value="quadratic">Quadratic</option></select><output></output></label>
+        </div>
+        <button class="corral-drawer-tab" id="corralPhysicsDrawerTab" type="button" aria-expanded="false" aria-controls="corralPhysicsDrawer">Physics ▼</button>
+      </section>
+      <section class="corral-drawer" id="corralSvgDrawer">
+        <div class="corral-drawer-content">
+          <textarea class="corral-path-input" id="corralSvgPathInput" placeholder="Closed SVG path data, e.g. M 0 0 L 100 0 L 100 100 Z" aria-label="SVG path data"></textarea>
+          <div class="corral-drawer-row">
+            <button class="sim-pill" id="corralApplyPathBtn" type="button">Apply Path</button>
+            <button class="sim-pill" id="corralLoadBtn" type="button">Import SVG</button>
+            <button class="sim-pill" id="corralExportBtn" type="button">Download SVG</button>
+          </div>
+          <div class="corral-drawer-row">
+            <button class="sim-pill" id="corralChooseDirectoryBtn" type="button">Choose Folder</button>
+            <button class="sim-pill" id="corralReconnectDirectoryBtn" type="button">Reconnect</button>
+            <button class="sim-pill" id="corralRefreshDirectoryBtn" type="button">Refresh</button>
+          </div>
+          <div class="corral-file-tree" id="corralFileTree" aria-label="Corral SVG files"></div>
+          <div class="corral-drawer-row">
+            <input class="corral-file-name" id="corralFileName" type="text" value="boid-corral.svg" aria-label="SVG filename">
+            <button class="sim-pill" id="corralSaveToDirectoryBtn" type="button">Save to Folder</button>
+          </div>
+          <div class="corral-file-status" id="corralFileStatus">Choose a folder for quick SVG access. Browser permission is requested only when you click.</div>
+          <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
+        </div>
+        <button class="corral-drawer-tab" id="corralSvgDrawerTab" type="button" aria-expanded="false" aria-controls="corralSvgDrawer">SVG &amp; Files ▼</button>
+      </section>
     </div>
   </div>
 </div>
@@ -1900,7 +1948,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-11-corral-force-tunnel';
+const assetVersion = '2026-09-11-corral-drawers';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

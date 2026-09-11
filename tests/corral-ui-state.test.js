@@ -12,18 +12,18 @@ test('corral overlay exposes persistent visibility and collapse controls', () =>
   assert.match(html, /id="corralVisibilityBtn"[^>]*aria-pressed="false"/);
   assert.match(html, /id="corralCollapseBtn"[^>]*aria-expanded="true"/);
   assert.match(html, /id="corralHudBody"/);
-  assert.match(html, /#corralHud\.collapsed \.corral-body\{display:none;\}/);
+  assert.match(html, /#corralHud\.collapsed \.corral-body,#corralHud\.collapsed \.corral-drawers\{display:none;\}/);
 });
 
 test('corral toolbar is centered, single-line, and below panel tabs', () => {
   assert.match(html, /#corralHud\{[^}]*left:50%;[^}]*z-index:19;[^}]*transform:translateX\(-50%\)/);
-  assert.match(html, /\.corral-card\{[^}]*justify-content:center;[^}]*width:max-content;[^}]*overflow-x:auto/);
+  assert.match(html, /\.corral-main\{[^}]*justify-content:center;[^}]*overflow-x:auto/);
   assert.match(html, /\.corral-body\{[^}]*flex-wrap:nowrap/);
   assert.match(html, /\.panel-tabs\{[^}]*z-index:21/);
 });
 
 test('corral control delivery uses the current cache token', () => {
-  assert.match(html, /const assetVersion = '2026-09-11-corral-force-tunnel'/);
+  assert.match(html, /const assetVersion = '2026-09-11-corral-drawers'/);
 });
 
 test('enabled corral keeps controls visible outside editor mode', () => {
@@ -48,4 +48,27 @@ test('corral exposes and persists an independent repulsion radius', () => {
   assert.match(app, /corralRepulsionRadius: this\.corral\.repulsionRadius/);
   assert.match(app, /controls\.corralRepulsionRadius = Math\.round\(this\.corral\.repulsionRadius\)/);
   assert.match(app, /id === 'corralRepulsionRadius'/);
+});
+
+test('corral has two attached moving-tab drawers with advanced controls', () => {
+  assert.match(html, /id="corralPhysicsDrawerTab"[^>]*aria-expanded="false"/);
+  assert.match(html, /id="corralSvgDrawerTab"[^>]*aria-expanded="false"/);
+  assert.match(app, /tab\.textContent = `\$\{label\} \$\{open \? '▲' : '▼'\}`/);
+  for (const id of [
+    'corralHardEdge',
+    'corralMidpointForce',
+    'corralTangentialForce',
+    'corralNormalDamping',
+    'corralTangentialFriction',
+    'corralShapeSmoothing',
+    'corralFalloff',
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+});
+
+test('SVG drawer supports path entry and permission-based folder browsing', () => {
+  assert.match(html, /id="corralSvgPathInput"/);
+  assert.match(html, /id="corralChooseDirectoryBtn"/);
+  assert.match(html, /id="corralFileTree"/);
+  assert.match(html, /id="corralSaveToDirectoryBtn"/);
+  assert.match(app, /new CorralFileWorkspace\(\)/);
 });
