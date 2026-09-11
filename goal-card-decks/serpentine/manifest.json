@@ -1,0 +1,1716 @@
+{
+  "format": "boid-brush-goal-study-manifest",
+  "version": 1,
+  "suiteId": "serpentine-studies-2026-09-11",
+  "title": "Serpiginous / cohesive accumulated-trail study suite",
+  "importable": false,
+  "deckCount": 6,
+  "cardCount": 72,
+  "goal": "Explore serpiginous, cohesive boid trails: a connected winding ribbon with alternating bends. These accumulated stills test visible trail structure, not sustained moving-group cohesion, speed, or leader following.",
+  "evidenceStatus": "All suite hypotheses are unobserved; no generated cards have been executed or reviewed.",
+  "instructions": [
+    "This manifest is an index, not an app import. Download/import each numbered deck JSON in the listed order via Experimentation > Goal cards.",
+    "Each file is a complete independent r1 deck with null parent for a new serpentine study, not a mark-study revision. No prerequisite parent imports.",
+    "Run cards manually in runOrder, compare paired cards and record agreement plus notes. Import alone does not execute cards. No automatic search, scheduling or winner.",
+    "For each pair, compare completed exact WASM / Canvas2D results with matching captured frames; for the interval study only frames differ intentionally. Preserve timeouts/errors, and manually rerun only with user approval.",
+    "Questions concern accumulated stills only. Use N/A where a property is not assessable, and notes for ambiguity, clipping, broad clouds or solid blobs. Unanswered is not neutral.",
+    "Do not infer motion coherence, actual speed, oscillation frequency or leader following from accumulated PNGs. Ask for separate temporal observations.",
+    "Export reviewed bundles after each batch and before reruns. Image capacity can be exhausted before 72 reviews; archive originals including failures, then use a fresh browser profile if needed.",
+    "Cross-batch anchors and factorial duplicate controls are same internal-seed repeatability checks, not independent random replications or cross-build guarantees."
+  ],
+  "retention": {
+    "maxCardsPerDeck": 12,
+    "maxRevisions": 20,
+    "maxReviews": 100,
+    "maxImportBytes": 16000000,
+    "maxTotalImageChars": 8000000,
+    "exportAfterEveryDeck": true,
+    "capacityAssumption": "72 first runs and 6 revisions fit count limits only if existing collection has enough room; image/storage limits may bind earlier."
+  },
+  "sharedControls": {
+    "anchorCardId": "anchor",
+    "anchorFrames": 90,
+    "derivation": "Exact createExampleDeck().cards[0].config with guides changed to []; no other configuration change.",
+    "config": {
+      "engine": "boid-wasm-canvas-v1",
+      "width": 384,
+      "height": 384,
+      "background": "#ffffff",
+      "params": {
+        "seek": 0,
+        "cohesion": 0.35,
+        "separation": 0.15,
+        "alignment": 0.22,
+        "jitter": 0,
+        "wander": 0.06,
+        "wanderSpeed": 0.3,
+        "maxSpeed": 4,
+        "damping": 0.95,
+        "fov": 115,
+        "flowField": 0,
+        "flowScale": 0.01,
+        "fleeRadius": 0,
+        "individuality": 0,
+        "neighborRadius": 80,
+        "separationRadius": 25,
+        "simBoundsMargin": 0,
+        "sizeVar": 0,
+        "opacityVar": 0,
+        "speedVar": 0,
+        "forceVar": 0,
+        "hueVar": 0,
+        "satVar": 0,
+        "litVar": 0,
+        "stampSize": 4,
+        "stampOpacity": 0.15,
+        "stampSeparation": 0,
+        "color": "#216c91"
+      },
+      "target": {
+        "x": 192,
+        "y": 192
+      },
+      "spawns": [
+        {
+          "id": "spawn-1",
+          "x": 140,
+          "y": 192,
+          "count": 48,
+          "shape": "circle",
+          "radius": 45,
+          "angle": 0,
+          "jitter": 0
+        }
+      ],
+      "guides": []
+    },
+    "wallSeconds": 5,
+    "defaultFrames": 90,
+    "fixedStepSeconds": 0.016666666666666666,
+    "randomness": "Engine-internal seed 42; no user seed control; cross-build reproducibility not guaranteed",
+    "variablePaths": [
+      "config.params",
+      "config.guides",
+      "budget.frames"
+    ],
+    "allOtherConfigFieldsFixed": true,
+    "sourcePair": {
+      "baselineCardId": "source-baseline",
+      "spacingCardId": "source-spacing",
+      "sourceDeckId": "mark-study",
+      "sourceRevisionId": "r1",
+      "baselineConfig": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": [
+          {
+            "id": "guide-1",
+            "type": "attract",
+            "x": 270,
+            "y": 192,
+            "strength": 0.3,
+            "radius": 80,
+            "influenceRadius": 350,
+            "hardness": 1
+          }
+        ]
+      },
+      "spacingOnlyChange": {
+        "separation": 0.45
+      },
+      "sourceBudget": {
+        "frames": 90,
+        "wallSeconds": 3
+      },
+      "newBudget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "caveat": "Exact source native configs retained, but new wall budget and ribbon questions mean these are not exact historical protocol replications."
+    }
+  },
+  "questions": [
+    {
+      "id": "ribbon",
+      "text": "Most visible paint belongs to one connected, elongated ribbon rather than separate clusters."
+    },
+    {
+      "id": "bends",
+      "text": "The visible ribbon has successive bends in alternating directions."
+    },
+    {
+      "id": "continuity",
+      "text": "The main painted trail has no visible breaks along its length."
+    },
+    {
+      "id": "compactness",
+      "text": "Visible marks occupy a compact band rather than a broad scattered cloud."
+    },
+    {
+      "id": "gaps",
+      "text": "White gaps remain visible between marks inside the painted band."
+    }
+  ],
+  "decks": [
+    {
+      "order": 1,
+      "file": "01-wander.json",
+      "deckId": "serpentine-01-wander",
+      "revisionId": "r1",
+      "cardCount": 12,
+      "anchorCardId": "anchor",
+      "runOrder": [
+        "anchor",
+        "source-baseline",
+        "source-spacing",
+        "wander-0",
+        "wander-0p02",
+        "wander-0p12",
+        "wander-0p24",
+        "wanderspeed-0p05",
+        "wanderspeed-0p15",
+        "wanderspeed-0p6",
+        "wanderspeed-1",
+        "anchor-repeat"
+      ]
+    },
+    {
+      "order": 2,
+      "file": "02-noise-flow.json",
+      "deckId": "serpentine-02-noise-flow",
+      "revisionId": "r1",
+      "cardCount": 12,
+      "anchorCardId": "anchor",
+      "runOrder": [
+        "anchor",
+        "jitter-0p015",
+        "jitter-0p05",
+        "jitter-0p12",
+        "jitter-0p25",
+        "flowfield-0p08",
+        "flowfield-0p2",
+        "flowfield-0p45",
+        "flowscale-0p003",
+        "flowscale-0p03",
+        "flowscale-0p07",
+        "anchor-repeat"
+      ]
+    },
+    {
+      "order": 3,
+      "file": "03-flocking.json",
+      "deckId": "serpentine-03-flocking",
+      "revisionId": "r1",
+      "cardCount": 12,
+      "anchorCardId": "anchor",
+      "runOrder": [
+        "anchor",
+        "cohesion-0p15",
+        "cohesion-0p6",
+        "cohesion-0p85",
+        "alignment-0",
+        "alignment-0p5",
+        "alignment-0p8",
+        "separation-0",
+        "separation-0p3",
+        "separation-0p45",
+        "neighborradius-40",
+        "neighborradius-140"
+      ]
+    },
+    {
+      "order": 4,
+      "file": "04-interactions-guides.json",
+      "deckId": "serpentine-04-interactions-guides",
+      "revisionId": "r1",
+      "cardCount": 12,
+      "anchorCardId": "anchor",
+      "runOrder": [
+        "anchor",
+        "factor-w0-c0-a0",
+        "factor-w0-c0-a1",
+        "factor-w0-c1-a0",
+        "factor-w0-c1-a1",
+        "factor-w1-c0-a0",
+        "factor-w1-c0-a1",
+        "factor-w1-c1-a0",
+        "factor-w1-c1-a1",
+        "static-attractor-0p1",
+        "static-attractor-0p3",
+        "static-attractor-0p6"
+      ]
+    },
+    {
+      "order": 5,
+      "file": "05-heading-tempo.json",
+      "deckId": "serpentine-05-heading-tempo",
+      "revisionId": "r1",
+      "cardCount": 12,
+      "anchorCardId": "anchor",
+      "runOrder": [
+        "anchor",
+        "fov-60",
+        "fov-220",
+        "fov-360",
+        "maxspeed-2",
+        "maxspeed-6",
+        "damping-0p88",
+        "damping-0p99",
+        "individuality-0p15",
+        "individuality-0p4",
+        "separationradius-12",
+        "separationradius-40"
+      ]
+    },
+    {
+      "order": 6,
+      "file": "06-intervals.json",
+      "deckId": "serpentine-06-intervals",
+      "revisionId": "r1",
+      "cardCount": 12,
+      "anchorCardId": "anchor",
+      "runOrder": [
+        "anchor",
+        "source-baseline",
+        "source-spacing",
+        "guide-free-60",
+        "guide-free-120",
+        "guide-free-180",
+        "coordinated-wander-60",
+        "coordinated-wander-120",
+        "coordinated-wander-180",
+        "flow-60",
+        "flow-120",
+        "flow-180"
+      ]
+    }
+  ],
+  "oneFactorSweeps": [
+    {
+      "deckId": "serpentine-01-wander",
+      "parameter": "wander",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0.06,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0,
+          "cardId": "wander-0"
+        },
+        {
+          "value": 0.02,
+          "cardId": "wander-0p02"
+        },
+        {
+          "value": 0.12,
+          "cardId": "wander-0p12"
+        },
+        {
+          "value": 0.24,
+          "cardId": "wander-0p24"
+        }
+      ],
+      "valueGrid": [
+        0,
+        0.02,
+        0.06,
+        0.12,
+        0.24
+      ]
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "parameter": "wanderSpeed",
+      "controlCardId": "anchor",
+      "fixedParams": {
+        "wander": 0.06
+      },
+      "members": [
+        {
+          "value": 0.3,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0.05,
+          "cardId": "wanderspeed-0p05"
+        },
+        {
+          "value": 0.15,
+          "cardId": "wanderspeed-0p15"
+        },
+        {
+          "value": 0.6,
+          "cardId": "wanderspeed-0p6"
+        },
+        {
+          "value": 1,
+          "cardId": "wanderspeed-1"
+        }
+      ],
+      "valueGrid": [
+        0.05,
+        0.15,
+        0.3,
+        0.6,
+        1
+      ]
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "parameter": "jitter",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0.015,
+          "cardId": "jitter-0p015"
+        },
+        {
+          "value": 0.05,
+          "cardId": "jitter-0p05"
+        },
+        {
+          "value": 0.12,
+          "cardId": "jitter-0p12"
+        },
+        {
+          "value": 0.25,
+          "cardId": "jitter-0p25"
+        }
+      ],
+      "valueGrid": [
+        0,
+        0.015,
+        0.05,
+        0.12,
+        0.25
+      ]
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "parameter": "flowField",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0.08,
+          "cardId": "flowfield-0p08"
+        },
+        {
+          "value": 0.2,
+          "cardId": "flowfield-0p2"
+        },
+        {
+          "value": 0.45,
+          "cardId": "flowfield-0p45"
+        }
+      ],
+      "valueGrid": [
+        0,
+        0.08,
+        0.2,
+        0.45
+      ]
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "parameter": "flowScale",
+      "controlCardId": "flowfield-0p2",
+      "fixedParams": {
+        "flowField": 0.2
+      },
+      "members": [
+        {
+          "value": 0.01,
+          "cardId": "flowfield-0p2"
+        },
+        {
+          "value": 0.003,
+          "cardId": "flowscale-0p003"
+        },
+        {
+          "value": 0.03,
+          "cardId": "flowscale-0p03"
+        },
+        {
+          "value": 0.07,
+          "cardId": "flowscale-0p07"
+        }
+      ],
+      "valueGrid": [
+        0.003,
+        0.01,
+        0.03,
+        0.07
+      ]
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "parameter": "cohesion",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0.35,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0.15,
+          "cardId": "cohesion-0p15"
+        },
+        {
+          "value": 0.6,
+          "cardId": "cohesion-0p6"
+        },
+        {
+          "value": 0.85,
+          "cardId": "cohesion-0p85"
+        }
+      ],
+      "valueGrid": [
+        0.15,
+        0.35,
+        0.6,
+        0.85
+      ]
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "parameter": "alignment",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0.22,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0,
+          "cardId": "alignment-0"
+        },
+        {
+          "value": 0.5,
+          "cardId": "alignment-0p5"
+        },
+        {
+          "value": 0.8,
+          "cardId": "alignment-0p8"
+        }
+      ],
+      "valueGrid": [
+        0,
+        0.22,
+        0.5,
+        0.8
+      ]
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "parameter": "separation",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0.15,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0,
+          "cardId": "separation-0"
+        },
+        {
+          "value": 0.3,
+          "cardId": "separation-0p3"
+        },
+        {
+          "value": 0.45,
+          "cardId": "separation-0p45"
+        }
+      ],
+      "valueGrid": [
+        0,
+        0.15,
+        0.3,
+        0.45
+      ]
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "parameter": "neighborRadius",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 80,
+          "cardId": "anchor"
+        },
+        {
+          "value": 40,
+          "cardId": "neighborradius-40"
+        },
+        {
+          "value": 140,
+          "cardId": "neighborradius-140"
+        }
+      ],
+      "valueGrid": [
+        40,
+        80,
+        140
+      ]
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "parameter": "fov",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 115,
+          "cardId": "anchor"
+        },
+        {
+          "value": 60,
+          "cardId": "fov-60"
+        },
+        {
+          "value": 220,
+          "cardId": "fov-220"
+        },
+        {
+          "value": 360,
+          "cardId": "fov-360"
+        }
+      ],
+      "valueGrid": [
+        60,
+        115,
+        220,
+        360
+      ]
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "parameter": "maxSpeed",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 4,
+          "cardId": "anchor"
+        },
+        {
+          "value": 2,
+          "cardId": "maxspeed-2"
+        },
+        {
+          "value": 6,
+          "cardId": "maxspeed-6"
+        }
+      ],
+      "valueGrid": [
+        2,
+        4,
+        6
+      ]
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "parameter": "damping",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0.95,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0.88,
+          "cardId": "damping-0p88"
+        },
+        {
+          "value": 0.99,
+          "cardId": "damping-0p99"
+        }
+      ],
+      "valueGrid": [
+        0.88,
+        0.95,
+        0.99
+      ]
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "parameter": "individuality",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 0,
+          "cardId": "anchor"
+        },
+        {
+          "value": 0.15,
+          "cardId": "individuality-0p15"
+        },
+        {
+          "value": 0.4,
+          "cardId": "individuality-0p4"
+        }
+      ],
+      "valueGrid": [
+        0,
+        0.15,
+        0.4
+      ]
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "parameter": "separationRadius",
+      "controlCardId": "anchor",
+      "fixedParams": {},
+      "members": [
+        {
+          "value": 25,
+          "cardId": "anchor"
+        },
+        {
+          "value": 12,
+          "cardId": "separationradius-12"
+        },
+        {
+          "value": 40,
+          "cardId": "separationradius-40"
+        }
+      ],
+      "valueGrid": [
+        12,
+        25,
+        40
+      ]
+    }
+  ],
+  "pairings": [
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "source-baseline",
+      "variantCardId": "source-spacing",
+      "changedPaths": [
+        "config.params.separation"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "source-baseline",
+      "variantCardId": "anchor",
+      "changedPaths": [
+        "config.guides"
+      ],
+      "kind": "guide-removal"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wander-0",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wander-0p02",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wander-0p12",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wander-0p24",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wanderspeed-0p05",
+      "changedPaths": [
+        "config.params.wanderSpeed"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wanderspeed-0p15",
+      "changedPaths": [
+        "config.params.wanderSpeed"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wanderspeed-0p6",
+      "changedPaths": [
+        "config.params.wanderSpeed"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "wanderspeed-1",
+      "changedPaths": [
+        "config.params.wanderSpeed"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-01-wander",
+      "controlCardId": "anchor",
+      "variantCardId": "anchor-repeat",
+      "changedPaths": [],
+      "kind": "repeatability"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "jitter-0p015",
+      "changedPaths": [
+        "config.params.jitter"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "jitter-0p05",
+      "changedPaths": [
+        "config.params.jitter"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "jitter-0p12",
+      "changedPaths": [
+        "config.params.jitter"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "jitter-0p25",
+      "changedPaths": [
+        "config.params.jitter"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "flowfield-0p08",
+      "changedPaths": [
+        "config.params.flowField"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "flowfield-0p2",
+      "changedPaths": [
+        "config.params.flowField"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "flowfield-0p45",
+      "changedPaths": [
+        "config.params.flowField"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "flowfield-0p2",
+      "variantCardId": "flowscale-0p003",
+      "changedPaths": [
+        "config.params.flowScale"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "flowfield-0p2",
+      "variantCardId": "flowscale-0p03",
+      "changedPaths": [
+        "config.params.flowScale"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "flowfield-0p2",
+      "variantCardId": "flowscale-0p07",
+      "changedPaths": [
+        "config.params.flowScale"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-02-noise-flow",
+      "controlCardId": "anchor",
+      "variantCardId": "anchor-repeat",
+      "changedPaths": [],
+      "kind": "repeatability"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "cohesion-0p15",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "cohesion-0p6",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "cohesion-0p85",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "alignment-0",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "alignment-0p5",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "alignment-0p8",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "separation-0",
+      "changedPaths": [
+        "config.params.separation"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "separation-0p3",
+      "changedPaths": [
+        "config.params.separation"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "separation-0p45",
+      "changedPaths": [
+        "config.params.separation"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "neighborradius-40",
+      "changedPaths": [
+        "config.params.neighborRadius"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-03-flocking",
+      "controlCardId": "anchor",
+      "variantCardId": "neighborradius-140",
+      "changedPaths": [
+        "config.params.neighborRadius"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "anchor",
+      "variantCardId": "factor-w0-c0-a0",
+      "changedPaths": [],
+      "kind": "repeatability"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c0-a0",
+      "variantCardId": "factor-w0-c0-a1",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c0-a0",
+      "variantCardId": "factor-w0-c1-a0",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c0-a0",
+      "variantCardId": "factor-w1-c0-a0",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c0-a1",
+      "variantCardId": "factor-w0-c1-a1",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c0-a1",
+      "variantCardId": "factor-w1-c0-a1",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c1-a0",
+      "variantCardId": "factor-w0-c1-a1",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c1-a0",
+      "variantCardId": "factor-w1-c1-a0",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w0-c1-a1",
+      "variantCardId": "factor-w1-c1-a1",
+      "changedPaths": [
+        "config.params.wander"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w1-c0-a0",
+      "variantCardId": "factor-w1-c0-a1",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w1-c0-a0",
+      "variantCardId": "factor-w1-c1-a0",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w1-c0-a1",
+      "variantCardId": "factor-w1-c1-a1",
+      "changedPaths": [
+        "config.params.cohesion"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "factor-w1-c1-a0",
+      "variantCardId": "factor-w1-c1-a1",
+      "changedPaths": [
+        "config.params.alignment"
+      ],
+      "kind": "factorial-edge"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "anchor",
+      "variantCardId": "static-attractor-0p3",
+      "changedPaths": [
+        "config.guides"
+      ],
+      "kind": "static-guidance"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "static-attractor-0p3",
+      "variantCardId": "static-attractor-0p1",
+      "changedPaths": [
+        "config.guides.0.strength"
+      ],
+      "kind": "static-guidance-strength"
+    },
+    {
+      "deckId": "serpentine-04-interactions-guides",
+      "controlCardId": "static-attractor-0p3",
+      "variantCardId": "static-attractor-0p6",
+      "changedPaths": [
+        "config.guides.0.strength"
+      ],
+      "kind": "static-guidance-strength"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "fov-60",
+      "changedPaths": [
+        "config.params.fov"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "fov-220",
+      "changedPaths": [
+        "config.params.fov"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "fov-360",
+      "changedPaths": [
+        "config.params.fov"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "maxspeed-2",
+      "changedPaths": [
+        "config.params.maxSpeed"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "maxspeed-6",
+      "changedPaths": [
+        "config.params.maxSpeed"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "damping-0p88",
+      "changedPaths": [
+        "config.params.damping"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "damping-0p99",
+      "changedPaths": [
+        "config.params.damping"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "individuality-0p15",
+      "changedPaths": [
+        "config.params.individuality"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "individuality-0p4",
+      "changedPaths": [
+        "config.params.individuality"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "separationradius-12",
+      "changedPaths": [
+        "config.params.separationRadius"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-05-heading-tempo",
+      "controlCardId": "anchor",
+      "variantCardId": "separationradius-40",
+      "changedPaths": [
+        "config.params.separationRadius"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "source-baseline",
+      "variantCardId": "source-spacing",
+      "changedPaths": [
+        "config.params.separation"
+      ],
+      "kind": "one-factor"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "source-baseline",
+      "variantCardId": "anchor",
+      "changedPaths": [
+        "config.guides"
+      ],
+      "kind": "guide-removal"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "guide-free-60",
+      "variantCardId": "guide-free-120",
+      "changedPaths": [
+        "budget.frames"
+      ],
+      "kind": "interval"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "guide-free-120",
+      "variantCardId": "guide-free-180",
+      "changedPaths": [
+        "budget.frames"
+      ],
+      "kind": "interval"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "coordinated-wander-60",
+      "variantCardId": "coordinated-wander-120",
+      "changedPaths": [
+        "budget.frames"
+      ],
+      "kind": "interval"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "coordinated-wander-120",
+      "variantCardId": "coordinated-wander-180",
+      "changedPaths": [
+        "budget.frames"
+      ],
+      "kind": "interval"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "flow-60",
+      "variantCardId": "flow-120",
+      "changedPaths": [
+        "budget.frames"
+      ],
+      "kind": "interval"
+    },
+    {
+      "deckId": "serpentine-06-intervals",
+      "controlCardId": "flow-120",
+      "variantCardId": "flow-180",
+      "changedPaths": [
+        "budget.frames"
+      ],
+      "kind": "interval"
+    }
+  ],
+  "factorial": {
+    "deckId": "serpentine-04-interactions-guides",
+    "design": "full 2x2x2, limited to three factors; not an optimization or complete search",
+    "valueGrids": {
+      "wander": [
+        0.06,
+        0.18
+      ],
+      "cohesion": [
+        0.35,
+        0.7
+      ],
+      "alignment": [
+        0.22,
+        0.65
+      ]
+    },
+    "fixedReference": "guide-free anchor; flowField=0, jitter=0, 90 frames / 5 seconds wall",
+    "cells": [
+      {
+        "cardId": "factor-w0-c0-a0",
+        "values": {
+          "wander": 0.06,
+          "cohesion": 0.35,
+          "alignment": 0.22
+        }
+      },
+      {
+        "cardId": "factor-w0-c0-a1",
+        "values": {
+          "wander": 0.06,
+          "cohesion": 0.35,
+          "alignment": 0.65
+        }
+      },
+      {
+        "cardId": "factor-w0-c1-a0",
+        "values": {
+          "wander": 0.06,
+          "cohesion": 0.7,
+          "alignment": 0.22
+        }
+      },
+      {
+        "cardId": "factor-w0-c1-a1",
+        "values": {
+          "wander": 0.06,
+          "cohesion": 0.7,
+          "alignment": 0.65
+        }
+      },
+      {
+        "cardId": "factor-w1-c0-a0",
+        "values": {
+          "wander": 0.18,
+          "cohesion": 0.35,
+          "alignment": 0.22
+        }
+      },
+      {
+        "cardId": "factor-w1-c0-a1",
+        "values": {
+          "wander": 0.18,
+          "cohesion": 0.35,
+          "alignment": 0.65
+        }
+      },
+      {
+        "cardId": "factor-w1-c1-a0",
+        "values": {
+          "wander": 0.18,
+          "cohesion": 0.7,
+          "alignment": 0.22
+        }
+      },
+      {
+        "cardId": "factor-w1-c1-a1",
+        "values": {
+          "wander": 0.18,
+          "cohesion": 0.7,
+          "alignment": 0.65
+        }
+      }
+    ],
+    "comparisonRule": "Use listed factorial-edge pairs for single-factor effects conditioned on other factors; diagonal comparisons change multiple parameters."
+  },
+  "staticGuidance": {
+    "deckId": "serpentine-04-interactions-guides",
+    "parameterPath": "config.guides.0.strength",
+    "valueGrid": [
+      0.1,
+      0.3,
+      0.6
+    ],
+    "members": [
+      {
+        "value": 0.1,
+        "cardId": "static-attractor-0p1"
+      },
+      {
+        "value": 0.3,
+        "cardId": "static-attractor-0p3"
+      },
+      {
+        "value": 0.6,
+        "cardId": "static-attractor-0p6"
+      }
+    ],
+    "fixedGuide": {
+      "id": "guide-1",
+      "type": "attract",
+      "x": 270,
+      "y": 192,
+      "strength": "varies",
+      "radius": 80,
+      "influenceRadius": 350,
+      "hardness": 1
+    },
+    "claim": "Stationary attractor only. Not leaders, animated paths or moving targets."
+  },
+  "intervals": {
+    "deckId": "serpentine-06-intervals",
+    "frameGrid": [
+      60,
+      120,
+      180
+    ],
+    "simulationSecondGrid": [
+      1,
+      2,
+      3
+    ],
+    "wallSeconds": 5,
+    "groups": [
+      {
+        "id": "guide-free",
+        "fixedParams": {},
+        "reference90": {
+          "deckId": "serpentine-01-wander",
+          "cardId": "anchor",
+          "revisionId": "r1"
+        },
+        "members": [
+          {
+            "cardId": "guide-free-60",
+            "frames": 60,
+            "simulationSeconds": 1
+          },
+          {
+            "cardId": "guide-free-120",
+            "frames": 120,
+            "simulationSeconds": 2
+          },
+          {
+            "cardId": "guide-free-180",
+            "frames": 180,
+            "simulationSeconds": 3
+          }
+        ]
+      },
+      {
+        "id": "coordinated-wander",
+        "fixedParams": {
+          "wander": 0.18,
+          "cohesion": 0.7,
+          "alignment": 0.65
+        },
+        "reference90": {
+          "deckId": "serpentine-04-interactions-guides",
+          "cardId": "factor-w1-c1-a1",
+          "revisionId": "r1"
+        },
+        "members": [
+          {
+            "cardId": "coordinated-wander-60",
+            "frames": 60,
+            "simulationSeconds": 1
+          },
+          {
+            "cardId": "coordinated-wander-120",
+            "frames": 120,
+            "simulationSeconds": 2
+          },
+          {
+            "cardId": "coordinated-wander-180",
+            "frames": 180,
+            "simulationSeconds": 3
+          }
+        ]
+      },
+      {
+        "id": "flow",
+        "fixedParams": {
+          "flowField": 0.2
+        },
+        "reference90": {
+          "deckId": "serpentine-02-noise-flow",
+          "cardId": "flowfield-0p2",
+          "revisionId": "r1"
+        },
+        "members": [
+          {
+            "cardId": "flow-60",
+            "frames": 60,
+            "simulationSeconds": 1
+          },
+          {
+            "cardId": "flow-120",
+            "frames": 120,
+            "simulationSeconds": 2
+          },
+          {
+            "cardId": "flow-180",
+            "frames": 180,
+            "simulationSeconds": 3
+          }
+        ]
+      }
+    ],
+    "caveat": "Configurations match exactly within each group and its reference90. These are fresh same-seed runs of accumulated paint, not instantaneous snapshots or independently sampled motion."
+  },
+  "deferredLeaderStudy": {
+    "status": "blocked-unsupported-v1",
+    "runnable": false,
+    "reason": "CAPABILITIES lists leaders unsupported; goal-card-worker.js explicitly sets leaderCount: 0. Static guides are not leader agents.",
+    "prerequisite": "User-approved future capability/schema support and a workflow able to observe temporal group behavior; no runtime changes or guessed runnable keys in this suite.",
+    "proposedControls": [
+      {
+        "concept": "Real leader count",
+        "proposedLevels": [
+          0,
+          1,
+          2,
+          4
+        ],
+        "comparison": "Start with no-leader control; hold total population constant at 48 by replacing followers, not adding agents. Report changed leader/follower ratio."
+      },
+      {
+        "concept": "Leader speed relative to follower native max speed",
+        "proposedLevels": [
+          0.75,
+          1,
+          1.25
+        ],
+        "comparison": "Hold one real leader and follower speed fixed; confirm native units and allowed range first."
+      },
+      {
+        "concept": "Leader influence / following force",
+        "proposedLevels": [
+          "off",
+          "low",
+          "medium",
+          "high"
+        ],
+        "comparison": "Calibrate native numeric bounds from future capabilities; keep leader path and follower forces fixed."
+      },
+      {
+        "concept": "Leader turning persistence / wander",
+        "proposedLevels": [
+          "straight",
+          "slow persistent bends",
+          "faster alternating bends"
+        ],
+        "comparison": "Separate turning amplitude and angular-step sweeps; observe actual motion, not just a painted shape."
+      },
+      {
+        "concept": "Leader spacing and release",
+        "proposedLevels": [
+          "co-located",
+          "separated",
+          "simultaneous",
+          "staggered"
+        ],
+        "comparison": "Treat spatial spacing and temporal release as two separate experiments, not one confounded sweep; unsupported spawning schedules remain deferred."
+      },
+      {
+        "concept": "Matched simulation intervals",
+        "proposedLevels": [
+          60,
+          120,
+          180
+        ],
+        "comparison": "Repeat complete supported configurations with a common wall budget; require temporal evidence for following and cohesion."
+      }
+    ],
+    "nonGoals": [
+      "Do not add leader fields to v1 deck JSON.",
+      "Do not relabel static guides as leaders.",
+      "Do not launch or auto-execute future studies."
+    ]
+  },
+  "provenance": {
+    "source": "User-supplied reviewed mark-study/r1 exports; no PNG pixel inspection performed.",
+    "uniqueCompletedReviews": 2,
+    "pairedConfigurationComparisons": 1,
+    "failedAttempts": 1,
+    "independentReplications": 0,
+    "baseline": {
+      "deckId": "mark-study",
+      "revisionId": "r1",
+      "cardId": "baseline",
+      "reviewId": "e5a014b6-5970-408b-bdb5-f00568d91d02",
+      "suppliedExportOccurrences": 2,
+      "countedReviews": 1,
+      "status": "completed",
+      "backend": "wasm / canvas2d",
+      "frames": 90,
+      "capturedFrames": 90,
+      "framesExact": true,
+      "wallMilliseconds": 804.1000000014901,
+      "answers": {
+        "visible": 100,
+        "gaps": 87
+      },
+      "notes": ""
+    },
+    "spacingCompleted": {
+      "deckId": "mark-study",
+      "revisionId": "r1",
+      "cardId": "spacing",
+      "reviewId": "a4024eaa-b518-4415-93ef-852264fb7b57",
+      "createdAt": "2026-09-11T20:53:51.973Z",
+      "onlyConfigChange": {
+        "separation": 0.45
+      },
+      "status": "completed",
+      "backend": "wasm / canvas2d",
+      "frames": 90,
+      "capturedFrames": 90,
+      "framesExact": true,
+      "wallMilliseconds": 673.7999999970198,
+      "answers": {
+        "visible": 100,
+        "gaps": 98
+      },
+      "notes": ""
+    },
+    "spacingFailed": {
+      "deckId": "mark-study",
+      "revisionId": "r1",
+      "cardId": "spacing",
+      "reviewId": "a434a8b1-e61e-4d42-8b31-69c9f8ef3805",
+      "createdAt": "2026-09-11T20:53:46.633Z",
+      "status": "timeout",
+      "backend": "unavailable",
+      "frames": 0,
+      "framesExact": false,
+      "wallMilliseconds": 3252,
+      "png": null,
+      "allAnswersUnanswered": true,
+      "sealed": true,
+      "interpretation": "One unsuccessful attempt; actual execution total unknown. Possible startup/backend issue, not diagnosed and not parameter-quality evidence."
+    },
+    "conclusion": "One reported gap-agreement contrast of +11 at separation .45 versus .15; visibility agreement unchanged at 100. Low generalization confidence. No serpentine/cohesion/motion/speed conclusion; no visually inspected pixels. Repeated baseline export is not replication.",
+    "randomness": "Engine-internal seed 42; no user seed control; cross-build reproducibility not guaranteed"
+  }
+}

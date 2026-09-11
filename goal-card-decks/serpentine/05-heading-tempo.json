@@ -1,0 +1,796 @@
+{
+  "format": "boid-brush-goal-deck",
+  "version": 1,
+  "deckId": "serpentine-05-heading-tempo",
+  "revisionId": "r1",
+  "parentRevisionId": null,
+  "changes": [],
+  "title": "Serpentine 5 / heading, native speed and local spread",
+  "goal": "Explore serpiginous, cohesive boid trails: a connected winding ribbon with alternating bends. These accumulated stills test visible trail structure, not sustained moving-group cohesion, speed, or leader following.",
+  "successCriteria": [
+    "Most visible paint forms one elongated connected ribbon with successive alternating bends.",
+    "The main trail remains visually continuous and narrower than a dispersed cloud.",
+    "Small white gaps remain visible without breaking the main band into separate clusters.",
+    "Rate only visible accumulated-image properties; use N/A and notes for ambiguity, clipping, or motion that cannot be inferred."
+  ],
+  "sharedQuestions": [
+    {
+      "id": "ribbon",
+      "text": "Most visible paint belongs to one connected, elongated ribbon rather than separate clusters."
+    },
+    {
+      "id": "bends",
+      "text": "The visible ribbon has successive bends in alternating directions."
+    },
+    {
+      "id": "continuity",
+      "text": "The main painted trail has no visible breaks along its length."
+    },
+    {
+      "id": "compactness",
+      "text": "Visible marks occupy a compact band rather than a broad scattered cloud."
+    },
+    {
+      "id": "gaps",
+      "text": "White gaps remain visible between marks inside the painted band."
+    }
+  ],
+  "cards": [
+    {
+      "id": "anchor",
+      "title": "Guide-free control / 90 frames",
+      "hypothesis": "Unobserved hypothesis: The source configuration without its static attractor may reveal endogenous trail structure. This repeated control is not an independent seed replication.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "fov-60",
+      "title": "fov = 60",
+      "hypothesis": "Unobserved hypothesis: Changing only fov to 60 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 60,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "fov-220",
+      "title": "fov = 220",
+      "hypothesis": "Unobserved hypothesis: Changing only fov to 220 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 220,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "fov-360",
+      "title": "fov = 360",
+      "hypothesis": "Unobserved hypothesis: Changing only fov to 360 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 360,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "maxspeed-2",
+      "title": "maxSpeed = 2",
+      "hypothesis": "Unobserved hypothesis: Changing only maxSpeed to 2 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 2,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "maxspeed-6",
+      "title": "maxSpeed = 6",
+      "hypothesis": "Unobserved hypothesis: Changing only maxSpeed to 6 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 6,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "damping-0p88",
+      "title": "damping = 0.88",
+      "hypothesis": "Unobserved hypothesis: Changing only damping to 0.88 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.88,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "damping-0p99",
+      "title": "damping = 0.99",
+      "hypothesis": "Unobserved hypothesis: Changing only damping to 0.99 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.99,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "individuality-0p15",
+      "title": "individuality = 0.15",
+      "hypothesis": "Unobserved hypothesis: Changing only individuality to 0.15 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0.15,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "individuality-0p4",
+      "title": "individuality = 0.4",
+      "hypothesis": "Unobserved hypothesis: Changing only individuality to 0.4 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0.4,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "separationradius-12",
+      "title": "separationRadius = 12",
+      "hypothesis": "Unobserved hypothesis: Changing only separationRadius to 12 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 12,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "separationradius-40",
+      "title": "separationRadius = 40",
+      "hypothesis": "Unobserved hypothesis: Changing only separationRadius to 40 may alter bends, connectedness or spread; compare with anchor.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 40,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    }
+  ]
+}

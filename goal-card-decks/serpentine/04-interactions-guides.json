@@ -1,0 +1,829 @@
+{
+  "format": "boid-brush-goal-deck",
+  "version": 1,
+  "deckId": "serpentine-04-interactions-guides",
+  "revisionId": "r1",
+  "parentRevisionId": null,
+  "changes": [],
+  "title": "Serpentine 4 / limited factorial and static guidance",
+  "goal": "Explore serpiginous, cohesive boid trails: a connected winding ribbon with alternating bends. These accumulated stills test visible trail structure, not sustained moving-group cohesion, speed, or leader following.",
+  "successCriteria": [
+    "Most visible paint forms one elongated connected ribbon with successive alternating bends.",
+    "The main trail remains visually continuous and narrower than a dispersed cloud.",
+    "Small white gaps remain visible without breaking the main band into separate clusters.",
+    "Rate only visible accumulated-image properties; use N/A and notes for ambiguity, clipping, or motion that cannot be inferred."
+  ],
+  "sharedQuestions": [
+    {
+      "id": "ribbon",
+      "text": "Most visible paint belongs to one connected, elongated ribbon rather than separate clusters."
+    },
+    {
+      "id": "bends",
+      "text": "The visible ribbon has successive bends in alternating directions."
+    },
+    {
+      "id": "continuity",
+      "text": "The main painted trail has no visible breaks along its length."
+    },
+    {
+      "id": "compactness",
+      "text": "Visible marks occupy a compact band rather than a broad scattered cloud."
+    },
+    {
+      "id": "gaps",
+      "text": "White gaps remain visible between marks inside the painted band."
+    }
+  ],
+  "cards": [
+    {
+      "id": "anchor",
+      "title": "Guide-free control / 90 frames",
+      "hypothesis": "Unobserved hypothesis: The source configuration without its static attractor may reveal endogenous trail structure. This repeated control is not an independent seed replication.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w0-c0-a0",
+      "title": "Factorial W0 C0 A0",
+      "hypothesis": "Unobserved hypothesis: Wander 0.06, cohesion 0.35, alignment 0.22 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w0-c0-a1",
+      "title": "Factorial W0 C0 A1",
+      "hypothesis": "Unobserved hypothesis: Wander 0.06, cohesion 0.35, alignment 0.65 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.65,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w0-c1-a0",
+      "title": "Factorial W0 C1 A0",
+      "hypothesis": "Unobserved hypothesis: Wander 0.06, cohesion 0.7, alignment 0.22 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.7,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w0-c1-a1",
+      "title": "Factorial W0 C1 A1",
+      "hypothesis": "Unobserved hypothesis: Wander 0.06, cohesion 0.7, alignment 0.65 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.7,
+          "separation": 0.15,
+          "alignment": 0.65,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w1-c0-a0",
+      "title": "Factorial W1 C0 A0",
+      "hypothesis": "Unobserved hypothesis: Wander 0.18, cohesion 0.35, alignment 0.22 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.18,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w1-c0-a1",
+      "title": "Factorial W1 C0 A1",
+      "hypothesis": "Unobserved hypothesis: Wander 0.18, cohesion 0.35, alignment 0.65 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.65,
+          "jitter": 0,
+          "wander": 0.18,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w1-c1-a0",
+      "title": "Factorial W1 C1 A0",
+      "hypothesis": "Unobserved hypothesis: Wander 0.18, cohesion 0.7, alignment 0.22 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.7,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.18,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "factor-w1-c1-a1",
+      "title": "Factorial W1 C1 A1",
+      "hypothesis": "Unobserved hypothesis: Wander 0.18, cohesion 0.7, alignment 0.65 may interact to balance bends and connectedness. Compare one-factor edges, not diagonal cells as causal single-factor tests.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.7,
+          "separation": 0.15,
+          "alignment": 0.65,
+          "jitter": 0,
+          "wander": 0.18,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": []
+      }
+    },
+    {
+      "id": "static-attractor-0p1",
+      "title": "STATIC attractor strength 0.1 / NOT a leader",
+      "hypothesis": "Unobserved hypothesis: A stationary point force of 0.1 may curve or concentrate paint, or collapse it into a knot. This is static guidance, not a moving leader or evidence of following.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": [
+          {
+            "id": "guide-1",
+            "type": "attract",
+            "x": 270,
+            "y": 192,
+            "strength": 0.1,
+            "radius": 80,
+            "influenceRadius": 350,
+            "hardness": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "static-attractor-0p3",
+      "title": "STATIC attractor strength 0.3 / NOT a leader",
+      "hypothesis": "Unobserved hypothesis: A stationary point force of 0.3 may curve or concentrate paint, or collapse it into a knot. This is static guidance, not a moving leader or evidence of following.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": [
+          {
+            "id": "guide-1",
+            "type": "attract",
+            "x": 270,
+            "y": 192,
+            "strength": 0.3,
+            "radius": 80,
+            "influenceRadius": 350,
+            "hardness": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "static-attractor-0p6",
+      "title": "STATIC attractor strength 0.6 / NOT a leader",
+      "hypothesis": "Unobserved hypothesis: A stationary point force of 0.6 may curve or concentrate paint, or collapse it into a knot. This is static guidance, not a moving leader or evidence of following.",
+      "questions": [],
+      "budget": {
+        "frames": 90,
+        "wallSeconds": 5
+      },
+      "config": {
+        "engine": "boid-wasm-canvas-v1",
+        "width": 384,
+        "height": 384,
+        "background": "#ffffff",
+        "params": {
+          "seek": 0,
+          "cohesion": 0.35,
+          "separation": 0.15,
+          "alignment": 0.22,
+          "jitter": 0,
+          "wander": 0.06,
+          "wanderSpeed": 0.3,
+          "maxSpeed": 4,
+          "damping": 0.95,
+          "fov": 115,
+          "flowField": 0,
+          "flowScale": 0.01,
+          "fleeRadius": 0,
+          "individuality": 0,
+          "neighborRadius": 80,
+          "separationRadius": 25,
+          "simBoundsMargin": 0,
+          "sizeVar": 0,
+          "opacityVar": 0,
+          "speedVar": 0,
+          "forceVar": 0,
+          "hueVar": 0,
+          "satVar": 0,
+          "litVar": 0,
+          "stampSize": 4,
+          "stampOpacity": 0.15,
+          "stampSeparation": 0,
+          "color": "#216c91"
+        },
+        "target": {
+          "x": 192,
+          "y": 192
+        },
+        "spawns": [
+          {
+            "id": "spawn-1",
+            "x": 140,
+            "y": 192,
+            "count": 48,
+            "shape": "circle",
+            "radius": 45,
+            "angle": 0,
+            "jitter": 0
+          }
+        ],
+        "guides": [
+          {
+            "id": "guide-1",
+            "type": "attract",
+            "x": 270,
+            "y": 192,
+            "strength": 0.6,
+            "radius": 80,
+            "influenceRadius": 350,
+            "hardness": 1
+          }
+        ]
+      }
+    }
+  ]
+}
