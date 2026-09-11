@@ -90,11 +90,11 @@ export function compileCorral(points) {
     maxX: Math.max(box.maxX, point.x),
     maxY: Math.max(box.maxY, point.y),
   }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-  const centroid = clean.reduce((sum, point) => ({
-    x: sum.x + point.x / clean.length,
-    y: sum.y + point.y / clean.length,
-  }), { x: 0, y: 0 });
-  return { points: clean, bounds, centroid };
+  const signedArea = clean.reduce((area, point, index) => {
+    const next = clean[(index + 1) % clean.length];
+    return area + point.x * next.y - next.x * point.y;
+  }, 0);
+  return { points: clean, bounds, winding: signedArea >= 0 ? 1 : -1 };
 }
 
 function closestBoundaryPoint(x, y, points) {
@@ -112,7 +112,7 @@ function closestBoundaryPoint(x, y, points) {
     const distance2 = (x - px) ** 2 + (y - py) ** 2;
     if (distance2 < bestDistance2) {
       bestDistance2 = distance2;
-      closest = { x: px, y: py, distance: Math.sqrt(distance2) };
+      closest = { x: px, y: py, distance: Math.sqrt(distance2), dx, dy };
     }
   }
   return closest;
@@ -130,11 +130,9 @@ export function constrainAgentsToCorral(read, compiled, strength = 1) {
     const inside = pointInCorral(x, y, compiled.points);
     const nearest = closestBoundaryPoint(x, y, compiled.points);
     if (!nearest) continue;
-    const towardCenterX = compiled.centroid.x - nearest.x;
-    const towardCenterY = compiled.centroid.y - nearest.y;
-    const inwardLength = Math.hypot(towardCenterX, towardCenterY) || 1;
-    const nx = towardCenterX / inwardLength;
-    const ny = towardCenterY / inwardLength;
+    const edgeLength = Math.hypot(nearest.dx, nearest.dy) || 1;
+    const nx = compiled.winding * -nearest.dy / edgeLength;
+    const ny = compiled.winding * nearest.dx / edgeLength;
     if (!inside) {
       x = nearest.x + nx * 0.75;
       y = nearest.y + ny * 0.75;
@@ -171,18 +169,21 @@ export function corralToSvg(points, width, height) {
 
 export function extractClosedSvgPath(svgText) {
   if (typeof svgText !== 'string' || svgText.length > 1024 * 1024) throw new Error('SVG file is too large');
-  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
-  if (doc.querySelector('parsererror')) throw new Error('Invalid SVG');
-  const root = doc.documentElement;
-  const paths = [...root.querySelectorAll('path')];
-  if (root.localName !== 'svg' || paths.length !== 1) throw new Error('SVG must contain one path');
-  const path = paths[0];
-  const d = path.getAttribute('d')?.trim() || '';
-  if (!/[zZ]\s*$/.test(d)) throw new Error('SVG path must be closed');
-  if (path.hasAttribute('transform') || root.querySelector('script, use, image, foreignObject')) {
+  const rootMatch = svgText.match(/<svg\b([^>]*)>/i);
+  const pathMatches = [...svgText.matchAll(/<path\b([^>]*)\/?>/gi)];
+  if (!rootMatch || !/<\/svg\s*>/i.test(svgText) || pathMatches.length !== 1) {
+    throw new Error('SVG must contain one path');
+  }
+  if (/<(?:script|use|image|foreignObject)\b/i.test(svgText) || /\btransform\s*=/i.test(svgText)) {
     throw new Error('SVG transforms and external content are not supported');
   }
-  const viewBox = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+  const readAttribute = (attributes, name) => {
+    const match = attributes.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i'));
+    return match ? (match[2] ?? match[3] ?? '') : '';
+  };
+  const d = readAttribute(pathMatches[0][1], 'd').trim();
+  if (!/[zZ]\s*$/.test(d)) throw new Error('SVG path must be closed');
+  const viewBox = readAttribute(rootMatch[1], 'viewBox').trim().split(/[\s,]+/).map(Number);
   if (viewBox.length !== 4 || viewBox.some(value => !Number.isFinite(value)) || viewBox[2] <= 0 || viewBox[3] <= 0) {
     throw new Error('SVG requires a valid viewBox');
   }

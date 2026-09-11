@@ -4,6 +4,7 @@ import {
   compileCorral,
   constrainAgentsToCorral,
   corralToSvg,
+  extractClosedSvgPath,
   pointInCorral,
   smoothClosedCorral,
 } from '../corral.js';
@@ -46,4 +47,18 @@ test('corral SVG export emits one closed path and the canvas viewBox', () => {
   const svg = corralToSvg(square, 640, 480);
   assert.match(svg, /viewBox="0 0 640 480"/);
   assert.match(svg, /<path[^>]+ Z"/);
+});
+
+test('corral SVG import accepts one closed path and rejects active content', () => {
+  const parsed = extractClosedSvgPath('<svg viewBox="0 0 10 20"><path d="M0 0 L10 0 L10 20 Z"/></svg>');
+  assert.equal(parsed.d, 'M0 0 L10 0 L10 20 Z');
+  assert.deepEqual(parsed.viewBox, [0, 0, 10, 20]);
+  assert.throws(
+    () => extractClosedSvgPath('<svg viewBox="0 0 10 10"><script>alert(1)</script><path d="M0 0L1 1Z"/></svg>'),
+    /not supported/,
+  );
+  assert.throws(
+    () => extractClosedSvgPath('<svg viewBox="0 0 10 10"><path d="M0 0L1 1"/></svg>'),
+    /closed/,
+  );
 });

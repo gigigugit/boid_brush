@@ -16854,6 +16854,7 @@ export class App {
     button?.classList.toggle('active', available && this.corral.editing);
     if (button) button.style.display = available ? '' : 'none';
     hud?.classList.toggle('open', available && this.corral.editing);
+    document.body.classList.toggle('corral-editor-open', available && this.corral.editing);
     if (enabled) enabled.checked = this.corral.enabled;
     if (strength) strength.value = String(Math.round(this.corral.edgeStrength * 100));
     if (output) output.value = this.corral.edgeStrength.toFixed(2);
