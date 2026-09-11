@@ -15,7 +15,7 @@ test('folder tree lists only SVG files in stable order', async () => {
   const files = await listSvgFiles(directory([
     ['z.svg', { kind: 'file' }],
     ['notes.txt', { kind: 'file' }],
-    ['folder', { kind: 'directory' }],
+    ['folder', directory([])],
     ['a.SVG', { kind: 'file' }],
   ]));
   assert.deepEqual(files.map(file => file.name), ['a.SVG', 'z.svg']);
