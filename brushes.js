@@ -14,6 +14,7 @@ import { WebGPUFluidRenderer } from './fluid-renderer.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
 import { applyModTargets, summarizeModulation } from './boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
 import { evaluatePressureCurve } from './pressure-curve.js';
+import { constrainAgentsToCorral } from './corral.js';
 
 // Pressure EMA alpha for BristleBrush (~6-frame smoothing window)
 const BRISTLE_PRESSURE_ALPHA = 0.15;
@@ -1033,6 +1034,20 @@ function _pathInfluenceFalloff(distance, radius, influenceRadius) {
 function _syncSimulationGuidesToGpu(brush, guideState) {
   if (!brush.sim?.setSimulationGuides) return { points: false, pathTargets: false };
   return brush.sim.setSimulationGuides(guideState) ?? { points: false, pathTargets: false };
+}
+
+function _applyCorral(brush, p, read) {
+  if (!p.corralEnabled || !p.corralCompiled) return false;
+  return constrainAgentsToCorral(read, p.corralCompiled, {
+    edgeStrength: p.corralEdgeStrength,
+    repulsionRadius: p.corralRepulsionRadius,
+    midpointForce: p.corralMidpointForce,
+    tangentialForce: p.corralTangentialForce,
+    normalDamping: p.corralNormalDamping,
+    tangentialFriction: p.corralTangentialFriction,
+    hardEdge: p.corralHardEdge,
+    falloff: p.corralFalloff,
+  });
 }
 
 function _applySimulationGuides(brush, p, read, guideState = _collectSimulationGuides(brush, p), gpuSupport = {}) {
@@ -2194,6 +2209,7 @@ export class BoidBrush {
     // Write params with the current hover leader position so boids follow
     this.sim.writeParams(this._applySimVars(p), this.app.leaderX, this.app.leaderY, elapsed);
     this.sim.step(1 / 60);
+    if (_applyCorral(this, p, this.sim.readAgents())) this.sim.markStateDirty?.();
   }
 
   onDown(x, y, pressure) {
@@ -2311,7 +2327,10 @@ export class BoidBrush {
       this.sim.writeParams(simP, x, y, 0);
       this.sim.step(1 / 60);
       const { buffer, count, stride } = this.sim.readAgents();
-      if (_applySimulationGuides(this, p, { buffer, count, stride }, guideState, gpuGuideSupport)) {
+      const read = { buffer, count, stride };
+      const guidesChanged = _applySimulationGuides(this, p, read, guideState, gpuGuideSupport);
+      const corralChanged = _applyCorral(this, p, read);
+      if (guidesChanged || corralChanged) {
         this.sim.markStateDirty?.();
       }
       if (count > 0) {
@@ -2723,7 +2742,9 @@ export class BoidBrush {
     // (see webgpu-boid-sim.js _applyReadyResults), so caching a transient
     // snapshot from it here never stalls the frame loop.
     const read = this.sim.readAgents();
-    if (_applySimulationGuides(this, p, read, guideState, gpuGuideSupport)) this.sim.markStateDirty?.();
+    const guidesChanged = _applySimulationGuides(this, p, read, guideState, gpuGuideSupport);
+    const corralChanged = _applyCorral(this, p, read);
+    if (guidesChanged || corralChanged) this.sim.markStateDirty?.();
     if (app.simulation?.mode === 'forceVisualization') this._updateTransientSnapshot(read);
     this._renderAgentRead(read, p, {
       forceStamp: !!app.isDrawing || !!app.simulation?.running,
