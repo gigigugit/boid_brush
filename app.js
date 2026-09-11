@@ -9939,7 +9939,7 @@ export class App {
     const controls = {};
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return controls;
-    sidebar.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"]').forEach(el => {
+    sidebar.querySelectorAll('input[type="range"], input[type="checkbox"], select, input[type="number"], #boidModMatrix').forEach(el => {
       if (!el.id || SIM_SESSION_SIDEBAR_CONTROL_EXCLUDE_IDS.has(el.id)) return;
       controls[el.id] = el.type === 'checkbox' ? !!el.checked : el.value;
     });
@@ -10199,7 +10199,7 @@ export class App {
     };
   }
 
-  _addExperimentationStarter(key) {
+  _getExperimentationDefaultControls() {
     // Use existing control defaults, restricted to simulation-owned sidebar
     // controls. Never apply a workspace preset or change document/layer state.
     const currentControls = this._captureSimulationSessionControlState();
@@ -10207,8 +10207,13 @@ export class App {
     for (const id of Object.keys(currentControls)) {
       if (Object.hasOwn(FACTORY_DEFAULTS, id)) controls[id] = FACTORY_DEFAULTS[id];
     }
+    return controls;
+  }
+
+  _addExperimentationStarter(key) {
     const session = createStarter(key, {
-      id: this._createSimulationSessionId(), width: this.W, height: this.H, controls,
+      id: this._createSimulationSessionId(), width: this.W, height: this.H,
+      controls: this._getExperimentationDefaultControls(),
     });
     this.simulation.sessions.push(session);
     // Normalization normally arms new sessions. Examples must stay unarmed.
@@ -11456,7 +11461,9 @@ export class App {
         runtime.brushInstance.onFrame?.(elapsed);
       });
     }
-    this._updateSimulationLeader(elapsed, p);
+    // The river experiment pairs guide travel with the boid engine's fixed
+    // 1/60 step. Preserve the existing timing for ordinary playback.
+    this._updateSimulationLeader(this.experimentation?.river?.running ? 1000 / 60 : elapsed, p);
     const allSavedPlaybackComplete = savedRuntimeCount > 0
       && liveRuntimeCount === 0
       && savedRuntimeCompleteCount === savedRuntimeCount;

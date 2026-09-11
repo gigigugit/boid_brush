@@ -1,4 +1,7 @@
-// Experimentation owns observations, never simulation state or paint targets.
+import { createRiverBundle, RiverExperimentRunner } from './river-experiment.js';
+
+// Feedback owns observations. The opt-in river runner owns its temporary state
+// and new paint layers separately from ordinary observation-only cards.
 export const FEEDBACK_KEY = 'bb_experimentation_v1';
 export const FEEDBACK_FORMAT = 'boid-brush-experimentation';
 export const SAMPLE_LABELS = ['Start', 'Early', 'Middle', 'Late', 'End'];
@@ -216,6 +219,14 @@ export class ExperimentationController {
     this.launch = document.getElementById('experimentationLaunch');
     this.body = document.getElementById('experimentationContent');
     this.status = document.getElementById('experimentationStatus');
+    this.river = new RiverExperimentRunner(app, message => {
+      const status = this.body.querySelector('[data-river-progress]');
+      if (status) status.textContent = message;
+      const start = this.body.querySelector('[data-river-start]');
+      if (start) start.disabled = this.river.running;
+      const stop = this.body.querySelector('[data-river-stop]');
+      if (stop) stop.disabled = !this.river.running;
+    });
     this.launch.addEventListener('click', () => this.show());
     document.getElementById('experimentationClose').addEventListener('click', () => this.close());
     document.getElementById('experimentationExport').addEventListener('click', () => {
@@ -286,6 +297,7 @@ export class ExperimentationController {
   }
 
   close() {
+    if (this.river.running) { this.river.cancel(); return; }
     if (!this.open) return;
     this.open = false;
     this.panel.hidden = true;
@@ -406,6 +418,7 @@ export class ExperimentationController {
   }
 
   renderStarters() {
+    this.renderRiverExperiment();
     this.body.append(element('p', 'experiment-note', 'Add a runnable Boid configuration to your saved cards. Nothing is loaded, started, armed for multi-session playback, or painted. Load explicitly, then use the existing Play controls (running may paint; Undo is unchanged).'));
     for (const starter of STARTERS) {
       const card = element('section', 'experiment-card');
@@ -419,6 +432,50 @@ export class ExperimentationController {
       }));
       this.body.append(card);
     }
+  }
+
+  renderRiverExperiment() {
+    const app = this.app;
+    const generate = () => createRiverBundle({
+      width: app.W, height: app.H, controls: app._getExperimentationDefaultControls(),
+      idPrefix: `river-${app._createSimulationSessionId()}`,
+    });
+    const card = element('section', 'experiment-card');
+    card.append(element('h3', '', 'River / oxbow experiment'));
+    card.append(element('p', 'experiment-note',
+      'A priori: unguided control, guided baseline, slower alignment, looser spacing/smaller stamps, stronger pull. Five trials, nine feedback candidates. No scoring or automatic winner.'));
+    card.append(element('p', 'experiment-note',
+      'A moving guide traces a horseshoe, then a bypass while retaining old paint. Finite agents recirculate off-canvas: this is visual outflow, not a source/sink, channel constraint, or physical erosion. Keep this tab visible. At most 12 minutes; stalls/timeouts stop safely.'));
+    const actions = element('div', 'experiment-actions');
+    actions.append(button('Download native river JSON', () => {
+      try {
+        const bundle = generate();
+        app._downloadBlob(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }), 'river-priori.sim-setup.json');
+        this.river.report('Downloaded analysis and nine static phase candidates. Native Setup Accept replaces your saved list: import in a separate workspace or back up first. Use Start here for automatic phase transitions.');
+      } catch (error) { this.river.report(error.message); }
+    }));
+    const start = button('Start bounded sequence…', async () => {
+      if (this.river.running) return;
+      if (!window.confirm('Run five trials unattended on five NEW layers and append nine saved candidates? Current playback will stop without resuming; existing paint and draft are retained. Only the latest experiment layer stays visible. Canvas/shortcuts are locked until completion; Stop or Escape cancels and retains partial layers. Keep the tab visible. Maximum 12 minutes.')) return;
+      try {
+        const run = this.river.start(generate());
+        start.disabled = this.river.running;
+        stop.disabled = !this.river.running;
+        if (this.river.running) this.body.querySelector('[data-river-stop]')?.focus();
+        await run;
+      } catch (error) { this.river.report(`River experiment failed: ${error.message}`); }
+    });
+    start.dataset.riverStart = '';
+    start.disabled = this.river.running;
+    const stop = button('Stop / Cancel', () => this.river.cancel());
+    stop.dataset.riverStop = '';
+    stop.disabled = !this.river.running;
+    actions.append(start, stop);
+    const status = element('p', 'experiment-note', this.river.progress);
+    status.dataset.riverProgress = '';
+    status.setAttribute('role', 'status');
+    card.append(actions, status);
+    this.body.append(card);
   }
 
   renderQuestion(card, q, context, answer) {

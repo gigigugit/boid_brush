@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -13,7 +13,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 test('Experimentation real-browser layout, feedback, session, and input lifecycle', {
   skip: !process.env.BB_TEST_CHROMIUM,
-  timeout: 180000,
+  timeout: 900000,
 }, async t => {
   const profile = await mkdtemp(join(tmpdir(), 'bb-experimentation-'));
   const server = await startStaticServer();
@@ -165,7 +165,7 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
       window.__draftId = _app._getExperimentationContext().id;
       const before = JSON.stringify(_app.simulation.brushData);
       _app.experimentation.selectTab('starters');
-      document.querySelector('#experimentationContent .experiment-card button').click();
+      [...document.querySelectorAll('#experimentationContent button')].find(b => b.textContent === 'Add saved configuration').click();
       window.__starterId = _app.experimentation.selectedId;
       _app._addExperimentationStarter('obstacle');
       return {same: before === JSON.stringify(_app.simulation.brushData), index: _app.simulation.activeSessionIndex,
@@ -394,6 +394,180 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
     assert.equal(await evaluate(`_app._getExperimentationContext().id`), id);
     assert.deepEqual(await evaluate(`_app._captureViewState()`), expectedView);
     assert.equal(await evaluate(`_app.experimentation.store.records.get(${JSON.stringify(id)}).answers.alignment.notApplicable`), true);
+  });
+  await t.test('river generation/import, unattended full sequence, outflow, paint and restoration', async () => {
+    await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`(async () => {
+      const app = _app;
+      if (app.simulation.running) app.pauseSimulation();
+      if (app.simulation.paused) app.stopSimulation(false);
+      app._workspaceMargin = 0;
+      await app.resizeDocument(400, 400, '#ffffff');
+      app._toggleSimulationMode(true);
+      app.experimentation.show();
+      app.experimentation.selectTab('starters');
+      window.__riverModule = await import('./river-experiment.js');
+      const bundle = __riverModule.createRiverBundle({
+        width: app.W, height: app.H, controls: app._getExperimentationDefaultControls(), idPrefix: 'roundtrip-test'
+      });
+      const draft = app._simulationSetupDraft;
+      const saved = JSON.stringify(app.simulation.sessions);
+      await app.importSimulationSetupText(JSON.stringify(bundle));
+      window.__riverImport = {
+        count: app._simulationSetupDraft.sessions.length,
+        sameSaved: JSON.stringify(app.simulation.sessions) === saved,
+        ids: app._simulationSetupDraft.sessions.map(s => s.id),
+        enabled: app._simulationSetupDraft.rows.map(r => r.enabled),
+        normalized: app._normalizeSimulationSetupBundle(bundle).sessions,
+        originals: bundle.sessions
+      };
+      app._simulationSetupDraft = draft;
+      app._downloadBlob = blob => {
+        window.__riverDownload = blob.text().then(raw => JSON.parse(raw));
+      };
+      [...app.experimentation.body.querySelectorAll('button')].find(b => b.textContent === 'Download native river JSON').click();
+      window.__riverDownloaded = await __riverDownload;
+      window.__riverBefore = {
+        controls: app._captureSimulationSessionControlState(),
+        sessions: JSON.stringify(app.simulation.sessions),
+        bindings: JSON.stringify(app.simulation.multiSessionBindings),
+        brushData: JSON.stringify(app.simulation.brushData),
+        vars: JSON.stringify(app.simulation.vars),
+        active: app.simulation.activeSessionIndex, brush: app.activeBrush,
+        layerId: app.getActiveLayer().id,
+        layers: app.layers.map(l => ({id:l.id, paint:l.canvas.toDataURL(), visible:l.visible})),
+        view: app._captureViewState(), draftId: app.simulation.experimentationDraftId,
+        playback: JSON.stringify(app.simulation.savedPlayback)
+      };
+      window.confirm = () => true;
+      document.querySelector('[data-river-start]').click();
+    })()`);
+    const imported = await evaluate(`__riverImport`);
+    assert.equal(imported.count, 9);
+    assert.equal(imported.sameSaved, true);
+    assert.ok(imported.enabled.every(v => !v));
+    assert.deepEqual(imported.normalized, imported.originals);
+    assert.equal(await evaluate(`__riverDownloaded.riverExperiment.analysis.baseline.seek`), 0);
+    assert.equal(await evaluate(`_app.experimentation.river.running`), true);
+
+    const positionHashes = new Set(), paintHashes = new Set(), backends = new Set();
+    let maxAgents = 0, maxOutside = 0, maxX = 0, maxFrame = 0;
+    const shots = new Set();
+    for (let n = 0; n < 1450; n++) {
+      const sample = await evaluate(`(() => {
+        const app = _app, run = app.experimentation.river, brush = app.getCurrentBrush();
+        const read = brush.sim?.readAgents?.() || {count:0,buffer:[],stride:1};
+        let hash = 0, outside = 0, maxX = 0;
+        for(let i=0; i<read.count; i++) {
+          const x=read.buffer[i*read.stride], y=read.buffer[i*read.stride+1];
+          hash += x*(i+1) + y;
+          if(x>app.W || x<0 || y<0 || y>app.H) outside++;
+          maxX=Math.max(maxX,x);
+        }
+        const layer = app.getActiveLayer();
+        const canvas = document.createElement('canvas'); canvas.width=128;canvas.height=128;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(layer.canvas,0,0,128,128);
+        if(layer.gpuPreviewCanvas) ctx.drawImage(layer.gpuPreviewCanvas,0,0,128,128);
+        const pixels=ctx.getImageData(0,0,128,128).data;
+        let paint=0;for(let i=3;i<pixels.length;i+=4) paint+=pixels[i];
+        const path=app.simulation.brushData.boid?.paths?.[0];
+        const p=app.getP();
+        return {running:run.running,progress:run.progress,results:run.results,
+          frame:app.simulation.frameCount,count:read.count,hash,paint,outside,maxX,
+          layer:layer.name,backend:brush.getStatusInfo?.(),
+          travel:path?.travelDistance||0, length:path?app._getSimulationPathSample(path,0).totalLength:0,
+          points:path?.points.length, effective:{maxSpeed:p.maxSpeed,wander:p.wander,seek:p.seek,
+            stampSize:p.stampSize,mod:p.modMatrix,stampImage:!!p.stampImageCanvas,simPathSpeed:p.simPathSpeed}
+        };
+      })()`);
+      if (!sample.running) break;
+      assert.ok(Number.isFinite(sample.hash), JSON.stringify(sample));
+      maxAgents = Math.max(maxAgents, sample.count);
+      maxOutside = Math.max(maxOutside, sample.outside);
+      maxX = Math.max(maxX, sample.maxX);
+      maxFrame = Math.max(maxFrame, sample.frame);
+      positionHashes.add(Math.round(sample.hash));
+      paintHashes.add(sample.paint);
+      backends.add(sample.backend);
+      assert.equal(sample.effective.seek, 0);
+      assert.equal(sample.effective.stampImage, false);
+      if (sample.layer === 'River · Guided baseline') {
+        assert.equal(sample.effective.maxSpeed, 11);
+        assert.equal(sample.effective.wander, .06);
+        assert.equal(sample.effective.simPathSpeed, 56);
+        const phase = sample.progress.includes('bypass') ? 'bypass' : 'horseshoe';
+        if (sample.travel / sample.length > .7 && !shots.has(phase)) {
+          const screenshot = await send('Page.captureScreenshot', { format: 'png' });
+          await writeFile(join(tmpdir(), `boid-river-${phase}.png`), Buffer.from(screenshot.data, 'base64'));
+          shots.add(phase);
+        }
+      }
+      await delay(500);
+    }
+    const result = await evaluate(`(() => {
+      const app=_app, before=__riverBefore, run=app.experimentation.river;
+      return {running:run.running, progress:run.progress, results:run.results,
+        restored: {
+          controls: JSON.stringify(app._captureSimulationSessionControlState())===JSON.stringify(before.controls),
+          sessions: JSON.stringify(app.simulation.sessions.slice(0,-9))===before.sessions,
+          bindings: JSON.stringify(app.simulation.multiSessionBindings.slice(0,-9))===before.bindings,
+          brushData: JSON.stringify(app.simulation.brushData)===before.brushData,
+          vars: JSON.stringify(app.simulation.vars)===before.vars,
+          layer: app.getActiveLayer().id===before.layerId,
+          paint: before.layers.every(old=>app.layers.find(l=>l.id===old.id).canvas.toDataURL()===old.paint),
+          visibility:before.layers.every(old=>app.layers.find(l=>l.id===old.id).visible===old.visible),
+          view:JSON.stringify(app._captureViewState())===JSON.stringify(before.view),
+          draftId:app.simulation.experimentationDraftId===before.draftId,
+          playback:JSON.stringify(app.simulation.savedPlayback)===before.playback,
+          stopped:!app.simulation.running&&!app.simulation.paused,
+          active:app.simulation.activeSessionIndex===before.active,
+          brush:app.activeBrush===before.brush,
+        },
+        unarmed:app.simulation.multiSessionBindings.slice(-9).every(b=>!b.enabled),
+        newLayers:app.layers.filter(l=>l.name.startsWith('River ·')).map(l=>{
+          const data=l.ctx.getImageData(0,0,l.canvas.width,l.canvas.height).data;
+          let paint=0;for(let i=3;i<data.length;i+=4)paint+=data[i];
+          return {name:l.name,visible:l.visible,paint};
+        })
+      };
+    })()`);
+    t.diagnostic(JSON.stringify({ maxAgents, maxOutside, maxX, maxFrame,
+      positionSamples: positionHashes.size, paintSamples: paintHashes.size,
+      backends: [...backends], result }));
+    assert.equal(result.running, false, result.progress);
+    assert.equal(result.results.length, 9, result.progress);
+    assert.ok(Object.values(result.restored).every(Boolean), JSON.stringify(result.restored));
+    assert.equal(result.unarmed, true);
+    assert.equal(result.newLayers.length, 5);
+    assert.ok(result.newLayers.every(l => l.paint > 0), JSON.stringify(result.newLayers));
+    assert.equal(result.newLayers.filter(l => l.visible).length, 1);
+    assert.equal(maxAgents, 500);
+    assert.ok(positionHashes.size > 10);
+    assert.ok(paintHashes.size > 10);
+    assert.ok(maxOutside > 0 && maxX > 400, 'Actual agents must cross the right outlet, not only the guide');
+    assert.deepEqual([...shots].sort(), ['bypass', 'horseshoe']);
+    // Per-session observations remain distinct after appending generated IDs.
+    assert.equal(await evaluate(`(() => {
+      const app=_app, sessions=app.simulation.sessions.slice(-9);
+      app.experimentation.store.update(app._getExperimentationContext(sessions[1]), {notes:'horseshoe observed'});
+      app.experimentation.store.update(app._getExperimentationContext(sessions[2]), {notes:'bypass observed'});
+      return app.experimentation.store.records.get(sessions[1].id).notes !== app.experimentation.store.records.get(sessions[2].id).notes;
+    })()`), true);
+  });
+
+  await t.test('river Escape cancels real playback and removes the input fence', async () => {
+    await evaluate(`document.querySelector('[data-river-start]').click()`);
+    assert.equal(await evaluate(`_app.experimentation.river.running`), true);
+    await delay(700);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape' });
+    await delay(500);
+    assert.equal(await evaluate(`_app.experimentation.river.running`), false);
+    assert.match(await evaluate(`_app.experimentation.river.progress`), /Cancelled/);
+    assert.equal(await evaluate(`_app.simulation.running || _app.simulation.paused`), false);
+    await evaluate(`document.getElementById('experimentationClose').click()`);
+    assert.equal(await evaluate(`_app.experimentation.open`), false);
   });
   assert.deepEqual(exceptions, [], 'No uncaught browser exceptions');
 });
