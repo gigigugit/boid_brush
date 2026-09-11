@@ -1086,6 +1086,15 @@ body.experimentation-open #experimentationLaunch{display:none;}
 .experiment-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08);}
 .experiment-tabs button[aria-selected="true"],#experimentationDialog button[aria-pressed="true"]{background:#304b78;border-color:#86aff0;}
 #experimentationContent{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:14px;}
+.goal-card img{width:100%;max-width:512px;height:auto;display:block;margin:10px auto;}
+.goal-card img[hidden]{display:none;}
+.goal-card pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;}
+.goal-card select,#goalRevision{max-width:100%;}
+.goal-card textarea{display:block;box-sizing:border-box;width:100%;}
+.goal-question{min-width:0;margin:12px 0;padding:10px;border:1px solid #555;}
+.goal-question input[type=range]{width:75%;}
+.goal-question output{display:inline-block;min-width:65px;}
+.experiment-actions a{color:inherit;text-decoration:underline;}
 .experiment-card{min-width:0;padding:14px;margin-bottom:12px;border:1px solid rgba(126,156,220,.18);border-radius:12px;background:rgba(4,9,18,.28);}
 .experiment-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0;}
 .experiment-actions span{color:#aab9d6;font-variant-numeric:tabular-nums;}
@@ -1780,15 +1789,16 @@ body.experimentation-open #simHud{max-width:calc(60vw - 70px);}
 <button id="experimentationLaunch" type="button" aria-haspopup="dialog" aria-controls="experimentationDialog" aria-expanded="false" hidden>Experimentation</button>
 <section id="experimentationDialog" role="dialog" aria-modal="false" aria-labelledby="experimentationTitle" hidden>
   <header class="experiment-header">
-    <div><h2 id="experimentationTitle">Experimentation</h2><p>Observe a simulation. Record what works.</p></div>
+    <div><h2 id="experimentationTitle">Experimentation</h2><p>Import goal cards. Preview briefly. Review and iterate.</p></div>
     <button id="experimentationClose" type="button" aria-label="Close Experimentation">Close ✕</button>
   </header>
   <nav class="experiment-tabs" role="tablist" aria-label="Experimentation views">
-    <button id="experimentationTabCurrent" data-experimentation-tab="current" type="button" role="tab" aria-controls="experimentationContent" aria-selected="true">Current / ad-hoc</button>
-    <button id="experimentationTabSaved" data-experimentation-tab="saved" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Saved cards</button>
-    <button id="experimentationTabStarters" data-experimentation-tab="starters" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Starting points</button>
+    <button id="experimentationTabGoals" data-experimentation-tab="goals" type="button" role="tab" aria-controls="experimentationContent" aria-selected="true">Goal cards</button>
+    <button id="experimentationTabCurrent" data-experimentation-tab="current" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Advanced: Current / ad-hoc</button>
+    <button id="experimentationTabSaved" data-experimentation-tab="saved" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Advanced: Saved cards</button>
+    <button id="experimentationTabStarters" data-experimentation-tab="starters" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Advanced: Starting points</button>
   </nav>
-  <div id="experimentationContent" role="tabpanel" aria-labelledby="experimentationTabCurrent" tabindex="0"></div>
+  <div id="experimentationContent" role="tabpanel" aria-labelledby="experimentationTabGoals" tabindex="0"></div>
   <footer class="experiment-footer">
     <span id="experimentationStatus" role="status" aria-live="polite"></span>
     <button id="experimentationExport" type="button">Export feedback JSON</button>

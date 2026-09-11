@@ -25,6 +25,7 @@
       "*.html",
       "*.js",
       "*.png",
+      "simulation-card-designer.agent.md",
       "wasm-sim/pkg/**/*",
       "README.md",
       "docs/third-party-licenses.md"

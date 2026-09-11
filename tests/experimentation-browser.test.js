@@ -19,6 +19,8 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
   const server = await startStaticServer();
   const chrome = spawn(process.env.BB_TEST_CHROMIUM, [
     '--headless=new', '--no-sandbox', '--disable-dev-shm-usage',
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
     '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -93,6 +95,253 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
   }
   assert.equal(await evaluate(`window.__testReady`), 'Ready');
 
+  await t.test('Goal cards default: real isolated WASM preview, frozen evidence and untouched workspace', async () => {
+    const initial = await evaluate(`(async () => {
+      const app = _app;
+      app._toggleSimulationMode(true);
+      app.experimentation.show();
+      // Let the host draw its mode-switch guide overlay before comparing it.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      window.__goalSnapshot = () => JSON.stringify({
+        layers: app.layers.map(l => ({id:l.id, paint:l.canvas.toDataURL(), width:l.canvas.width, height:l.canvas.height})),
+        active: app.activeLayerIdx, nextLayer: app._nextLayerId,
+        undo: app.undoStack, redo: app.redoStack, sessions: app.simulation.sessions,
+        data: app.simulation.brushData, vars: app.simulation.vars,
+        frame: app.simulation.frameCount, activeSession: app.simulation.activeSessionIndex,
+        savedPlayback: app.simulation.savedPlayback,
+        controls: app._captureSimulationSessionControlState(),
+        storage: Object.fromEntries(Object.keys(localStorage).filter(k=>k!=='bb_goal_cards_v1').map(k=>[k,localStorage.getItem(k)])),
+        // liveCanvas is the host's independently animated guide overlay, not
+        // committed paint. Compare its persistent painting presentation instead.
+        composite: app.compositeCanvas.toDataURL()
+      });
+      window.__goalBefore = __goalSnapshot();
+      window.__goalChanges = () => {
+        const before=JSON.parse(__goalBefore),after=JSON.parse(__goalSnapshot());
+        return Object.keys(before).filter(k=>JSON.stringify(before[k])!==JSON.stringify(after[k]));
+      };
+      window.__goalSharedSim = app.sharedMotionSim;
+      const tab = app.experimentation.tab;
+      document.getElementById('goalTryExample').click();
+      document.getElementById('goalRun').click();
+      return {tab, running:app.experimentation.goals.runner.running};
+    })()`);
+    assert.deepEqual(initial, { tab: 'goals', running: true });
+    for (let n = 0; n < 80 && await evaluate(`_app.experimentation.goals.runner.running`); n++) await delay(100);
+    const run = await evaluate(`(() => {
+      const g = _app.experimentation.goals, r = g.store.reviews.at(-1);
+      const before=JSON.parse(__goalBefore),after=JSON.parse(__goalSnapshot());
+      const changes=Object.keys(before).filter(k=>JSON.stringify(before[k])!==JSON.stringify(after[k]));
+      return {result:r?.result, message:g.message, changes, same:__goalBefore === __goalSnapshot(), shared:__goalSharedSim===_app.sharedMotionSim};
+    })()`);
+    assert.equal(run.result?.status, 'completed', JSON.stringify(run));
+    assert.equal(run.result.frames, 90);
+    assert.equal(run.result.capturedFrames, 90);
+    assert.equal(run.result.framesExact, true);
+    assert.equal(run.result.simulationSeconds, 1.5);
+    assert.equal(run.result.backend, 'wasm / canvas2d');
+    assert.ok(run.result.wallMilliseconds < 3250);
+    assert.match(run.result.png, /^data:image\/png;base64,/);
+    assert.equal(run.same, true, 'No host layer/history/session/storage/canvas mutation: '+JSON.stringify(run.changes));
+    assert.equal(run.shared, true, 'Host shared simulator is not replaced');
+    const pixels = await evaluate(`(async () => {
+      const image = document.getElementById('goalPreviewImage'); await image.decode();
+      const c=document.createElement('canvas'); c.width=image.naturalWidth;c.height=image.naturalHeight;
+      const ctx=c.getContext('2d');ctx.drawImage(image,0,0);
+      const p=ctx.getImageData(0,0,c.width,c.height).data;
+      let blue=0;for(let i=0;i<p.length;i+=4)if(p[i+2]>p[i]+10)blue++;
+      window.__goalFrozen=image.src;
+      return {blue,width:c.width,height:c.height};
+    })()`);
+    assert.equal(pixels.width, 384); assert.equal(pixels.height, 384);
+    assert.ok(pixels.blue > 50, 'Actual visible blue brush stamps, not just a backend label');
+    await delay(150);
+    assert.equal(await evaluate(`document.getElementById('goalPreviewImage').src === __goalFrozen`), true);
+  });
+
+  await t.test('Goal navigation retains image, neutral/unanswered/N/A, notes and rerun history', async () => {
+    const ratings = await evaluate(`(() => {
+      const q=document.querySelectorAll('.goal-question');
+      const slider=q[0].querySelector('input[type=range]');
+      slider.value='-37';slider.dispatchEvent(new Event('input',{bubbles:true}));
+      const scalar=_app.experimentation.goals.store.reviews[0].answers[0].value;
+      [...q[0].querySelectorAll('button')].find(b=>b.textContent==='Clear answer').click();
+      const cleared=_app.experimentation.goals.store.reviews[0].answers[0].value;
+      [...q[0].querySelectorAll('button')].find(b=>b.textContent==='Neutral (0)').click();
+      [...q[1].querySelectorAll('button')].find(b=>b.textContent==='N/A').click();
+      const notes=document.getElementById('goalNotes');notes.value='<img src=x onerror=alert(1)> observed';
+      notes.dispatchEvent(new Event('input',{bubbles:true}));
+      document.getElementById('goalNext').click();
+      const unanswered=!document.querySelector('.goal-question');
+      document.getElementById('goalPrevious').click();
+      return {scalar,cleared,unanswered, values:_app.experimentation.goals.store.reviews[0].answers.map(a=>a.value),
+        note:document.getElementById('goalNotes').value,
+        same:document.getElementById('goalPreviewImage').src===__goalFrozen};
+    })()`);
+    assert.deepEqual(ratings.values, [0, 'na']);
+    assert.equal(ratings.scalar, -37); assert.equal(ratings.cleared, null);
+    assert.equal(ratings.unanswered, true); assert.equal(ratings.same, true);
+    assert.match(ratings.note, /observed/);
+    await evaluate(`document.getElementById('goalRun').click()`);
+    for (let n = 0; n < 80 && await evaluate(`_app.experimentation.goals.runner.running`); n++) await delay(100);
+    const history = await evaluate(`(() => {
+      const g=_app.experimentation.goals, select=document.getElementById('goalRunHistory');
+      select.value=g.store.reviews[0].id;select.dispatchEvent(new Event('change',{bubbles:true}));
+      return {count:g.store.reviews.length,sealed:g.store.reviews[0].sealed,
+        disabled:document.querySelector('.goal-question').disabled,
+        fresh:g.store.reviews[1].answers.map(a=>a.value),
+        first:g.store.reviews[0].result.png,second:g.store.reviews[1].result.png,
+        changes:__goalChanges(),sameHost:__goalBefore===__goalSnapshot()};
+    })()`);
+    assert.equal(history.count, 2); assert.equal(history.sealed, true); assert.equal(history.disabled, true);
+    assert.deepEqual(history.fresh, [null, null]);
+    assert.equal(history.first, history.second, 'Same fresh internal seed/config gives the same PNG in this build');
+    assert.equal(history.sameHost, true, JSON.stringify(history.changes));
+  });
+
+  await t.test('Goal actual import/export controls, collision safety, revisions and persisted PNGs', async () => {
+    const results = await evaluate(`(async () => {
+      const g=_app.experimentation.goals;
+      const original=URL.createObjectURL;
+      window.__goalDownloads=[];
+      URL.createObjectURL=blob=>{ __goalDownloads.push(blob); return original(blob); };
+      try {
+        document.getElementById('goalExport').click();
+        document.getElementById('goalExample').click();
+        document.getElementById('goalSchema').click();
+      } finally {URL.createObjectURL=original;}
+      const [reviewed,example,cap]=await Promise.all(__goalDownloads.map(async b=>JSON.parse(await b.text())));
+      const inputFile=async value=>{
+        const input=document.querySelector('#experimentationContent input[type=file]');
+        const dt=new DataTransfer();dt.items.add(new File([JSON.stringify(value)],'deck.json',{type:'application/json'}));
+        input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(r=>setTimeout(r,40));
+      };
+      const collision=structuredClone(example);collision.cards[0].hypothesis='changed under same identity';
+      await inputFile(collision);
+      const rejected=document.getElementById('goalStatus').textContent;
+      const child=structuredClone(example);child.revisionId='r2';child.parentRevisionId='r1';child.changes=['Increase separation'];
+      child.cards[0].config.params.separation=.6;
+      await inputFile(child);
+      const historical=g.store.isHistorical(g.store.revisions[0]);
+      const model=await import('./goal-card-model.js');
+      model.validateBundle(reviewed);
+      const restored=new model.GoalCardStore(localStorage);
+      const bad=structuredClone(child);bad.revisionId='r3';bad.parentRevisionId='r2';bad.cards[0].config.url='https://example.invalid';
+      await inputFile(bad);
+      return {format:reviewed.format,scale:reviewed.scale, png:!!reviewed.reviews[0].result.png,
+        complete:!!reviewed.revisions[0].cards[0].config.params.flowScale,
+        cap:cap.schema.properties.format.enum[0],example:example.cards.length,rejected,
+        revisions:g.store.revisions.length,historical,restored:restored.reviews.length,
+        bad:document.getElementById('goalStatus').textContent,
+        agent:await fetch('./simulation-card-designer.agent.md').then(r=>r.text()),
+        sameHost:__goalBefore===__goalSnapshot()};
+    })()`);
+    assert.equal(results.format, 'boid-brush-reviewed-deck');
+    assert.equal(results.scale.unanswered, null); assert.equal(results.scale.neutral, 0);
+    assert.equal(results.scale.notApplicable, 'na');
+    assert.ok(results.png && results.complete);
+    assert.equal(results.cap, 'boid-brush-goal-deck'); assert.equal(results.example, 2);
+    assert.match(results.rejected, /identity collision/); assert.match(results.bad, /unknown field/);
+    assert.equal(results.revisions, 2); assert.equal(results.historical, true);
+    assert.equal(results.restored, 2); assert.equal(results.sameHost, true);
+    assert.match(results.agent, /Initial mode/);
+  });
+
+  await t.test('Goal byte-budget rejection warns without truncating notes; downloaded backup round-trips', async () => {
+    const checked = await evaluate(`(async () => {
+      const model=await import('./goal-card-model.js');
+      const {GoalCardsView}=await import('./goal-card-ui.js');
+      // Memory storage avoids browser quota masking the aggregate export limit.
+      const data=new Map(), storage={getItem:k=>data.get(k),setItem:(k,v)=>data.set(k,v)};
+      const seed=new model.GoalCardStore(storage), example=model.createExampleDeck();
+      example.sharedQuestions=Array.from({length:12},(_,i)=>({id:'shared-'+i,text:'Question?'}));
+      example.cards[0].questions=Array.from({length:8},(_,i)=>({id:'card-'+i,text:'Question?'}));
+      const deck=seed.import(example);
+      const result={status:'cancelled',frames:0,framesExact:true,capturedFrames:0,simulationSeconds:0,
+        wallMilliseconds:30,backend:'unavailable',randomness:model.RANDOMNESS,message:'',png:null};
+      const run=seed.addRun(deck,deck.cards[0],result), bundle=seed.bundle();
+      bundle.reviews=Array.from({length:65},(_,i)=>({...structuredClone(run),id:'review-'+i,sealed:i!==64,
+        answers:run.answers.map(a=>({...a,note:'界'.repeat(4000)}))}));
+      const size=value=>new TextEncoder().encode(model.serializeReviewedDeck(value)).length;
+      let remaining=model.LIMITS.importBytes-size(bundle);
+      for(const row of bundle.reviews.slice(0,-1)){
+        const bytes=Math.min(remaining,36000);
+        row.notes='界'.repeat(Math.floor(bytes/3))+'x'.repeat(bytes%3);remaining-=bytes;
+      }
+      if(remaining!==0)throw new Error('Boundary fixture did not fit');
+      storage.setItem(model.GOAL_KEY,JSON.stringify(bundle));
+      const g=new GoalCardsView(storage), root=document.createElement('div');
+      const raw=storage.getItem(model.GOAL_KEY);
+      g.mount(root);
+      try {
+        const notes=root.querySelector('#goalNotes');
+        notes.value='界';notes.dispatchEvent(new Event('input',{bubbles:true}));
+        const editWarning=root.querySelector('#goalStatus').textContent;
+        const draft=notes.value, saved=g.store.reviews.at(-1).notes;
+        const input=root.querySelector('input[type=file]'), dt=new DataTransfer();
+        const child=structuredClone(deck);child.revisionId='r2';child.parentRevisionId='r1';child.changes=['New revision'];
+        dt.items.add(new File([JSON.stringify(child)],'deck.json',{type:'application/json'}));
+        input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(r=>setTimeout(r,40));
+        const importWarning=root.querySelector('#goalStatus').textContent;
+        g.runner.run=async()=>result;await g.start();
+        const runWarning=root.querySelector('#goalStatus').textContent;
+        const original=URL.createObjectURL;let backup;
+        URL.createObjectURL=blob=>{backup=blob;return original(blob);};
+        try {root.querySelector('#goalExport').click();} finally {URL.createObjectURL=original;}
+        const text=await backup.text();
+        const restored=new model.GoalCardStore({getItem:()=>null,setItem(){}});
+        restored.import(model.parseImport(text));
+        return {editWarning,importWarning,runWarning,draft,saved,bytes:backup.size,
+          pretty:text===model.serializeReviewedDeck(bundle),
+          unchanged:storage.getItem(model.GOAL_KEY)===raw&&JSON.stringify(g.store.bundle())===raw,
+          roundTrip:restored.reviews.length===65&&restored.reviews[0].answers[0].note==='界'.repeat(4000),
+          sealed:g.store.reviews.at(-1).sealed};
+      } finally {g.unmount();}
+    })()`);
+    for (const warning of [checked.editWarning, checked.importWarning, checked.runWarning]) {
+      assert.match(warning, /change rejected: total UTF-8 backup exceeds 16 MB/);
+      assert.match(warning, /Existing evidence is unchanged; no notes were truncated/);
+    }
+    assert.equal(checked.draft, '界'); assert.equal(checked.saved, '');
+    assert.equal(checked.bytes, 16000000);
+    assert.equal(checked.pretty, true); assert.equal(checked.unchanged, true);
+    assert.equal(checked.roundTrip, true); assert.equal(checked.sealed, false);
+  });
+
+  await t.test('Goal real cancellation, timeout, close lifecycle and phone layout stay bounded', async () => {
+    const cancelled = await evaluate(`(async () => {
+      const g=_app.experimentation.goals;
+      const pending=g.start();document.getElementById('goalCancel').click();await pending;
+      return g.store.reviews.at(-1).result;
+    })()`);
+    assert.equal(cancelled.status, 'cancelled'); assert.ok(cancelled.wallMilliseconds < 2000);
+    const timeout = await evaluate(`(async () => {
+      const g=_app.experimentation.goals;
+      const d=structuredClone(g.deck);d.revisionId='r3';d.parentRevisionId='r2';d.changes=['Short deadline stress'];
+      d.cards[0].budget={frames:180,wallSeconds:.5};
+      d.cards[0].config.spawns[0].count=128;g.importValue(d);
+      await g.start();return g.store.reviews.at(-1).result;
+    })()`);
+    assert.equal(timeout.status, 'timeout', JSON.stringify(timeout));
+    assert.ok(timeout.wallMilliseconds < 1500);
+    assert.ok(timeout.frames < 180); assert.equal(timeout.simulationSeconds, timeout.frames / 60);
+    const closed = await evaluate(`(async () => {
+      const g=_app.experimentation.goals, p=g.start();
+      _app.experimentation.close();await p;
+      return {status:g.store.reviews.at(-1).result.status,running:g.runner.running,
+        open:_app.experimentation.open,same:__goalBefore===__goalSnapshot()};
+    })()`);
+    assert.deepEqual(closed, { status: 'cancelled', running: false, open: false, same: true });
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`_app.experimentation.show()`);
+    await delay(100);
+    assert.ok(await evaluate(`(() => {const c=document.getElementById('experimentationContent');return c.scrollWidth-c.clientWidth<=1;})()`), 'Goal cards fit the existing 40% phone panel');
+    await evaluate(`_app.experimentation.close()`);
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  });
+
   await t.test('opening reflows 60/40 without changing paint or backing dimensions, and closing restores view', async () => {
     const result = await evaluate(`(() => {
       const app = _app;
@@ -125,6 +374,7 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
 
   await t.test('pointer curves, keyboard neutral, N/A, notes and local persistence use real controls', async () => {
     await evaluate(`document.getElementById('experimentationLaunch').click()`);
+    await evaluate(`_app.experimentation.selectTab('current')`);
     const rect = await evaluate(`(() => {
       const svg = document.querySelector('.experiment-curve');
       svg.scrollIntoView({block:'center'});
@@ -217,7 +467,7 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
         const session = _app._addExperimentationStarter(${JSON.stringify(key)});
         _app._loadExperimentationSession(session.id);
         await _app.startSimulation({announce:false});
-        await new Promise(resolve => setTimeout(resolve, 150));
+        for (let n=0;n<20 && !_app.simulation.frameCount;n++) await new Promise(resolve => setTimeout(resolve, 100));
         const result = {running:_app.simulation.running, frames:_app.simulation.frameCount, count:_app.getP().count};
         _app.pauseSimulation();
         _app.stopSimulation(false);
@@ -394,6 +644,29 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
     assert.equal(await evaluate(`_app._getExperimentationContext().id`), id);
     assert.deepEqual(await evaluate(`_app._captureViewState()`), expectedView);
     assert.equal(await evaluate(`_app.experimentation.store.records.get(${JSON.stringify(id)}).answers.alignment.notApplicable`), true);
+  });
+  await t.test('advanced river UI remains available and its real runner cancels promptly', async () => {
+    await evaluate(`(async () => {
+      const app=_app;
+      await app.resizeDocument(400,400,'#ffffff');
+      app._toggleSimulationMode(true);app.experimentation.show();app.experimentation.selectTab('starters');
+      const bundleModule=await import('./river-experiment.js');
+      const bundle=bundleModule.createRiverBundle({width:app.W,height:app.H,controls:app._getExperimentationDefaultControls()});
+      window.__shortRiverLayerIds = app.layers.map(layer => layer.id);
+      window.__shortRiver = app.experimentation.river.start(bundle);
+      app.experimentation.river.cancel();
+    })()`);
+    for (let n = 0; n < 60 && await evaluate(`_app.experimentation.river.running`); n++) await delay(100);
+    assert.equal(await evaluate(`_app.experimentation.river.running`), false);
+    assert.match(await evaluate(`_app.experimentation.river.progress`), /Cancelled/);
+    assert.equal(await evaluate(`!!document.querySelector('[data-river-start]')`), true);
+    // Cancellation intentionally retains experiment paint. Undo this test's run
+    // so the preexisting river tests do not inherit its extra visible layer.
+    assert.equal(await evaluate(`(() => {
+      _app.doUndo();
+      return JSON.stringify(_app.layers.map(layer => layer.id)) === JSON.stringify(__shortRiverLayerIds);
+    })()`), true, 'Short cancellation test restores its original layers');
+    await evaluate(`_app.experimentation.close()`);
   });
   await t.test('river native sequence completes or times out safely with real outflow, paint and restoration', async () => {
     // Keep software presentation inexpensive without changing the production

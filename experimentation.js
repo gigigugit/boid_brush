@@ -1,4 +1,5 @@
 import { createRiverBundle, RiverExperimentRunner } from './river-experiment.js';
+import { GoalCardsView } from './goal-card-ui.js';
 
 // Feedback owns observations. The opt-in river runner owns its temporary state
 // and new paint layers separately from ordinary observation-only cards.
@@ -212,8 +213,9 @@ export class ExperimentationController {
       try { storage = window.localStorage; } catch { storage = null; }
     }
     this.store = new FeedbackStore(storage);
+    this.goals = new GoalCardsView(storage);
     this.open = false;
-    this.tab = 'current';
+    this.tab = 'goals';
     this.selectedId = null;
     this.panel = document.getElementById('experimentationDialog');
     this.launch = document.getElementById('experimentationLaunch');
@@ -277,7 +279,7 @@ export class ExperimentationController {
     this.fitView();
     this.render();
     document.getElementById('experimentationClose').focus();
-    if (this.app.saveSession({ syncSimulation: false }) === false) {
+    if (this.tab !== 'goals' && this.app.saveSession({ syncSimulation: false }) === false) {
       this.status.textContent += ' Workspace could not be saved; export feedback and simulation setup before leaving.';
     }
   }
@@ -299,6 +301,7 @@ export class ExperimentationController {
   close() {
     if (this.river.running) { this.river.cancel(); return; }
     if (!this.open) return;
+    this.goals.unmount();
     this.open = false;
     this.panel.hidden = true;
     document.body.classList.remove('experimentation-open');
@@ -320,6 +323,7 @@ export class ExperimentationController {
   }
 
   selectTab(tab) {
+    if (this.tab === 'goals' && tab !== 'goals') this.goals.unmount();
     this.tab = tab;
     this.render();
   }
@@ -341,6 +345,12 @@ export class ExperimentationController {
       if (active) this.body.setAttribute('aria-labelledby', tab.id);
     });
     this.body.replaceChildren();
+    document.getElementById('experimentationExport').hidden = this.tab === 'goals';
+    if (this.tab === 'goals') {
+      this.status.textContent = 'Goal previews are isolated from painting, layers, history and saved sessions. Other tabs are advanced workspace views.';
+      this.goals.mount(this.body);
+      return;
+    }
     this.status.textContent = this.store.status || 'Feedback saves locally as you edit. Export a backup to keep it elsewhere.';
     if (this.tab === 'starters') { this.renderStarters(); return; }
     const context = this.context();
