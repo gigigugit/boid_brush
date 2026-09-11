@@ -7423,13 +7423,18 @@ export class App {
     if (this.simulation.mode === next) return;
     if (this.simulation.running || this.simulation.paused) this.stopSimulation(false);
     if (next === 'forceVisualization') {
-      this._forceVizManualViewSnapshot = this._captureViewState();
+      // Experimentation's fit is temporary. A later exit (even after closing
+      // the panel) must return to the full manual view, not the reserved fit.
+      this._forceVizManualViewSnapshot = this.experimentation?.open
+        ? { ...this.experimentation.savedView }
+        : this._captureViewState();
     } else {
       this._restoreOrRetainForceVizView();
     }
     this.simulation.mode = next;
     this._normalizeForceVizState();
     this._syncSimulationUI();
+    if (this.experimentation?.open) this.experimentation.fitView();
     this._maybeAutoSaveSession?.();
     this.showToast(next === 'forceVisualization' ? 'Force Visualization mode ON' : 'Force Visualization mode OFF');
   }
@@ -10039,6 +10044,7 @@ export class App {
     this.simulation.vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot, {});
     const nextSession = {
       ...session,
+      experimentationBrush: this.activeBrush,
       vars: _normalizeSimulationVars(this.simulation.vars),
       controlState,
       paramSnapshot,
@@ -10245,14 +10251,18 @@ export class App {
     } else if (this.simulation.sessions[this.simulation.activeSessionIndex]?.id !== id) {
       this._syncActiveSimulationSessionFromDraft();
     }
+    // Mode changes autosave the outgoing draft; do this before changing its brush.
+    if (session.experimentationStarter) this._setSimulationMode('normal');
     if (typeof session.experimentationBrush === 'string' && this._isMotionBrush(session.experimentationBrush)) {
       this.setBrush(session.experimentationBrush);
     }
-    if (session.experimentationStarter) this._setSimulationMode('normal');
     // An explicit card load auditions ONE session, not any armed routing set.
     this.simulation.multiSessionEnabled = false;
     if (!this.simulation.enabled) this._toggleSimulationMode(true);
     this._loadSimulationSession(this.simulation.sessions.indexOf(session));
+    // Loading may stop force-viz and restore its manual view. Refit only after
+    // the brush, mode, and session transitions have all completed.
+    if (this.experimentation?.open) this.experimentation.fitView();
     return true;
   }
 
@@ -13072,6 +13082,7 @@ export class App {
     this._toggleBrushSections(this.activeBrush);
     this._syncSimulationUI();
     if (next && !overlayHudEnabled) this._showSimulationControlsDrawer();
+    if (this.experimentation?.open) this.experimentation.fitView();
     this.showToast(next ? 'Simulation mode ON' : 'Simulation mode OFF');
   }
 

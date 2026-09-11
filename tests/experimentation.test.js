@@ -214,6 +214,131 @@ test('loading guards missing/starting/already loaded sessions and pauses before 
   assert.deepEqual(calls, []);
 });
 
+test('loading B and returning to edited Boid A restores its new Ant engine and draft data', () => {
+  const app = headlessApp();
+  const a = app._addExperimentationStarter('flock');
+  const b = app._addExperimentationStarter('spacing');
+  app.simulation.activeSessionIndex = 0;
+  app.setBrush('ant');
+  app._areAlphaFeaturesEnabled = () => true;
+  app.simulation.brushData.ant = { spawns: [{ id: 'edited-ant', x: 123, y: 234 }], points: [] };
+  const editedData = structuredClone(app.simulation.brushData);
+  app._loadSimulationSession = index => {
+    app.simulation.activeSessionIndex = index;
+    app.simulation.brushData = structuredClone(app.simulation.sessions[index].brushData);
+  };
+  assert.equal(app._loadExperimentationSession(b.id), true);
+  assert.equal(app.activeBrush, 'boid');
+  const savedA = app.simulation.sessions[0];
+  assert.deepEqual(savedA.brushData, editedData);
+  assert.deepEqual(savedA.controlState, { count: 200, stampSize: 40 });
+  assert.equal(savedA.experimentationBrush, 'ant');
+  assert.equal(app._getExperimentationContext(savedA).brush, 'ant');
+  assert.equal(app._loadExperimentationSession(a.id), true);
+  assert.equal(app.activeBrush, 'ant');
+  assert.deepEqual(app.simulation.brushData, editedData);
+});
+
+function viewApp() {
+  const app = headlessApp();
+  app._setSimulationMode = App.prototype._setSimulationMode;
+  app._normalizeForceVizState = () => {};
+  app._syncSimulationUI = () => {};
+  app._maybeAutoSaveSession = () => {};
+  app.showToast = () => {};
+  app._applyViewTransform = () => {};
+  app._getCanvasViewMetrics = () => ({ areaRect: { width: 480, height: 700 }, docW: 800, docH: 600 });
+  app.simulation.mode = 'normal';
+  app.simulation.forceViz = { camera: { exitBehavior: 'restoreManualView' } };
+  app._applyViewState({ zoom: 1.7, panX: 95, panY: -31, rotation: 0.3, flipped: true });
+  const controller = Object.create(ExperimentationController.prototype);
+  controller.app = app;
+  controller.open = true;
+  controller.savedView = app._captureViewState();
+  app.experimentation = controller;
+  return app;
+}
+
+test('starter mode-transition autosave cannot overwrite the outgoing edited session brush', () => {
+  const app = viewApp();
+  const a = app._addExperimentationStarter('flock');
+  const b = app._addExperimentationStarter('spacing');
+  app.simulation.activeSessionIndex = 0;
+  app.setBrush('ant');
+  app._maybeAutoSaveSession = () => app._syncActiveSimulationSessionFromDraft();
+  app._setSimulationMode('forceVisualization');
+  app._loadSimulationSession = index => { app.simulation.activeSessionIndex = index; };
+  assert.equal(app._loadExperimentationSession(b.id), true);
+  assert.equal(app.simulation.mode, 'normal');
+  assert.equal(app.activeBrush, 'boid');
+  assert.equal(app.simulation.sessions.find(s => s.id === a.id).experimentationBrush, 'ant');
+});
+
+test('starter loading reapplies the reserved fit after force-viz exit and completed loading', () => {
+  const app = viewApp();
+  app.simulation.mode = 'forceVisualization';
+  app._forceVizManualViewSnapshot = { ...app.experimentation.savedView, zoom: 2.3, panX: 160 };
+  app.experimentation.fitView();
+  const fitted = app._captureViewState();
+  const saved = { ...app.experimentation.savedView };
+  const session = app._addExperimentationStarter('flock');
+  let viewAtLoad;
+  app._loadSimulationSession = () => {
+    viewAtLoad = app._captureViewState();
+    // A load can finish other view-changing transitions; fit must be last.
+    app.viewPanX = 500;
+  };
+  assert.equal(app._loadExperimentationSession(session.id), true);
+  assert.deepEqual(app._captureViewState(), fitted);
+  assert.deepEqual(viewAtLoad, fitted);
+  assert.deepEqual(app.experimentation.savedView, saved);
+  assert.equal(app.simulation.mode, 'normal');
+  assert.equal(app._forceVizManualViewSnapshot, null);
+});
+
+test('direct force-viz transitions keep the open reserved fit without changing its saved view', () => {
+  const app = viewApp();
+  const saved = { ...app.experimentation.savedView };
+  app.experimentation.fitView();
+  const fitted = app._captureViewState();
+  app._setSimulationMode('forceVisualization');
+  assert.deepEqual(app._captureViewState(), fitted);
+  app.viewZoom = 3;
+  app.viewPanX = 700;
+  app._setSimulationMode('normal');
+  assert.deepEqual(app._captureViewState(), fitted);
+  assert.deepEqual(app.experimentation.savedView, saved);
+});
+
+test('force-viz entered during Experimentation uses the full manual view after close, not its temporary fit', () => {
+  const app = viewApp();
+  const saved = { ...app.experimentation.savedView };
+  app.experimentation.fitView();
+  app._setSimulationMode('forceVisualization');
+  // Model close's existing view restoration, then a later force-viz exit.
+  app.experimentation.open = false;
+  app._applyViewState(saved);
+  app._setSimulationMode('normal');
+  assert.deepEqual(app._captureViewState(), saved);
+  assert.equal(app._forceVizManualViewSnapshot, null);
+});
+
+test('pre-existing force-viz manual baseline and retain-current exit semantics survive Experimentation', () => {
+  for (const exitBehavior of ['restoreManualView', 'retainCurrentView']) {
+    const app = viewApp();
+    const manual = { ...app.experimentation.savedView, zoom: 2.4, panX: -170 };
+    app.simulation.mode = 'forceVisualization';
+    app.simulation.forceViz.camera.exitBehavior = exitBehavior;
+    app._forceVizManualViewSnapshot = manual;
+    app.experimentation.fitView();
+    app.experimentation.open = false;
+    app._applyViewState(app.experimentation.savedView);
+    app._setSimulationMode('normal');
+    assert.deepEqual(app._captureViewState(), exitBehavior === 'restoreManualView' ? manual : app.experimentation.savedView);
+    assert.equal(app._forceVizManualViewSnapshot, null);
+  }
+});
+
 test('session identity is retained by import normalization and renaming', () => {
   const app = headlessApp();
   const session = app._addExperimentationStarter('spacing');

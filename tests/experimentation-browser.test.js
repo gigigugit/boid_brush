@@ -229,6 +229,124 @@ test('Experimentation real-browser layout, feedback, session, and input lifecycl
     }
   });
 
+  await t.test('saved Boid A edited as Ant returns with Ant controls, guides, and engine after loading B', async () => {
+    const result = await evaluate(`(() => {
+      const app = _app;
+      const alpha = document.getElementById('showAlphaFeatures');
+      const priorAlpha = alpha.checked;
+      alpha.checked = true;
+      app.setAlphaFeaturesVisible(true, {persist:false});
+      try {
+        const a = app._addExperimentationStarter('flock');
+        const b = app._addExperimentationStarter('spacing');
+        app._loadExperimentationSession(a.id);
+        app.setBrush('ant');
+        const count = document.getElementById('count');
+        count.value = '73';
+        count.dispatchEvent(new Event('input', {bubbles:true}));
+        app.simulation.brushData.ant.spawns[0].x = app.W * 0.37;
+        // Compare normalized data; newly created spawns gain color/mask defaults on load.
+        app._normalizeSimulationData();
+        const guides = structuredClone(app.simulation.brushData.ant);
+        // The starter's mode-transition autosave must still capture A as Ant.
+        app._setSimulationMode('forceVisualization');
+        app._loadExperimentationSession(b.id);
+        const storedBrush = app.simulation.sessions.find(s => s.id === a.id).experimentationBrush;
+        app._loadExperimentationSession(a.id);
+        return {storedBrush, activeBrush:app.activeBrush, antEngine:app.getCurrentBrush() === app.brushes.ant,
+          count:app.getP().count, guides, loadedGuides:app.simulation.brushData.ant};
+      } finally {
+        app.setBrush('boid');
+        alpha.checked = priorAlpha;
+        app.setAlphaFeaturesVisible(priorAlpha, {persist:false});
+      }
+    })()`);
+    assert.deepEqual(result.loadedGuides, result.guides);
+    assert.deepEqual(
+      { storedBrush: result.storedBrush, activeBrush: result.activeBrush, antEngine: result.antEngine, count: result.count },
+      { storedBrush: 'ant', activeBrush: 'ant', antEngine: true, count: 73 },
+    );
+  });
+
+  await t.test('loading a starter from force-viz keeps the rotated document inside the reserved viewport', async () => {
+    const result = await evaluate(`(() => {
+      const app = _app;
+      app.experimentation.close();
+      const before = app._captureViewState();
+      const paint = app.layers.map(l => l.canvas.toDataURL());
+      app._applyViewState({zoom:2.2, panX:183, panY:-92, rotation:0.4, flipped:true});
+      app._setSimulationMode('forceVisualization');
+      app.simulation.forceViz.camera.exitBehavior = 'restoreManualView';
+      const saved = app._captureViewState();
+      app.experimentation.show();
+      const fitted = app._captureViewState();
+      const session = app._addExperimentationStarter('flock');
+      app._loadExperimentationSession(session.id);
+      const afterLoad = app._captureViewState();
+      const metrics = app._getCanvasViewMetrics();
+      const c = Math.abs(Math.cos(app.viewRotation)), s = Math.abs(Math.sin(app.viewRotation));
+      const inside = (metrics.docW*c + metrics.docH*s)*app.viewZoom <= metrics.areaRect.width
+        && (metrics.docW*s + metrics.docH*c)*app.viewZoom <= metrics.areaRect.height;
+      app.experimentation.close();
+      const closed = app._captureViewState();
+      const samePaint = JSON.stringify(paint) === JSON.stringify(app.layers.map(l => l.canvas.toDataURL()));
+      app._applyViewState(before);
+      app.experimentation.show();
+      return {saved, fitted, afterLoad, inside, closed, samePaint, mode:app.simulation.mode};
+    })()`);
+    assert.deepEqual(result.afterLoad, result.fitted);
+    assert.equal(result.inside, true);
+    assert.deepEqual(result.closed, result.saved);
+    assert.equal(result.samePaint, true);
+    assert.equal(result.mode, 'normal');
+  });
+
+  await t.test('closing preserves prior force-viz exit semantics without leaking the temporary fit', async () => {
+    const results = await evaluate(`(() => {
+      const app = _app;
+      app.experimentation.close();
+      const before = app._captureViewState();
+      const results = [];
+      for (const enteredBefore of [true, false]) {
+        for (const exitBehavior of ['restoreManualView', 'retainCurrentView']) {
+          app._applyViewState({zoom:1.8, panX:123, panY:-47, rotation:0.2, flipped:true});
+          const manual = app._captureViewState();
+          if (enteredBefore) {
+            app._setSimulationMode('forceVisualization');
+            app._applyViewState({...manual, zoom:0.9, panX:-87});
+          }
+          const saved = app._captureViewState();
+          app.experimentation.show();
+          if (!enteredBefore) app._setSimulationMode('forceVisualization');
+          app.simulation.forceViz.camera.exitBehavior = exitBehavior;
+          const fitted = app._captureViewState();
+          app._applyViewState(saved);
+          app._toggleSimulationMode(false);
+          const disabledView = app._captureViewState();
+          app._applyViewState(saved);
+          app._toggleSimulationMode(true);
+          const enabledView = app._captureViewState();
+          app.experimentation.close();
+          const closed = app._captureViewState();
+          app._setSimulationMode('normal');
+          results.push({enteredBefore, exitBehavior, manual, saved, fitted, disabledView, enabledView, closed, afterExit:app._captureViewState(),
+            snapshot:app._forceVizManualViewSnapshot});
+        }
+      }
+      app._applyViewState(before);
+      app.experimentation.show();
+      return results;
+    })()`);
+    for (const result of results) {
+      const label = `${result.enteredBefore ? 'pre-existing' : 'new'} / ${result.exitBehavior}`;
+      assert.deepEqual(result.disabledView, result.fitted, label);
+      assert.deepEqual(result.enabledView, result.fitted, label);
+      assert.deepEqual(result.closed, result.saved, label);
+      assert.deepEqual(result.afterExit, result.exitBehavior === 'restoreManualView' ? result.manual : result.saved, label);
+      assert.equal(result.snapshot, null, label);
+    }
+  });
+
   await t.test('desktop/tablet/phone reserve 40%, scroll without horizontal overflow, and retain backing dimensions', async () => {
     await evaluate(`_app.experimentation.selectTab('current')`);
     const dimensions = await evaluate(`[ _app.W, _app.H, ..._app.layers.flatMap(l => [l.canvas.width,l.canvas.height]) ]`);
