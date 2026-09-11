@@ -24,7 +24,7 @@ import {
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-10-edge-overlay-cache-bust';
+const APP_BUILD_ID = '2026-09-11-corral-drawer-actions';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;

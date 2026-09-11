@@ -22,8 +22,11 @@ test('corral toolbar is centered, single-line, and below panel tabs', () => {
   assert.match(html, /\.panel-tabs\{[^}]*z-index:21/);
 });
 
-test('corral control delivery uses the current cache token', () => {
-  assert.match(html, /const assetVersion = '2026-09-11-corral-drawers'/);
+test('corral control delivery uses a build-matched current cache token', () => {
+  const assetVersion = html.match(/const assetVersion = '([^']+)'/)?.[1];
+  const appBuildId = app.match(/const APP_BUILD_ID = '([^']+)'/)?.[1];
+  assert.equal(assetVersion, '2026-09-11-corral-drawer-actions');
+  assert.equal(appBuildId, assetVersion);
 });
 
 test('enabled corral keeps controls visible outside editor mode', () => {
