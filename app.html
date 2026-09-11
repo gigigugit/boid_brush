@@ -1061,6 +1061,64 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   .tb-hide-compact{display:none;}
   .sim-hud{left:10px;top:10px;}
 }
+/* Experimentation shares the Input Modulation modal's palette and card rhythm,
+   not the sidebar's compact slider layout. The right 40% is reserved at every
+   viewport size; narrow screens stack controls rather than covering the canvas. */
+body.experimentation-open{--experiment-w:40vw;}
+body.experimentation-open #canvasArea{right:var(--experiment-w);}
+body.experimentation-open #rightPanel,
+body.experimentation-open #rightPanelTabs,
+body.experimentation-open #sidebarToggle{visibility:hidden;}
+#experimentationLaunch{position:fixed;right:12px;top:calc(var(--topbar-h) + 8px);z-index:45;padding:10px 14px;border:1px solid rgba(126,156,220,.5);border-radius:10px;background:#19243a;color:#f3f6ff;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;}
+#experimentationLaunch[hidden],#experimentationDialog[hidden]{display:none;}
+body.experimentation-open #experimentationLaunch{display:none;}
+#experimentationDialog{position:fixed;inset:var(--topbar-h) 0 var(--status-h) auto;width:40vw;z-index:70;display:flex;flex-direction:column;min-width:0;overflow:hidden;background:linear-gradient(180deg,rgba(21,25,36,.99),rgba(12,16,25,.99));border:1px solid rgba(126,156,220,.18);border-radius:14px 0 0 14px;box-shadow:0 20px 60px rgba(0,0,0,.7);color:#e0e7f5;font-size:12px;}
+#experimentationDialog *{touch-action:pan-y;}
+#experimentationDialog button{min-height:36px;max-width:100%;padding:7px 10px;border:1px solid rgba(126,156,220,.3);border-radius:8px;background:rgba(255,255,255,.06);color:#e2eaff;font:inherit;cursor:pointer;overflow-wrap:anywhere;}
+#experimentationDialog button:hover{background:rgba(126,156,220,.16);}
+#experimentationDialog button:disabled{opacity:.4;cursor:default;}
+#experimentationDialog :focus-visible,#experimentationLaunch:focus-visible{outline:2px solid #9cc3ff;outline-offset:2px;}
+#experimentationDialog h2{font-size:16px;color:#f3f6ff;margin:0 0 4px;}
+#experimentationDialog h3{font-size:14px;color:#f3f6ff;overflow-wrap:anywhere;}
+.experiment-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px;border-bottom:1px solid rgba(255,255,255,.08);}
+.experiment-header p,.experiment-note{color:#aab9d6;font-size:12px;line-height:1.5;}
+.experiment-note{margin:10px 0;overflow-wrap:anywhere;}
+.experiment-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08);}
+.experiment-tabs button[aria-selected="true"],#experimentationDialog button[aria-pressed="true"]{background:#304b78;border-color:#86aff0;}
+#experimentationContent{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:14px;}
+.experiment-card{min-width:0;padding:14px;margin-bottom:12px;border:1px solid rgba(126,156,220,.18);border-radius:12px;background:rgba(4,9,18,.28);}
+.experiment-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0;}
+.experiment-actions span{color:#aab9d6;font-variant-numeric:tabular-nums;}
+.experiment-question{min-width:0;border:1px solid rgba(126,156,220,.2);border-radius:10px;padding:10px;margin:18px 0;}
+.experiment-question legend{padding:0 5px;color:#dce7fc;font-size:12px;line-height:1.5;}
+.experiment-answer-state{font-size:11px;color:#a9bddf;}
+#experimentationDialog .experiment-curve{display:block;width:100%;height:auto;aspect-ratio:3;min-height:65px;max-height:160px;background:#0e1522;border:1px solid #30405c;border-radius:8px;margin-top:8px;touch-action:none;cursor:crosshair;}
+.experiment-grid{fill:none;stroke:#33415a;stroke-width:1;stroke-dasharray:3 4;}
+.experiment-line{fill:none;stroke:#9fc4ff;stroke-width:2.5;}
+.experiment-point{fill:#b8d6ff;stroke:#b8d6ff;stroke-width:1.5;}
+.experiment-point.unanswered{fill:#0e1522;stroke:#7c8ca6;stroke-dasharray:2 2;}
+.experiment-curve.not-applicable{opacity:.4;}
+.experiment-curve-axis{font-size:10px;line-height:1.6;color:#a9bddf;text-align:center;}
+.experiment-question summary{cursor:pointer;color:#afcaff;line-height:1.6;}
+.experiment-slider{display:grid;grid-template-columns:45px minmax(0,1fr) 30px;align-items:center;gap:5px;margin-top:8px;font-size:11px;}
+#experimentationDialog input[type="range"]{width:100%;min-width:0;accent-color:#9fc4ff;touch-action:none;}
+.experiment-slider output{text-align:right;}
+.experiment-notes{display:block;margin-top:12px;color:#bfcde7;font-size:12px;}
+#experimentationDialog textarea{display:block;width:100%;min-width:0;resize:vertical;min-height:60px;margin-top:6px;padding:8px;border:1px solid #3b4b66;border-radius:8px;background:#101724;color:#edf3ff;font:inherit;touch-action:auto;user-select:text;-webkit-user-select:text;}
+.experiment-footer{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 18px;border-top:1px solid rgba(255,255,255,.08);}
+#experimentationStatus{flex:1 1 180px;color:#adbedb;font-size:11px;line-height:1.5;overflow-wrap:anywhere;}
+body.experimentation-open #simPlaybackBar{left:8px;right:calc(40vw + 8px);max-width:none;transform:none;max-height:25vh;overflow:auto;}
+body.experimentation-open #simHud{max-width:calc(60vw - 70px);}
+@media(max-width:760px){
+  .experiment-header{padding:8px;gap:5px;flex-wrap:wrap;}
+  .experiment-tabs,#experimentationContent,.experiment-footer{padding:7px;}
+  .experiment-tabs{gap:4px;}
+  #experimentationDialog button{min-height:40px;padding:5px;font-size:11px;}
+  .experiment-card{padding:6px;}
+  .experiment-question{padding:5px;}
+  .experiment-slider{grid-template-columns:minmax(0,1fr) 26px;}
+  .experiment-slider input{grid-column:1;grid-row:auto;}
+}
 </style>
 </head>
 <body>
@@ -1717,6 +1775,25 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </div>
   </div>
 </div>
+
+<!-- Experimentation is non-modal so the reserved canvas and playback stay usable. -->
+<button id="experimentationLaunch" type="button" aria-haspopup="dialog" aria-controls="experimentationDialog" aria-expanded="false" hidden>Experimentation</button>
+<section id="experimentationDialog" role="dialog" aria-modal="false" aria-labelledby="experimentationTitle" hidden>
+  <header class="experiment-header">
+    <div><h2 id="experimentationTitle">Experimentation</h2><p>Observe a simulation. Record what works.</p></div>
+    <button id="experimentationClose" type="button" aria-label="Close Experimentation">Close ✕</button>
+  </header>
+  <nav class="experiment-tabs" role="tablist" aria-label="Experimentation views">
+    <button id="experimentationTabCurrent" data-experimentation-tab="current" type="button" role="tab" aria-controls="experimentationContent" aria-selected="true">Current / ad-hoc</button>
+    <button id="experimentationTabSaved" data-experimentation-tab="saved" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Saved cards</button>
+    <button id="experimentationTabStarters" data-experimentation-tab="starters" type="button" role="tab" aria-controls="experimentationContent" aria-selected="false" tabindex="-1">Starting points</button>
+  </nav>
+  <div id="experimentationContent" role="tabpanel" aria-labelledby="experimentationTabCurrent" tabindex="0"></div>
+  <footer class="experiment-footer">
+    <span id="experimentationStatus" role="status" aria-live="polite"></span>
+    <button id="experimentationExport" type="button">Export feedback JSON</button>
+  </footer>
+</section>
 
 <!-- ══════════ Input Modulation Editor Modal ══════════ -->
 <!-- Full editor for the boid input-modulation matrix. Opened from the compact

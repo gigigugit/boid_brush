@@ -15,6 +15,7 @@ import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPr
 import { workspaceControlBelongsToBrush } from './settings-catalog.js';
 import { compileCorral, corralToSvg, extractClosedSvgPath, smoothClosedCorral } from './corral.js';
 import { CorralFileWorkspace } from './workspace-files.js';
+import { ExperimentationController, createStarter } from './experimentation.js';
 import {
   FeatureTracker,
   evaluateModMatrix,
@@ -2730,6 +2731,7 @@ export class App {
 
     // Events
     this._bindEvents();
+    this.experimentation = new ExperimentationController(this);
     this._initTopbarOverflow();
     void this._restoreCorralDirectory();
 
@@ -2776,6 +2778,11 @@ export class App {
   // ========================================================
 
   _resizeAll() {
+    if (this.experimentation?.open) {
+      // Experimentation reserves CSS viewport space, never resizes paint buffers.
+      this._applyViewTransform();
+      return;
+    }
     if (this._docSized) {
       // Document has explicit size — don't resize to viewport
       const transformEl = document.getElementById('canvasTransform');
@@ -2850,6 +2857,7 @@ export class App {
   }
 
   async resizeDocument(newW, newH, bgColor) {
+    this.experimentation?.close();
     newW = Math.max(1, Math.min(8192, Math.round(newW)));
     newH = Math.max(1, Math.min(8192, Math.round(newH)));
     const oldDocW = Math.max(1, this._docW || this.W || newW);
@@ -6886,6 +6894,7 @@ export class App {
   }
 
   _syncSimulationSessionContextUi() {
+    this.experimentation?.sync();
     const context = this._getSimulationSessionContextSummary();
     const sidebarTitle = document.getElementById('simSidebarSessionName');
     if (sidebarTitle) sidebarTitle.textContent = context.sidebarTitle;
@@ -10087,6 +10096,7 @@ export class App {
     this.simulation.savedPlayback = null;
     this._simulationSavedPlaybackCapture = null;
     this.simulation.activeSessionIndex = -1;
+    this.simulation.experimentationDraftId = this._createSimulationSessionId();
     this.simulation.nextId = 1;
     this.simulation.selected = null;
     this.simulation.drawingBlob = null;
@@ -10111,7 +10121,8 @@ export class App {
     const vars = this._getSimulationVarOverridesFromParamSnapshot(paramSnapshot);
     this.simulation.vars = vars;
     const nextSession = {
-      id: existingSession?.id || this._createSimulationSessionId(),
+      id: existingSession?.id || this._getExperimentationDraftId(),
+      experimentationBrush: this.activeBrush,
       name,
       savedAt: Date.now(),
       vars,
@@ -10151,6 +10162,100 @@ export class App {
     this.showToast(`Loaded "${session.name}"`);
   }
 
+  _getExperimentationDraftId() {
+    const id = this.simulation.experimentationDraftId;
+    // A setup import can detach the current draft while retaining its former
+    // saved session. The detached draft must not duplicate that session's ID.
+    if (typeof id !== 'string' || !id.length || id.length > 240 || this.simulation.sessions.some(session => session.id === id)) {
+      this.simulation.experimentationDraftId = this._createSimulationSessionId();
+    }
+    return this.simulation.experimentationDraftId;
+  }
+
+  _getExperimentationContext(session = null) {
+    this._ensureSimulationSessionIds();
+    const active = this.simulation.sessions[this.simulation.activeSessionIndex];
+    const current = !session || session.id === active?.id;
+    const saved = session || active;
+    return {
+      id: saved?.id || this._getExperimentationDraftId(),
+      name: saved?.name || 'Current ad-hoc draft',
+      brush: current ? this.activeBrush : saved.experimentationBrush || 'boid',
+      configuration: {
+        width: this.W, height: this.H,
+        vars: _deepClone(current ? this.simulation.vars : saved.vars),
+        controlState: current ? this._captureSimulationSessionControlState() : _deepClone(saved.controlState || {}),
+        paramSnapshot: current ? this._captureSimulationSessionParamSnapshot() : _deepClone(saved.paramSnapshot || {}),
+        brushData: _deepClone(current ? this.simulation.brushData : saved.brushData),
+        sensingSourceSelection: current ? this._serializeSensingSourceSelection() : saved.sensingSourceSelection,
+        nextId: current ? this.simulation.nextId : saved.nextId,
+      },
+    };
+  }
+
+  _addExperimentationStarter(key) {
+    // Use existing control defaults, restricted to simulation-owned sidebar
+    // controls. Never apply a workspace preset or change document/layer state.
+    const currentControls = this._captureSimulationSessionControlState();
+    const controls = {};
+    for (const id of Object.keys(currentControls)) {
+      if (Object.hasOwn(FACTORY_DEFAULTS, id)) controls[id] = FACTORY_DEFAULTS[id];
+    }
+    const session = createStarter(key, {
+      id: this._createSimulationSessionId(), width: this.W, height: this.H, controls,
+    });
+    this.simulation.sessions.push(session);
+    // Normalization normally arms new sessions. Examples must stay unarmed.
+    this.simulation.multiSessionBindings.push({
+      sessionId: session.id, sessionIndex: this.simulation.sessions.length - 1,
+      enabled: false, layerIds: [],
+    });
+    this._normalizeSimulationSessionBindings();
+    this._renderSimulationInspector();
+    this._syncSimulationSessionContextUi();
+    if (!this.saveSession({ syncSimulation: false })) {
+      this.showToast('Configuration added in this tab only. Could not save workspace; export simulation setup to keep it.');
+    }
+    return session;
+  }
+
+  _loadExperimentationSession(id) {
+    const session = this.simulation.sessions.find(candidate => candidate.id === id);
+    if (!session || this.simulation.starting) return false;
+    if (this.simulation.sessions[this.simulation.activeSessionIndex]?.id === id) return true;
+    if (['ant', 'motionPath'].includes(session.experimentationBrush) && !this._areAlphaFeaturesEnabled()) {
+      this.showToast('Enable alpha features before loading this configuration’s brush.');
+      return false;
+    }
+    // Pausing before the normal stop avoids committing a running preview.
+    if (this.simulation.running) this.pauseSimulation();
+    if (this.simulation.paused) this.stopSimulation(false);
+    if (this.simulation.activeSessionIndex < 0) {
+      const context = this._getExperimentationContext();
+      const preserved = {
+        ...context.configuration, id: context.id,
+        name: 'Preserved ad-hoc draft', savedAt: Date.now(),
+        experimentationBrush: this.activeBrush, savedPlayback: this.simulation.savedPlayback,
+      };
+      this.simulation.sessions.push(preserved);
+      this.simulation.multiSessionBindings.push({
+        sessionId: preserved.id, sessionIndex: this.simulation.sessions.length - 1,
+        enabled: false, layerIds: [],
+      });
+    } else if (this.simulation.sessions[this.simulation.activeSessionIndex]?.id !== id) {
+      this._syncActiveSimulationSessionFromDraft();
+    }
+    if (typeof session.experimentationBrush === 'string' && this._isMotionBrush(session.experimentationBrush)) {
+      this.setBrush(session.experimentationBrush);
+    }
+    if (session.experimentationStarter) this._setSimulationMode('normal');
+    // An explicit card load auditions ONE session, not any armed routing set.
+    this.simulation.multiSessionEnabled = false;
+    if (!this.simulation.enabled) this._toggleSimulationMode(true);
+    this._loadSimulationSession(this.simulation.sessions.indexOf(session));
+    return true;
+  }
+
   _setActiveSimulationSessionIndex(index) {
     if (this.simulation.running || this.simulation.paused) {
       this.stopSimulation(false);
@@ -10159,6 +10264,7 @@ export class App {
     this._syncActiveSimulationSessionFromDraft();
     if (!Number.isFinite(index) || index < 0 || !this.simulation.sessions[index]) {
       this.simulation.activeSessionIndex = -1;
+      this.simulation.experimentationDraftId = this._createSimulationSessionId();
       this._normalizeSimulationSessionBindings();
       this._renderSimulationInspector();
       this._syncSimulationSessionContextUi();
@@ -10175,6 +10281,7 @@ export class App {
     this.simulation.sessions.splice(index, 1);
     if (this.simulation.activeSessionIndex === index) {
       this.simulation.activeSessionIndex = -1;
+      this.simulation.experimentationDraftId = session.id;
     } else if (this.simulation.activeSessionIndex > index) {
       this.simulation.activeSessionIndex -= 1;
     }
@@ -12975,6 +13082,7 @@ export class App {
   }
 
   _syncSimulationUI() {
+    this.experimentation?.sync();
     this._syncForceVizUI();
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
     if (this.activeBrush === 'ant' && this.simulation.editorTool === 'path') this.simulation.editorTool = 'spawn';
@@ -21346,7 +21454,7 @@ export class App {
       rawPoints: this.corral.rawPoints,
       points: this.corral.points,
     };
-    controls._view = this._captureViewState();
+    controls._view = this.experimentation?.open ? { ...this.experimentation.savedView } : this._captureViewState();
     controls._viewBookmarks = _deepClone(this.viewBookmarks);
     controls._lastChangeMarker = _deepClone(this.lastChangeMarker);
     if (this._docSized) {
@@ -21371,6 +21479,7 @@ export class App {
       vars: this.simulation.vars,
       sessions: this.simulation.sessions,
       activeSessionIndex: this.simulation.activeSessionIndex,
+      experimentationDraftId: this.simulation.experimentationDraftId,
       savedPlayback: this.simulation.savedPlayback,
       multiSessionEnabled: this.simulation.multiSessionEnabled,
       multiSessionBindings: this.simulation.multiSessionBindings,
@@ -21744,12 +21853,15 @@ export class App {
     return true;
   }
 
-  saveSession() {
-    if (this._suppressSessionPersistence) return;
+  saveSession({ syncSimulation = true } = {}) {
+    if (this._suppressSessionPersistence) return false;
     try {
-      this._syncActiveSimulationSessionFromDraft();
+      // Observation-only UI may persist IDs/cards without implicitly updating
+      // the saved configuration currently being evaluated.
+      if (syncSimulation) this._syncActiveSimulationSessionFromDraft();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this._captureSessionControls()));
-    } catch { /* quota exceeded — ignore */ }
+      return true;
+    } catch { return false; }
   }
 
   _sanitizeWorkspacePresets(presets) {
@@ -21841,6 +21953,7 @@ export class App {
   }
 
   async applyWorkspaceSettingsBundle(bundle) {
+    this.experimentation?.close();
     const normalized = this._normalizeWorkspaceSettingsBundle(bundle);
     if (!normalized.session || typeof normalized.session !== 'object' || Array.isArray(normalized.session)) {
       throw new Error('Workspace bundle is missing session settings');
@@ -21999,6 +22112,9 @@ export class App {
         continue;
       }
       if (id === '_simulation') {
+        this.simulation.experimentationDraftId = typeof val?.experimentationDraftId === 'string'
+          && val.experimentationDraftId.length > 0 && val.experimentationDraftId.length <= 240
+          ? val.experimentationDraftId : this._createSimulationSessionId();
         if (val?.brushData) this.simulation.brushData = val.brushData;
         if (typeof val?.editorTool === 'string') this.simulation.editorTool = val.editorTool;
         if (typeof val?.nextId === 'number') this.simulation.nextId = val.nextId;
@@ -22119,6 +22235,7 @@ export class App {
   }
 
   async _restoreSession() {
+    this.experimentation?.close();
     try {
       await this._ensureBuiltinCanvasTexture();
       const raw = localStorage.getItem(STORAGE_KEY);
