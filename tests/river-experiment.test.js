@@ -1,6 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { App } from '../app.js';
 import { createRiverBundle, riverGeometry, RIVER_ANALYSIS, RIVER_TRIALS, RiverExperimentRunner } from '../river-experiment.js';
+
+test('single-session river guide clock uses fixed milliseconds without changing ordinary playback', () => {
+  const oldDocument = globalThis.document;
+  globalThis.document = { visibilityState: 'visible', getElementById() { return null; } };
+  try {
+    for (const running of [true, false]) {
+      const app = Object.create(App.prototype);
+      const stop = new Error('frame sampled');
+      Object.assign(app, {
+        _performanceTelemetry: { enabled: false }, _startTime: performance.now() - 100000,
+        simulation: { running: true, frameCount: 0 },
+        experimentation: { river: { running } },
+        getP: () => ({}), getCurrentBrush: () => ({ onFrame() { throw stop; } }),
+        _hasActiveMultiSessionPlayback: () => false,
+        _applySimulationEphemeralFade() {},
+        _updateSimulationLeader(elapsed) { this.guideElapsed = elapsed; },
+      });
+      assert.throws(() => app._frameLoop(), error => error === stop);
+      if (running) assert.equal(app.guideElapsed, 1000 / 60);
+      else assert.ok(app.guideElapsed >= 100 && app.guideElapsed < 101);
+    }
+  } finally { globalThis.document = oldDocument; }
+});
 
 test('river native data is deterministic, bounded, selective and explicit about feedback limitations', () => {
   const bundle = createRiverBundle();
@@ -66,11 +90,23 @@ function fakeApp() {
       multiSessionEnabled: true, multiSessionBindings: [{ sessionId: 'mine', enabled: true, layerIds: ['user'] }],
     },
     controls: { maxSpeed: '22', wander: '6' },
+    activeTool: 'fill', sensingSelection: ['user'], undoStack: [], redoStack: [],
+    _serializeSensingSourceSelection() { return [...this.sensingSelection]; },
+    _restoreSensingSourceSelection(selection) { this.sensingSelection = selection; },
+    _captureState() { return { layers: structuredClone(this.layers), simulation: structuredClone(this.simulation) }; },
+    pushUndo(state) { this.undoStack.push({ s: state, i: this.activeLayerIdx }); this.redoStack = []; },
+    setTool(tool) { this.activeTool = tool; },
+    getCurrentBrush() { return this.brush; },
+    _syncCorralUI() {},
     _captureSimulationSessionControlState() { return structuredClone(this.controls); },
     _captureViewState() { return { zoom: .7, panX: 30 }; },
     _applyViewState(v) { this.view = v; },
     _applySimulationSessionControlState(c) { this.controls = c; },
-    _applySimulationSessionToDraft(s) { Object.assign(this.simulation, structuredClone({ vars: s.vars, brushData: s.brushData })); this.controls = s.controlState; },
+    _applySimulationSessionToDraft(s) {
+      Object.assign(this.simulation, structuredClone({ vars: s.vars, brushData: s.brushData }));
+      this.controls = s.controlState;
+      this._restoreSensingSourceSelection(s.sensingSourceSelection);
+    },
     getActiveLayer() { return this.layers[this.activeLayerIdx]; },
     pauseSimulation() { this.simulation.running = false; this.simulation.paused = true; },
     stopSimulation() {
@@ -81,7 +117,10 @@ function fakeApp() {
     _toggleSimulationMode(enabled) { this.simulation.enabled = enabled; },
     setBrush(brush) { this.activeBrush = brush; },
     addLayer(name) { this.layers.splice(this.activeLayerIdx, 0, { id: name, name, visible: true }); },
-    async startSimulation() { this.simulation.running = true; this.simulation.frameCount = 0; },
+    async startSimulation() {
+      this.pushUndo(this._captureState());
+      this.simulation.running = true; this.simulation.frameCount = 0;
+    },
     _syncLayerSwitcher() {}, _syncSimulationUI() {}, compositeAllLayers() {},
     saveSession() { return true; },
   };
@@ -97,6 +136,8 @@ for (const outcome of ['success', 'cancel', 'failure']) {
     };
     try {
       const app = fakeApp();
+      // App tracks hover in this map too; it is not a pointer-down guard.
+      app._activePointers = new Map([[1, { type: 'mouse' }]]);
       const original = structuredClone(app.simulation);
       const runner = new RiverExperimentRunner(app);
       let phases = 0;
@@ -105,6 +146,12 @@ for (const outcome of ['success', 'cancel', 'failure']) {
         assert.equal(app.getActiveLayer().id, runner.layerId);
         assert.equal(app.simulation.multiSessionEnabled, false);
         assert.equal(app.corral.enabled, false);
+        assert.deepEqual(app.sensingSelection, []);
+        for (const type of ['wheel', 'touchmove', 'drop', 'paste']) {
+          let blocked = false;
+          listeners.get(type)({ type, preventDefault() { blocked = true; }, stopImmediatePropagation() {} });
+          assert.equal(blocked, true, `${type} is fenced`);
+        }
         if (session.riverExperiment.phase === 'bypass') {
           assert.deepEqual(app.simulation.brushData.boid.paths[0].points, session.brushData.boid.paths[0].points);
           assert.equal(app.simulation.brushData.boid.paths[0].travelDistance, 0);
@@ -131,8 +178,111 @@ for (const outcome of ['success', 'cancel', 'failure']) {
       assert.equal(app.simulation.running, false);
       assert.equal(app.simulation.paused, false);
       assert.equal(app.corral.enabled, true);
+      assert.equal(app.activeTool, 'fill');
+      assert.deepEqual(app.sensingSelection, ['user']);
+      assert.equal(app.undoStack.length, 1);
+      assert.deepEqual(app.undoStack[0].s.layers.map(l => l.id), ['user']);
+      assert.deepEqual(app.undoStack[0].s.simulation.brushData, original.brushData);
       assert.equal(app._simulationExport.armedOnStart, true);
       assert.deepEqual(app.controls, { maxSpeed: '22', wander: '6' });
     } finally { delete globalThis.window; }
   });
 }
+
+test('cancellation during startup waits for owned GPU preview and commits it once before restoration', async () => {
+  const listeners = new Set();
+  globalThis.window = {
+    addEventListener(type) { listeners.add(type); },
+    removeEventListener(type) { listeners.delete(type); },
+  };
+  try {
+    const app = fakeApp();
+    let releaseStart, commits = 0;
+    const started = new Promise(resolve => { releaseStart = resolve; });
+    app.brush = {
+      _gpuPreviewActive: true,
+      _gpuPreviewRenderer: { kind: 'webgpu', _previewSyncPending: true, _hasLivePreviewFrame: false },
+      onUp() {
+        assert.notEqual(app.getActiveLayer().id, 'user');
+        assert.equal(app.simulation.running, false);
+        assert.equal(this._gpuPreviewRenderer._hasLivePreviewFrame, true);
+        assert.equal(this._gpuPreviewRenderer._previewSyncPending, false);
+        this._gpuPreviewActive = false;
+        app.getActiveLayer().paint = 'committed partial preview';
+        commits++;
+      },
+    };
+    app.startSimulation = async () => { app.simulation.running = true; await started; };
+    const runner = new RiverExperimentRunner(app);
+    runner.waitForPhase = () => assert.fail('cancelled startup must not enter a phase');
+    const run = runner.start(createRiverBundle());
+    runner.cancel();
+    releaseStart();
+    setTimeout(() => {
+      app.brush._gpuPreviewRenderer._hasLivePreviewFrame = true;
+      app.brush._gpuPreviewRenderer._previewSyncPending = false;
+    }, 0);
+    assert.equal(await run, false);
+    assert.equal(commits, 1);
+    assert.equal(app.layers[0].paint, 'committed partial preview');
+    assert.equal(app.getActiveLayer().id, 'user');
+    assert.equal(runner.running, false);
+    assert.equal(listeners.size, 0);
+  } finally { delete globalThis.window; }
+});
+
+test('phase checks use smoothed circuit distance and enforce time budgets and target ownership', async t => {
+  const app = fakeApp(), runner = new RiverExperimentRunner(app);
+  const session = createRiverBundle().sessions[1];
+  runner.layerId = 'user';
+  app.activeBrush = 'boid';
+  app.simulation.brushData.boid = { paths: [{ travelDistance: 100 }] };
+  app._getSimulationPathSample = () => ({ totalLength: 100 });
+  app.simulation.frameCount = 12;
+  await runner.waitForPhase(session, performance.now());
+  assert.equal(runner.results[0].circuitLength, 100);
+  assert.equal(runner.results[0].frames, 12);
+  app.activeBrush = 'ant';
+  await assert.rejects(runner.waitForPhase(session, performance.now()), /target changed/);
+  app.activeBrush = 'boid';
+  t.mock.method(performance, 'now', () => 800000);
+  await assert.rejects(runner.waitForPhase(session, 0), /Time budget/);
+});
+
+test('stalled GPU preview cleanup is bounded and never commits an unavailable presentation', async t => {
+  const app = fakeApp();
+  app.activeBrush = 'boid';
+  app.addLayer('River partial');
+  app.brush = {
+    _gpuPreviewActive: true,
+    _gpuPreviewRenderer: { kind: 'webgpu', _previewSyncPending: true, _hasLivePreviewFrame: false },
+    onUp() { assert.fail('unsettled preview must not be copied to paint'); },
+  };
+  const runner = new RiverExperimentRunner(app);
+  runner.layerId = app.getActiveLayer().id;
+  let clock = 0;
+  t.mock.method(performance, 'now', () => { clock += 20000; return clock; });
+  await assert.rejects(runner.finishOwnedPlayback(), /Preview did not settle/);
+  assert.equal(app.simulation.running, false);
+  assert.equal(app.simulation.paused, false);
+  assert.equal(app.layers.find(l => l.id === 'user').paint, 'untouched');
+});
+
+test('in-flight editing and queued playback refresh reject river startup without mutation', async () => {
+  for (const block of [
+    app => { app.simulation.starting = true; },
+    app => { app._simulationPlaybackRefreshQueued = true; },
+    app => { app.simulation.dragTarget = {}; },
+    app => { app._pinchActive = true; },
+    app => { app.corral.drawing = true; },
+    app => { app.selectionMgr = { active: true }; },
+  ]) {
+    const app = fakeApp();
+    block(app);
+    const runner = new RiverExperimentRunner(app);
+    assert.equal(await runner.start(createRiverBundle()), false);
+    assert.equal(app.layers.length, 1);
+    assert.equal(app.simulation.running, true);
+    assert.equal(app.simulation.sessions.length, 1);
+  }
+});

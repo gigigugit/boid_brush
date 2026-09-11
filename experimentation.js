@@ -445,7 +445,7 @@ export class ExperimentationController {
     card.append(element('p', 'experiment-note',
       'A priori: unguided control, guided baseline, slower alignment, looser spacing/smaller stamps, stronger pull. Five trials, nine feedback candidates. No scoring or automatic winner.'));
     card.append(element('p', 'experiment-note',
-      'A moving guide traces a horseshoe, then a bypass while retaining old paint. Finite agents recirculate off-canvas: this is visual outflow, not a source/sink, channel constraint, or physical erosion. Keep this tab visible. At most 12 minutes; stalls/timeouts stop safely.'));
+      'A moving guide traces a horseshoe, then a bypass while retaining old paint. Finite agents recirculate off-canvas: this is visual outflow, not a source/sink, channel constraint, or physical erosion. Keep this tab visible. At most 12 minutes of trials; preview cleanup may take up to 15 seconds. Undo removes the experiment layers together; saved candidates remain.'));
     const actions = element('div', 'experiment-actions');
     actions.append(button('Download native river JSON', () => {
       try {
@@ -456,7 +456,7 @@ export class ExperimentationController {
     }));
     const start = button('Start bounded sequence…', async () => {
       if (this.river.running) return;
-      if (!window.confirm('Run five trials unattended on five NEW layers and append nine saved candidates? Current playback will stop without resuming; existing paint and draft are retained. Only the latest experiment layer stays visible. Canvas/shortcuts are locked until completion; Stop or Escape cancels and retains partial layers. Keep the tab visible. Maximum 12 minutes.')) return;
+      if (!window.confirm('Run five trials unattended on five NEW layers and append nine saved candidates? Current playback will stop without resuming; existing paint and draft are retained. Only the latest experiment layer stays visible. Canvas/shortcuts are locked until completion; Stop or Escape cancels and retains partial layers. Keep the tab visible. Maximum 12 minutes of trials, plus up to 15 seconds of final preview cleanup.')) return;
       try {
         const run = this.river.start(generate());
         start.disabled = this.river.running;

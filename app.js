@@ -6034,6 +6034,7 @@ export class App {
           : null,
         id: l.id,
         name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
+        alphaLock: !!l.alphaLock,
         isBackground: !!l.isBackground
       })),
       simulation: this._captureSimulationUndoState(),
@@ -6065,6 +6066,7 @@ export class App {
         visible: s.visible,
         opacity: s.opacity,
         blend: s.blend,
+        alphaLock: !!s.alphaLock,
         isBackground: !!s.isBackground,
       });
     });
@@ -11461,9 +11463,7 @@ export class App {
         runtime.brushInstance.onFrame?.(elapsed);
       });
     }
-    // The river experiment pairs guide travel with the boid engine's fixed
-    // 1/60 step. Preserve the existing timing for ordinary playback.
-    this._updateSimulationLeader(this.experimentation?.river?.running ? 1000 / 60 : elapsed, p);
+    this._updateSimulationLeader(elapsed, p);
     const allSavedPlaybackComplete = savedRuntimeCount > 0
       && liveRuntimeCount === 0
       && savedRuntimeCompleteCount === savedRuntimeCount;
@@ -19753,7 +19753,10 @@ export class App {
       if (this._hasActiveMultiSessionPlayback()) {
         this._stepMultiSessionSimulation(elapsed, p);
       } else {
-        this._updateSimulationLeader(elapsed, p);
+        // River playback is single-session: advance guides by the boid engine's
+        // fixed 1/60-second step (the guide sampler expects milliseconds).
+        // Ordinary playback retains its existing clock.
+        this._updateSimulationLeader(this.experimentation?.river?.running ? 1000 / 60 : elapsed, p);
         this._applySimulationEphemeralFade(p);
       }
     }

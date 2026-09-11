@@ -145,7 +145,7 @@ export function createRiverBundle({ width = 1424, height = 1424, controls = {}, 
       trials: clone(RIVER_TRIALS), limits: { ...RIVER_LIMITS },
       instructions: [
         'Use Experimentation > Starting points > River / oxbow experiment > Start for the automatic sequence.',
-        'Start appends nine unarmed feedback candidates and paints five new layers; it never selects a best candidate.',
+        'Start appends nine unarmed feedback candidates and paints five new layers; it never selects a best candidate. Undo removes the experiment paint/layers as one operation; saved candidates remain.',
         'Each guided trial runs one full horseshoe circuit, then one bypass circuit on the same layer without respawning.',
         'The control observes up to 60 frames or 15 wall-clock seconds. Runner guides use the boid fixed 1/60-second simulation step, not application uptime.',
         'Imported JSON contains static phase candidates, not an executable schedule. Native Setup Accept replaces saved sessions: import in a separate workspace or back up first.',
@@ -167,6 +167,7 @@ const savedSimKeys = [
   'enabled', 'mode', 'forceViz', 'vars', 'brushData', 'savedPlayback', 'nextId',
   'activeSessionIndex', 'experimentationDraftId', 'sessions', 'multiSessionEnabled',
   'multiSessionBindings', 'guidesVisible', 'heatmapVisible', 'selected', 'priorDrawSeek',
+  'editorTool', 'hovered', 'frameCount', 'pathDistance',
 ];
 
 export class RiverExperimentRunner {
@@ -193,6 +194,37 @@ export class RiverExperimentRunner {
     const app = this.app;
     if (app.simulation.running) app.pauseSimulation();
     if (app.simulation.paused) app.stopSimulation(false);
+  }
+
+  async finishOwnedPlayback() {
+    const app = this.app;
+    if (!this.layerId || (!app.simulation.running && !app.simulation.paused)) return;
+    if (app.activeBrush !== 'boid' || app.getActiveLayer()?.id !== this.layerId) {
+      throw new Error('Experiment target changed; foreign preview was not committed');
+    }
+    // Freeze stepping before waiting for transient GPU presentation. Unlike the
+    // user's old preview, completed AND cancelled river paint belongs to us.
+    if (app.simulation.running) app.pauseSimulation();
+    const brush = app.getCurrentBrush();
+    const renderer = brush?._gpuPreviewRenderer;
+    const started = performance.now();
+    try {
+      while (brush?._gpuPreviewActive && renderer?.kind === 'webgpu'
+        && (renderer._previewSyncPending || renderer._previewSyncQueued)) {
+        if (performance.now() - started > RIVER_LIMITS.stallMilliseconds) {
+          throw new Error('Preview did not settle; only already committed paint was retained');
+        }
+        await new Promise(resolve => setTimeout(resolve, RIVER_LIMITS.pollMilliseconds));
+      }
+      if (brush?._gpuPreviewActive && renderer?.kind === 'webgpu' && !renderer._hasLivePreviewFrame) {
+        throw new Error('Preview unavailable; only already committed paint was retained');
+      }
+      brush?.onUp?.(app.leaderX, app.leaderY);
+    } finally {
+      // Stop while paused: onUp already committed the owned preview exactly once,
+      // or failed and only already committed paint can safely be retained.
+      app.stopSimulation(false);
+    }
   }
 
   async waitForPhase(session, started) {
@@ -226,7 +258,10 @@ export class RiverExperimentRunner {
   async start(bundle) {
     if (this.running) return false;
     const app = this.app;
-    if (app.simulation.starting || app.isTapering || (app.isDrawing && !app.simulation.running)
+    if (app.simulation.starting || app._simulationPlaybackRefreshQueued
+      || app._pinchActive || app._symmetryDrag || app.corral.drawing
+      || app.simulation.dragTarget || app.simulation.drawingPath || app.simulation.drawingBlob
+      || app.isTapering || (app.isDrawing && !app.simulation.running)
       || app.selectionMgr?.active || app.selectionMgr?.transformActive || app._simulationExport?.recording) {
       this.report('Finish the current stroke, selection, transform, recording, or startup before starting.');
       return false;
@@ -244,6 +279,9 @@ export class RiverExperimentRunner {
       armed: app._simulationExport.armedOnStart,
       forceVizView: clone(app._forceVizManualViewSnapshot ?? null),
       forceVizCamera: clone(app._forceVizCameraRuntime ?? null),
+      sensingSelection: app._serializeSensingSourceSelection(),
+      tool: app.activeTool, layerIndex: app.activeLayerIdx,
+      undo: [...app.undoStack], redo: [...app.redoStack], paint: app._captureState(),
     };
     this.running = true;
     this.cancelled = false;
@@ -254,14 +292,22 @@ export class RiverExperimentRunner {
     // A local input fence prevents shortcuts, canvas editing, routing, and layer
     // changes during the unattended sequence. Escape/Stop always remain usable.
     const fence = event => {
-      if (event.type === 'keydown' && event.key === 'Escape') this.cancel();
+      if (event.type === 'keydown' && event.key === 'Escape') {
+        this.cancel();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       if (event.target?.closest?.('[data-river-stop]')) return;
       event.preventDefault();
       event.stopImmediatePropagation();
     };
-    const events = ['pointerdown', 'pointermove', 'pointerup', 'click', 'keydown', 'keyup', 'input', 'change'];
+    const events = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel',
+      'touchstart', 'touchmove', 'touchend', 'click', 'dblclick', 'contextmenu',
+      'wheel', 'dragover', 'drop', 'paste', 'cut', 'keydown', 'keyup', 'input', 'change'];
+    const listenerOptions = { capture: true, passive: false };
     try {
-      events.forEach(type => window.addEventListener(type, fence, true));
+      events.forEach(type => window.addEventListener(type, fence, listenerOptions));
       app._suppressSessionPersistence = true;
       app._simulationExport.armedOnStart = false;
       this.discardPlayback();
@@ -296,24 +342,28 @@ export class RiverExperimentRunner {
           }
           await this.waitForPhase(phases[i], started);
         }
-        // Commit ONLY the experiment-owned target, never the user's old preview.
-        if (!this.cancelled) app.stopSimulation(false);
+        await this.finishOwnedPlayback();
       }
     } catch (error) {
       failure = error;
     } finally {
       try {
+        try { await this.finishOwnedPlayback(); } catch (error) { failure ||= error; }
         this.discardPlayback();
         app.simulation.activeSessionIndex = -1;
         app.setBrush(snapshot.brush);
         app._setSimulationMode(snapshot.sim.mode);
         if (app.simulation.enabled !== snapshot.sim.enabled) app._toggleSimulationMode(snapshot.sim.enabled);
         Object.assign(app.simulation, snapshot.sim, { running: false, paused: false, starting: false });
+        app._restoreSensingSourceSelection(snapshot.sensingSelection);
         app._applySimulationSessionControlState(snapshot.controls);
         app.corral.enabled = snapshot.corralEnabled;
+        app._syncCorralUI();
+        app.setTool(snapshot.tool);
         app._simulationExport.armedOnStart = snapshot.armed;
         app.activeLayerIdx = Math.max(0, app.layers.findIndex(layer => layer.id === snapshot.layerId));
         app._applyViewState(snapshot.view);
+        if (app.experimentation?.open) app.experimentation.fitView();
         app._forceVizManualViewSnapshot = snapshot.forceVizView;
         app._forceVizCameraRuntime = snapshot.forceVizCamera;
         // Append, never import/Accept: retain the user's exact draft/list/bindings.
@@ -327,10 +377,21 @@ export class RiverExperimentRunner {
         app._syncSimulationUI();
         app.compositeAllLayers();
       } finally {
-        events.forEach(type => window.removeEventListener(type, fence, true));
-        app._suppressSessionPersistence = snapshot.suppress;
-        this.running = false;
-        this.layerId = null;
+        try {
+          // Normal onDown snapshots include temporary river guides and miss layer
+          // creation. Collapse them into one operation captured before any edits.
+          app.undoStack = snapshot.undo;
+          app.redoStack = snapshot.redo;
+          if (ownedLayers.length) {
+            app.pushUndo(snapshot.paint);
+            app.undoStack[app.undoStack.length - 1].i = snapshot.layerIndex;
+          }
+        } finally {
+          events.forEach(type => window.removeEventListener(type, fence, listenerOptions));
+          app._suppressSessionPersistence = snapshot.suppress;
+          this.running = false;
+          this.layerId = null;
+        }
       }
       const saved = app.saveSession({ syncSimulation: false });
       this.report(`${failure ? `Stopped: ${failure.message}` : this.cancelled ? 'Cancelled' : 'Finished'}. ${this.results.length}/9 phases completed. Nine unarmed candidates added; experiment layers retained (only latest visible). Original playback remains stopped.${saved ? '' : ' Workspace not saved; export a backup.'}`);
