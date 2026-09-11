@@ -2235,6 +2235,7 @@ export class App {
       visible: true,
       overlayCollapsed: false,
       edgeStrength: 1,
+      repulsionRadius: 32,
       rawPoints: [],
       points: [],
       compiled: null,
@@ -6169,6 +6170,7 @@ export class App {
       count: Math.max(1, Math.min(MAX_SWARM_COUNT, val('count') || 60)),
       corralEnabled: this.activeBrush === 'boid' && this.corral.enabled && !!this.corral.compiled,
       corralEdgeStrength: this.corral.edgeStrength,
+      corralRepulsionRadius: this.corral.repulsionRadius,
       corralCompiled: this.corral.compiled,
       // Forces
       seek: val('seek') / 100,
@@ -16853,6 +16855,8 @@ export class App {
     const enabled = document.getElementById('corralEnabled');
     const strength = document.getElementById('corralEdgeStrength');
     const output = document.getElementById('corralEdgeStrengthValue');
+    const radius = document.getElementById('corralRepulsionRadius');
+    const radiusOutput = document.getElementById('corralRepulsionRadiusValue');
     const visibilityButton = document.getElementById('corralVisibilityBtn');
     const collapseButton = document.getElementById('corralCollapseBtn');
     const showHud = available && (this.corral.enabled || this.corral.editing);
@@ -16864,6 +16868,8 @@ export class App {
     if (enabled) enabled.checked = this.corral.enabled;
     if (strength) strength.value = String(Math.round(this.corral.edgeStrength * 100));
     if (output) output.value = this.corral.edgeStrength.toFixed(2);
+    if (radius) radius.value = String(Math.round(this.corral.repulsionRadius));
+    if (radiusOutput) radiusOutput.value = `${Math.round(this.corral.repulsionRadius)}px`;
     if (visibilityButton) {
       visibilityButton.textContent = this.corral.visible ? 'Hide Corral' : 'Show Corral';
       visibilityButton.setAttribute('aria-pressed', this.corral.visible ? 'false' : 'true');
@@ -17118,6 +17124,12 @@ export class App {
       this._syncCorralUI();
     });
     document.getElementById('corralEdgeStrength')?.addEventListener('change', () => this.saveSession());
+    document.getElementById('corralRepulsionRadius')?.addEventListener('input', event => {
+      this.corral.repulsionRadius = Math.max(0, Math.min(150, Number(event.target.value) || 0));
+      this.invalidateParams();
+      this._syncCorralUI();
+    });
+    document.getElementById('corralRepulsionRadius')?.addEventListener('change', () => this.saveSession());
     document.getElementById('sidebarToggle')?.addEventListener('click', () => {
       const rp = document.getElementById('rightPanel');
       const open = rp?.classList.toggle('open');
@@ -21113,6 +21125,7 @@ export class App {
     controls.corralVisible = this.corral.visible;
     controls.corralOverlayCollapsed = this.corral.overlayCollapsed;
     controls.corralEdgeStrength = Math.round(this.corral.edgeStrength * 100);
+    controls.corralRepulsionRadius = Math.round(this.corral.repulsionRadius);
     controls._corral = {
       rawPoints: this.corral.rawPoints,
       points: this.corral.points,
@@ -21696,6 +21709,13 @@ export class App {
         const value = Math.max(0, Math.min(200, Number(val) || 0));
         this.corral.edgeStrength = value / 100;
         const input = document.getElementById('corralEdgeStrength');
+        if (input) input.value = String(value);
+        continue;
+      }
+      if (id === 'corralRepulsionRadius') {
+        const value = Math.max(0, Math.min(150, Number(val) || 0));
+        this.corral.repulsionRadius = value;
+        const input = document.getElementById('corralRepulsionRadius');
         if (input) input.value = String(value);
         continue;
       }

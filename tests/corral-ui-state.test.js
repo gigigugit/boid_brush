@@ -23,7 +23,7 @@ test('corral toolbar is centered, single-line, and below panel tabs', () => {
 });
 
 test('corral control delivery uses the current cache token', () => {
-  assert.match(html, /const assetVersion = '2026-09-11-corral-toolbar'/);
+  assert.match(html, /const assetVersion = '2026-09-11-corral-force-tunnel'/);
 });
 
 test('enabled corral keeps controls visible outside editor mode', () => {
@@ -41,4 +41,11 @@ test('corral boundary visibility and overlay collapse round-trip through session
 test('hiding the boundary does not disable containment', () => {
   assert.match(app, /if \(!this\.corral\.visible \|\| this\.activeBrush !== 'boid'/);
   assert.doesNotMatch(app, /this\.corral\.visible\s*=\s*this\.corral\.enabled/);
+});
+
+test('corral exposes and persists an independent repulsion radius', () => {
+  assert.match(html, /id="corralRepulsionRadius"[^>]*min="0" max="150"[^>]*value="32"/);
+  assert.match(app, /corralRepulsionRadius: this\.corral\.repulsionRadius/);
+  assert.match(app, /controls\.corralRepulsionRadius = Math\.round\(this\.corral\.repulsionRadius\)/);
+  assert.match(app, /id === 'corralRepulsionRadius'/);
 });

@@ -118,10 +118,17 @@ function closestBoundaryPoint(x, y, points) {
   return closest;
 }
 
-export function constrainAgentsToCorral(read, compiled, strength = 1) {
+export function corralRepulsionWeight(distance, radius) {
+  const influenceRadius = Math.max(0, Number(radius) || 0);
+  if (influenceRadius <= 0 || distance >= influenceRadius) return 0;
+  const u = clamp(1 - Math.max(0, distance) / influenceRadius, 0, 1);
+  return u * u * (3 - 2 * u);
+}
+
+export function constrainAgentsToCorral(read, compiled, strength = 1, radius = 32) {
   if (!compiled || !read?.buffer || !read.count || read.stride < 4) return false;
   const response = clamp(Number(strength) || 0, 0, 2);
-  const softRadius = 8 + response * 24;
+  const influenceRadius = clamp(Number(radius) || 0, 0, 300);
   let changed = false;
   for (let i = 0; i < read.count; i++) {
     const base = i * read.stride;
@@ -140,9 +147,11 @@ export function constrainAgentsToCorral(read, compiled, strength = 1) {
       read.buffer[base + 1] = y;
       changed = true;
     }
-    if (!inside || nearest.distance < softRadius) {
-      const proximity = inside ? 1 - nearest.distance / softRadius : 1;
-      const push = response * proximity;
+    const profile = inside
+      ? corralRepulsionWeight(nearest.distance, influenceRadius)
+      : 1;
+    if (!inside || profile > 0) {
+      const push = response * profile;
       let vx = read.buffer[base + 2];
       let vy = read.buffer[base + 3];
       const outwardVelocity = vx * -nx + vy * -ny;
@@ -150,9 +159,13 @@ export function constrainAgentsToCorral(read, compiled, strength = 1) {
         vx += nx * outwardVelocity * (1 + Math.min(1, response));
         vy += ny * outwardVelocity * (1 + Math.min(1, response));
       }
-      read.buffer[base + 2] = vx + nx * push;
-      read.buffer[base + 3] = vy + ny * push;
-      changed = true;
+      const nextVx = vx + nx * push;
+      const nextVy = vy + ny * push;
+      if (nextVx !== read.buffer[base + 2] || nextVy !== read.buffer[base + 3]) {
+        read.buffer[base + 2] = nextVx;
+        read.buffer[base + 3] = nextVy;
+        changed = true;
+      }
     }
   }
   return changed;

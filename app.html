@@ -1184,9 +1184,13 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <div class="corral-body" id="corralHudBody">
       <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
       <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
-      <label class="corral-strength" for="corralEdgeStrength">Edge
+      <label class="corral-strength" for="corralEdgeStrength" title="Inward force at the hard edge">Force
         <input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100">
         <output id="corralEdgeStrengthValue" for="corralEdgeStrength">1.00</output>
+      </label>
+      <label class="corral-strength" for="corralRepulsionRadius" title="Interior distance over which the edge smoothly repels boids">Radius
+        <input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32">
+        <output id="corralRepulsionRadiusValue" for="corralRepulsionRadius">32px</output>
       </label>
       <button class="sim-pill" id="corralExportBtn" type="button">Export SVG</button>
       <button class="sim-pill" id="corralLoadBtn" type="button">Load SVG</button>
@@ -1896,7 +1900,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-11-corral-toolbar';
+const assetVersion = '2026-09-11-corral-force-tunnel';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

@@ -1038,7 +1038,12 @@ function _syncSimulationGuidesToGpu(brush, guideState) {
 
 function _applyCorral(brush, p, read) {
   if (!p.corralEnabled || !p.corralCompiled) return false;
-  return constrainAgentsToCorral(read, p.corralCompiled, p.corralEdgeStrength);
+  return constrainAgentsToCorral(
+    read,
+    p.corralCompiled,
+    p.corralEdgeStrength,
+    p.corralRepulsionRadius,
+  );
 }
 
 function _applySimulationGuides(brush, p, read, guideState = _collectSimulationGuides(brush, p), gpuSupport = {}) {

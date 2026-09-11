@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   compileCorral,
   constrainAgentsToCorral,
+  corralRepulsionWeight,
   corralToSvg,
   extractClosedSvgPath,
   pointInCorral,
@@ -53,6 +54,29 @@ test('corral constraint redirects only agents near the boundary', () => {
   constrainAgentsToCorral({ buffer, count: 2, stride: 4 }, compiled, 1);
   assert.ok(buffer[2] < 4);
   assert.deepEqual([...buffer.slice(4)], [50, 50, 1, 2]);
+});
+
+test('corral repulsion is a smooth half-tunnel with no hard-edge dropoff', () => {
+  assert.equal(corralRepulsionWeight(0, 32), 1);
+  assert.equal(corralRepulsionWeight(32, 32), 0);
+  assert.equal(corralRepulsionWeight(40, 32), 0);
+  assert.ok(corralRepulsionWeight(8, 32) > corralRepulsionWeight(16, 32));
+  const epsilon = 0.001;
+  const wallSlope = (corralRepulsionWeight(epsilon, 32) - corralRepulsionWeight(0, 32)) / epsilon;
+  const innerSlope = (corralRepulsionWeight(32, 32) - corralRepulsionWeight(32 - epsilon, 32)) / epsilon;
+  assert.ok(Math.abs(wallSlope) < 0.001);
+  assert.ok(Math.abs(innerSlope) < 0.001);
+});
+
+test('repulsion radius and force strength are independent', () => {
+  const compiled = compileCorral(square);
+  const outsideBand = new Float32Array([80, 50, 0, 0]);
+  assert.equal(constrainAgentsToCorral({ buffer: outsideBand, count: 1, stride: 4 }, compiled, 1, 10), false);
+  const insideBand = new Float32Array([80, 50, 0, 0]);
+  assert.equal(constrainAgentsToCorral({ buffer: insideBand, count: 1, stride: 4 }, compiled, 1, 30), true);
+  assert.ok(insideBand[2] < 0);
+  const zeroForce = new Float32Array([99, 50, 0, 0]);
+  assert.equal(constrainAgentsToCorral({ buffer: zeroForce, count: 1, stride: 4 }, compiled, 0, 30), false);
 });
 
 test('active corral uses synchronous simulation state', () => {
