@@ -197,6 +197,18 @@ test('_teardownMultiSessionRuntimeSessions isolates a broken runtime so its sibl
   assert.deepEqual(app.simulation.runtimeSessions, [], 'runtimeSessions must always end up cleared, even after a mid-loop failure');
 });
 
+test('_teardownMultiSessionRuntimeSessions does not cache a runtime whose teardown failed', () => {
+  const app = makeHeadlessSimApp();
+  const broken = makeFakeRuntime('broken');
+  broken.brushInstance.deactivate = () => { throw new Error('deactivate failed'); };
+  app.simulation.runtimeSessions = [broken];
+
+  app._teardownMultiSessionRuntimeSessions({ commitPreview: false, cache: true });
+
+  assert.deepEqual(app.simulation.cachedRuntimeSessions, []);
+  assert.equal(broken.brushInstance.destroyCalls, 1);
+});
+
 test('teardown defines recorded-vs-new behavior: onUp is skipped for a saved-playback runtime but still runs for a live one', () => {
   const app = makeHeadlessSimApp();
   const recorded = makeFakeRuntime('recorded', { savedPlayback: { frames: [], agentCount: 0 } });
@@ -249,4 +261,56 @@ test('_createMultiSessionRuntimeSessions isolates a priming failure: the failed 
   assert.equal(instances.length, 2, 'both brush instances were attempted');
   assert.equal(instances[1].destroyCalls, 1, 'the failed session\'s brush instance must be destroyed, not leaked');
   assert.equal(instances[0].destroyCalls, 0, 'the surviving session\'s brush instance must remain alive');
+});
+
+test('_createMultiSessionRuntimeSessions checks lifecycle ownership before priming an asynchronously created runtime', async () => {
+  const app = makeHeadlessSimApp();
+  app.simulation.sessions = [{ id: 's1', name: 'Session 1' }];
+  app._getRunnableSimulationSessionBindings = () => ([
+    { sessionId: 's1', sessionIndex: 0, layerId: 'L1' },
+  ]);
+  app._canReuseCachedMultiSessionRuntimeSessions = () => false;
+  app._getLayerById = id => ({ id, name: id });
+  app._getSimulationSavedPlaybackForRuntime = () => null;
+
+  const instance = { destroyCalls: 0, destroy() { this.destroyCalls++; } };
+  let resolveCreate;
+  app._createSimulationRuntimeBrush = () => new Promise(resolve => { resolveCreate = resolve; });
+  let primeCalls = 0;
+  app._primeMultiSessionRuntime = () => { primeCalls++; };
+
+  const runToken = 1;
+  app.simulation.runToken = runToken;
+  const createPromise = app._createMultiSessionRuntimeSessions({}, runToken);
+  app.simulation.runToken++;
+  resolveCreate(instance);
+
+  const runtimes = await createPromise;
+
+  assert.deepEqual(runtimes, []);
+  assert.equal(primeCalls, 0, 'a superseded runtime must not mutate layers during priming');
+  assert.equal(instance.destroyCalls, 1);
+});
+
+test('_createMultiSessionRuntimeSessions isolates failures while re-priming cached runtimes', async () => {
+  const app = makeHeadlessSimApp();
+  app.simulation.sessions = [{ id: 's1', name: 'Session 1' }, { id: 's2', name: 'Session 2' }];
+  app._getRunnableSimulationSessionBindings = () => ([
+    { sessionId: 's1', sessionIndex: 0, layerId: 'L1' },
+    { sessionId: 's2', sessionIndex: 1, layerId: 'L2' },
+  ]);
+  app._getLayerById = id => ({ id, name: id });
+  const healthy = makeFakeRuntime('healthy');
+  const broken = makeFakeRuntime('broken');
+  app.simulation.cachedRuntimeSessions = [healthy, broken];
+  app._canReuseCachedMultiSessionRuntimeSessions = () => true;
+  app._primeMultiSessionRuntime = runtime => {
+    if (runtime === broken) throw new Error('cached prime failed');
+  };
+
+  const runtimes = await app._createMultiSessionRuntimeSessions({});
+
+  assert.deepEqual(runtimes, [healthy]);
+  assert.equal(broken.brushInstance.destroyCalls, 1);
+  assert.deepEqual(app.simulation.cachedRuntimeSessions, []);
 });

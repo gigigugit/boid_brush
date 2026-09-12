@@ -11170,11 +11170,20 @@ export class App {
   async _createSimulationRuntimeBrush(brushName = 'boid', gpuOptions = {}) {
     if (brushName !== 'boid') return null;
     const runtimeBrush = new BoidBrush(this);
-    await runtimeBrush.init({ useShared: false, gpuOptions });
-    if (!runtimeBrush.sim) {
-      throw new Error('Failed to initialize isolated boid simulation runtime');
+    try {
+      await runtimeBrush.init({ useShared: false, gpuOptions });
+      if (!runtimeBrush.sim) {
+        throw new Error('Failed to initialize isolated boid simulation runtime');
+      }
+      return runtimeBrush;
+    } catch (error) {
+      try {
+        runtimeBrush.destroy?.();
+      } catch (destroyError) {
+        console.error('Multi-session: failed to clean up an uninitialized runtime:', destroyError);
+      }
+      throw error;
     }
-    return runtimeBrush;
   }
 
   // Destroys a single multi-session runtime's brush instance (GPU device,
@@ -11255,19 +11264,35 @@ export class App {
     });
   }
 
-  async _createMultiSessionRuntimeSessions(p) {
+  async _createMultiSessionRuntimeSessions(p, runToken = null) {
     const bindings = this._getRunnableSimulationSessionBindings();
     if (this._canReuseCachedMultiSessionRuntimeSessions(bindings)) {
       const runtimes = this.simulation.cachedRuntimeSessions;
       this.simulation.cachedRuntimeSessions = [];
+      const primedRuntimes = [];
+      let failedCount = 0;
       bindings.forEach((binding, index) => {
         const session = this.simulation.sessions[binding.sessionIndex];
         const layer = this._getLayerById(binding.layerId);
         const runtime = runtimes[index];
-        if (!session || !layer || !runtime) return;
-        this._primeMultiSessionRuntime(runtime, session, layer, p);
+        if (!session || !layer || !runtime) {
+          this._destroySimulationRuntimeSession(runtime);
+          failedCount++;
+          return;
+        }
+        try {
+          this._primeMultiSessionRuntime(runtime, session, layer, p);
+          primedRuntimes.push(runtime);
+        } catch (e) {
+          console.error(`Multi-session: failed to restart runtime for session "${session.name}" → layer "${layer.name}":`, e);
+          this._destroySimulationRuntimeSession(runtime);
+          failedCount++;
+        }
       });
-      return runtimes;
+      if (failedCount > 0 && primedRuntimes.length > 0) {
+        this.showToast(`${failedCount} session(s) failed to start — running ${primedRuntimes.length} of ${bindings.length}`);
+      }
+      return primedRuntimes;
     }
 
     this._releaseCachedMultiSessionRuntimeSessions();
@@ -11291,6 +11316,7 @@ export class App {
         console.warn('Multi-session: shared GPU device acquisition failed, sessions will attempt individual devices.', e);
       }
     }
+    if (runToken !== null && runToken !== this.simulation.runToken) return [];
 
     const runtimes = [];
     let failedCount = 0;
@@ -11317,6 +11343,11 @@ export class App {
       };
       try {
         runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush, gpuOptions);
+        if (runToken !== null && runToken !== this.simulation.runToken) {
+          this._destroySimulationRuntimeSession(runtime);
+          this._destroySimulationRuntimeSessionList(runtimes);
+          return [];
+        }
         // Priming (spawning agents / preparing saved playback) runs real
         // brush lifecycle code and can itself throw (bad session data, a
         // GPU error mid-spawn, etc.). Keep it inside the same try so a
@@ -11391,6 +11422,7 @@ export class App {
       // there is no live stroke to commit — calling onUp on it is
       // undefined and must be skipped.
       const isRecordedRuntime = !!runtime.savedPlayback;
+      let teardownCompleted = false;
       try {
         this._withSimulationRuntimeContext(runtime, () => {
           if (commitPreview && !isRecordedRuntime && runtime.brushInstance.onUp) {
@@ -11398,6 +11430,7 @@ export class App {
           }
           runtime.brushInstance.deactivate?.();
         });
+        teardownCompleted = true;
       } catch (e) {
         // A single broken runtime must never abort teardown of the rest —
         // that used to leave later runtimes (and this.simulation.runtimeSessions
@@ -11405,7 +11438,7 @@ export class App {
         // shared GPU device limit and blocked every future simulation run.
         console.error(`Multi-session: failed to stop runtime for session "${runtime.sessionName || runtime.sessionIndex}":`, e);
       }
-      if (cache) nextCached.push(runtime);
+      if (cache && teardownCompleted) nextCached.push(runtime);
       else this._destroySimulationRuntimeSession(runtime);
     }
     this.simulation.cachedRuntimeSessions = cache ? nextCached : [];
@@ -13247,7 +13280,7 @@ export class App {
           this.showToast(diagnostics.blockReason || 'Save and arm at least one session route before running multiple sessions');
           return;
         }
-        const runtimeSessions = await this._createMultiSessionRuntimeSessions(simParams);
+        const runtimeSessions = await this._createMultiSessionRuntimeSessions(simParams, runToken);
         if (runToken !== this.simulation.runToken) {
           // Superseded mid-flight (stopped, or a newer start began) — the
           // freshly created runtimes were never published, so tear them
