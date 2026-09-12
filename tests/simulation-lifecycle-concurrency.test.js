@@ -67,6 +67,7 @@ function makeHeadlessSimApp(overrides = {}) {
   app.simulation = {
     enabled: true,
     starting: false,
+    multiSessionStarting: false,
     running: false,
     paused: false,
     runToken: 0,
@@ -118,6 +119,13 @@ test('a Stop mid-flight during an async multi-session start does not resurrect t
   });
 
   const fakeRuntime = makeFakeRuntime('session-1');
+  const activeBrush = {
+    onUpCalls: 0,
+    deactivateCalls: 0,
+    onUp() { this.onUpCalls++; },
+    deactivate() { this.deactivateCalls++; },
+  };
+  app.getCurrentBrush = () => activeBrush;
   let resolveCreate;
   app._createMultiSessionRuntimeSessions = () => new Promise(resolve => { resolveCreate = resolve; });
 
@@ -139,6 +147,8 @@ test('a Stop mid-flight during an async multi-session start does not resurrect t
   assert.deepEqual(app.simulation.runtimeSessions, [], 'the stale run must never publish its runtime sessions');
   assert.equal(fakeRuntime.brushInstance.destroyCalls, 1, 'the orphaned runtime must be destroyed, not leaked');
   assert.equal(app.simulation.running, false, 'the explicit stop must remain in effect, not be clobbered by the stale start');
+  assert.equal(activeBrush.onUpCalls, 0, 'a pending multi-session run must not finalize the unrelated active brush');
+  assert.equal(activeBrush.deactivateCalls, 0);
 });
 
 test('a fresh Start superseding an in-flight Start destroys the stale runtimes and keeps only the newer run\'s sessions', async () => {
@@ -231,6 +241,22 @@ test('_releaseCachedMultiSessionRuntimeSessions isolates a broken cached runtime
   assert.doesNotThrow(() => app._releaseCachedMultiSessionRuntimeSessions());
   assert.equal(healthy.brushInstance.destroyCalls, 1);
   assert.deepEqual(app.simulation.cachedRuntimeSessions, []);
+});
+
+test('owned multi-session GPU device is released only after its final runtime is destroyed', () => {
+  const app = makeHeadlessSimApp();
+  const first = makeFakeRuntime('first');
+  const second = makeFakeRuntime('second');
+  const device = { destroyCalls: 0, destroy() { this.destroyCalls++; } };
+  const lease = { device, refs: 2, building: false, released: false };
+  first.gpuDeviceLease = lease;
+  second.gpuDeviceLease = lease;
+
+  app._destroySimulationRuntimeSession(first);
+  assert.equal(device.destroyCalls, 0);
+
+  app._destroySimulationRuntimeSession(second);
+  assert.equal(device.destroyCalls, 1);
 });
 
 test('_createMultiSessionRuntimeSessions isolates a priming failure: the failed runtime is destroyed, not leaked, and sibling sessions are preserved', async () => {

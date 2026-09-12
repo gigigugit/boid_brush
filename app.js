@@ -2255,6 +2255,7 @@ export class App {
     this.simulation = {
       enabled: false,
       starting: false,
+      multiSessionStarting: false,
       running: false,
       paused: false,
       // Monotonically increasing lifecycle generation. startSimulation()
@@ -11194,13 +11195,45 @@ export class App {
   // eventually exhausting the shared WebGPU device limit so no further
   // simulation (single or multi-session) could start.
   _destroySimulationRuntimeSession(runtime) {
-    if (!runtime?.brushInstance) return;
+    if (!runtime) return;
     try {
-      this._withSimulationRuntimeContext(runtime, () => {
-        runtime.brushInstance.destroy?.();
-      });
+      if (runtime.brushInstance) {
+        this._withSimulationRuntimeContext(runtime, () => {
+          runtime.brushInstance.destroy?.();
+        });
+      }
     } catch (e) {
       console.error(`Multi-session: failed to destroy runtime for session "${runtime.sessionName || runtime.sessionIndex}":`, e);
+    } finally {
+      this._releaseSimulationRuntimeGpuLease(runtime);
+    }
+  }
+
+  _releaseSimulationRuntimeGpuLease(runtime) {
+    const lease = runtime?.gpuDeviceLease;
+    if (!lease) return;
+    runtime.gpuDeviceLease = null;
+    lease.refs = Math.max(0, lease.refs - 1);
+    if (lease.refs === 0 && !lease.building && !lease.released) {
+      lease.released = true;
+      try {
+        lease.device?.destroy?.();
+      } catch (e) {
+        console.error('Multi-session: failed to release shared GPU device:', e);
+      }
+    }
+  }
+
+  _finishSimulationRuntimeGpuLeaseBuild(lease) {
+    if (!lease) return;
+    lease.building = false;
+    if (lease.refs === 0 && !lease.released) {
+      lease.released = true;
+      try {
+        lease.device?.destroy?.();
+      } catch (e) {
+        console.error('Multi-session: failed to release unused shared GPU device:', e);
+      }
     }
   }
 
@@ -11300,6 +11333,7 @@ export class App {
     // Acquire a single shared GPU device for all runtime sessions to avoid
     // exceeding the browser's WebGPU device limit when multiple sims start.
     let gpuOptions = {};
+    let gpuDeviceLease = null;
     if (typeof navigator !== 'undefined' && navigator.gpu) {
       try {
         const existingSim = this.sharedMotionSim;
@@ -11310,17 +11344,26 @@ export class App {
           if (adapter) {
             const device = await adapter.requestDevice();
             gpuOptions = { device, adapter };
+            gpuDeviceLease = { device, refs: 0, building: true, released: false };
           }
         }
       } catch (e) {
         console.warn('Multi-session: shared GPU device acquisition failed, sessions will attempt individual devices.', e);
       }
     }
-    if (runToken !== null && runToken !== this.simulation.runToken) return [];
+    if (runToken !== null && runToken !== this.simulation.runToken) {
+      this._finishSimulationRuntimeGpuLeaseBuild(gpuDeviceLease);
+      return [];
+    }
 
     const runtimes = [];
     let failedCount = 0;
     for (const binding of bindings) {
+      if (runToken !== null && runToken !== this.simulation.runToken) {
+        this._destroySimulationRuntimeSessionList(runtimes);
+        this._finishSimulationRuntimeGpuLeaseBuild(gpuDeviceLease);
+        return [];
+      }
       const session = this.simulation.sessions[binding.sessionIndex];
       const layer = this._getLayerById(binding.layerId);
       if (!session || !layer) continue;
@@ -11343,9 +11386,14 @@ export class App {
       };
       try {
         runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush, gpuOptions);
+        if (gpuDeviceLease) {
+          runtime.gpuDeviceLease = gpuDeviceLease;
+          gpuDeviceLease.refs++;
+        }
         if (runToken !== null && runToken !== this.simulation.runToken) {
           this._destroySimulationRuntimeSession(runtime);
           this._destroySimulationRuntimeSessionList(runtimes);
+          this._finishSimulationRuntimeGpuLeaseBuild(gpuDeviceLease);
           return [];
         }
         // Priming (spawning agents / preparing saved playback) runs real
@@ -11359,10 +11407,16 @@ export class App {
         console.error(`Multi-session: failed to start runtime for session "${session.name}" → layer "${layer.name}":`, e);
         this._destroySimulationRuntimeSession(runtime);
         failedCount++;
+        if (runToken !== null && runToken !== this.simulation.runToken) {
+          this._destroySimulationRuntimeSessionList(runtimes);
+          this._finishSimulationRuntimeGpuLeaseBuild(gpuDeviceLease);
+          return [];
+        }
         continue;
       }
       runtimes.push(runtime);
     }
+    this._finishSimulationRuntimeGpuLeaseBuild(gpuDeviceLease);
     if (failedCount > 0 && runtimes.length > 0) {
       this.showToast(`${failedCount} session(s) failed to start — running ${runtimes.length} of ${runtimes.length + failedCount}`);
     }
@@ -13257,6 +13311,8 @@ export class App {
     // eventually exhausting the shared device limit so no further
     // simulation — single or multi-session — could start.
     const runToken = ++this.simulation.runToken;
+    const useMultiSessionPlayback = this._shouldUseMultiSessionPlayback();
+    this.simulation.multiSessionStarting = useMultiSessionPlayback;
     let diagnostics = null;
     try {
       this.simulation.running = true;
@@ -13268,7 +13324,7 @@ export class App {
       this.undoPushedThisStroke = false;
       this.strokeFrame = 0;
 
-      if (this._shouldUseMultiSessionPlayback()) {
+      if (useMultiSessionPlayback) {
         this._simulationSavedPlaybackCapture = null;
         diagnostics = this._getMultiSessionRouteDiagnostics({ autoHeal: true });
         if (diagnostics.healedBindings) this.saveSession();
@@ -13298,6 +13354,7 @@ export class App {
         }
         brush.deactivate?.();
         this.simulation.runtimeSessions = runtimeSessions;
+        this.simulation.multiSessionStarting = false;
       } else {
         this._beginSimulationSavedPlaybackCapture();
         this.simulation.runtimeSessions = [];
@@ -13359,7 +13416,10 @@ export class App {
       // Only clear the in-flight flag for the run we actually captured a
       // token for. A superseded (stale) call must not clobber a newer
       // start's own "starting" bookkeeping.
-      if (runToken === this.simulation.runToken) this.simulation.starting = false;
+      if (runToken === this.simulation.runToken) {
+        this.simulation.starting = false;
+        this.simulation.multiSessionStarting = false;
+      }
     }
   }
 
@@ -13386,6 +13446,7 @@ export class App {
   }
 
   stopSimulation(showToast = true) {
+    const hadPendingMultiSessionPlayback = this.simulation.starting && this.simulation.multiSessionStarting;
     // Bump the lifecycle generation first so an in-flight startSimulation()
     // awaiting GPU/session setup (see the runToken comment there) discovers
     // — as soon as it resumes — that this stop superseded it, and tears
@@ -13400,12 +13461,13 @@ export class App {
         commitPreview: this.simulation.running,
         cache: true,
       });
-    } else if (this.simulation.running && brush?.onUp) {
+    } else if (!hadPendingMultiSessionPlayback && this.simulation.running && brush?.onUp) {
       brush.onUp(this.leaderX, this.leaderY);
     }
-    if (wasActive) this.recordLastChangeMarker('Simulation stroke');
-    if (wasActive && !hadMultiSessionPlayback && brush?.deactivate) brush.deactivate();
+    if (wasActive && !hadPendingMultiSessionPlayback) this.recordLastChangeMarker('Simulation stroke');
+    if (wasActive && !hadMultiSessionPlayback && !hadPendingMultiSessionPlayback && brush?.deactivate) brush.deactivate();
     this.simulation.starting = false;
+    this.simulation.multiSessionStarting = false;
     this.simulation.running = false;
     this.simulation.paused = false;
     this.simulation.runtimeStrokeStarts = [];
