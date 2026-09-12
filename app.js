@@ -19794,7 +19794,7 @@ export class App {
     }
 
     // Active brush frame (e.g. boid step)
-    if (this.simulation.running) {
+    if (this.simulation.running && !this.simulation.multiSessionStarting) {
       this.simulation.frameCount += 1;
       const frameCounter = document.getElementById('simFrameCounter');
       if (frameCounter) frameCounter.textContent = this._formatSimulationFrameCounter();
@@ -19805,7 +19805,11 @@ export class App {
         this._applySimulationEphemeralFade(p);
       }
     }
-    if ((this.isDrawing || this.simulation.running) && brush && brush.onFrame && !this._hasActiveMultiSessionPlayback()) {
+    if ((this.isDrawing || this.simulation.running)
+      && !this.simulation.multiSessionStarting
+      && brush
+      && brush.onFrame
+      && !this._hasActiveMultiSessionPlayback()) {
       brush.onFrame(elapsed);
       if (this.simulation.running && this.simulation.enabled && this.activeBrush === 'boid') {
         this._syncSimulationSavedPlaybackCapture(brush);
