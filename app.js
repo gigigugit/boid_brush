@@ -2257,6 +2257,14 @@ export class App {
       starting: false,
       running: false,
       paused: false,
+      // Monotonically increasing lifecycle generation. startSimulation()
+      // captures the token before any await; stopSimulation() (and a fresh
+      // startSimulation()) bump it. When an in-flight async start resumes
+      // after its await, it compares tokens to detect whether it has been
+      // superseded by a stop/restart — if so it must tear down whatever
+      // runtime sessions it just created instead of publishing them, so a
+      // race never leaks GPU-backed simulations or clobbers newer state.
+      runToken: 0,
       frameCount: 0,
       guidesVisible: true,
       heatmapVisible: false,
@@ -11169,13 +11177,30 @@ export class App {
     return runtimeBrush;
   }
 
-  _releaseCachedMultiSessionRuntimeSessions() {
-    for (const runtime of this.simulation.cachedRuntimeSessions || []) {
-      if (!runtime?.brushInstance) continue;
+  // Destroys a single multi-session runtime's brush instance (GPU device,
+  // buffers, renderer). Isolated in try/catch: one broken runtime (bad GPU
+  // state, a torn-down layer, etc.) must never prevent its siblings from
+  // being released — an uncaught throw here used to abort the whole
+  // teardown loop, leaking every runtime after the failing one and
+  // eventually exhausting the shared WebGPU device limit so no further
+  // simulation (single or multi-session) could start.
+  _destroySimulationRuntimeSession(runtime) {
+    if (!runtime?.brushInstance) return;
+    try {
       this._withSimulationRuntimeContext(runtime, () => {
         runtime.brushInstance.destroy?.();
       });
+    } catch (e) {
+      console.error(`Multi-session: failed to destroy runtime for session "${runtime.sessionName || runtime.sessionIndex}":`, e);
     }
+  }
+
+  _destroySimulationRuntimeSessionList(runtimes) {
+    for (const runtime of runtimes || []) this._destroySimulationRuntimeSession(runtime);
+  }
+
+  _releaseCachedMultiSessionRuntimeSessions() {
+    this._destroySimulationRuntimeSessionList(this.simulation.cachedRuntimeSessions);
     this.simulation.cachedRuntimeSessions = [];
   }
 
@@ -11292,12 +11317,19 @@ export class App {
       };
       try {
         runtime.brushInstance = await this._createSimulationRuntimeBrush(runtime.brush, gpuOptions);
+        // Priming (spawning agents / preparing saved playback) runs real
+        // brush lifecycle code and can itself throw (bad session data, a
+        // GPU error mid-spawn, etc.). Keep it inside the same try so a
+        // priming failure is treated exactly like a creation failure: the
+        // partially-built runtime is destroyed and does not abort the loop
+        // — previously created sibling runtimes must still come back.
+        this._primeMultiSessionRuntime(runtime, session, layer, p);
       } catch (e) {
-        console.error(`Multi-session: failed to create runtime for session "${session.name}" → layer "${layer.name}":`, e);
+        console.error(`Multi-session: failed to start runtime for session "${session.name}" → layer "${layer.name}":`, e);
+        this._destroySimulationRuntimeSession(runtime);
         failedCount++;
         continue;
       }
-      this._primeMultiSessionRuntime(runtime, session, layer, p);
       runtimes.push(runtime);
     }
     if (failedCount > 0 && runtimes.length > 0) {
@@ -11352,14 +11384,29 @@ export class App {
     const nextCached = [];
     for (const runtime of this.simulation.runtimeSessions) {
       if (!runtime?.brushInstance) continue;
-      this._withSimulationRuntimeContext(runtime, () => {
-        if (commitPreview && runtime.brushInstance.onUp) {
-          runtime.brushInstance.onUp(runtime.leaderX, runtime.leaderY);
-        }
-        runtime.brushInstance.deactivate?.();
-      });
+      // Recorded-vs-new: onUp() is a live-stroke lifecycle hook (flushes a
+      // pending preview stamp, may run boidUntouchAction, which can even
+      // spawn agents). A recorded (savedPlayback) runtime never called
+      // onDown and is only ever driven by renderSavedPlaybackFrame(), so
+      // there is no live stroke to commit — calling onUp on it is
+      // undefined and must be skipped.
+      const isRecordedRuntime = !!runtime.savedPlayback;
+      try {
+        this._withSimulationRuntimeContext(runtime, () => {
+          if (commitPreview && !isRecordedRuntime && runtime.brushInstance.onUp) {
+            runtime.brushInstance.onUp(runtime.leaderX, runtime.leaderY);
+          }
+          runtime.brushInstance.deactivate?.();
+        });
+      } catch (e) {
+        // A single broken runtime must never abort teardown of the rest —
+        // that used to leave later runtimes (and this.simulation.runtimeSessions
+        // itself) in a leaked, never-cleared state, which exhausted the
+        // shared GPU device limit and blocked every future simulation run.
+        console.error(`Multi-session: failed to stop runtime for session "${runtime.sessionName || runtime.sessionIndex}":`, e);
+      }
       if (cache) nextCached.push(runtime);
-      else runtime.brushInstance.destroy?.();
+      else this._destroySimulationRuntimeSession(runtime);
     }
     this.simulation.cachedRuntimeSessions = cache ? nextCached : [];
     this.simulation.runtimeSessions = [];
@@ -13167,6 +13214,16 @@ export class App {
     this._constrainSimulationDataToBounds(this.activeBrush);
     this.stopSimulation(false);
     this.simulation.starting = true;
+    // Captured once, before the only await below. Multi-session runtime
+    // creation acquires a GPU device asynchronously; while that is pending,
+    // a Stop click (or any other stopSimulation() call) bumps runToken.
+    // When this call resumes it compares tokens to know whether it is still
+    // the active run — if not, it must destroy what it just built instead
+    // of publishing/overwriting shared simulation state. Without this, a
+    // stop-then-start race left orphaned GPU-backed runtimes alive forever,
+    // eventually exhausting the shared device limit so no further
+    // simulation — single or multi-session — could start.
+    const runToken = ++this.simulation.runToken;
     let diagnostics = null;
     try {
       this.simulation.running = true;
@@ -13191,6 +13248,13 @@ export class App {
           return;
         }
         const runtimeSessions = await this._createMultiSessionRuntimeSessions(simParams);
+        if (runToken !== this.simulation.runToken) {
+          // Superseded mid-flight (stopped, or a newer start began) — the
+          // freshly created runtimes were never published, so tear them
+          // down here instead of leaking their GPU-backed brush instances.
+          this._destroySimulationRuntimeSessionList(runtimeSessions);
+          return;
+        }
         if (!runtimeSessions.length) {
           this.simulation.running = false;
           this.simulation.paused = false;
@@ -13242,17 +13306,27 @@ export class App {
       }
     } catch (error) {
       console.error('Simulation start failed:', error);
-      this._teardownMultiSessionRuntimeSessions({ commitPreview: false });
-      this.simulation.running = false;
-      this.simulation.paused = false;
-      this.isDrawing = false;
-      this._syncSimulationUI();
-      const msg = error?.message?.includes('WebGPU')
-        ? 'Simulation start failed: GPU device limit reached'
-        : 'Simulation start failed';
-      this.showToast(msg);
+      // Only touch shared runtime-session state (and only surface the
+      // failure toast) if this call is still the active run. A stale
+      // (superseded) call must not tear down a newer start's already-
+      // published runtime sessions or show a confusing failure toast for a
+      // run the user already stopped intentionally.
+      if (runToken === this.simulation.runToken) {
+        this._teardownMultiSessionRuntimeSessions({ commitPreview: false });
+        this.simulation.running = false;
+        this.simulation.paused = false;
+        this.isDrawing = false;
+        this._syncSimulationUI();
+        const msg = error?.message?.includes('WebGPU')
+          ? 'Simulation start failed: GPU device limit reached'
+          : 'Simulation start failed';
+        this.showToast(msg);
+      }
     } finally {
-      this.simulation.starting = false;
+      // Only clear the in-flight flag for the run we actually captured a
+      // token for. A superseded (stale) call must not clobber a newer
+      // start's own "starting" bookkeeping.
+      if (runToken === this.simulation.runToken) this.simulation.starting = false;
     }
   }
 
@@ -13279,6 +13353,11 @@ export class App {
   }
 
   stopSimulation(showToast = true) {
+    // Bump the lifecycle generation first so an in-flight startSimulation()
+    // awaiting GPU/session setup (see the runToken comment there) discovers
+    // — as soon as it resumes — that this stop superseded it, and tears
+    // down whatever it just built instead of resurrecting it.
+    this.simulation.runToken++;
     const brush = this.getCurrentBrush();
     const wasActive = this.simulation.running || this.simulation.paused;
     const hadMultiSessionPlayback = this.simulation.runtimeSessions.length > 0;
