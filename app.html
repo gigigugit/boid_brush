@@ -310,7 +310,13 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
 /* Simulation HUD */
-#simHud{position:fixed;left:58px;top:calc(var(--topbar-h) + 14px);z-index:31;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
+#globalOverlayBar{position:fixed;left:14px;top:calc(var(--topbar-h) + 14px);z-index:32;display:none;align-items:center;gap:6px;padding:6px;border:1px solid var(--line-0);border-radius:12px;background:rgba(17,20,29,.9);backdrop-filter:blur(14px);box-shadow:var(--shadow-lg);}
+#globalOverlayBar.open{display:flex;}
+#globalOverlayBar .sim-pill{min-height:30px;padding:5px 9px;}
+#globalOverlayBar .compact-sim-control{display:none;}
+body.overlays-collapsed #globalOverlayBar.simulation-active .compact-sim-control{display:inline-flex;}
+body.overlays-collapsed #simHud,body.overlays-collapsed #simPlaybackBar,body.overlays-collapsed #corralHud{display:none!important;}
+#simHud{position:fixed;left:58px;top:calc(var(--topbar-h) + 58px);z-index:31;display:none;flex-direction:column;gap:8px;pointer-events:none;min-width:172px;}
 #simHud.open{display:flex;}
 .sim-card{pointer-events:auto;background:rgba(17,20,29,0.88);backdrop-filter:blur(14px);border:1px solid var(--line-0);border-radius:12px;padding:8px;box-shadow:var(--shadow-lg);}
 #simHud .sim-card{width:100%;}
@@ -334,14 +340,17 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .sim-pill-icon svg{display:block;width:18px;height:18px;fill:currentColor;}
 .sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
 .sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
-#corralHud{position:fixed;left:50%;top:calc(var(--topbar-h) + 14px);z-index:19;display:none;max-width:calc(100vw - 112px);transform:translateX(-50%);pointer-events:none;}
+#corralHud{position:fixed;left:50%;top:calc(var(--topbar-h) + 58px);z-index:19;display:none;max-width:calc(100vw - 112px);transform:translateX(-50%);pointer-events:none;}
 #corralHud.open{display:block;}
 .corral-card{pointer-events:auto;display:flex;flex-direction:column;align-items:center;width:max-content;max-width:100%;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
 .corral-main{display:flex;align-items:center;justify-content:center;gap:8px;max-width:100%;padding:8px 10px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;}
 .corral-header{display:contents;}
 .corral-header-actions{display:flex;align-items:center;gap:6px;}
 .corral-body{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
-#corralHud.collapsed .corral-body,#corralHud.collapsed .corral-drawers{display:none;}
+.corral-toolbar-group{display:flex;align-items:center;gap:5px;padding:0 7px;border-left:1px solid rgba(255,255,255,.08);}
+.corral-toolbar-group:first-child{border-left:0;padding-left:0;}
+.corral-toolbar-label{color:#9da8bd;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
+.corral-segment-select{min-height:34px;padding:5px 24px 5px 8px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:var(--select-bg);color:var(--select-text);font-size:10px;}
 .corral-title{color:#ff8bea;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;}
 .corral-strength{display:flex;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
 .corral-strength input{width:110px;accent-color:#ff2bd6;}
@@ -365,8 +374,7 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 .corral-file-item:hover{background:rgba(255,43,214,.1);color:#ffd8f7;}
 .corral-file-status{font-size:9px;color:#8994a8;line-height:1.35;}
 #corralBtn.active{background:linear-gradient(135deg,#bd299f,#f044cc);border-color:rgba(255,107,224,.55);color:#fff;box-shadow:0 0 10px rgba(255,43,214,.3);}
-body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px);}
-@media (max-width:760px){#corralHud{max-width:calc(100vw - 88px)}.corral-drawers{grid-template-columns:1fr}.corral-drawer:first-child{border-right:0;border-bottom:1px solid rgba(255,255,255,.06)}.corral-drawer-content{max-height:38vh}body.corral-overlay-open #simHud{top:calc(var(--topbar-h) + 76px)}}
+@media (max-width:760px){#corralHud{max-width:calc(100vw - 88px)}.corral-drawers{grid-template-columns:1fr}.corral-drawer:first-child{border-right:0;border-bottom:1px solid rgba(255,255,255,.06)}.corral-drawer-content{max-height:38vh}.corral-toolbar-label{display:none}}
 #simPlaybackBar{position:fixed;left:50%;bottom:calc(var(--status-h) + 14px);transform:translate(-50%,12px);z-index:19;display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:min(94vw,960px);padding:9px 12px;border:1px solid var(--line-0);border-radius:16px;background:rgba(14,18,28,0.92);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);}
 #simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
 #simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
@@ -1190,6 +1198,12 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   </div>
 </div>
 
+<div id="globalOverlayBar" aria-label="Overlay controls">
+  <button class="sim-pill" id="globalOverlayCollapseBtn" type="button" aria-expanded="true" title="Collapse all overlays">◀ Hide overlays</button>
+  <button class="sim-pill compact-sim-control" id="globalOverlayRunBtn" type="button">▶ Start</button>
+  <button class="sim-pill warn compact-sim-control" id="globalOverlayStopBtn" type="button">⏹ Stop</button>
+</div>
+
 <div id="corralHud" aria-label="Corral controls">
   <div class="corral-card">
     <div class="corral-main">
@@ -1197,13 +1211,34 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         <span class="corral-title">Corral</span>
         <div class="corral-header-actions">
           <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
-          <button class="sim-pill" id="corralCollapseBtn" type="button" aria-expanded="true" aria-controls="corralHudBody">Collapse Overlay</button>
         </div>
       </div>
       <div class="corral-body" id="corralHudBody">
-        <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
-        <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
-        <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
+        <div class="corral-toolbar-group" aria-label="Corral path tools">
+          <span class="corral-toolbar-label">Path</span>
+          <button class="sim-pill active" id="corralDrawBtn" type="button">Draw</button>
+          <button class="sim-pill" id="corralEditBtn" type="button">Edit points</button>
+          <button class="sim-pill" id="corralAddPointBtn" type="button">Add point</button>
+          <button class="sim-pill warn" id="corralDeletePointBtn" type="button">Delete point</button>
+          <select class="corral-segment-select" id="corralSegmentType" aria-label="Selected segment type">
+            <option value="line">Line</option>
+            <option value="curve">Curve</option>
+            <option value="spline" selected>Spline</option>
+          </select>
+        </div>
+        <div class="corral-toolbar-group" aria-label="Corral edit actions">
+          <span class="corral-toolbar-label">Edit</span>
+          <button class="sim-pill" id="corralUndoBtn" type="button" disabled>↩ Undo</button>
+          <button class="sim-pill" id="corralRedoBtn" type="button" disabled>↪ Redo</button>
+          <button class="sim-pill" id="corralCopyBtn" type="button">Copy</button>
+          <button class="sim-pill" id="corralPasteBtn" type="button" disabled>Paste</button>
+        </div>
+        <div class="corral-toolbar-group" aria-label="Corral simulation actions">
+          <span class="corral-toolbar-label">Corral</span>
+          <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
+          <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
+          <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
+        </div>
       </div>
     </div>
     <div class="corral-drawers">
@@ -1256,7 +1291,6 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         <option value="normal">Normal</option>
         <option value="forceVisualization">Force Visualization</option>
       </select>
-      <button class="sim-pill sim-hud-toggle" id="simHudCollapseBtn" type="button" aria-controls="simHudBody" aria-expanded="true">Collapse</button>
     </div>
     <div class="sim-hud-body" id="simHudBody">
       <div class="sim-row sim-stack" id="simToolRow">
@@ -1948,7 +1982,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-11-corral-drawer-actions';
+const assetVersion = '2026-09-13-unified-overlay-corral-editor';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

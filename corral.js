@@ -50,6 +50,76 @@ function resampleClosed(points, maxPoints = MAX_CORRAL_POINTS) {
   return result;
 }
 
+export function normalizeEditableCorral(points, defaultSegment = 'spline') {
+  const allowedSegments = new Set(['line', 'curve', 'spline']);
+  if (!Array.isArray(points)) return [];
+  return points.flatMap(point => {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+    const normalizeHandle = handle => {
+      const hx = Number(handle?.x);
+      const hy = Number(handle?.y);
+      return Number.isFinite(hx) && Number.isFinite(hy) ? { x: hx, y: hy } : null;
+    };
+    return [{
+      x,
+      y,
+      segment: allowedSegments.has(point?.segment) ? point.segment : defaultSegment,
+      inHandle: normalizeHandle(point?.inHandle),
+      outHandle: normalizeHandle(point?.outHandle),
+    }];
+  });
+}
+
+function cubicPoint(a, b, c, d, t) {
+  const u = 1 - t;
+  return {
+    x: u ** 3 * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t ** 3 * d.x,
+    y: u ** 3 * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t ** 3 * d.y,
+  };
+}
+
+export function sampleEditableCorral(anchors, samplesPerCurve = 8) {
+  const clean = normalizeEditableCorral(anchors);
+  if (clean.length < 3) return [];
+  const result = [];
+  const steps = clamp(Math.round(samplesPerCurve) || 8, 2, 24);
+  for (let index = 0; index < clean.length; index++) {
+    const previous = clean[(index - 1 + clean.length) % clean.length];
+    const start = clean[index];
+    const end = clean[(index + 1) % clean.length];
+    const following = clean[(index + 2) % clean.length];
+    result.push({ x: start.x, y: start.y });
+    if (start.segment === 'line') continue;
+    let controlA;
+    let controlB;
+    if (start.segment === 'curve') {
+      controlA = start.outHandle || {
+        x: start.x + (end.x - previous.x) / 6,
+        y: start.y + (end.y - previous.y) / 6,
+      };
+      controlB = end.inHandle || {
+        x: end.x - (following.x - start.x) / 6,
+        y: end.y - (following.y - start.y) / 6,
+      };
+    } else {
+      controlA = {
+        x: start.x + (end.x - previous.x) / 6,
+        y: start.y + (end.y - previous.y) / 6,
+      };
+      controlB = {
+        x: end.x - (following.x - start.x) / 6,
+        y: end.y - (following.y - start.y) / 6,
+      };
+    }
+    for (let step = 1; step < steps; step++) {
+      result.push(cubicPoint(start, controlA, controlB, end, step / steps));
+    }
+  }
+  return resampleClosed(result);
+}
+
 export function smoothClosedCorral(points, iterations = 2) {
   let current = sanitizePoints(points);
   if (current.length < 3) return [];
