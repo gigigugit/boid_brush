@@ -558,6 +558,7 @@ class WebGPUBoidStampRenderer {
     this.context = null;
     this.adapter = null;
     this.device = null;
+    this._ownsDevice = false;
     this.pipeline = null;
     this.uniformBuffer = null;
     this.instanceBuffer = null;
@@ -632,15 +633,15 @@ class WebGPUBoidStampRenderer {
     return true;
   }
 
-  async init() {
+  async init(gpuOptions = {}) {
     if (this.ready) return true;
     if (this.failed) return false;
     if (this._initPromise) return this._initPromise;
-    this._initPromise = this._doInit();
+    this._initPromise = this._doInit(gpuOptions);
     return this._initPromise;
   }
 
-  async _doInit() {
+  async _doInit(gpuOptions = {}) {
     if (typeof navigator === 'undefined' || !navigator.gpu || typeof document === 'undefined') {
       this.failed = true;
       this.unavailableReason = 'navigator.gpu unavailable';
@@ -649,14 +650,21 @@ class WebGPUBoidStampRenderer {
     }
     try {
       this._pushDebugEvent('init-start');
-      this.adapter = await navigator.gpu.requestAdapter();
-      if (!this.adapter) {
-        this.failed = true;
-        this.unavailableReason = 'WebGPU adapter unavailable';
-        this._pushDebugEvent('init-failed', { reason: this.unavailableReason });
-        return false;
+      if (gpuOptions.device) {
+        this.adapter = gpuOptions.adapter || null;
+        this.device = gpuOptions.device;
+        this._ownsDevice = false;
+      } else {
+        this.adapter = await navigator.gpu.requestAdapter();
+        if (!this.adapter) {
+          this.failed = true;
+          this.unavailableReason = 'WebGPU adapter unavailable';
+          this._pushDebugEvent('init-failed', { reason: this.unavailableReason });
+          return false;
+        }
+        this.device = await this.adapter.requestDevice();
+        this._ownsDevice = true;
       }
-      this.device = await this.adapter.requestDevice();
       this.canvas = document.createElement('canvas');
       this.context = this.canvas.getContext('webgpu');
       if (!this.context) {
@@ -705,10 +713,28 @@ class WebGPUBoidStampRenderer {
   }
 
   reset() {
+    try {
+      this.context?.unconfigure?.();
+    } catch {}
+    try {
+      this.uniformBuffer?.destroy?.();
+    } catch {}
+    try {
+      this.instanceBuffer?.destroy?.();
+    } catch {}
+    try {
+      this._accumulationTexture?.destroy?.();
+    } catch {}
+    if (this._ownsDevice) {
+      try {
+        this.device?.destroy?.();
+      } catch {}
+    }
     this.canvas = null;
     this.context = null;
     this.adapter = null;
     this.device = null;
+    this._ownsDevice = false;
     this.pipeline = null;
     this.uniformBuffer = null;
     this.presentationFormat = null;
@@ -1341,7 +1367,7 @@ export class BoidStampRenderer {
     this.activeKind = this.canvas.kind;
   }
 
-  async init() {
+  async init(gpuOptions = {}) {
     await this.canvas.init();
     try {
       await this.webgl.init();
@@ -1349,7 +1375,7 @@ export class BoidStampRenderer {
       console.warn('Boid WebGL renderer init failed — falling back to Canvas2D.', error);
     }
     try {
-      await this.webgpu.init();
+      await this.webgpu.init(gpuOptions);
     } catch (error) {
       console.warn('Boid WebGPU renderer init failed — falling back to Canvas2D.', error);
     }

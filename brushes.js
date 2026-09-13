@@ -1319,13 +1319,13 @@ export class BoidBrush {
       this.sim = this.app.sharedMotionSim;
       this._usingSharedSim = true;
       this.sim.setDisplaySize?.(this.app.W, this.app.H);
-      await this.renderer.init();
+      await this.renderer.init(gpuOptions);
       this._patchRendererChain();
       this._syncRenderBackendStatus();
       this._ready = true;
       return this.sim;
     }
-    await this.renderer.init();
+    await this.renderer.init(gpuOptions);
     this._patchRendererChain();
     try {
       this.sim = useShared
