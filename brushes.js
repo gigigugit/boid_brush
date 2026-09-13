@@ -5171,6 +5171,21 @@ export class SimpleBrush {
     this._renderLegacyReason = kind === 'legacy' ? reason : '';
   }
 
+  _formatLegacyFallbackReason(reason) {
+    return `${reason || 'GPU simple-stamp renderer failed'}; using CPU fallback`;
+  }
+
+  _resolveStrokeAngle(pathAngle, p, fallbackAngle = 0) {
+    return this.app.resolveStrokeAngle(pathAngle, {
+      mode: p.strokeAngleMode,
+      fallbackAngle,
+    });
+  }
+
+  _getStampBounds(size) {
+    return this.app.getP().stampImageCanvas ? size * Math.SQRT2 : size;
+  }
+
   _getBatchRendererSupport(p) {
     const layer = this.app.getActiveLayer();
     if (!layer) return { ok: false, reason: 'no active layer' };
