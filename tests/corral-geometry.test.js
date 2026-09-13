@@ -7,7 +7,9 @@ import {
   corralRepulsionWeight,
   corralToSvg,
   extractClosedSvgPath,
+  normalizeEditableCorral,
   pointInCorral,
+  sampleEditableCorral,
   smoothClosedCorral,
 } from '../corral.js';
 import { isSupportedByGpu } from '../webgpu-boid-sim.js';
@@ -23,6 +25,28 @@ test('smoothClosedCorral creates a bounded closed contour', () => {
   const smoothed = smoothClosedCorral(square, 1);
   assert.equal(smoothed.length, 8);
   assert.ok(smoothed.every(point => point.x >= 0 && point.x <= 100 && point.y >= 0 && point.y <= 100));
+});
+
+test('editable corrals preserve line, curve, and spline segments', () => {
+  const anchors = normalizeEditableCorral([
+    { x: 0, y: 0, segment: 'line' },
+    { x: 100, y: 0, segment: 'curve' },
+    { x: 100, y: 100, segment: 'spline' },
+    { x: 0, y: 100, segment: 'invalid' },
+  ]);
+  assert.deepEqual(anchors.map(point => point.segment), ['line', 'curve', 'spline', 'spline']);
+  const sampled = sampleEditableCorral(anchors, 4);
+  assert.ok(sampled.length > anchors.length);
+  assert.deepEqual(sampled[0], { x: 0, y: 0 });
+  assert.ok(sampled.every(point => Number.isFinite(point.x) && Number.isFinite(point.y)));
+  assert.ok(compileCorral(sampled));
+});
+
+test('legacy point arrays normalize into editable spline anchors', () => {
+  const anchors = normalizeEditableCorral(square);
+  assert.equal(anchors.length, square.length);
+  assert.ok(anchors.every(point => point.segment === 'spline'));
+  assert.equal(pointInCorral(50, 50, sampleEditableCorral(anchors)), true);
 });
 
 test('pointInCorral handles inside and outside points', () => {

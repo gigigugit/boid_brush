@@ -17184,7 +17184,10 @@ export class App {
   _restoreCorralEditState(state) {
     this.corral.anchors = normalizeEditableCorral(state?.anchors || state?.rawPoints || []);
     this.corral.rawPoints = structuredClone(state?.rawPoints || this.corral.anchors);
-    this.corral.selectedAnchor = Math.min(Number(state?.selectedAnchor) || -1, this.corral.anchors.length - 1);
+    const selectedAnchor = Number(state?.selectedAnchor);
+    this.corral.selectedAnchor = Number.isInteger(selectedAnchor)
+      ? Math.min(selectedAnchor, this.corral.anchors.length - 1)
+      : -1;
     this._rebuildCorralGeometry();
     this.invalidateParams();
     this.saveSession();
@@ -17391,6 +17394,7 @@ export class App {
     }
     this.invalidateParams();
     this.saveSession();
+    this._syncCorralUI();
     return true;
   }
 
@@ -17481,7 +17485,7 @@ export class App {
       }
       this._pushCorralUndo();
       this.corral.rawPoints = rawPoints;
-      this.corral.anchors = normalizeEditableCorral(rawPoints, 'curve');
+      this.corral.anchors = normalizeEditableCorral(rawPoints, 'line');
       this._rebuildCorralGeometry();
       if (!this.corral.compiled) throw new Error('SVG path could not form a corral');
       this.corral.enabled = true;
@@ -17734,13 +17738,6 @@ export class App {
     });
     document.getElementById('corralShapeSmoothing')?.addEventListener('input', event => {
       this.corral.shapeSmoothing = Math.max(0, Math.min(3, Math.round(Number(event.target.value) || 0)));
-      if (this.corral.rawPoints.length >= 3) {
-        this.corral.anchors = normalizeEditableCorral(
-          smoothClosedCorral(this.corral.rawPoints, this.corral.shapeSmoothing),
-          'spline',
-        );
-        this._rebuildCorralGeometry();
-      }
       this.invalidateParams();
       this._syncCorralUI();
     });
@@ -19086,7 +19083,7 @@ export class App {
       const isEditableField = !target.disabled && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
       if (target.isContentEditable || isEditableField) return;
     }
-    if (this.corral?.editing) {
+    if (this.corral?.editing && this.activeBrush === 'boid') {
       const command = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (command && key === 'z') {
@@ -22363,9 +22360,9 @@ export class App {
       if (id === '_stampImageState') continue;
       if (id === '_corral') {
         const rawPoints = Array.isArray(val?.rawPoints) ? val.rawPoints : val?.points;
-        const anchors = normalizeEditableCorral(
-          Array.isArray(val?.anchors) ? val.anchors : (Array.isArray(rawPoints) ? rawPoints : []),
-        );
+        const anchors = normalizeEditableCorral(Array.isArray(val?.anchors)
+          ? val.anchors
+          : (Array.isArray(val?.points) ? val.points : (Array.isArray(rawPoints) ? rawPoints : [])));
         const points = anchors.length >= 3
           ? sampleEditableCorral(anchors)
           : (Array.isArray(val?.points) ? val.points : smoothClosedCorral(rawPoints));
