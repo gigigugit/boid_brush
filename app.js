@@ -7,7 +7,8 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
+import { buildSidebar, buildBoidPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
+import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -81,6 +82,10 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
 }, {
   leaderCount: 0,
   leaderPull: 35,
+  ...Object.fromEntries(BOID_VARIANCE_FIELDS.flatMap(field => [
+    [field.leaderControlId, 0],
+    [field.leaderOverrideId, false],
+  ])),
 }));
 // Controls that own a dedicated localStorage key (and side-effect wiring) —
 // excluded from the generic session snapshot so the dedicated key stays the
@@ -157,6 +162,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   hueVar: 0,
   satVar: 0,
   litVar: 0,
+  ...Object.fromEntries(BOID_VARIANCE_FIELDS.map(field => [field.controlId, 0])),
   maxSpeed: 22,
   damping: 95,
   ...LEADER_FACTORY_DEFAULTS,
@@ -849,10 +855,18 @@ function _readLeaderOverrideConfig({ val, chk, sel }) {
       value: field.readControl({ val, chk, sel }),
     };
   }
+  const varianceOverrides = {};
+  for (const field of BOID_VARIANCE_FIELDS) {
+    varianceOverrides[field.key] = {
+      enabled: chk(field.leaderOverrideId),
+      value: Math.max(0, Math.min(1, val(field.leaderControlId) / 100)),
+    };
+  }
   return {
     count: Math.max(0, Math.round(val('leaderCount') || 0)),
     pull: val('leaderPull') / 100,
     overrides,
+    varianceOverrides,
   };
 }
 
@@ -2749,6 +2763,7 @@ export class App {
 
     // Sidebar UI
     buildSidebar(this);
+    buildBoidPanel(this);
     buildFavoritesPanel(this);
     buildSettingsPanel(this);
     buildLayersPanel(this);
@@ -6449,8 +6464,12 @@ export class App {
       antTrailVisible: chk('antTrailVisible'),
       antPheromoneToSensing: chk('antPheromoneToSensing'),
       // Neighbor/separation radii (ant math panel)
-      neighborRadius: val('am_neighborRadius') || 80,
-      separationRadius: val('am_separationRadius') || 25,
+      neighborRadius: val('neighborRadius') || 80,
+      separationRadius: val('separationRadius') || 25,
+      variances: Object.fromEntries(BOID_VARIANCE_FIELDS.map(field => [
+        field.key,
+        Math.max(0, Math.min(1, val(field.controlId) / 100)),
+      ])),
       // Simulation mode
       simSpeed: (val('simSpeed') || 100) / 100,
       simPointStrength: (val('simPointStrength') || 0) / 100,
@@ -17018,6 +17037,16 @@ export class App {
       const shouldShow = allowed.includes(brush);
       el.classList.toggle('brush-hidden', !shouldShow);
     });
+    const boidTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="boid"]');
+    const boidPanel = document.getElementById('boidPanel');
+    const visible = brush === 'boid';
+    boidTab?.classList.toggle('panel-tab-hidden', !visible);
+    if (!visible && boidTab?.classList.contains('active')) {
+      boidTab.classList.remove('active');
+      boidPanel?.classList.remove('active');
+      document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]')?.classList.add('active');
+      document.getElementById('sidebar')?.classList.add('active');
+    }
   }
 
   getCurrentBrush() { return this.brushes[this.activeBrush]; }

@@ -35,6 +35,9 @@ pub struct Simulation {
     pub params_buf: Vec<f32>,
     /// PRNG for forces and spawning.
     pub rng: Rng,
+    /// Monotonic identity used only for stable per-agent variance seeds.
+    /// Unlike packed buffer indices, it is not reused after swap-removal.
+    next_variance_identity: u32,
     /// Simplex noise for flow field.
     pub noise: SimplexNoise,
     /// Pixel sensing map slots. Slot 0 preserves the legacy single-map behavior.
@@ -60,6 +63,7 @@ impl Simulation {
             params: SimParams::default(),
             params_buf: vec![0.0; PARAMS_LEN],
             rng: Rng::new(seed),
+            next_variance_identity: 0,
             noise: SimplexNoise::new(seed as f32),
             sensing_maps: std::array::from_fn(|_| SensingMap::new()),
             spawn_scratch: Vec::with_capacity(256),
@@ -123,6 +127,24 @@ impl Simulation {
         self.buf[base + LIT] = lit;
     }
 
+    fn initialize_variance_seeds(&mut self, base: usize, agent_id: u32) {
+        for offset in 0..VARIANCE_SEED_COUNT {
+            // Keep this stream independent from the legacy simulation RNG so
+            // zero variance preserves the exact pre-variance spawn sequence.
+            let mut bits = agent_id
+                .wrapping_add(1)
+                .wrapping_mul(0x9E37_79B9)
+                ^ (offset as u32).wrapping_mul(0x85EB_CA6B);
+            bits ^= bits >> 16;
+            bits = bits.wrapping_mul(0x7FEB_352D);
+            bits ^= bits >> 15;
+            bits = bits.wrapping_mul(0x846C_A68B);
+            bits ^= bits >> 16;
+            self.buf[base + VARIANCE_SEED_START + offset] =
+                ((bits & 0x00FF_FFFF) as f32 / 8_388_608.0) - 1.0;
+        }
+    }
+
     /// Spawn a single agent at (x, y). Returns the agent index (ID).
     /// Per-agent multipliers are randomized based on variance params.
     pub fn spawn_one(&mut self, x: f32, y: f32) -> u32 {
@@ -162,6 +184,9 @@ impl Simulation {
             sat,
             lit,
         );
+        let variance_identity = self.next_variance_identity;
+        self.next_variance_identity = self.next_variance_identity.wrapping_add(1);
+        self.initialize_variance_seeds(base, variance_identity);
         self.agent_count += 1;
         idx as u32
     }
@@ -265,11 +290,13 @@ impl Simulation {
             if flags & FLAG_ALIVE == 0 {
                 continue;
             }
-            let agent_params = if flags & FLAG_LEADER != 0 {
+            let base_params = if flags & FLAG_LEADER != 0 {
                 leader_params
             } else {
                 follower_params
             };
+            let agent_params =
+                base_params.varied(&self.buf[base + VARIANCE_SEED_START..base + STRIDE]);
 
             // Per-agent multipliers
             let agent_ms = agent_params.max_speed * self.buf[base + SPD_M];
@@ -368,11 +395,13 @@ impl Simulation {
             if flags & FLAG_ALIVE == 0 {
                 continue;
             }
-            let agent_params = if flags & FLAG_LEADER != 0 {
+            let base_params = if flags & FLAG_LEADER != 0 {
                 leader_params
             } else {
                 follower_params
             };
+            let agent_params =
+                base_params.varied(&self.buf[base + VARIANCE_SEED_START..base + STRIDE]);
             let agent_ms = agent_params.max_speed * self.buf[base + SPD_M];
             let bounds_margin = agent_params.boundary_margin;
             let (min_x, min_y, max_x, max_y) = if bounds_margin >= 0.0 {

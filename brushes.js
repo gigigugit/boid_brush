@@ -12,6 +12,7 @@ import { createBoidStampRenderer } from './boid-renderer.js';
 import { WebGPUFluidSim } from './webgpu-fluid-sim.js';
 import { WebGPUFluidRenderer } from './fluid-renderer.js';
 import { LEADER_OVERRIDE_FIELDS } from './ui.js';
+import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { applyModTargets, summarizeModulation } from './boid-input-modulation.js?v=2026-09-08-absolute-modulation-curves';
 import { evaluatePressureCurve } from './pressure-curve.js';
 import { constrainAgentsToCorral } from './corral.js';
@@ -265,6 +266,13 @@ function _resolveLeaderParams(p, modApplied = null) {
     leader[field.key] = modApplied?.[field.key]
       ? p[field.key]
       : (override?.enabled ? override.value : p[field.key]);
+  }
+  leader.variances = {};
+  for (const field of BOID_VARIANCE_FIELDS) {
+    const override = leaderConfig?.varianceOverrides?.[field.key];
+    leader.variances[field.key] = override?.enabled
+      ? override.value
+      : (p?.variances?.[field.key] ?? 0);
   }
   return leader;
 }

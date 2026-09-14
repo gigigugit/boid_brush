@@ -15,6 +15,7 @@ import {
   normalizePreset,
 } from './settings-library.js';
 import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-08-absolute-modulation-curves';
+import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import {
   DEFAULT_MOD_CURVE_POINTS,
   FEATURE_CHANNELS,
@@ -443,10 +444,27 @@ export const LEADER_OVERRIDE_FIELDS = Object.freeze([
   { key: 'sensingRadius', sourceId: 'sensingRadius', id: 'leaderSensingRadius', overrideId: 'leaderOverrideSensingRadius', type: 'range', label: 'Sensing Radius', min: 0, max: 200, defaultValue: 20, readControl: ({ val }) => val('leaderSensingRadius') },
   { key: 'sensingFitRadius', sourceId: 'sensingFitRadius', id: 'leaderSensingFitRadius', overrideId: 'leaderOverrideSensingFitRadius', type: 'range', label: 'Sensing Fit Radius', min: 0, max: 200, defaultValue: 0, readControl: ({ val }) => val('leaderSensingFitRadius') },
   { key: 'sensingThreshold', sourceId: 'sensingThreshold', id: 'leaderSensingThreshold', overrideId: 'leaderOverrideSensingThreshold', type: 'range', label: 'Sensing Threshold', min: 0, max: 100, defaultValue: 10, readControl: ({ val }) => val('leaderSensingThreshold') / 100 },
-  { key: 'neighborRadius', sourceId: 'am_neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
-  { key: 'separationRadius', sourceId: 'am_separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
+  { key: 'neighborRadius', sourceId: 'neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
+  { key: 'separationRadius', sourceId: 'separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
   { key: 'simBoundsMargin', sourceId: 'simBoundsMargin', id: 'leaderSimBoundsMargin', overrideId: 'leaderOverrideSimBoundsMargin', type: 'range', label: 'Bounds Margin', min: 0, max: 240, defaultValue: 0, readControl: ({ val }) => Math.max(0, val('leaderSimBoundsMargin') || 0) },
 ]);
+
+function _buildIndependentVarianceRows() {
+  return BOID_VARIANCE_FIELDS.map(field =>
+    sliderRow(field.controlId, `${field.label} ±`, 0, 100, 0, v => (v / 100).toFixed(2),
+      `Stable per-agent relative variation for ${field.label.toLowerCase()}`)).join('');
+}
+
+function _buildLeaderVarianceRows() {
+  return BOID_VARIANCE_FIELDS.map(field => `
+    <div data-leader-variance-field="${field.key}" style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;">
+        <span>${field.label} ±</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#9fb0c6;">Override <input type="checkbox" id="${field.leaderOverrideId}" data-leader-target="${field.leaderControlId}" data-leader-source="${field.controlId}"></span>
+      </label>
+      <label style="margin:4px 0 0 0;">Variance <span id="v_${field.leaderControlId}">0.00</span><input type="range" id="${field.leaderControlId}" min="0" max="100" value="0"></label>
+    </div>`).join('');
+}
 
 function _buildLeaderOverrideControl(field) {
   if (field.type === 'checkbox') {
@@ -492,6 +510,14 @@ function _copyLeaderOverrideFromSource(field) {
 
 function _syncLeaderOverrideUI() {
   LEADER_OVERRIDE_FIELDS.forEach(_syncLeaderOverrideControlState);
+  BOID_VARIANCE_FIELDS.forEach(field => {
+    const toggle = document.getElementById(field.leaderOverrideId);
+    const target = document.getElementById(field.leaderControlId);
+    const row = document.querySelector(`[data-leader-variance-field="${field.key}"]`);
+    const enabled = !!toggle?.checked;
+    if (target) target.disabled = !enabled;
+    if (row) row.style.opacity = enabled ? '1' : '0.6';
+  });
 }
 
 // ── Boid Input Modulation Framework ─────────────────────────
@@ -612,8 +638,8 @@ const _MOD_TARGET_UI_SCALE = Object.freeze({
   damping: 100, sensingStrength: 100, sensingThreshold: 100,
 });
 const _MOD_TARGET_CONTROL_ID = Object.freeze({
-  neighborRadius: 'am_neighborRadius',
-  separationRadius: 'am_separationRadius',
+  neighborRadius: 'neighborRadius',
+  separationRadius: 'separationRadius',
 });
 
 function _readModTargetBaseValue(app, target) {
@@ -1375,6 +1401,8 @@ export function buildSidebar(app) {
       ${sliderRow('flowField', 'Flow', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('flowScale', 'Flow Scale', 1, 100, 10, v => (v/1000).toFixed(3))}
       ${sliderRow('fleeRadius', 'Flee R', 0, 150, 0)}
+      ${sliderRow('neighborRadius', 'Neighbor Radius', 10, 240, 80)}
+      ${sliderRow('separationRadius', 'Separation Radius', 5, 240, 25)}
       ${sliderRow('individuality', 'Individ.', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
@@ -1395,6 +1423,9 @@ export function buildSidebar(app) {
       ${sliderRow('hueVar', 'Hue Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('satVar', 'Satur Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('litVar', 'Light Var', 0, 100, 0, v => (v/100).toFixed(2))}
+      <div style="font-weight:700;color:#a9bbd5;margin:9px 0 3px;">Independent behavior variation</div>
+      <span class="slider-desc">Each value is sampled once per agent and remains stable. Zero preserves the canonical base value.</span>
+      ${_buildIndependentVarianceRows()}
     </div>
 
     <!-- Motion (boid + ant) -->
@@ -1410,6 +1441,8 @@ export function buildSidebar(app) {
       ${sliderRow('leaderPull', 'Leader Pull', 0, 100, 35, v => (v / 100).toFixed(2), 'Extra pull followers feel toward nearby leaders')}
       <span class="slider-desc">The first N boids in each spawned batch become leaders. Enable an override to decouple that leader setting from the main boid controls.</span>
       ${_buildLeaderOverrideRows()}
+      <div style="font-weight:700;color:#a9bbd5;margin:10px 0 3px;">Leader variance overrides</div>
+      ${_buildLeaderVarianceRows()}
     </div>
 
     <!-- Input Modulation (boid only) — compact: the sidebar only shows a live
@@ -1928,6 +1961,7 @@ export function buildSidebar(app) {
       span.textContent = fmt ? fmt(+inp.value) : inp.value;
       app.invalidateParams();
       syncEdgeSliders(app);
+      syncBoidPanel();
     };
     inp.addEventListener('input', update);
   });
@@ -2008,6 +2042,20 @@ export function buildSidebar(app) {
   LEADER_OVERRIDE_FIELDS.forEach(field => {
     document.getElementById(field.overrideId)?.addEventListener('change', (event) => {
       if (event.target.checked) _copyLeaderOverrideFromSource(field);
+      _syncLeaderOverrideUI();
+      app.invalidateParams();
+    });
+  });
+  BOID_VARIANCE_FIELDS.forEach(field => {
+    document.getElementById(field.leaderOverrideId)?.addEventListener('change', event => {
+      if (event.target.checked) {
+        const source = document.getElementById(field.controlId);
+        const target = document.getElementById(field.leaderControlId);
+        if (source && target) {
+          target.value = source.value;
+          document.getElementById(`v_${field.leaderControlId}`).textContent = (+target.value / 100).toFixed(2);
+        }
+      }
       _syncLeaderOverrideUI();
       app.invalidateParams();
     });
@@ -2555,6 +2603,88 @@ export function buildSettingsPanel(app) {
   if (!panel) return;
   panel.innerHTML = _workspaceSettingsMarkup();
   _wireWorkspaceSettingsPanel(app, panel);
+}
+
+const BOID_PANEL_GROUPS = Object.freeze([
+  ['Swarm', ['count', 'spawnRadius', 'spawnAngle', 'spawnJitter']],
+  ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'flowField', 'flowScale']],
+  ['Radii & sensing', ['neighborRadius', 'separationRadius', 'fleeRadius', 'fov', 'sensingStrength', 'sensingRadius', 'sensingFitRadius', 'sensingThreshold']],
+  ['Motion', ['wanderSpeed', 'maxSpeed', 'damping']],
+  ['Attributes', ['sizeVar', 'opacityVar', 'hueVar', 'satVar', 'litVar']],
+  ['Legacy aggregate variance', ['individuality', 'speedVar', 'forceVar']],
+  ['Independent variance', BOID_VARIANCE_FIELDS.map(field => field.controlId)],
+  ['Leaders', ['leaderCount', 'leaderPull', ...LEADER_OVERRIDE_FIELDS.flatMap(field => [field.overrideId, field.id]), ...BOID_VARIANCE_FIELDS.flatMap(field => [field.leaderOverrideId, field.leaderControlId])]],
+]);
+
+function _boidControlLabel(source) {
+  const label = source.closest('label');
+  const text = label?.childNodes?.[0]?.textContent?.trim();
+  return text || source.id;
+}
+
+function _boidProxyMarkup(source) {
+  const attrs = `data-boid-control="${source.id}"`;
+  if (source.type === 'checkbox') {
+    return `<label>${escapeHtml(_boidControlLabel(source))}<input type="checkbox" ${attrs}${source.checked ? ' checked' : ''}></label>`;
+  }
+  if (source.tagName === 'SELECT') {
+    return `<label>${escapeHtml(_boidControlLabel(source))}<select ${attrs}>${Array.from(source.options).map(option =>
+      `<option value="${escapeHtml(option.value)}"${option.value === source.value ? ' selected' : ''}>${escapeHtml(option.textContent)}</option>`).join('')}</select></label>`;
+  }
+  const value = Number(source.value);
+  const fmt = _sliderFormats[source.id];
+  return `<label>${escapeHtml(_boidControlLabel(source))}<span data-boid-value="${source.id}">${fmt ? fmt(value) : escapeHtml(source.value)}</span><input type="${source.type}" ${attrs} min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}></label>`;
+}
+
+export function syncBoidPanel() {
+  document.querySelectorAll('#boidPanel [data-boid-control]').forEach(proxy => {
+    const source = document.getElementById(proxy.dataset.boidControl);
+    if (!source) return;
+    if (proxy.type === 'checkbox') proxy.checked = source.checked;
+    else proxy.value = source.value;
+    proxy.disabled = source.disabled;
+    const value = document.querySelector(`#boidPanel [data-boid-value="${source.id}"]`);
+    const fmt = _sliderFormats[source.id];
+    if (value) value.textContent = fmt ? fmt(+source.value) : source.value;
+  });
+}
+
+export function buildBoidPanel(app) {
+  const panel = document.getElementById('boidPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="sim-card">
+      <div class="sim-hud-header"><div class="sim-label">Boid Parameters</div></div>
+      <div class="sim-hud-body">
+        <span class="slider-desc">A wider categorized view of the canonical brush controls. Changes in either panel edit the same persisted state.</span>
+        ${BOID_PANEL_GROUPS.map(([title, ids], index) => {
+          const controls = ids.map(id => document.getElementById(id)).filter(Boolean);
+          if (!controls.length) return '';
+          return `<div class="section-header${index > 2 ? ' closed' : ''}" data-section="boidPanel${index}">${title} <span class="chevron">▼</span></div>
+            <div class="section-body${index > 2 ? ' collapsed' : ''}"><div class="boid-control-grid">${controls.map(_boidProxyMarkup).join('')}</div></div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  panel.querySelectorAll('.section-header').forEach(header => header.addEventListener('click', () => toggleSection(header)));
+  panel.addEventListener('input', event => {
+    const proxy = event.target.closest('[data-boid-control]');
+    if (!proxy) return;
+    const source = document.getElementById(proxy.dataset.boidControl);
+    if (!source) return;
+    if (proxy.type === 'checkbox') source.checked = proxy.checked;
+    else source.value = proxy.value;
+    source.dispatchEvent(new Event('input', { bubbles: true }));
+    if (proxy.type === 'checkbox' || proxy.tagName === 'SELECT') source.dispatchEvent(new Event('change', { bubbles: true }));
+    syncBoidPanel();
+    app.invalidateParams();
+  });
+  const canonicalIds = new Set(BOID_PANEL_GROUPS.flatMap(([, ids]) => ids));
+  canonicalIds.forEach(id => {
+    const source = document.getElementById(id);
+    source?.addEventListener('input', syncBoidPanel);
+    source?.addEventListener('change', syncBoidPanel);
+  });
+  syncBoidPanel();
 }
 
 export function buildSimulationControlsPanel(app) {
@@ -3269,6 +3399,8 @@ const _AM_MIRRORS = [
   ['am_sensingStrength', 'sensingStrength'],
   ['am_sensingRadius', 'sensingRadius'],
   ['am_sensingThreshold', 'sensingThreshold'],
+  ['am_neighborRadius', 'neighborRadius'],
+  ['am_separationRadius', 'separationRadius'],
   ['am_antFollow', 'antFollow'],
   ['am_antPheromoneRate', 'antPheromoneRate'],
   ['am_antPheromoneDecay', 'antPheromoneDecay'],
@@ -3294,9 +3426,8 @@ function _amSlider(id, label, min, max, value, fmt, math) {
  * changing a mirror slider syncs the value back to the main sidebar input
  * and fires its 'input' event so getP() picks up the change.
  *
- * Two sliders are panel-only (no sidebar counterpart):
- *   - am_neighborRadius  → getP().neighborRadius  (was hardcoded 80)
- *   - am_separationRadius → getP().separationRadius (was hardcoded 25)
+ * Every slider is a mirror of a canonical sidebar control. In particular the
+ * two flock radii no longer create a second persisted state in this panel.
  */
 function _buildAntMathPanel(app) {
   const panel = document.getElementById('antMathPanel');
@@ -3319,8 +3450,8 @@ function _buildAntMathPanel(app) {
     ${_amSlider('am_cohesion', 'w_coh', 0, 100, 15, v => (v/100).toFixed(2), 'F_coh = seek(centroid_of_neighbors) · w_c')}
     ${_amSlider('am_separation', 'w_sep', 0, 100, 15, v => (v/100).toFixed(2), 'F_sep = Σ −d̂_ij · w_s (for ‖d‖ < R_sep)')}
     ${_amSlider('am_alignment', 'w_align', 0, 100, 20, v => (v/100).toFixed(2), 'F_align = (avg_neighbor_v − v_i) · w_a')}
-    ${_amSlider('am_neighborRadius', 'R_neighbor', 10, 200, 80, null, 'Radius for cohesion/alignment neighbor scan')}
-    ${_amSlider('am_separationRadius', 'R_sep', 5, 100, 25, null, 'Radius for separation repulsion')}
+    ${_amSlider('am_neighborRadius', 'R_neighbor', 10, 240, 80, null, 'Radius for cohesion/alignment neighbor scan')}
+    ${_amSlider('am_separationRadius', 'R_sep', 5, 240, 25, null, 'Radius for separation repulsion')}
     ${_amSlider('am_fov', 'θ_fov', 30, 360, 115, v => v + '°', 'Field of view angle for neighbor detection')}
 
     <div class="am-section">Flow Field</div>
@@ -3444,6 +3575,7 @@ export function syncUI(app) {
   syncStampImageUI(app);
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
+  syncBoidPanel();
   _syncModMatrixUi(app);
   _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
@@ -3685,6 +3817,10 @@ LEADER_OVERRIDE_FIELDS.forEach(field => {
   if (field.type === 'range' && !_sliderFormats[field.id] && _sliderFormats[field.sourceId]) {
     _sliderFormats[field.id] = _sliderFormats[field.sourceId];
   }
+});
+BOID_VARIANCE_FIELDS.forEach(field => {
+  _sliderFormats[field.controlId] = v => (v / 100).toFixed(2);
+  _sliderFormats[field.leaderControlId] = v => (v / 100).toFixed(2);
 });
 
 let _edgeSliderApp = null;

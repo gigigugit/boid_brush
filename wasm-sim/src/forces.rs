@@ -141,6 +141,11 @@ fn quorum_enabled(threshold: u32) -> bool {
 }
 
 #[inline]
+fn varied_params(buf: &[f32], base: usize, params: &AgentParams) -> AgentParams {
+    params.varied(&buf[base + VARIANCE_SEED_START..base + STRIDE])
+}
+
+#[inline]
 fn accumulate_direct_neighbor(
     accum: &mut DirectNeighborAccum,
     dx: f32,
@@ -323,11 +328,12 @@ fn compute_quorum_members(
         if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
-        let focal_params = if flags_i & FLAG_LEADER != 0 {
+        let base_params = if flags_i & FLAG_LEADER != 0 {
             leader_params
         } else {
             follower_params
         };
+        let focal_params = varied_params(buf, bi, base_params);
         if !quorum_enabled(focal_params.quorum_threshold) {
             continue;
         }
@@ -382,11 +388,12 @@ fn compute_quorum_members_grid(
         if flags_i & FLAG_ALIVE == 0 {
             continue;
         }
-        let focal_params = if flags_i & FLAG_LEADER != 0 {
+        let base_params = if flags_i & FLAG_LEADER != 0 {
             leader_params
         } else {
             follower_params
         };
+        let focal_params = varied_params(buf, bi, base_params);
         if !quorum_enabled(focal_params.quorum_threshold) {
             continue;
         }
@@ -445,11 +452,12 @@ pub fn apply_neighbor_forces(buf: &mut [f32], agent_count: usize, p: &SimParams)
         }
 
         let focal_is_leader = flags_i & FLAG_LEADER != 0;
-        let focal_params = if focal_is_leader {
+        let base_params = if focal_is_leader {
             &leader_params
         } else {
             &follower_params
         };
+        let focal_params = varied_params(buf, bi, base_params);
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
@@ -559,11 +567,12 @@ pub fn apply_neighbor_forces_grid(
         }
 
         let focal_is_leader = flags_i & FLAG_LEADER != 0;
-        let focal_params = if focal_is_leader {
+        let base_params = if focal_is_leader {
             &leader_params
         } else {
             &follower_params
         };
+        let focal_params = varied_params(buf, bi, base_params);
         let xi = buf[bi + X];
         let yi = buf[bi + Y];
         let nd2 = focal_params.neighbor_radius * focal_params.neighbor_radius;
@@ -740,9 +749,4 @@ impl Rng {
         (self.next_u32() & 0x00FF_FFFF) as f32 / 16_777_216.0
     }
 
-    /// Returns a float in [-1, 1).
-    #[inline]
-    pub fn next_f32_signed(&mut self) -> f32 {
-        self.next_f32() * 2.0 - 1.0
-    }
 }

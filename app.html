@@ -162,7 +162,12 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
 #rightPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-#sidebar,#favoritesPanel,#settingsPanel,#jsonPanel{-webkit-overflow-scrolling:touch;padding:10px;}
+#sidebar,#favoritesPanel,#settingsPanel,#jsonPanel,#boidPanel{-webkit-overflow-scrolling:touch;padding:10px;}
+#boidPanel{overflow:auto;}
+body:has(#boidPanel.active){--right-panel-open-w:min(92vw,520px);}
+.boid-control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;}
+.boid-control-grid label{display:grid!important;grid-template-columns:minmax(90px,1fr) auto;gap:4px 8px;white-space:normal!important;}
+.boid-control-grid input[type="range"]{grid-column:1/-1;width:100%!important;}
 #simOverlaySidebar{-webkit-overflow-scrolling:touch;padding:8px;}
 #rightPanel .panel-view,#rightPanel .section-body,#rightPanel label{min-width:0;}
 #jsonPanel{overflow-x:hidden;overflow-y:auto;}
@@ -1371,6 +1376,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <div class="panel-tabs panel-tabs--right" id="rightPanelTabs">
   <button class="panel-tab panel-tab--favorites" data-panel-view="favorites" data-panel-target="rightPanel">★</button>
   <button class="panel-tab active" data-panel-view="brush" data-panel-target="rightPanel">Brush</button>
+  <button class="panel-tab panel-tab-hidden" data-panel-view="boid" data-panel-target="rightPanel">Boid</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="simulation" data-panel-target="rightPanel">Simulation</button>
   <button class="panel-tab" data-panel-view="settings" data-panel-target="rightPanel">Settings</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="json" data-panel-target="rightPanel">JSON</button>
@@ -1378,6 +1384,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 <aside id="rightPanel">
   <div id="favoritesPanel" class="panel-view" data-panel-view="favorites"></div>
   <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
+  <div id="boidPanel" class="panel-view" data-panel-view="boid"></div>
   <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
   <div id="settingsPanel" class="panel-view" data-panel-view="settings"></div>
   <div id="jsonPanel" class="panel-view" data-panel-view="json">
