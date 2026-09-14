@@ -162,10 +162,13 @@ body.json-panel-expanded{--right-panel-open-w:min(96vw,calc(var(--sidebar-w) * 2
 #rightPanel::-webkit-scrollbar{width:5px;}
 #rightPanel::-webkit-scrollbar-track{background:transparent;}
 #rightPanel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:3px;}
-#sidebar,#favoritesPanel,#settingsPanel,#jsonPanel,#boidPanel{-webkit-overflow-scrolling:touch;padding:10px;}
+#sidebar,#favoritesPanel,#settingsPanel,#jsonPanel,#boidPanel,#corralPanel{-webkit-overflow-scrolling:touch;padding:10px;}
 #boidPanel{overflow:auto;}
+#corralPanel{overflow:auto;}
 #boidPanel .section-body:not(.collapsed){max-height:none;}
+#corralPanel .section-body:not(.collapsed){max-height:none;}
 body:has(#boidPanel.active){--right-panel-open-w:min(92vw,520px);}
+body:has(#corralPanel.active){--right-panel-open-w:min(92vw,520px);}
 .boid-control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;}
 .boid-control-grid label{display:grid!important;grid-template-columns:minmax(90px,1fr) auto;gap:4px 8px;white-space:normal!important;}
 .boid-control-grid input[type="range"]{grid-column:1/-1;width:100%!important;}
@@ -251,8 +254,8 @@ body:has(#boidPanel.active){--right-panel-open-w:min(92vw,520px);}
 #guidesPanel{overflow-y:auto;}
 
 /* Controls */
-#sidebar label,#layersPanel label,#guidesPanel label,#favoritesPanel label,#settingsPanel label,#simulationControlsPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
-#sidebar label span,#layersPanel label span,#guidesPanel label span,#favoritesPanel label span,#settingsPanel label span,#simulationControlsPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
+#sidebar label,#layersPanel label,#guidesPanel label,#favoritesPanel label,#settingsPanel label,#simulationControlsPanel label,#corralPanel label{display:flex;justify-content:space-between;align-items:center;margin:3px 0;white-space:nowrap;font-size:11px;color:var(--ink-1);font-weight:600;}
+#sidebar label span,#layersPanel label span,#guidesPanel label span,#favoritesPanel label span,#settingsPanel label span,#simulationControlsPanel label span,#corralPanel label span{color:var(--ink-0);font-variant-numeric:tabular-nums;min-width:32px;text-align:right;font-size:11px;}
 .slider-desc{display:block;font-size:8px;color:var(--ink-3);margin:-2px 0 2px 0;line-height:1.2;white-space:normal;}
 .pressure-curve-intro{font-size:9px;line-height:1.4;color:var(--ink-2);padding:2px 2px 6px;}
 .pressure-curve-group{display:grid;gap:7px;padding-top:4px;border-top:1px solid var(--line-0);}
@@ -265,19 +268,19 @@ body:has(#boidPanel.active){--right-panel-open-w:min(92vw,520px);}
 #rightPanel .pressure-curve-canvas{display:block;width:100%;height:118px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:#0b0f17;cursor:crosshair;touch-action:none;}
 .pressure-curve-axis{display:flex;justify-content:space-between;font-size:8px;color:var(--ink-3);}
 .pressure-curve-value{display:none;}
-#sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"],#boidPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:clamp(92px,38%,132px);max-width:100%;min-width:0;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
-#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#guidesPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover,#boidPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
-#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#guidesPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb,#boidPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb,#guidesPanel input[type="range"]::-moz-range-thumb,#favoritesPanel input[type="range"]::-moz-range-thumb,#settingsPanel input[type="range"]::-moz-range-thumb,#simulationControlsPanel input[type="range"]::-moz-range-thumb,#boidPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
-#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track,#guidesPanel input[type="range"]::-moz-range-track,#favoritesPanel input[type="range"]::-moz-range-track,#settingsPanel input[type="range"]::-moz-range-track,#simulationControlsPanel input[type="range"]::-moz-range-track,#boidPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
-#sidebar select,#layersPanel select,#guidesPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select,#boidPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:clamp(105px,42%,148px);max-width:100%;min-width:0;cursor:pointer;min-height:34px;color-scheme:dark;}
-#sidebar select:hover,#layersPanel select:hover,#guidesPanel select:hover,#favoritesPanel select:hover,#settingsPanel select:hover,#simulationControlsPanel select:hover,#boidPanel select:hover{border-color:rgba(255,255,255,0.2);}
-#sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup,#guidesPanel select option,#guidesPanel select optgroup,#favoritesPanel select option,#favoritesPanel select optgroup,#settingsPanel select option,#settingsPanel select optgroup,#simulationControlsPanel select option,#simulationControlsPanel select optgroup,#boidPanel select option,#boidPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
-#sidebar button,#layersPanel button,#guidesPanel button,#favoritesPanel button,#settingsPanel button,#simulationControlsPanel button,#boidPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
-#sidebar button:hover,#layersPanel button:hover,#guidesPanel button:hover,#favoritesPanel button:hover,#settingsPanel button:hover,#simulationControlsPanel button:hover,#boidPanel button:hover{background:rgba(255,255,255,0.15);color:#fff;}
-#sidebar input[type="checkbox"],#layersPanel input[type="checkbox"],#guidesPanel input[type="checkbox"],#favoritesPanel input[type="checkbox"],#settingsPanel input[type="checkbox"],#simulationControlsPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
-#sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked,#guidesPanel input[type="checkbox"]:checked,#favoritesPanel input[type="checkbox"]:checked,#settingsPanel input[type="checkbox"]:checked,#simulationControlsPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
-#sidebar input[type="checkbox"]:checked::after,#guidesPanel input[type="checkbox"]:checked::after,#favoritesPanel input[type="checkbox"]:checked::after,#settingsPanel input[type="checkbox"]:checked::after,#simulationControlsPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
+#sidebar input[type="range"],#layersPanel input[type="range"],#guidesPanel input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#simulationControlsPanel input[type="range"],#boidPanel input[type="range"],#corralPanel input[type="range"]{-webkit-appearance:none;appearance:none;width:clamp(92px,38%,132px);max-width:100%;min-width:0;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none;cursor:pointer;}
+#sidebar input[type="range"]:hover,#layersPanel input[type="range"]:hover,#guidesPanel input[type="range"]:hover,#favoritesPanel input[type="range"]:hover,#settingsPanel input[type="range"]:hover,#simulationControlsPanel input[type="range"]:hover,#boidPanel input[type="range"]:hover,#corralPanel input[type="range"]:hover{background:rgba(255,255,255,0.14);}
+#sidebar input[type="range"]::-webkit-slider-thumb,#layersPanel input[type="range"]::-webkit-slider-thumb,#guidesPanel input[type="range"]::-webkit-slider-thumb,#favoritesPanel input[type="range"]::-webkit-slider-thumb,#settingsPanel input[type="range"]::-webkit-slider-thumb,#simulationControlsPanel input[type="range"]::-webkit-slider-thumb,#boidPanel input[type="range"]::-webkit-slider-thumb,#corralPanel input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-thumb,#layersPanel input[type="range"]::-moz-range-thumb,#guidesPanel input[type="range"]::-moz-range-thumb,#favoritesPanel input[type="range"]::-moz-range-thumb,#settingsPanel input[type="range"]::-moz-range-thumb,#simulationControlsPanel input[type="range"]::-moz-range-thumb,#boidPanel input[type="range"]::-moz-range-thumb,#corralPanel input[type="range"]::-moz-range-thumb{width:14px;height:14px;background:#fff;border-radius:50%;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,0.5);}
+#sidebar input[type="range"]::-moz-range-track,#layersPanel input[type="range"]::-moz-range-track,#guidesPanel input[type="range"]::-moz-range-track,#favoritesPanel input[type="range"]::-moz-range-track,#settingsPanel input[type="range"]::-moz-range-track,#simulationControlsPanel input[type="range"]::-moz-range-track,#boidPanel input[type="range"]::-moz-range-track,#corralPanel input[type="range"]::-moz-range-track{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;border:none;}
+#sidebar select,#layersPanel select,#guidesPanel select,#favoritesPanel select,#settingsPanel select,#simulationControlsPanel select,#boidPanel select,#corralPanel select{background:var(--select-bg);color:var(--select-text);border:1px solid var(--line-1);border-radius:var(--rad-1);padding:6px 8px;font-size:11px;width:clamp(105px,42%,148px);max-width:100%;min-width:0;cursor:pointer;min-height:34px;color-scheme:dark;}
+#sidebar select:hover,#layersPanel select:hover,#guidesPanel select:hover,#favoritesPanel select:hover,#settingsPanel select:hover,#simulationControlsPanel select:hover,#boidPanel select:hover,#corralPanel select:hover{border-color:rgba(255,255,255,0.2);}
+#sidebar select option,#sidebar select optgroup,#layersPanel select option,#layersPanel select optgroup,#guidesPanel select option,#guidesPanel select optgroup,#favoritesPanel select option,#favoritesPanel select optgroup,#settingsPanel select option,#settingsPanel select optgroup,#simulationControlsPanel select option,#simulationControlsPanel select optgroup,#boidPanel select option,#boidPanel select optgroup,#corralPanel select option,#corralPanel select optgroup{background:var(--select-panel-bg);color:var(--select-text);}
+#sidebar button,#layersPanel button,#guidesPanel button,#favoritesPanel button,#settingsPanel button,#simulationControlsPanel button,#boidPanel button,#corralPanel button{margin:1px;padding:4px 8px;border:none;border-radius:5px;background:rgba(255,255,255,0.08);color:var(--ink-1);font-size:10px;cursor:pointer;transition:all 0.15s;}
+#sidebar button:hover,#layersPanel button:hover,#guidesPanel button:hover,#favoritesPanel button:hover,#settingsPanel button:hover,#simulationControlsPanel button:hover,#boidPanel button:hover,#corralPanel button:hover{background:rgba(255,255,255,0.15);color:#fff;}
+#sidebar input[type="checkbox"],#layersPanel input[type="checkbox"],#guidesPanel input[type="checkbox"],#favoritesPanel input[type="checkbox"],#settingsPanel input[type="checkbox"],#simulationControlsPanel input[type="checkbox"],#corralPanel input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:rgba(255,255,255,0.06);cursor:pointer;position:relative;transition:all 0.15s;flex-shrink:0;}
+#sidebar input[type="checkbox"]:checked,#layersPanel input[type="checkbox"]:checked,#guidesPanel input[type="checkbox"]:checked,#favoritesPanel input[type="checkbox"]:checked,#settingsPanel input[type="checkbox"]:checked,#simulationControlsPanel input[type="checkbox"]:checked,#corralPanel input[type="checkbox"]:checked{background:linear-gradient(135deg,var(--accent-a),var(--accent-b));border-color:rgba(91,138,240,0.5);}
+#sidebar input[type="checkbox"]:checked::after,#guidesPanel input[type="checkbox"]:checked::after,#favoritesPanel input[type="checkbox"]:checked::after,#settingsPanel input[type="checkbox"]:checked::after,#simulationControlsPanel input[type="checkbox"]:checked::after,#corralPanel input[type="checkbox"]:checked::after{content:'✓';position:absolute;top:-1px;left:2px;font-size:12px;color:#fff;font-weight:bold;}
 
 /* Dense Input Modulation rows stay contained without changing their control model. */
 #modRouteEditor,#modRouteEditor *{max-width:100%;}
@@ -295,10 +298,10 @@ body:has(#boidPanel.active){--right-panel-open-w:min(92vw,520px);}
 .mod-route-card input[type="number"]{min-width:0;}
 
 @media (max-width:760px){
-  #sidebar,#favoritesPanel,#settingsPanel,#jsonPanel{padding:8px;}
+  #sidebar,#favoritesPanel,#settingsPanel,#jsonPanel,#corralPanel{padding:8px;}
   #rightPanel .section-header{padding-inline:10px;}
   #rightPanel .section-body{padding:7px;}
-  #sidebar input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"]{width:clamp(88px,40%,124px);}
+  #sidebar input[type="range"],#favoritesPanel input[type="range"],#settingsPanel input[type="range"],#corralPanel input[type="range"]{width:clamp(88px,40%,124px);}
   .mod-route-card{padding:7px!important;}
   .mod-route-row{gap:5px!important;}
 }
@@ -388,29 +391,16 @@ body.overlays-collapsed #simHud,body.overlays-collapsed #simPlaybackBar,body.ove
 .sim-pill-icon svg{display:block;width:18px;height:18px;fill:currentColor;}
 .sim-label{font-size:9px;color:#7d8594;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:2px;}
 .sim-status{font-size:10px;color:var(--ink-1);min-width:0;padding:2px 2px 0;}
-#corralHud{position:fixed;left:50%;top:calc(var(--topbar-h) + 58px);z-index:19;display:none;max-width:calc(100vw - 112px);transform:translateX(-50%);pointer-events:none;}
+#corralHud{position:fixed;left:150px;right:0;top:calc(var(--topbar-h) + 8px);z-index:19;display:none;padding:0 14px;pointer-events:none;}
 #corralHud.open{display:block;}
-.corral-card{pointer-events:auto;display:flex;flex-direction:column;align-items:center;width:max-content;max-width:100%;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
-.corral-main{display:flex;align-items:center;justify-content:center;gap:8px;max-width:100%;padding:8px 10px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;}
-.corral-header{display:contents;}
-.corral-header-actions{display:flex;align-items:center;gap:6px;}
-.corral-body{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
-.corral-toolbar-group{display:flex;align-items:center;gap:5px;padding:0 7px;border-left:1px solid rgba(255,255,255,.08);}
+.corral-card{pointer-events:auto;display:flex;align-items:stretch;width:100%;border:1px solid rgba(255,43,214,.28);border-radius:14px;background:linear-gradient(145deg,rgba(24,18,31,.92),rgba(14,17,27,.88));backdrop-filter:blur(18px);box-shadow:0 12px 36px rgba(0,0,0,.34),0 0 18px rgba(255,43,214,.08);}
+.corral-main{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;white-space:nowrap;}
+.corral-toolbar-group{display:flex;align-items:center;gap:5px;padding:0 7px;border-left:1px solid rgba(255,255,255,.08);flex:0 0 auto;}
 .corral-toolbar-group:first-child{border-left:0;padding-left:0;}
 .corral-toolbar-label{color:#9da8bd;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
 .corral-segment-select{min-height:34px;padding:5px 24px 5px 8px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:var(--select-bg);color:var(--select-text);font-size:10px;}
 .corral-title{color:#ff8bea;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;}
-.corral-strength{display:flex;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
-.corral-strength input{width:110px;accent-color:#ff2bd6;}
-.corral-strength output{min-width:34px;color:#ffc4f4;font-variant-numeric:tabular-nums;}
 .corral-toggle{display:flex;align-items:center;gap:5px;color:var(--ink-1);font-size:10px;white-space:nowrap;}
-.corral-drawers{display:grid;grid-template-columns:1fr 1fr;align-items:start;width:100%;border-top:1px solid rgba(255,255,255,.06);}
-.corral-drawer{display:flex;flex-direction:column;min-width:0;}
-.corral-drawer:first-child{border-right:1px solid rgba(255,255,255,.06);}
-.corral-drawer-content{display:none;flex-direction:column;gap:9px;max-height:min(52vh,430px);padding:10px;overflow:auto;background:rgba(7,9,15,.42);}
-.corral-drawer.open .corral-drawer-content{display:flex;}
-.corral-drawer-tab{align-self:stretch;min-height:25px;padding:3px 8px;border:0;border-top:1px solid rgba(255,255,255,.08);border-radius:0 0 12px 12px;background:rgba(255,255,255,.055);color:#d8b4d1;font-size:10px;font-weight:700;cursor:pointer;}
-.corral-drawer-tab:hover{background:rgba(255,43,214,.12);color:#ffd8f7;}
 .corral-setting{display:grid;grid-template-columns:minmax(92px,1fr) 112px 42px;align-items:center;gap:7px;color:var(--ink-1);font-size:10px;}
 .corral-setting input[type="range"]{width:112px;accent-color:#ff2bd6;}
 .corral-setting output{color:#ffc4f4;text-align:right;font-variant-numeric:tabular-nums;}
@@ -421,8 +411,13 @@ body.overlays-collapsed #simHud,body.overlays-collapsed #simPlaybackBar,body.ove
 .corral-file-item{padding:5px 7px;text-align:left;border:0;border-radius:5px;background:transparent;color:var(--ink-1);font-size:10px;cursor:pointer;}
 .corral-file-item:hover{background:rgba(255,43,214,.1);color:#ffd8f7;}
 .corral-file-status{font-size:9px;color:#8994a8;line-height:1.35;}
+#corralPanel .corral-toggle{justify-content:flex-start;}
+#corralPanel .corral-setting{grid-template-columns:minmax(104px,1fr) minmax(132px,1fr) 52px;}
+#corralPanel .corral-setting input[type="range"]{width:100%;}
+#corralPanel .corral-setting select,#corralPanel .corral-file-name,#corralPanel .corral-path-input{width:100%;}
+#corralPanel .corral-drawer-row > *{flex:1 1 140px;}
 #corralBtn.active{background:linear-gradient(135deg,#bd299f,#f044cc);border-color:rgba(255,107,224,.55);color:#fff;box-shadow:0 0 10px rgba(255,43,214,.3);}
-@media (max-width:760px){#corralHud{max-width:calc(100vw - 88px)}.corral-drawers{grid-template-columns:1fr}.corral-drawer:first-child{border-right:0;border-bottom:1px solid rgba(255,255,255,.06)}.corral-drawer-content{max-height:38vh}.corral-toolbar-label{display:none}}
+@media (max-width:760px){#corralHud{left:128px;padding:0 10px}.corral-toolbar-label{display:none}}
 #simPlaybackBar{position:fixed;left:50%;bottom:calc(var(--status-h) + 14px);transform:translate(-50%,12px);z-index:19;display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:min(94vw,960px);padding:9px 12px;border:1px solid var(--line-0);border-radius:16px;background:rgba(14,18,28,0.92);backdrop-filter:blur(18px);box-shadow:var(--shadow-lg);}
 #simPlaybackBar.open{display:flex;transform:translate(-50%,0);}
 #simPlaybackBar .sim-pill{min-height:36px;padding-inline:12px;}
@@ -1254,84 +1249,36 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <div id="corralHud" aria-label="Corral controls">
   <div class="corral-card">
-    <div class="corral-main">
-      <div class="corral-header">
+    <div class="corral-main" id="corralHudBody">
+      <div class="corral-toolbar-group" aria-label="Corral visibility">
         <span class="corral-title">Corral</span>
-        <div class="corral-header-actions">
-          <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
-        </div>
+        <button class="sim-pill" id="corralVisibilityBtn" type="button" aria-pressed="false">Hide Corral</button>
       </div>
-      <div class="corral-body" id="corralHudBody">
-        <div class="corral-toolbar-group" aria-label="Corral path tools">
-          <span class="corral-toolbar-label">Path</span>
-          <button class="sim-pill active" id="corralDrawBtn" type="button">Draw</button>
-          <button class="sim-pill" id="corralEditBtn" type="button">Edit points</button>
-          <button class="sim-pill" id="corralAddPointBtn" type="button">Add point</button>
-          <button class="sim-pill warn" id="corralDeletePointBtn" type="button">Delete point</button>
-          <select class="corral-segment-select" id="corralSegmentType" aria-label="Selected segment type">
-            <option value="line">Line</option>
-            <option value="curve">Curve</option>
-            <option value="spline" selected>Spline</option>
-          </select>
-        </div>
-        <div class="corral-toolbar-group" aria-label="Corral edit actions">
-          <span class="corral-toolbar-label">Edit</span>
-          <button class="sim-pill" id="corralUndoBtn" type="button" disabled>↩ Undo</button>
-          <button class="sim-pill" id="corralRedoBtn" type="button" disabled>↪ Redo</button>
-          <button class="sim-pill" id="corralCopyBtn" type="button">Copy</button>
-          <button class="sim-pill" id="corralPasteBtn" type="button" disabled>Paste</button>
-        </div>
-        <div class="corral-toolbar-group" aria-label="Corral simulation actions">
-          <span class="corral-toolbar-label">Corral</span>
-          <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
-          <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
-          <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
-        </div>
+      <div class="corral-toolbar-group" aria-label="Corral path tools">
+        <span class="corral-toolbar-label">Path</span>
+        <button class="sim-pill active" id="corralDrawBtn" type="button">Draw</button>
+        <button class="sim-pill" id="corralEditBtn" type="button">Edit points</button>
+        <button class="sim-pill" id="corralAddPointBtn" type="button">Add point</button>
+        <button class="sim-pill warn" id="corralDeletePointBtn" type="button">Delete point</button>
+        <select class="corral-segment-select" id="corralSegmentType" aria-label="Selected segment type">
+          <option value="line">Line</option>
+          <option value="curve">Curve</option>
+          <option value="spline" selected>Spline</option>
+        </select>
       </div>
-    </div>
-    <div class="corral-drawers">
-      <section class="corral-drawer" id="corralPhysicsDrawer">
-        <div class="corral-drawer-content">
-          <label class="corral-toggle"><input id="corralHardEdge" type="checkbox" checked> Hard edge containment</label>
-          <label class="corral-setting"><span>Interaction</span><select id="corralInteractionMode"><option value="contain">Contain inside</option><option value="attract">Attract to edge</option><option value="exclude">Exclude interior</option></select><output></output></label>
-          <label class="corral-setting"><span>Repulsion force</span><input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100"><output id="corralEdgeStrengthValue">1.00</output></label>
-          <label class="corral-setting"><span>Repulsion radius</span><input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32"><output id="corralRepulsionRadiusValue">32px</output></label>
-          <label class="corral-setting"><span>Midpoint force</span><input id="corralMidpointForce" type="range" min="0" max="150" step="1" value="50"><output id="corralMidpointForceValue">50%</output></label>
-          <label class="corral-setting"><span>Tangential force</span><input id="corralTangentialForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralTangentialForceValue">0.00</output></label>
-          <label class="corral-setting"><span>Center force</span><input id="corralCenterForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralCenterForceValue">0.00</output></label>
-          <label class="corral-setting"><span>Force noise</span><input id="corralForceNoise" type="range" min="0" max="200" step="1" value="0"><output id="corralForceNoiseValue">0.00</output></label>
-          <label class="corral-setting"><span>Bounce</span><input id="corralRestitution" type="range" min="0" max="150" step="1" value="100"><output id="corralRestitutionValue">1.00</output></label>
-          <label class="corral-setting"><span>Speed limit</span><input id="corralMaxSpeed" type="range" min="0" max="500" step="1" value="0"><output id="corralMaxSpeedValue">Off</output></label>
-          <label class="corral-setting"><span>Normal damping</span><input id="corralNormalDamping" type="range" min="0" max="100" step="1" value="0"><output id="corralNormalDampingValue">0%</output></label>
-          <label class="corral-setting"><span>Edge friction</span><input id="corralTangentialFriction" type="range" min="0" max="100" step="1" value="0"><output id="corralTangentialFrictionValue">0%</output></label>
-          <label class="corral-setting"><span>Shape smoothing</span><input id="corralShapeSmoothing" type="range" min="0" max="3" step="1" value="2"><output id="corralShapeSmoothingValue">2</output></label>
-          <label class="corral-setting"><span>Falloff</span><select id="corralFalloff"><option value="smooth">Smooth</option><option value="linear">Linear</option><option value="quadratic">Quadratic</option></select><output></output></label>
-        </div>
-        <button class="corral-drawer-tab" id="corralPhysicsDrawerTab" type="button" aria-expanded="false" aria-controls="corralPhysicsDrawer">Physics ▼</button>
-      </section>
-      <section class="corral-drawer" id="corralSvgDrawer">
-        <div class="corral-drawer-content">
-          <textarea class="corral-path-input" id="corralSvgPathInput" placeholder="Closed SVG path data, e.g. M 0 0 L 100 0 L 100 100 Z" aria-label="SVG path data"></textarea>
-          <div class="corral-drawer-row">
-            <button class="sim-pill" id="corralApplyPathBtn" type="button">Apply Path</button>
-            <button class="sim-pill" id="corralLoadBtn" type="button">Import SVG</button>
-            <button class="sim-pill" id="corralExportBtn" type="button">Download SVG</button>
-          </div>
-          <div class="corral-drawer-row">
-            <button class="sim-pill" id="corralChooseDirectoryBtn" type="button">Choose Folder</button>
-            <button class="sim-pill" id="corralReconnectDirectoryBtn" type="button">Reconnect</button>
-            <button class="sim-pill" id="corralRefreshDirectoryBtn" type="button">Refresh</button>
-          </div>
-          <div class="corral-file-tree" id="corralFileTree" aria-label="Corral SVG files"></div>
-          <div class="corral-drawer-row">
-            <input class="corral-file-name" id="corralFileName" type="text" value="boid-corral.svg" aria-label="SVG filename">
-            <button class="sim-pill" id="corralSaveToDirectoryBtn" type="button">Save to Folder</button>
-          </div>
-          <div class="corral-file-status" id="corralFileStatus">Choose a folder for quick SVG access. Browser permission is requested only when you click.</div>
-          <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
-        </div>
-        <button class="corral-drawer-tab" id="corralSvgDrawerTab" type="button" aria-expanded="false" aria-controls="corralSvgDrawer">SVG &amp; Files ▼</button>
-      </section>
+      <div class="corral-toolbar-group" aria-label="Corral edit actions">
+        <span class="corral-toolbar-label">Edit</span>
+        <button class="sim-pill" id="corralUndoBtn" type="button" disabled>↩ Undo</button>
+        <button class="sim-pill" id="corralRedoBtn" type="button" disabled>↪ Redo</button>
+        <button class="sim-pill" id="corralCopyBtn" type="button">Copy</button>
+        <button class="sim-pill" id="corralPasteBtn" type="button" disabled>Paste</button>
+      </div>
+      <div class="corral-toolbar-group" aria-label="Corral simulation actions">
+        <span class="corral-toolbar-label">Corral</span>
+        <button class="sim-pill" id="corralResetBtn" type="button" title="Clear and redraw the corral">Reset</button>
+        <button class="sim-pill" id="corralExitBtn" type="button" title="Leave corral drawing">Exit</button>
+        <label class="corral-toggle"><input id="corralEnabled" type="checkbox" checked> Enabled</label>
+      </div>
     </div>
   </div>
 </div>
@@ -1420,6 +1367,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <button class="panel-tab panel-tab--favorites" data-panel-view="favorites" data-panel-target="rightPanel">★</button>
   <button class="panel-tab active" data-panel-view="brush" data-panel-target="rightPanel">Brush</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="boid" data-panel-target="rightPanel">Boid</button>
+  <button class="panel-tab panel-tab-hidden" data-panel-view="corral" data-panel-target="rightPanel">Corral</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="simulation" data-panel-target="rightPanel">Simulation</button>
   <button class="panel-tab" data-panel-view="settings" data-panel-target="rightPanel">Settings</button>
   <button class="panel-tab panel-tab-hidden" data-panel-view="json" data-panel-target="rightPanel">JSON</button>
@@ -1428,6 +1376,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   <div id="favoritesPanel" class="panel-view" data-panel-view="favorites"></div>
   <div id="sidebar" class="panel-view active" data-panel-view="brush"></div>
   <div id="boidPanel" class="panel-view" data-panel-view="boid"></div>
+  <div id="corralPanel" class="panel-view" data-panel-view="corral"></div>
   <div id="simOverlaySidebar" class="panel-view" data-panel-view="simulation"></div>
   <div id="settingsPanel" class="panel-view" data-panel-view="settings"></div>
   <div id="jsonPanel" class="panel-view" data-panel-view="json">
@@ -2037,7 +1986,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-14-boid-variance-subsettings';
+const assetVersion = '2026-09-14-corral-panel-toolbar';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

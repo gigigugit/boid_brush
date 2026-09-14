@@ -2901,6 +2901,62 @@ export function buildBoidPanel(app) {
   syncBoidPanel();
 }
 
+export function buildCorralPanel(app) {
+  const panel = document.getElementById('corralPanel');
+  if (!panel) return;
+  const physicsOpen = !!app?.corral?.physicsDrawerOpen;
+  const svgOpen = !!app?.corral?.svgDrawerOpen;
+  panel.innerHTML = `
+    <div class="sim-card">
+      <div class="sim-hud-header">
+        <div class="sim-label">Corral</div>
+      </div>
+      <div class="sim-hud-body">
+        <span class="slider-desc">Physics and SVG tools below edit the same corral state used by the overlay toolbar, session restore, and workspace save/open flows.</span>
+
+        <div class="section-header${physicsOpen ? '' : ' closed'}" id="corralPhysicsDrawerTab" data-section="corralPhysics" role="button" tabindex="0" aria-expanded="${physicsOpen ? 'true' : 'false'}" aria-controls="corralPhysicsDrawer">Physics <span class="chevron">▼</span></div>
+        <div class="section-body${physicsOpen ? '' : ' collapsed'}" id="corralPhysicsDrawer">
+          <label class="corral-toggle"><input id="corralHardEdge" type="checkbox" checked> Hard edge containment</label>
+          <label class="corral-setting"><span>Interaction</span><select id="corralInteractionMode"><option value="contain">Contain inside</option><option value="attract">Attract to edge</option><option value="exclude">Exclude interior</option></select><output></output></label>
+          <label class="corral-setting"><span>Repulsion force</span><input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100"><output id="corralEdgeStrengthValue">1.00</output></label>
+          <label class="corral-setting"><span>Repulsion radius</span><input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32"><output id="corralRepulsionRadiusValue">32px</output></label>
+          <label class="corral-setting"><span>Midpoint force</span><input id="corralMidpointForce" type="range" min="0" max="150" step="1" value="50"><output id="corralMidpointForceValue">50%</output></label>
+          <label class="corral-setting"><span>Tangential force</span><input id="corralTangentialForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralTangentialForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Center force</span><input id="corralCenterForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralCenterForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Force noise</span><input id="corralForceNoise" type="range" min="0" max="200" step="1" value="0"><output id="corralForceNoiseValue">0.00</output></label>
+          <label class="corral-setting"><span>Bounce</span><input id="corralRestitution" type="range" min="0" max="150" step="1" value="100"><output id="corralRestitutionValue">1.00</output></label>
+          <label class="corral-setting"><span>Speed limit</span><input id="corralMaxSpeed" type="range" min="0" max="500" step="1" value="0"><output id="corralMaxSpeedValue">Off</output></label>
+          <label class="corral-setting"><span>Normal damping</span><input id="corralNormalDamping" type="range" min="0" max="100" step="1" value="0"><output id="corralNormalDampingValue">0%</output></label>
+          <label class="corral-setting"><span>Edge friction</span><input id="corralTangentialFriction" type="range" min="0" max="100" step="1" value="0"><output id="corralTangentialFrictionValue">0%</output></label>
+          <label class="corral-setting"><span>Shape smoothing</span><input id="corralShapeSmoothing" type="range" min="0" max="3" step="1" value="2"><output id="corralShapeSmoothingValue">2</output></label>
+          <label class="corral-setting"><span>Falloff</span><select id="corralFalloff"><option value="smooth">Smooth</option><option value="linear">Linear</option><option value="quadratic">Quadratic</option></select><output></output></label>
+        </div>
+
+        <div class="section-header${svgOpen ? '' : ' closed'}" id="corralSvgDrawerTab" data-section="corralSvg" role="button" tabindex="0" aria-expanded="${svgOpen ? 'true' : 'false'}" aria-controls="corralSvgDrawer">SVG &amp; Files <span class="chevron">▼</span></div>
+        <div class="section-body${svgOpen ? '' : ' collapsed'}" id="corralSvgDrawer">
+          <textarea class="corral-path-input" id="corralSvgPathInput" placeholder="Closed SVG path data, e.g. M 0 0 L 100 0 L 100 100 Z" aria-label="SVG path data"></textarea>
+          <div class="corral-drawer-row">
+            <button class="sim-pill" id="corralApplyPathBtn" type="button">Apply Path</button>
+            <button class="sim-pill" id="corralLoadBtn" type="button">Import SVG</button>
+            <button class="sim-pill" id="corralExportBtn" type="button">Download SVG</button>
+          </div>
+          <div class="corral-drawer-row">
+            <button class="sim-pill" id="corralChooseDirectoryBtn" type="button">Choose Folder</button>
+            <button class="sim-pill" id="corralReconnectDirectoryBtn" type="button">Reconnect</button>
+            <button class="sim-pill" id="corralRefreshDirectoryBtn" type="button">Refresh</button>
+          </div>
+          <div class="corral-file-tree" id="corralFileTree" aria-label="Corral SVG files"></div>
+          <div class="corral-drawer-row">
+            <input class="corral-file-name" id="corralFileName" type="text" value="boid-corral.svg" aria-label="SVG filename">
+            <button class="sim-pill" id="corralSaveToDirectoryBtn" type="button">Save to Folder</button>
+          </div>
+          <div class="corral-file-status" id="corralFileStatus">Choose a folder for quick SVG access. Browser permission is requested only when you click.</div>
+          <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
+        </div>
+      </div>
+    </div>`;
+}
+
 export function buildSimulationControlsPanel(app) {
   const panel = document.getElementById('simulationControlsPanel');
   if (!panel) return;

@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
-const [html, app] = await Promise.all([
+const [html, app, ui] = await Promise.all([
   readFile(new URL('app.html', root), 'utf8'),
   readFile(new URL('app.js', root), 'utf8'),
+  readFile(new URL('ui.js', root), 'utf8'),
 ]);
 
 test('one global control collapses every simulation and corral overlay', () => {
@@ -19,17 +20,18 @@ test('one global control collapses every simulation and corral overlay', () => {
   assert.doesNotMatch(html, /id="simHudCollapseBtn"/);
 });
 
-test('corral toolbar is centered, single-line, and below panel tabs', () => {
-  assert.match(html, /#corralHud\{[^}]*left:50%;[^}]*z-index:19;[^}]*transform:translateX\(-50%\)/);
-  assert.match(html, /\.corral-main\{[^}]*justify-content:center;[^}]*overflow-x:auto/);
-  assert.match(html, /\.corral-body\{[^}]*flex-wrap:nowrap/);
+test('corral overlay is a horizontal toolbar directly below the top bar', () => {
+  assert.match(html, /#corralHud\{[^}]*left:150px;[^}]*right:0;[^}]*top:calc\(var\(--topbar-h\) \+ 8px\)/);
+  assert.match(html, /\.corral-card\{[^}]*width:100%/);
+  assert.match(html, /\.corral-main\{[^}]*align-items:center;[^}]*overflow-x:auto;[^}]*white-space:nowrap/);
   assert.match(html, /\.panel-tabs\{[^}]*z-index:21/);
+  assert.doesNotMatch(html, /class="corral-drawers"/);
 });
 
 test('corral control delivery uses a build-matched current cache token', () => {
   const assetVersion = html.match(/const assetVersion = '([^']+)'/)?.[1];
   const appBuildId = app.match(/const APP_BUILD_ID = '([^']+)'/)?.[1];
-  assert.equal(assetVersion, '2026-09-14-boid-variance-subsettings');
+  assert.equal(assetVersion, '2026-09-14-corral-panel-toolbar');
   assert.equal(appBuildId, assetVersion);
 });
 
@@ -78,16 +80,21 @@ test('hiding the boundary does not disable containment', () => {
 });
 
 test('corral exposes and persists an independent repulsion radius', () => {
-  assert.match(html, /id="corralRepulsionRadius"[^>]*min="0" max="150"[^>]*value="32"/);
+  assert.match(ui, /id="corralRepulsionRadius"[^>]*min="0" max="150"[^>]*value="32"/);
   assert.match(app, /corralRepulsionRadius: this\.corral\.repulsionRadius/);
   assert.match(app, /controls\.corralRepulsionRadius = Math\.round\(this\.corral\.repulsionRadius\)/);
   assert.match(app, /id === 'corralRepulsionRadius'/);
 });
 
-test('corral has two attached moving-tab drawers with advanced controls', () => {
-  assert.match(html, /id="corralPhysicsDrawerTab"[^>]*aria-expanded="false"/);
-  assert.match(html, /id="corralSvgDrawerTab"[^>]*aria-expanded="false"/);
-  assert.match(app, /tab\.textContent = `\$\{label\} \$\{open \? '▲' : '▼'\}`/);
+test('corral panel keeps the existing physics and SVG controls under persisted sections', () => {
+  assert.match(ui, /id="corralPhysicsDrawerTab"[^>]*aria-expanded="\$\{physicsOpen \? 'true' : 'false'\}"/);
+  assert.match(ui, /id="corralSvgDrawerTab"[^>]*aria-expanded="\$\{svgOpen \? 'true' : 'false'\}"/);
+  assert.match(ui, /id="corralPhysicsDrawerTab"[^>]*role="button" tabindex="0"/);
+  assert.match(app, /if \(event\.key !== 'Enter' && event\.key !== ' '\) return/);
+  assert.match(app, /drawer\?\.classList\.toggle\('collapsed', !open\)/);
+  assert.match(app, /tab\.classList\.toggle\('closed', !open\)/);
+  assert.match(app, /controls\.corralPhysicsDrawerOpen = this\.corral\.physicsDrawerOpen/);
+  assert.match(app, /controls\.corralSvgDrawerOpen = this\.corral\.svgDrawerOpen/);
   for (const id of [
     'corralHardEdge',
     'corralMidpointForce',
@@ -101,7 +108,7 @@ test('corral has two attached moving-tab drawers with advanced controls', () => 
     'corralForceNoise',
     'corralRestitution',
     'corralMaxSpeed',
-  ]) assert.match(html, new RegExp(`id="${id}"`));
+  ]) assert.match(ui, new RegExp(`id="${id}"`));
 });
 
 test('additional corral interactions flow through params and session state', () => {
@@ -117,10 +124,10 @@ test('additional corral interactions flow through params and session state', () 
   }
 });
 
-test('SVG drawer supports path entry and permission-based folder browsing', () => {
-  assert.match(html, /id="corralSvgPathInput"/);
-  assert.match(html, /id="corralChooseDirectoryBtn"/);
-  assert.match(html, /id="corralFileTree"/);
-  assert.match(html, /id="corralSaveToDirectoryBtn"/);
+test('corral SVG section supports path entry and permission-based folder browsing', () => {
+  assert.match(ui, /id="corralSvgPathInput"/);
+  assert.match(ui, /id="corralChooseDirectoryBtn"/);
+  assert.match(ui, /id="corralFileTree"/);
+  assert.match(ui, /id="corralSaveToDirectoryBtn"/);
   assert.match(app, /new CorralFileWorkspace\(\)/);
 });

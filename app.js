@@ -7,7 +7,7 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildBoidPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, syncBoidPanel, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
+import { buildSidebar, buildBoidPanel, buildCorralPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, syncBoidPanel, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-14-corral-panel-toolbar';
 import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
@@ -32,7 +32,7 @@ import {
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-14-boid-variance-subsettings';
+const APP_BUILD_ID = '2026-09-14-corral-panel-toolbar';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
@@ -2764,6 +2764,7 @@ export class App {
     // Sidebar UI
     buildSidebar(this);
     buildBoidPanel(this);
+    buildCorralPanel(this);
     buildFavoritesPanel(this);
     buildSettingsPanel(this);
     buildLayersPanel(this);
@@ -17037,16 +17038,18 @@ export class App {
       const shouldShow = allowed.includes(brush);
       el.classList.toggle('brush-hidden', !shouldShow);
     });
-    const boidTab = document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="boid"]');
-    const boidPanel = document.getElementById('boidPanel');
     const visible = brush === 'boid';
-    boidTab?.classList.toggle('panel-tab-hidden', !visible);
-    if (!visible && boidTab?.classList.contains('active')) {
-      boidTab.classList.remove('active');
-      boidPanel?.classList.remove('active');
-      document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]')?.classList.add('active');
-      document.getElementById('sidebar')?.classList.add('active');
-    }
+    ['boid', 'corral'].forEach(viewName => {
+      const tab = document.querySelector(`#rightPanelTabs .panel-tab[data-panel-view="${viewName}"]`);
+      const panel = document.querySelector(`#rightPanel .panel-view[data-panel-view="${viewName}"]`);
+      tab?.classList.toggle('panel-tab-hidden', !visible);
+      if (!visible && tab?.classList.contains('active')) {
+        tab.classList.remove('active');
+        panel?.classList.remove('active');
+        document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]')?.classList.add('active');
+        document.getElementById('sidebar')?.classList.add('active');
+      }
+    });
   }
 
   getCurrentBrush() { return this.brushes[this.activeBrush]; }
@@ -17188,10 +17191,9 @@ export class App {
     const open = isPhysics ? this.corral.physicsDrawerOpen : this.corral.svgDrawerOpen;
     const drawer = document.getElementById(isPhysics ? 'corralPhysicsDrawer' : 'corralSvgDrawer');
     const tab = document.getElementById(isPhysics ? 'corralPhysicsDrawerTab' : 'corralSvgDrawerTab');
-    const label = isPhysics ? 'Physics' : 'SVG & Files';
-    drawer?.classList.toggle('open', open);
+    drawer?.classList.toggle('collapsed', !open);
     if (tab) {
-      tab.textContent = `${label} ${open ? '▲' : '▼'}`;
+      tab.classList.toggle('closed', !open);
       tab.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
   }
@@ -17732,8 +17734,17 @@ export class App {
       this.saveSession();
       this._syncCorralUI();
     });
-    document.getElementById('corralPhysicsDrawerTab')?.addEventListener('click', () => this._toggleCorralDrawer('physics'));
-    document.getElementById('corralSvgDrawerTab')?.addEventListener('click', () => this._toggleCorralDrawer('svg'));
+    const bindCorralSectionToggle = (id, name) => {
+      const toggle = document.getElementById(id);
+      toggle?.addEventListener('click', () => this._toggleCorralDrawer(name));
+      toggle?.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        this._toggleCorralDrawer(name);
+      });
+    };
+    bindCorralSectionToggle('corralPhysicsDrawerTab', 'physics');
+    bindCorralSectionToggle('corralSvgDrawerTab', 'svg');
     document.getElementById('corralResetBtn')?.addEventListener('click', () => this._resetCorral());
     document.getElementById('corralExitBtn')?.addEventListener('click', () => this._toggleCorralEditor(false));
     document.getElementById('corralExportBtn')?.addEventListener('click', () => this._exportCorralSvg());
