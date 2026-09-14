@@ -7,7 +7,7 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildBoidPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
+import { buildSidebar, buildBoidPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, syncBoidPanel, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
 import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
@@ -10606,7 +10606,7 @@ export class App {
                     <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="layers">
                       ${layerOptions.map(option => `
                         <label>
-                          <input type="checkbox" data-sim-setup-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.layerIds.includes(option.id) ? 'checked' : ''}>
+                          <input type="checkbox" data-sim-setup-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.layerIds.includes(String(option.id)) ? 'checked' : ''}>
                           <span>${_escapeHtml(option.label)}</span>
                         </label>`).join('')}
                     </div>
@@ -10631,7 +10631,7 @@ export class App {
                     <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="sensing">
                       ${sensingLayerOptions.map(option => `
                         <label>
-                          <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(option.id) ? 'checked' : ''}>
+                          <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(String(option.id)) ? 'checked' : ''}>
                           <span>${_escapeHtml(option.label)}</span>
                         </label>`).join('')}
                     </div>
@@ -11991,8 +11991,8 @@ export class App {
             const playbackStatus = this._getSimulationSavedPlaybackStatus(session);
             const playbackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
             const normalizedLayerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
-            const selectedLayerIdSet = new Set(normalizedLayerIds);
-            const selectedSensingLayerSet = new Set(row.sensingLayerIds);
+            const selectedLayerIdSet = new Set(normalizedLayerIds.map(id => String(id)));
+            const selectedSensingLayerSet = new Set(_normalizeSimulationSensingSourceSelection(row.sensingLayerIds));
             const routeCount = normalizedLayerIds.length;
             const routeSummary = this._buildSimulationSetupLayerSummary(normalizedLayerIds, row.sessionIndex);
             const sensingSummary = this._buildSimulationSetupSensingSummary(row);
@@ -12029,7 +12029,7 @@ export class App {
                     <div class="sim-stage-field-label">Target Layer(s)</div>
                     <div class="sim-stage-checklist">
                       ${stageLayerOptions.map(layer => {
-                        const checked = selectedLayerIdSet.has(layer.id);
+                        const checked = selectedLayerIdSet.has(String(layer.id));
                         return `
                           <label class="sim-stage-check">
                             <input type="checkbox" data-sim-stage-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''}>
@@ -12058,7 +12058,7 @@ export class App {
                     <div class="sim-stage-field-label">Selected Sensing Layers</div>
                     <div class="sim-stage-checklist">
                       ${sensingLayerOptions.map(layer => {
-                        const checked = selectedSensingLayerSet.has(layer.id);
+                        const checked = selectedSensingLayerSet.has(String(layer.id));
                         return `
                           <label class="sim-stage-check">
                             <input type="checkbox" data-sim-stage-sensing-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''} ${sensingLayersDisabled ? 'disabled' : ''}>
@@ -21110,7 +21110,7 @@ export class App {
             <div class="sensing-rule-layer-list">
               ${layerOptions.map(option => `
                 <label>
-                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(option.id) ? 'checked' : ''}>
+                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(String(option.id)) ? 'checked' : ''}>
                   <span>${_escapeHtml(option.label)}</span>
                 </label>
               `).join('')}
@@ -21263,7 +21263,7 @@ export class App {
   _getSelectedSensingSourceLayers() {
     const selectedIds = this._serializeSensingSourceSelection();
     const selectedSet = new Set(selectedIds);
-    const layers = this.layers.filter(layer => selectedSet.has(layer.id));
+    const layers = this.layers.filter(layer => selectedSet.has(String(layer.id)));
     if (layers.length !== selectedIds.length) {
       this._setCurrentSensingSourceSelectionState(layers.map(layer => layer.id));
     }
@@ -21345,6 +21345,7 @@ export class App {
       this._renderSensingSourcePicker();
       if (this._sensingSourcePickerAnchor) this._positionSensingSourcePicker(this._sensingSourcePickerAnchor);
     }
+    syncBoidPanel();
   }
 
   _handleSensingSourceChange(nextSource, previousSource = 'below') {
@@ -21400,7 +21401,7 @@ export class App {
       id: layer.id,
       label: layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer'),
       meta: layer.isBackground ? 'Canvas background fill' : `${Math.round(layer.opacity * 100)}% • ${layer.visible ? 'visible' : 'hidden'}`,
-      checked: selected.has(layer.id),
+      checked: selected.has(String(layer.id)),
     }));
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
@@ -21566,14 +21567,14 @@ export class App {
         drawLayer(l);
       }
     } else if (src === 'selected') {
-      const selectedIds = new Set(
+      const selectedIds = new Set(_normalizeSimulationSensingSourceSelection(
         Array.isArray(override?.layerIds) && override.layerIds.length
           ? override.layerIds
           : this._serializeSensingSourceSelection()
-      );
+      ));
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
-        if (!selectedIds.has(l.id)) continue;
+        if (!selectedIds.has(String(l.id))) continue;
         drawLayer(l);
       }
     }

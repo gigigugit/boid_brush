@@ -2608,13 +2608,15 @@ export function buildSettingsPanel(app) {
 const BOID_PANEL_GROUPS = Object.freeze([
   ['Swarm', ['count', 'spawnRadius', 'spawnAngle', 'spawnJitter']],
   ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'flowField', 'flowScale']],
-  ['Radii & sensing', ['neighborRadius', 'separationRadius', 'fleeRadius', 'fov', 'sensingStrength', 'sensingRadius', 'sensingFitRadius', 'sensingThreshold']],
+  ['Radii', ['neighborRadius', 'separationRadius', 'fleeRadius', 'fov']],
   ['Motion', ['wanderSpeed', 'maxSpeed', 'damping']],
   ['Attributes', ['sizeVar', 'opacityVar', 'hueVar', 'satVar', 'litVar']],
   ['Legacy aggregate variance', ['individuality', 'speedVar', 'forceVar']],
   ['Independent variance', BOID_VARIANCE_FIELDS.map(field => field.controlId)],
   ['Leaders', ['leaderCount', 'leaderPull', ...LEADER_OVERRIDE_FIELDS.flatMap(field => [field.overrideId, field.id]), ...BOID_VARIANCE_FIELDS.flatMap(field => [field.leaderOverrideId, field.leaderControlId])]],
 ]);
+
+let _boidPanelApp = null;
 
 function _boidControlLabel(source) {
   const label = source.closest('label');
@@ -2636,6 +2638,107 @@ function _boidProxyMarkup(source) {
   return `<label>${escapeHtml(_boidControlLabel(source))}<span data-boid-value="${source.id}">${fmt ? fmt(value) : escapeHtml(source.value)}</span><input type="${source.type}" ${attrs} min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}></label>`;
 }
 
+function _boidSensingSliderMarkup(id, label) {
+  const source = document.getElementById(id);
+  if (!source) return '';
+  const fmt = _sliderFormats[id];
+  const value = Number(source.value);
+  return `<label class="boid-sensing-slider">
+    <span>${label}</span>
+    <output data-boid-value="${id}">${fmt ? fmt(value) : escapeHtml(source.value)}</output>
+    <input type="range" data-boid-control="${id}" min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}>
+  </label>`;
+}
+
+function _boidSensingSourceRows(app) {
+  const selected = new Set((app?._serializeSensingSourceSelection?.() || []).map(id => String(id)));
+  return (app?.layers || []).map(layer => {
+    const id = String(layer.id);
+    const isSelected = selected.has(id);
+    const label = layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer');
+    const detail = layer.isBackground
+      ? 'Canvas background fill'
+      : `${Math.round((Number(layer.opacity) || 0) * 100)}% · ${layer.visible ? 'Visible' : 'Hidden'}`;
+    return `<button class="boid-sensing-source-row${isSelected ? ' is-selected' : ''}" type="button" role="checkbox" aria-checked="${isSelected ? 'true' : 'false'}" data-boid-sensing-layer-id="${escapeHtml(id)}">
+      <svg class="boid-sensing-check" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.25"></circle><path d="m6.1 10.1 2.45 2.45 5.35-5.35"></path></svg>
+      <span class="boid-sensing-source-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span>
+    </button>`;
+  }).join('');
+}
+
+function _boidSensingMarkup(app) {
+  const enabled = document.getElementById('sensingEnabled');
+  const mode = document.getElementById('sensingMode');
+  const source = document.getElementById('sensingSource');
+  if (!enabled || !mode || !source) return '';
+  const isAvoid = mode.value !== 'attract';
+  return `<div class="section-header" data-section="boidPanelSensing">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body boid-sensing-body">
+      <div class="boid-sensing-topline">
+        <span>Pixel sensing</span>
+        <label class="boid-tablet-switch">
+          <input type="checkbox" data-boid-control="sensingEnabled"${enabled.checked ? ' checked' : ''}>
+          <span class="boid-tablet-switch-track" aria-hidden="true"><span></span></span>
+          <span class="boid-tablet-switch-state">${enabled.checked ? 'On' : 'Off'}</span>
+        </label>
+      </div>
+      <div class="boid-sensing-response" role="group" aria-label="Sensing response">
+        <span>Response</span>
+        <div class="boid-sensing-mode-buttons">
+          <button type="button" class="${isAvoid ? 'active' : ''}" data-boid-sensing-mode="avoid" aria-pressed="${isAvoid ? 'true' : 'false'}">Avoid</button>
+          <button type="button" class="${isAvoid ? '' : 'active'}" data-boid-sensing-mode="attract" aria-pressed="${isAvoid ? 'false' : 'true'}">Attract</button>
+        </div>
+      </div>
+      <label class="boid-sensing-select">Channel
+        <select data-boid-control="sensingChannel">${Array.from(document.getElementById('sensingChannel')?.options || []).map(option =>
+          `<option value="${escapeHtml(option.value)}"${option.value === document.getElementById('sensingChannel')?.value ? ' selected' : ''}>${escapeHtml(option.textContent)}</option>`).join('')}</select>
+      </label>
+      <div class="boid-sensing-control-grid">
+        ${_boidSensingSliderMarkup('sensingStrength', 'Strength')}
+        ${_boidSensingSliderMarkup('sensingRadius', 'Detection Radius')}
+        ${_boidSensingSliderMarkup('sensingFitRadius', 'Fit Radius')}
+        ${_boidSensingSliderMarkup('sensingThreshold', 'Threshold')}
+        ${_boidSensingSliderMarkup('sensingUpdateFrames', 'Update Interval')}
+      </div>
+      <label class="boid-sensing-select">Source
+        <select data-boid-control="sensingSource">${Array.from(source.options).map(option =>
+          `<option value="${escapeHtml(option.value)}"${option.value === source.value ? ' selected' : ''}>${escapeHtml(option.textContent)}</option>`).join('')}</select>
+      </label>
+      <div class="boid-sensing-source-table" data-boid-sensing-source-table aria-label="Custom sensing source layers">
+        <div class="boid-sensing-source-table-title">Custom source layers <span>Multi-select</span></div>
+        <div data-boid-sensing-source-rows>${_boidSensingSourceRows(app)}</div>
+      </div>
+    </div>`;
+}
+
+function _syncBoidSensingUi() {
+  const panel = document.getElementById('boidPanel');
+  const app = _boidPanelApp;
+  if (!panel || !app) return;
+  const selected = new Set((app._serializeSensingSourceSelection?.() || []).map(id => String(id)));
+  panel.querySelectorAll('[data-boid-sensing-layer-id]').forEach(row => {
+    const isSelected = selected.has(String(row.dataset.boidSensingLayerId));
+    row.classList.toggle('is-selected', isSelected);
+    row.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+  });
+  const sourceRows = panel.querySelector('[data-boid-sensing-source-rows]');
+  const layerSignature = (app.layers || []).map(layer =>
+    `${String(layer.id)}:${layer.name || ''}:${layer.visible ? 1 : 0}:${Number(layer.opacity) || 0}:${layer.isBackground ? 1 : 0}`).join('|');
+  if (sourceRows && sourceRows.dataset.layerSignature !== layerSignature) {
+    sourceRows.dataset.layerSignature = layerSignature;
+    sourceRows.innerHTML = _boidSensingSourceRows(app);
+  }
+  const mode = document.getElementById('sensingMode')?.value;
+  panel.querySelectorAll('[data-boid-sensing-mode]').forEach(button => {
+    const isActive = button.dataset.boidSensingMode === mode;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  const enabled = document.getElementById('sensingEnabled')?.checked;
+  const enabledState = panel.querySelector('.boid-tablet-switch-state');
+  if (enabledState) enabledState.textContent = enabled ? 'On' : 'Off';
+}
+
 export function syncBoidPanel() {
   document.querySelectorAll('#boidPanel [data-boid-control]').forEach(proxy => {
     const source = document.getElementById(proxy.dataset.boidControl);
@@ -2647,11 +2750,13 @@ export function syncBoidPanel() {
     const fmt = _sliderFormats[source.id];
     if (value) value.textContent = fmt ? fmt(+source.value) : source.value;
   });
+  _syncBoidSensingUi();
 }
 
 export function buildBoidPanel(app) {
   const panel = document.getElementById('boidPanel');
   if (!panel) return;
+  _boidPanelApp = app;
   panel.innerHTML = `
     <div class="sim-card">
       <div class="sim-hud-header"><div class="sim-label">Boid Parameters</div></div>
@@ -2661,7 +2766,7 @@ export function buildBoidPanel(app) {
           const controls = ids.map(id => document.getElementById(id)).filter(Boolean);
           if (!controls.length) return '';
           return `<div class="section-header${index > 2 ? ' closed' : ''}" data-section="boidPanel${index}">${title} <span class="chevron">▼</span></div>
-            <div class="section-body${index > 2 ? ' collapsed' : ''}"><div class="boid-control-grid">${controls.map(_boidProxyMarkup).join('')}</div></div>`;
+            <div class="section-body${index > 2 ? ' collapsed' : ''}"><div class="boid-control-grid">${controls.map(_boidProxyMarkup).join('')}</div></div>${title === 'Radii' ? _boidSensingMarkup(app) : ''}`;
         }).join('')}
       </div>
     </div>`;
@@ -2678,7 +2783,46 @@ export function buildBoidPanel(app) {
     syncBoidPanel();
     app.invalidateParams();
   });
-  const canonicalIds = new Set(BOID_PANEL_GROUPS.flatMap(([, ids]) => ids));
+  panel.addEventListener('click', event => {
+    const modeButton = event.target.closest('[data-boid-sensing-mode]');
+    if (modeButton) {
+      const source = document.getElementById('sensingMode');
+      if (!source) return;
+      source.value = modeButton.dataset.boidSensingMode === 'attract' ? 'attract' : 'avoid';
+      source.dispatchEvent(new Event('input', { bubbles: true }));
+      source.dispatchEvent(new Event('change', { bubbles: true }));
+      syncBoidPanel();
+      app.invalidateParams();
+      return;
+    }
+    const layerRow = event.target.closest('[data-boid-sensing-layer-id]');
+    if (!layerRow) return;
+    const layerId = String(layerRow.dataset.boidSensingLayerId || '');
+    if (!layerId) return;
+    const source = document.getElementById('sensingSource');
+    const selected = new Set((app._serializeSensingSourceSelection?.() || []).map(id => String(id)));
+    if (selected.has(layerId)) selected.delete(layerId);
+    else selected.add(layerId);
+    if (source?.value !== 'selected') {
+      source.value = 'selected';
+      source.dispatchEvent(new Event('input', { bubbles: true }));
+      source.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    app._setSensingSourceSelection?.([...selected]);
+    syncBoidPanel();
+  });
+  const canonicalIds = new Set([
+    ...BOID_PANEL_GROUPS.flatMap(([, ids]) => ids),
+    'sensingEnabled',
+    'sensingMode',
+    'sensingChannel',
+    'sensingStrength',
+    'sensingRadius',
+    'sensingFitRadius',
+    'sensingThreshold',
+    'sensingUpdateFrames',
+    'sensingSource',
+  ]);
   canonicalIds.forEach(id => {
     const source = document.getElementById(id);
     source?.addEventListener('input', syncBoidPanel);

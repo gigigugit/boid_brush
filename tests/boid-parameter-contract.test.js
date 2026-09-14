@@ -9,6 +9,7 @@ import {
   readBoidVariances,
   writeBoidVariances,
 } from '../boid-parameter-contract.js';
+import { App } from '../app.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,4 +56,40 @@ test('dedicated Boid panel mirrors canonical radii instead of persisting panel c
   assert.match(ui, /\['am_neighborRadius', 'neighborRadius'\]/);
   assert.match(app, /neighborRadius: val\('neighborRadius'\)/);
   assert.doesNotMatch(app, /neighborRadius: val\('am_neighborRadius'\)/);
+});
+
+test('Boid sensing drawer uses canonical layer IDs for exact source highlighting', () => {
+  const app = Object.create(App.prototype);
+  app._simulationContextOverride = null;
+  app._sensingSourceSelection = ['3', 'missing-layer', '1'];
+  app.layers = [
+    { id: 1, name: 'Top' },
+    { id: 2, name: 'Middle' },
+    { id: 3, name: 'Bottom' },
+  ];
+
+  assert.deepEqual(
+    app._getSelectedSensingSourceLayers().map(layer => layer.id),
+    [1, 3],
+  );
+  assert.deepEqual(app._sensingSourceSelection, ['1', '3']);
+
+  const ui = fs.readFileSync(path.join(root, 'ui.js'), 'utf8');
+  const appSource = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+  assert.match(ui, /boid-tablet-switch/);
+  assert.match(ui, /data-boid-sensing-mode="avoid"/);
+  assert.match(ui, /Detection Radius/);
+  assert.match(ui, /Update Interval/);
+  assert.match(ui, /data-boid-sensing-layer-id/);
+  assert.match(ui, /<svg class="boid-sensing-check"/);
+  assert.match(appSource, /selectedSensingLayerSet\.has\(String\(layer\.id\)\)/);
+  assert.match(appSource, /selected\.has\(String\(layer\.id\)\)/);
+  assert.match(appSource, /rule\.layerIds\.includes\(String\(option\.id\)\)/);
+  assert.match(appSource, /selectedIds\.has\(String\(l\.id\)\)/);
+});
+
+test('Boid drawer removes section clipping and owns its vertical scroll', () => {
+  const html = fs.readFileSync(path.join(root, 'app.html'), 'utf8');
+  assert.match(html, /#boidPanel\{overflow:auto;\}/);
+  assert.match(html, /#boidPanel \.section-body:not\(\.collapsed\)\{max-height:none;\}/);
 });
