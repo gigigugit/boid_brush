@@ -2607,9 +2607,9 @@ export function buildSettingsPanel(app) {
 
 const BOID_PANEL_GROUPS = Object.freeze([
   ['Swarm', ['count', 'spawnRadius', 'spawnAngle', 'spawnJitter']],
-  ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'flowField', 'flowScale', 'quorumCompositeStrength']],
+  ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'wanderSpeed', 'flowField', 'flowScale', 'quorumCompositeStrength']],
   ['Radii', ['neighborRadius', 'separationRadius', 'fleeRadius', 'fov']],
-  ['Motion', ['wanderSpeed', 'maxSpeed', 'damping', 'simBoundsMargin']],
+  ['Motion', ['maxSpeed', 'damping', 'simBoundsMargin']],
   ['Attributes', ['sizeVar', 'opacityVar', 'hueVar', 'satVar', 'litVar']],
   ['Legacy aggregate variance', ['individuality', 'speedVar', 'forceVar']],
   // Consolidated advanced view: every independent-variance control in one

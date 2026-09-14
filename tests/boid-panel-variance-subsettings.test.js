@@ -26,6 +26,8 @@ test('every independent-variance field can resolve a subordinate sub-setting bes
   // groups must also be present, otherwise their variance rows would only be
   // reachable through the hidden advanced accordion.
   assert.match(ui, /\['Forces', \[[^\]]*'quorumCompositeStrength'\]\]/);
+  assert.match(ui, /\['Forces', \[[^\]]*'wanderSpeed'[^\]]*'quorumCompositeStrength'\]\]/);
+  assert.doesNotMatch(ui, /\['Motion', \[[^\]]*'wanderSpeed'/);
   assert.match(ui, /\['Motion', \[[^\]]*'simBoundsMargin'\]\]/);
   // Quorum remains governed by the existing alpha-feature visibility switch.
   assert.match(ui, /source\.closest\('\[data-alpha-feature\]'\)/);
