@@ -1245,10 +1245,15 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <section class="corral-drawer" id="corralPhysicsDrawer">
         <div class="corral-drawer-content">
           <label class="corral-toggle"><input id="corralHardEdge" type="checkbox" checked> Hard edge containment</label>
+          <label class="corral-setting"><span>Interaction</span><select id="corralInteractionMode"><option value="contain">Contain inside</option><option value="attract">Attract to edge</option><option value="exclude">Exclude interior</option></select><output></output></label>
           <label class="corral-setting"><span>Repulsion force</span><input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100"><output id="corralEdgeStrengthValue">1.00</output></label>
           <label class="corral-setting"><span>Repulsion radius</span><input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32"><output id="corralRepulsionRadiusValue">32px</output></label>
           <label class="corral-setting"><span>Midpoint force</span><input id="corralMidpointForce" type="range" min="0" max="150" step="1" value="50"><output id="corralMidpointForceValue">50%</output></label>
           <label class="corral-setting"><span>Tangential force</span><input id="corralTangentialForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralTangentialForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Center force</span><input id="corralCenterForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralCenterForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Force noise</span><input id="corralForceNoise" type="range" min="0" max="200" step="1" value="0"><output id="corralForceNoiseValue">0.00</output></label>
+          <label class="corral-setting"><span>Bounce</span><input id="corralRestitution" type="range" min="0" max="150" step="1" value="100"><output id="corralRestitutionValue">1.00</output></label>
+          <label class="corral-setting"><span>Speed limit</span><input id="corralMaxSpeed" type="range" min="0" max="500" step="1" value="0"><output id="corralMaxSpeedValue">Off</output></label>
           <label class="corral-setting"><span>Normal damping</span><input id="corralNormalDamping" type="range" min="0" max="100" step="1" value="0"><output id="corralNormalDampingValue">0%</output></label>
           <label class="corral-setting"><span>Edge friction</span><input id="corralTangentialFriction" type="range" min="0" max="100" step="1" value="0"><output id="corralTangentialFrictionValue">0%</output></label>
           <label class="corral-setting"><span>Shape smoothing</span><input id="corralShapeSmoothing" type="range" min="0" max="3" step="1" value="2"><output id="corralShapeSmoothingValue">2</output></label>
@@ -1982,7 +1987,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-13-unified-overlay-corral-editor';
+const assetVersion = '2026-09-14-corral-interactions';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

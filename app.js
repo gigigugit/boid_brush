@@ -31,7 +31,7 @@ import {
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-13-unified-overlay-corral-editor';
+const APP_BUILD_ID = '2026-09-14-corral-interactions';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
@@ -2251,8 +2251,13 @@ export class App {
       overlayCollapsed: false,
       edgeStrength: 1,
       repulsionRadius: 32,
+      interactionMode: 'contain',
       midpointForce: 0.5,
       tangentialForce: 0,
+      centerForce: 0,
+      forceNoise: 0,
+      restitution: 1,
+      maxSpeed: 0,
       normalDamping: 0,
       tangentialFriction: 0,
       hardEdge: true,
@@ -6208,8 +6213,13 @@ export class App {
       corralEnabled: this.activeBrush === 'boid' && this.corral.enabled && !!this.corral.compiled,
       corralEdgeStrength: this.corral.edgeStrength,
       corralRepulsionRadius: this.corral.repulsionRadius,
+      corralInteractionMode: this.corral.interactionMode,
       corralMidpointForce: this.corral.midpointForce,
       corralTangentialForce: this.corral.tangentialForce,
+      corralCenterForce: this.corral.centerForce,
+      corralForceNoise: this.corral.forceNoise,
+      corralRestitution: this.corral.restitution,
+      corralMaxSpeed: this.corral.maxSpeed,
       corralNormalDamping: this.corral.normalDamping,
       corralTangentialFriction: this.corral.tangentialFriction,
       corralHardEdge: this.corral.hardEdge,
@@ -17101,12 +17111,18 @@ export class App {
     };
     syncRange('corralMidpointForce', 'corralMidpointForceValue', Math.round(this.corral.midpointForce * 100), `${Math.round(this.corral.midpointForce * 100)}%`);
     syncRange('corralTangentialForce', 'corralTangentialForceValue', Math.round(this.corral.tangentialForce * 100), this.corral.tangentialForce.toFixed(2));
+    syncRange('corralCenterForce', 'corralCenterForceValue', Math.round(this.corral.centerForce * 100), this.corral.centerForce.toFixed(2));
+    syncRange('corralForceNoise', 'corralForceNoiseValue', Math.round(this.corral.forceNoise * 100), this.corral.forceNoise.toFixed(2));
+    syncRange('corralRestitution', 'corralRestitutionValue', Math.round(this.corral.restitution * 100), this.corral.restitution.toFixed(2));
+    syncRange('corralMaxSpeed', 'corralMaxSpeedValue', Math.round(this.corral.maxSpeed * 10), this.corral.maxSpeed > 0 ? this.corral.maxSpeed.toFixed(1) : 'Off');
     syncRange('corralNormalDamping', 'corralNormalDampingValue', Math.round(this.corral.normalDamping * 100), `${Math.round(this.corral.normalDamping * 100)}%`);
     syncRange('corralTangentialFriction', 'corralTangentialFrictionValue', Math.round(this.corral.tangentialFriction * 100), `${Math.round(this.corral.tangentialFriction * 100)}%`);
     syncRange('corralShapeSmoothing', 'corralShapeSmoothingValue', this.corral.shapeSmoothing, String(this.corral.shapeSmoothing));
     const hardEdge = document.getElementById('corralHardEdge');
+    const interactionMode = document.getElementById('corralInteractionMode');
     const falloff = document.getElementById('corralFalloff');
     if (hardEdge) hardEdge.checked = this.corral.hardEdge;
+    if (interactionMode) interactionMode.value = this.corral.interactionMode;
     if (falloff) falloff.value = this.corral.falloff;
     this._syncCorralDrawer('physics');
     this._syncCorralDrawer('svg');
@@ -17724,12 +17740,29 @@ export class App {
     };
     bindCorralPercent('corralMidpointForce', 'midpointForce', 0, 1.5);
     bindCorralPercent('corralTangentialForce', 'tangentialForce', -2, 2);
+    bindCorralPercent('corralCenterForce', 'centerForce', -2, 2);
+    bindCorralPercent('corralForceNoise', 'forceNoise', 0, 2);
+    bindCorralPercent('corralRestitution', 'restitution', 0, 1.5);
+    document.getElementById('corralMaxSpeed')?.addEventListener('input', event => {
+      this.corral.maxSpeed = Math.max(0, Math.min(50, (Number(event.target.value) || 0) / 10));
+      this.invalidateParams();
+      this._syncCorralUI();
+    });
+    document.getElementById('corralMaxSpeed')?.addEventListener('change', () => this.saveSession());
     bindCorralPercent('corralNormalDamping', 'normalDamping', 0, 1);
     bindCorralPercent('corralTangentialFriction', 'tangentialFriction', 0, 1);
     document.getElementById('corralHardEdge')?.addEventListener('change', event => {
       this.corral.hardEdge = !!event.target.checked;
       this.invalidateParams();
       this.saveSession();
+    });
+    document.getElementById('corralInteractionMode')?.addEventListener('change', event => {
+      this.corral.interactionMode = ['attract', 'exclude'].includes(event.target.value)
+        ? event.target.value
+        : 'contain';
+      this.invalidateParams();
+      this.saveSession();
+      this._syncCorralUI();
     });
     document.getElementById('corralFalloff')?.addEventListener('change', event => {
       this.corral.falloff = ['linear', 'quadratic'].includes(event.target.value) ? event.target.value : 'smooth';
@@ -21791,8 +21824,13 @@ export class App {
     controls.corralOverlayCollapsed = this.overlaysCollapsed;
     controls.corralEdgeStrength = Math.round(this.corral.edgeStrength * 100);
     controls.corralRepulsionRadius = Math.round(this.corral.repulsionRadius);
+    controls.corralInteractionMode = this.corral.interactionMode;
     controls.corralMidpointForce = Math.round(this.corral.midpointForce * 100);
     controls.corralTangentialForce = Math.round(this.corral.tangentialForce * 100);
+    controls.corralCenterForce = Math.round(this.corral.centerForce * 100);
+    controls.corralForceNoise = Math.round(this.corral.forceNoise * 100);
+    controls.corralRestitution = Math.round(this.corral.restitution * 100);
+    controls.corralMaxSpeed = Math.round(this.corral.maxSpeed * 10);
     controls.corralNormalDamping = Math.round(this.corral.normalDamping * 100);
     controls.corralTangentialFriction = Math.round(this.corral.tangentialFriction * 100);
     controls.corralHardEdge = this.corral.hardEdge;
@@ -22401,12 +22439,32 @@ export class App {
         if (input) input.value = String(value);
         continue;
       }
+      if (id === 'corralInteractionMode') {
+        this.corral.interactionMode = ['attract', 'exclude'].includes(val) ? val : 'contain';
+        continue;
+      }
       if (id === 'corralMidpointForce') {
         this.corral.midpointForce = Math.max(0, Math.min(1.5, (Number(val) || 0) / 100));
         continue;
       }
       if (id === 'corralTangentialForce') {
         this.corral.tangentialForce = Math.max(-2, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralCenterForce') {
+        this.corral.centerForce = Math.max(-2, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralForceNoise') {
+        this.corral.forceNoise = Math.max(0, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralRestitution') {
+        this.corral.restitution = Math.max(0, Math.min(1.5, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralMaxSpeed') {
+        this.corral.maxSpeed = Math.max(0, Math.min(50, (Number(val) || 0) / 10));
         continue;
       }
       if (id === 'corralNormalDamping') {

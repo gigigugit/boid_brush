@@ -145,6 +145,65 @@ test('hard edge can be disabled independently of interior repulsion', () => {
   assert.ok(buffer[2] < 0);
 });
 
+test('edge attraction pulls agents toward the boundary from either side', () => {
+    const compiled = compileCorral(square);
+    const inside = new Float32Array([90, 50, 0, 0]);
+    constrainAgentsToCorral({ buffer: inside, count: 1, stride: 4 }, compiled, {
+      interactionMode: 'attract',
+      edgeStrength: 1,
+      repulsionRadius: 20,
+    });
+    assert.ok(inside[2] > 0);
+    const outside = new Float32Array([110, 50, 0, 0]);
+    constrainAgentsToCorral({ buffer: outside, count: 1, stride: 4 }, compiled, {
+      interactionMode: 'attract',
+      edgeStrength: 1,
+      repulsionRadius: 20,
+    });
+    assert.ok(outside[2] < 0);
+    assert.equal(outside[0], 110);
+});
+
+test('exclusion projects interior agents outside and redirects them away', () => {
+    const compiled = compileCorral(square);
+    const buffer = new Float32Array([90, 50, -4, 0]);
+    constrainAgentsToCorral({ buffer, count: 1, stride: 4 }, compiled, {
+      interactionMode: 'exclude',
+      edgeStrength: 1,
+      repulsionRadius: 20,
+      restitution: 0.5,
+    });
+    assert.equal(pointInCorral(buffer[0], buffer[1], compiled.points), false);
+    assert.ok(buffer[2] > 0);
+});
+
+test('center force, force noise, restitution, and speed limit shape interactions', () => {
+    const compiled = compileCorral(square);
+    const centered = new Float32Array([20, 50, 0, 0]);
+    constrainAgentsToCorral({ buffer: centered, count: 1, stride: 4 }, compiled, {
+      edgeStrength: 0,
+      repulsionRadius: 0,
+      centerForce: 1,
+    });
+    assert.ok(centered[0] === 20 && centered[2] > 0);
+
+    const limited = new Float32Array([50, 50, 30, 40]);
+    constrainAgentsToCorral({ buffer: limited, count: 1, stride: 4 }, compiled, {
+      edgeStrength: 0,
+      repulsionRadius: 0,
+      maxSpeed: 5,
+    });
+    assert.ok(Math.abs(Math.hypot(limited[2], limited[3]) - 5) < 1e-6);
+
+    const noisy = new Float32Array([95, 40, 0, 0]);
+    constrainAgentsToCorral({ buffer: noisy, count: 1, stride: 4 }, compiled, {
+      edgeStrength: 0,
+      repulsionRadius: 20,
+      forceNoise: 1,
+    });
+    assert.notEqual(noisy[3], 0);
+});
+
 test('active corral uses synchronous simulation state', () => {
   assert.equal(isSupportedByGpu({ corralEnabled: true }), false);
   assert.equal(isSupportedByGpu({ corralEnabled: false }), true);

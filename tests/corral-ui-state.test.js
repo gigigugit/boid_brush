@@ -29,7 +29,7 @@ test('corral toolbar is centered, single-line, and below panel tabs', () => {
 test('corral control delivery uses a build-matched current cache token', () => {
   const assetVersion = html.match(/const assetVersion = '([^']+)'/)?.[1];
   const appBuildId = app.match(/const APP_BUILD_ID = '([^']+)'/)?.[1];
-  assert.equal(assetVersion, '2026-09-13-unified-overlay-corral-editor');
+  assert.equal(assetVersion, '2026-09-14-corral-interactions');
   assert.equal(appBuildId, assetVersion);
 });
 
@@ -96,7 +96,25 @@ test('corral has two attached moving-tab drawers with advanced controls', () => 
     'corralTangentialFriction',
     'corralShapeSmoothing',
     'corralFalloff',
+    'corralInteractionMode',
+    'corralCenterForce',
+    'corralForceNoise',
+    'corralRestitution',
+    'corralMaxSpeed',
   ]) assert.match(html, new RegExp(`id="${id}"`));
+});
+
+test('additional corral interactions flow through params and session state', () => {
+  for (const key of [
+    'InteractionMode',
+    'CenterForce',
+    'ForceNoise',
+    'Restitution',
+    'MaxSpeed',
+  ]) {
+    assert.match(app, new RegExp(`corral${key}: this\\.corral\\.`));
+    assert.match(app, new RegExp(`id === 'corral${key}'`));
+  }
 });
 
 test('SVG drawer supports path entry and permission-based folder browsing', () => {
