@@ -29,7 +29,7 @@ test('corral toolbar is centered, single-line, and below panel tabs', () => {
 test('corral control delivery uses a build-matched current cache token', () => {
   const assetVersion = html.match(/const assetVersion = '([^']+)'/)?.[1];
   const appBuildId = app.match(/const APP_BUILD_ID = '([^']+)'/)?.[1];
-  assert.equal(assetVersion, '2026-09-14-corral-interactions');
+  assert.equal(assetVersion, '2026-09-14-boid-variance-subsettings');
   assert.equal(appBuildId, assetVersion);
 });
 

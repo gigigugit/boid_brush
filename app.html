@@ -169,6 +169,13 @@ body:has(#boidPanel.active){--right-panel-open-w:min(92vw,520px);}
 .boid-control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;}
 .boid-control-grid label{display:grid!important;grid-template-columns:minmax(90px,1fr) auto;gap:4px 8px;white-space:normal!important;}
 .boid-control-grid input[type="range"]{grid-column:1/-1;width:100%!important;}
+.boid-control-with-variance{display:grid;gap:3px;min-width:0;}
+.boid-variance-subrow{margin:1px 0 2px 6px;padding:3px 0 1px 8px;border-left:2px solid rgba(255,255,255,.1);}
+.boid-variance-subrow label{color:var(--ink-3)!important;font-weight:500!important;}
+.boid-variance-subrow label span{font-size:10px;}
+.boid-variance-accordion-hidden{display:none!important;}
+.boid-variance-accordion-toggle{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:600;color:var(--ink-3);letter-spacing:.2px;cursor:pointer;white-space:nowrap;}
+.boid-variance-accordion-toggle input{margin:0;cursor:pointer;}
 .boid-sensing-body{gap:10px;}
 .boid-sensing-topline,.boid-sensing-response,.boid-sensing-select{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--ink-1);font-weight:600;}
 .boid-tablet-switch{display:inline-flex;align-items:center;gap:7px;cursor:pointer;}
@@ -2030,7 +2037,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-14-corral-interactions';
+const assetVersion = '2026-09-14-boid-variance-subsettings';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

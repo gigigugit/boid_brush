@@ -2607,14 +2607,43 @@ export function buildSettingsPanel(app) {
 
 const BOID_PANEL_GROUPS = Object.freeze([
   ['Swarm', ['count', 'spawnRadius', 'spawnAngle', 'spawnJitter']],
-  ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'flowField', 'flowScale']],
+  ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'flowField', 'flowScale', 'quorumCompositeStrength']],
   ['Radii', ['neighborRadius', 'separationRadius', 'fleeRadius', 'fov']],
-  ['Motion', ['wanderSpeed', 'maxSpeed', 'damping']],
+  ['Motion', ['wanderSpeed', 'maxSpeed', 'damping', 'simBoundsMargin']],
   ['Attributes', ['sizeVar', 'opacityVar', 'hueVar', 'satVar', 'litVar']],
   ['Legacy aggregate variance', ['individuality', 'speedVar', 'forceVar']],
+  // Consolidated advanced view: every independent-variance control in one
+  // place. Hidden by default (see BOID_VARIANCE_ACCORDION_STORAGE_KEY) since
+  // each of these controls is also inlined as a subordinate sub-setting right
+  // beside/below the base control it modifies (see _boidProxyMarkupWithVariance
+  // and _boidSensingSliderMarkup). This group stays for users who prefer one
+  // consolidated list instead of hunting through every base section.
   ['Independent variance', BOID_VARIANCE_FIELDS.map(field => field.controlId)],
   ['Leaders', ['leaderCount', 'leaderPull', ...LEADER_OVERRIDE_FIELDS.flatMap(field => [field.overrideId, field.id]), ...BOID_VARIANCE_FIELDS.flatMap(field => [field.leaderOverrideId, field.leaderControlId])]],
 ]);
+
+// Title of the consolidated advanced-variance group above — used to find it
+// again when deciding whether to hide it by default.
+const BOID_VARIANCE_ACCORDION_TITLE = 'Independent variance';
+// Dedicated, self-persisted key (same pattern as bb_showAlphaFeatures etc.):
+// this toggle is local presentation state for the wider Boid drawer only, has
+// no canonical sidebar counterpart, and is intentionally left out of the
+// generic #sidebar/#settingsPanel session-control snapshot.
+const BOID_VARIANCE_ACCORDION_STORAGE_KEY = 'bb_showBoidVarianceAccordion';
+
+function _boidVarianceAccordionVisible() {
+  try { return localStorage.getItem(BOID_VARIANCE_ACCORDION_STORAGE_KEY) === 'true'; }
+  catch { return false; }
+}
+
+function _setBoidVarianceAccordionVisible(visible) {
+  try { localStorage.setItem(BOID_VARIANCE_ACCORDION_STORAGE_KEY, String(!!visible)); }
+  catch { /* ignore persistence errors */ }
+}
+
+// Base control id -> its BOID_VARIANCE_FIELDS entry, so each base slider can
+// grow a subordinate variance sub-setting right beside/below it.
+const _BOID_VARIANCE_FIELD_BY_KEY = new Map(BOID_VARIANCE_FIELDS.map(field => [field.key, field]));
 
 let _boidPanelApp = null;
 
@@ -2638,16 +2667,40 @@ function _boidProxyMarkup(source) {
   return `<label>${escapeHtml(_boidControlLabel(source))}<span data-boid-value="${source.id}">${fmt ? fmt(value) : escapeHtml(source.value)}</span><input type="${source.type}" ${attrs} min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}></label>`;
 }
 
+// If `baseId` is the base control for one of BOID_VARIANCE_FIELDS, render its
+// per-agent variance control as a visually subordinate row (indented, muted,
+// smaller) so it reads as "part of" the base setting instead of a peer.
+function _boidVarianceSubrowMarkup(baseId) {
+  const field = _BOID_VARIANCE_FIELD_BY_KEY.get(baseId);
+  const varianceSource = field ? document.getElementById(field.controlId) : null;
+  if (!varianceSource) return '';
+  return `<div class="boid-variance-subrow" data-boid-variance-for="${baseId}">${_boidProxyMarkup(varianceSource)}</div>`;
+}
+
+// Wraps _boidProxyMarkup with the matching independent-variance sub-setting
+// (if any). Controls with no matching variance field render exactly as
+// _boidProxyMarkup alone, so this is safe to use everywhere in the grid.
+function _boidProxyMarkupWithVariance(source) {
+  const subrow = _boidVarianceSubrowMarkup(source.id);
+  if (!subrow) return _boidProxyMarkup(source);
+  const isAlphaFeature = !!source.closest('[data-alpha-feature]');
+  const alphaClass = isAlphaFeature && !_alphaFeaturesVisible() ? ' alpha-feature-hidden' : '';
+  const alphaAttr = isAlphaFeature ? ' data-alpha-feature' : '';
+  return `<div class="boid-control-with-variance${alphaClass}"${alphaAttr}>${_boidProxyMarkup(source)}${subrow}</div>`;
+}
+
 function _boidSensingSliderMarkup(id, label) {
   const source = document.getElementById(id);
   if (!source) return '';
   const fmt = _sliderFormats[id];
   const value = Number(source.value);
-  return `<label class="boid-sensing-slider">
+  const base = `<label class="boid-sensing-slider">
     <span>${label}</span>
     <output data-boid-value="${id}">${fmt ? fmt(value) : escapeHtml(source.value)}</output>
     <input type="range" data-boid-control="${id}" min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}>
   </label>`;
+  const subrow = _boidVarianceSubrowMarkup(id);
+  return subrow ? `<div class="boid-control-with-variance">${base}${subrow}</div>` : base;
 }
 
 function _boidSensingSourceRows(app) {
@@ -2746,9 +2799,10 @@ export function syncBoidPanel() {
     if (proxy.type === 'checkbox') proxy.checked = source.checked;
     else proxy.value = source.value;
     proxy.disabled = source.disabled;
-    const value = document.querySelector(`#boidPanel [data-boid-value="${source.id}"]`);
     const fmt = _sliderFormats[source.id];
-    if (value) value.textContent = fmt ? fmt(+source.value) : source.value;
+    document.querySelectorAll(`#boidPanel [data-boid-value="${source.id}"]`).forEach(value => {
+      value.textContent = fmt ? fmt(+source.value) : source.value;
+    });
   });
   _syncBoidSensingUi();
 }
@@ -2757,20 +2811,36 @@ export function buildBoidPanel(app) {
   const panel = document.getElementById('boidPanel');
   if (!panel) return;
   _boidPanelApp = app;
+  const varianceAccordionVisible = _boidVarianceAccordionVisible();
   panel.innerHTML = `
     <div class="sim-card">
-      <div class="sim-hud-header"><div class="sim-label">Boid Parameters</div></div>
+      <div class="sim-hud-header">
+        <div class="sim-label">Boid Parameters</div>
+        <label class="boid-variance-accordion-toggle" title="Independent variance controls already live beside each base setting below. Enable this to also show them consolidated in one advanced accordion.">
+          <input type="checkbox" id="showBoidVarianceAccordion"${varianceAccordionVisible ? ' checked' : ''}>
+          <span>Advanced variance view</span>
+        </label>
+      </div>
       <div class="sim-hud-body">
-        <span class="slider-desc">A wider categorized view of the canonical brush controls. Changes in either panel edit the same persisted state.</span>
+        <span class="slider-desc">A wider categorized view of the canonical brush controls. Changes in either panel edit the same persisted state. Each base setting below carries its own independent-variance sub-setting.</span>
         ${BOID_PANEL_GROUPS.map(([title, ids], index) => {
           const controls = ids.map(id => document.getElementById(id)).filter(Boolean);
           if (!controls.length) return '';
-          return `<div class="section-header${index > 2 ? ' closed' : ''}" data-section="boidPanel${index}">${title} <span class="chevron">▼</span></div>
-            <div class="section-body${index > 2 ? ' collapsed' : ''}"><div class="boid-control-grid">${controls.map(_boidProxyMarkup).join('')}</div></div>${title === 'Radii' ? _boidSensingMarkup(app) : ''}`;
+          const isVarianceAccordion = title === BOID_VARIANCE_ACCORDION_TITLE;
+          const accordionHiddenClass = isVarianceAccordion && !varianceAccordionVisible ? ' boid-variance-accordion-hidden' : '';
+          const accordionAttr = isVarianceAccordion ? ' data-boid-variance-accordion="true"' : '';
+          return `<div class="section-header${index > 2 ? ' closed' : ''}${accordionHiddenClass}" data-section="boidPanel${index}"${accordionAttr}>${title} <span class="chevron">▼</span></div>
+            <div class="section-body${index > 2 ? ' collapsed' : ''}${accordionHiddenClass}"${accordionAttr}><div class="boid-control-grid">${controls.map(_boidProxyMarkupWithVariance).join('')}</div></div>${title === 'Radii' ? _boidSensingMarkup(app) : ''}`;
         }).join('')}
       </div>
     </div>`;
   panel.querySelectorAll('.section-header').forEach(header => header.addEventListener('click', () => toggleSection(header)));
+  const varianceAccordionToggle = panel.querySelector('#showBoidVarianceAccordion');
+  varianceAccordionToggle?.addEventListener('change', () => {
+    const visible = !!varianceAccordionToggle.checked;
+    _setBoidVarianceAccordionVisible(visible);
+    panel.querySelectorAll('[data-boid-variance-accordion]').forEach(el => el.classList.toggle('boid-variance-accordion-hidden', !visible));
+  });
   panel.addEventListener('input', event => {
     const proxy = event.target.closest('[data-boid-control]');
     if (!proxy) return;
