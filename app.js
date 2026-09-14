@@ -17231,7 +17231,10 @@ export class App {
   }
 
   _rebuildCorralGeometry() {
-    this.corral.points = sampleEditableCorral(this.corral.anchors);
+    const editablePoints = sampleEditableCorral(this.corral.anchors);
+    this.corral.points = this.corral.shapeSmoothing > 0
+      ? smoothClosedCorral(editablePoints, this.corral.shapeSmoothing)
+      : editablePoints;
     this.corral.compiled = compileCorral(this.corral.points);
   }
 
@@ -17397,8 +17400,7 @@ export class App {
     if (!previous || Math.hypot(x - previous.x, y - previous.y) >= 2) {
       this.corral.rawPoints.push({ x, y });
     }
-    const smoothed = smoothClosedCorral(this.corral.rawPoints, this.corral.shapeSmoothing);
-    this.corral.anchors = normalizeEditableCorral(smoothed, 'spline');
+    this.corral.anchors = normalizeEditableCorral(this.corral.rawPoints, 'spline');
     this._rebuildCorralGeometry();
     if (!this.corral.compiled) {
       this.corral.rawPoints = [];
@@ -17771,6 +17773,7 @@ export class App {
     });
     document.getElementById('corralShapeSmoothing')?.addEventListener('input', event => {
       this.corral.shapeSmoothing = Math.max(0, Math.min(3, Math.round(Number(event.target.value) || 0)));
+      if (this.corral.anchors.length >= 3) this._rebuildCorralGeometry();
       this.invalidateParams();
       this._syncCorralUI();
     });
@@ -22398,16 +22401,21 @@ export class App {
       if (id === '_stampImageState') continue;
       if (id === '_corral') {
         const rawPoints = Array.isArray(val?.rawPoints) ? val.rawPoints : val?.points;
-        const anchors = normalizeEditableCorral(Array.isArray(val?.anchors)
-          ? val.anchors
-          : (Array.isArray(val?.points) ? val.points : (Array.isArray(rawPoints) ? rawPoints : [])));
-        const points = anchors.length >= 3
-          ? sampleEditableCorral(anchors)
-          : (Array.isArray(val?.points) ? val.points : smoothClosedCorral(rawPoints));
+        const hasEditableAnchors = Array.isArray(val?.anchors);
+        const anchors = normalizeEditableCorral(
+          hasEditableAnchors
+            ? val.anchors
+            : (Array.isArray(val?.points) ? val.points : (Array.isArray(rawPoints) ? rawPoints : [])),
+          hasEditableAnchors ? 'spline' : 'line',
+        );
         this.corral.anchors = anchors;
         this.corral.rawPoints = Array.isArray(rawPoints) ? rawPoints : [];
-        this.corral.points = Array.isArray(points) ? points : [];
-        this.corral.compiled = compileCorral(this.corral.points);
+        if (hasEditableAnchors) {
+          this._rebuildCorralGeometry();
+        } else {
+          this.corral.points = Array.isArray(val?.points) ? val.points : smoothClosedCorral(rawPoints);
+          this.corral.compiled = compileCorral(this.corral.points);
+        }
         continue;
       }
       if (id === 'corralEnabled') {
