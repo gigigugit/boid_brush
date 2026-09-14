@@ -1041,8 +1041,13 @@ function _applyCorral(brush, p, read) {
   return constrainAgentsToCorral(read, p.corralCompiled, {
     edgeStrength: p.corralEdgeStrength,
     repulsionRadius: p.corralRepulsionRadius,
+    interactionMode: p.corralInteractionMode,
     midpointForce: p.corralMidpointForce,
     tangentialForce: p.corralTangentialForce,
+    centerForce: p.corralCenterForce,
+    forceNoise: p.corralForceNoise,
+    restitution: p.corralRestitution,
+    maxSpeed: p.corralMaxSpeed,
     normalDamping: p.corralNormalDamping,
     tangentialFriction: p.corralTangentialFriction,
     hardEdge: p.corralHardEdge,

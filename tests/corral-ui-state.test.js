@@ -8,11 +8,15 @@ const [html, app] = await Promise.all([
   readFile(new URL('app.js', root), 'utf8'),
 ]);
 
-test('corral overlay exposes persistent visibility and collapse controls', () => {
+test('one global control collapses every simulation and corral overlay', () => {
   assert.match(html, /id="corralVisibilityBtn"[^>]*aria-pressed="false"/);
-  assert.match(html, /id="corralCollapseBtn"[^>]*aria-expanded="true"/);
+  assert.match(html, /id="globalOverlayCollapseBtn"[^>]*aria-expanded="true"/);
+  assert.match(html, /body\.overlays-collapsed #simHud,body\.overlays-collapsed #simPlaybackBar,body\.overlays-collapsed #corralHud/);
+  assert.match(html, /id="globalOverlayRunBtn"/);
+  assert.match(html, /id="globalOverlayStopBtn"/);
   assert.match(html, /id="corralHudBody"/);
-  assert.match(html, /#corralHud\.collapsed \.corral-body,#corralHud\.collapsed \.corral-drawers\{display:none;\}/);
+  assert.doesNotMatch(html, /id="corralCollapseBtn"/);
+  assert.doesNotMatch(html, /id="simHudCollapseBtn"/);
 });
 
 test('corral toolbar is centered, single-line, and below panel tabs', () => {
@@ -25,7 +29,7 @@ test('corral toolbar is centered, single-line, and below panel tabs', () => {
 test('corral control delivery uses a build-matched current cache token', () => {
   const assetVersion = html.match(/const assetVersion = '([^']+)'/)?.[1];
   const appBuildId = app.match(/const APP_BUILD_ID = '([^']+)'/)?.[1];
-  assert.equal(assetVersion, '2026-09-11-corral-drawer-actions');
+  assert.equal(assetVersion, '2026-09-14-corral-interactions');
   assert.equal(appBuildId, assetVersion);
 });
 
@@ -36,9 +40,36 @@ test('enabled corral keeps controls visible outside editor mode', () => {
 
 test('corral boundary visibility and overlay collapse round-trip through session state', () => {
   assert.match(app, /controls\.corralVisible = this\.corral\.visible/);
-  assert.match(app, /controls\.corralOverlayCollapsed = this\.corral\.overlayCollapsed/);
+  assert.match(app, /controls\.corralOverlayCollapsed = this\.overlaysCollapsed/);
   assert.match(app, /id === 'corralVisible'/);
   assert.match(app, /id === 'corralOverlayCollapsed'/);
+});
+
+test('corral exposes separate path and editing action groups', () => {
+  assert.match(html, /aria-label="Corral path tools"/);
+  assert.match(html, /aria-label="Corral edit actions"/);
+  assert.match(html, /aria-label="Corral simulation actions"/);
+  for (const id of [
+    'corralDrawBtn',
+    'corralEditBtn',
+    'corralAddPointBtn',
+    'corralDeletePointBtn',
+    'corralUndoBtn',
+    'corralRedoBtn',
+    'corralCopyBtn',
+    'corralPasteBtn',
+    'corralSegmentType',
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(app, /_undoCorralEdit\(\)/);
+  assert.match(app, /_redoCorralEdit\(\)/);
+  assert.match(app, /_copyCorral\(\)/);
+  assert.match(app, /_pasteCorral\(\)/);
+});
+
+test('simulation overlays use the active simulation predicate', () => {
+  assert.match(app, /const showOverlayHud = !!this\.simulation\.enabled && isMotion && overlayHudEnabled/);
+  assert.match(app, /playbackBar\.classList\.toggle\('open', !!this\.simulation\.enabled && isMotion\)/);
+  assert.match(app, /const simulationActive = !!this\.simulation\.enabled && this\._isMotionBrush\(\)/);
 });
 
 test('hiding the boundary does not disable containment', () => {
@@ -65,7 +96,25 @@ test('corral has two attached moving-tab drawers with advanced controls', () => 
     'corralTangentialFriction',
     'corralShapeSmoothing',
     'corralFalloff',
+    'corralInteractionMode',
+    'corralCenterForce',
+    'corralForceNoise',
+    'corralRestitution',
+    'corralMaxSpeed',
   ]) assert.match(html, new RegExp(`id="${id}"`));
+});
+
+test('additional corral interactions flow through params and session state', () => {
+  for (const key of [
+    'InteractionMode',
+    'CenterForce',
+    'ForceNoise',
+    'Restitution',
+    'MaxSpeed',
+  ]) {
+    assert.match(app, new RegExp(`corral${key}: this\\.corral\\.`));
+    assert.match(app, new RegExp(`id === 'corral${key}'`));
+  }
 });
 
 test('SVG drawer supports path entry and permission-based folder browsing', () => {

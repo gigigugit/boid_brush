@@ -50,6 +50,76 @@ function resampleClosed(points, maxPoints = MAX_CORRAL_POINTS) {
   return result;
 }
 
+export function normalizeEditableCorral(points, defaultSegment = 'spline') {
+  const allowedSegments = new Set(['line', 'curve', 'spline']);
+  if (!Array.isArray(points)) return [];
+  return points.flatMap(point => {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+    const normalizeHandle = handle => {
+      const hx = Number(handle?.x);
+      const hy = Number(handle?.y);
+      return Number.isFinite(hx) && Number.isFinite(hy) ? { x: hx, y: hy } : null;
+    };
+    return [{
+      x,
+      y,
+      segment: allowedSegments.has(point?.segment) ? point.segment : defaultSegment,
+      inHandle: normalizeHandle(point?.inHandle),
+      outHandle: normalizeHandle(point?.outHandle),
+    }];
+  });
+}
+
+function cubicPoint(a, b, c, d, t) {
+  const u = 1 - t;
+  return {
+    x: u ** 3 * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t ** 3 * d.x,
+    y: u ** 3 * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t ** 3 * d.y,
+  };
+}
+
+export function sampleEditableCorral(anchors, samplesPerCurve = 8) {
+  const clean = normalizeEditableCorral(anchors);
+  if (clean.length < 3) return [];
+  const result = [];
+  const steps = clamp(Math.round(samplesPerCurve) || 8, 2, 24);
+  for (let index = 0; index < clean.length; index++) {
+    const previous = clean[(index - 1 + clean.length) % clean.length];
+    const start = clean[index];
+    const end = clean[(index + 1) % clean.length];
+    const following = clean[(index + 2) % clean.length];
+    result.push({ x: start.x, y: start.y });
+    if (start.segment === 'line') continue;
+    let controlA;
+    let controlB;
+    if (start.segment === 'curve') {
+      controlA = start.outHandle || {
+        x: start.x + (end.x - previous.x) / 6,
+        y: start.y + (end.y - previous.y) / 6,
+      };
+      controlB = end.inHandle || {
+        x: end.x - (following.x - start.x) / 6,
+        y: end.y - (following.y - start.y) / 6,
+      };
+    } else {
+      controlA = {
+        x: start.x + (end.x - previous.x) / 6,
+        y: start.y + (end.y - previous.y) / 6,
+      };
+      controlB = {
+        x: end.x - (following.x - start.x) / 6,
+        y: end.y - (following.y - start.y) / 6,
+      };
+    }
+    for (let step = 1; step < steps; step++) {
+      result.push(cubicPoint(start, controlA, controlB, end, step / steps));
+    }
+  }
+  return resampleClosed(result);
+}
+
 export function smoothClosedCorral(points, iterations = 2) {
   let current = sanitizePoints(points);
   if (current.length < 3) return [];
@@ -94,7 +164,11 @@ export function compileCorral(points) {
     const next = clean[(index + 1) % clean.length];
     return area + point.x * next.y - next.x * point.y;
   }, 0);
-  return { points: clean, bounds, winding: signedArea >= 0 ? 1 : -1 };
+  const centroid = clean.reduce((center, point) => ({
+    x: center.x + point.x / clean.length,
+    y: center.y + point.y / clean.length,
+  }), { x: 0, y: 0 });
+  return { points: clean, bounds, centroid, winding: signedArea >= 0 ? 1 : -1 };
 }
 
 function closestBoundaryPoint(x, y, points) {
@@ -146,7 +220,14 @@ export function constrainAgentsToCorral(read, compiled, options = {}, legacyRadi
   const response = clamp(Number(config.edgeStrength) || 0, 0, 2);
   const influenceRadius = clamp(Number(config.repulsionRadius) || 0, 0, 300);
   const hardEdge = config.hardEdge !== false;
+  const interactionMode = ['attract', 'exclude'].includes(config.interactionMode)
+    ? config.interactionMode
+    : 'contain';
   const tangentialForce = clamp(Number(config.tangentialForce) || 0, -2, 2);
+  const centerForce = clamp(Number(config.centerForce) || 0, -2, 2);
+  const forceNoise = clamp(Number(config.forceNoise) || 0, 0, 2);
+  const restitution = clamp(Number(config.restitution ?? 1), 0, 1.5);
+  const maxSpeed = clamp(Number(config.maxSpeed) || 0, 0, 50);
   const midpointForce = clamp(Number(config.midpointForce ?? 0.5), 0, 1.5);
   const normalDamping = clamp(Number(config.normalDamping) || 0, 0, 1);
   const tangentialFriction = clamp(Number(config.tangentialFriction) || 0, 0, 1);
@@ -161,24 +242,29 @@ export function constrainAgentsToCorral(read, compiled, options = {}, legacyRadi
     const edgeLength = Math.hypot(nearest.dx, nearest.dy) || 1;
     const nx = compiled.winding * -nearest.dy / edgeLength;
     const ny = compiled.winding * nearest.dx / edgeLength;
-    if (!inside && hardEdge) {
-      x = nearest.x + nx * 0.75;
-      y = nearest.y + ny * 0.75;
+    const escaped = interactionMode === 'exclude' ? inside : !inside;
+    const containmentDirection = interactionMode === 'exclude' ? -1 : 1;
+    if (escaped && hardEdge && interactionMode !== 'attract') {
+      x = nearest.x + nx * 0.75 * containmentDirection;
+      y = nearest.y + ny * 0.75 * containmentDirection;
       read.buffer[base] = x;
       read.buffer[base + 1] = y;
       changed = true;
     }
-    const profile = inside
-      ? corralForceWeight(nearest.distance, influenceRadius, midpointForce, config.falloff)
-      : 1;
-    if ((!inside && hardEdge) || profile > 0) {
-      const push = response * profile;
+    const boundaryProfile = corralForceWeight(nearest.distance, influenceRadius, midpointForce, config.falloff);
+    const profile = escaped && interactionMode !== 'attract' ? 1 : boundaryProfile;
+    if ((escaped && hardEdge && interactionMode !== 'attract') || profile > 0) {
+      let normalDirection = containmentDirection;
+      if (interactionMode === 'attract') normalDirection = inside ? -1 : 1;
+      const push = response * profile * normalDirection;
       let vx = read.buffer[base + 2];
       let vy = read.buffer[base + 3];
-      const outwardVelocity = vx * -nx + vy * -ny;
-      if (hardEdge && outwardVelocity > 0) {
-        vx += nx * outwardVelocity * (1 + Math.min(1, response));
-        vy += ny * outwardVelocity * (1 + Math.min(1, response));
+      const escapeNx = -nx * containmentDirection;
+      const escapeNy = -ny * containmentDirection;
+      const escapeVelocity = vx * escapeNx + vy * escapeNy;
+      if (hardEdge && interactionMode !== 'attract' && escapeVelocity > 0) {
+        vx -= escapeNx * escapeVelocity * (1 + restitution);
+        vy -= escapeNy * escapeVelocity * (1 + restitution);
       }
       const tx = -ny;
       const ty = nx;
@@ -186,13 +272,35 @@ export function constrainAgentsToCorral(read, compiled, options = {}, legacyRadi
       const tangentVelocity = vx * tx + vy * ty;
       const dampedNormal = normalVelocity * (1 - profile * normalDamping);
       const dampedTangent = tangentVelocity * (1 - profile * tangentialFriction);
-      const nextVx = nx * (dampedNormal + push) + tx * (dampedTangent + tangentialForce * profile);
-      const nextVy = ny * (dampedNormal + push) + ty * (dampedTangent + tangentialForce * profile);
+      const noise = forceNoise
+        ? Math.sin(x * 0.127 + y * 0.311 + base * 0.173) * forceNoise * profile
+        : 0;
+      let nextVx = nx * (dampedNormal + push) + tx * (dampedTangent + tangentialForce * profile + noise);
+      let nextVy = ny * (dampedNormal + push) + ty * (dampedTangent + tangentialForce * profile + noise);
       if (nextVx !== read.buffer[base + 2] || nextVy !== read.buffer[base + 3]) {
         read.buffer[base + 2] = nextVx;
         read.buffer[base + 3] = nextVy;
         changed = true;
       }
+    }
+    let finalVx = read.buffer[base + 2];
+    let finalVy = read.buffer[base + 3];
+    if (centerForce && inside && compiled.centroid) {
+      const centerDx = compiled.centroid.x - x;
+      const centerDy = compiled.centroid.y - y;
+      const centerDistance = Math.hypot(centerDx, centerDy) || 1;
+      finalVx += centerDx / centerDistance * centerForce;
+      finalVy += centerDy / centerDistance * centerForce;
+    }
+    const speed = Math.hypot(finalVx, finalVy);
+    if (maxSpeed > 0 && speed > maxSpeed) {
+      finalVx *= maxSpeed / speed;
+      finalVy *= maxSpeed / speed;
+    }
+    if (finalVx !== read.buffer[base + 2] || finalVy !== read.buffer[base + 3]) {
+      read.buffer[base + 2] = finalVx;
+      read.buffer[base + 3] = finalVy;
+      changed = true;
     }
   }
   return changed;

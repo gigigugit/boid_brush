@@ -13,7 +13,14 @@ import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 import { workspaceControlBelongsToBrush } from './settings-catalog.js';
-import { compileCorral, corralToSvg, extractClosedSvgPath, smoothClosedCorral } from './corral.js';
+import {
+  compileCorral,
+  corralToSvg,
+  extractClosedSvgPath,
+  normalizeEditableCorral,
+  sampleEditableCorral,
+  smoothClosedCorral,
+} from './corral.js';
 import { CorralFileWorkspace } from './workspace-files.js';
 import {
   FeatureTracker,
@@ -24,7 +31,7 @@ import {
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-11-corral-drawer-actions';
+const APP_BUILD_ID = '2026-09-14-corral-interactions';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
@@ -2232,13 +2239,25 @@ export class App {
     this.corral = {
       editing: false,
       drawing: false,
+      editorTool: 'draw',
+      selectedAnchor: -1,
+      dragAnchor: -1,
+      anchors: [],
+      undoStack: [],
+      redoStack: [],
+      clipboard: null,
       enabled: true,
       visible: true,
       overlayCollapsed: false,
       edgeStrength: 1,
       repulsionRadius: 32,
+      interactionMode: 'contain',
       midpointForce: 0.5,
       tangentialForce: 0,
+      centerForce: 0,
+      forceNoise: 0,
+      restitution: 1,
+      maxSpeed: 0,
       normalDamping: 0,
       tangentialFriction: 0,
       hardEdge: true,
@@ -2250,6 +2269,7 @@ export class App {
       points: [],
       compiled: null,
     };
+    this.overlaysCollapsed = false;
     this.corralFiles = new CorralFileWorkspace();
     this._corralFileEntries = [];
     this.simulation = {
@@ -6193,8 +6213,13 @@ export class App {
       corralEnabled: this.activeBrush === 'boid' && this.corral.enabled && !!this.corral.compiled,
       corralEdgeStrength: this.corral.edgeStrength,
       corralRepulsionRadius: this.corral.repulsionRadius,
+      corralInteractionMode: this.corral.interactionMode,
       corralMidpointForce: this.corral.midpointForce,
       corralTangentialForce: this.corral.tangentialForce,
+      corralCenterForce: this.corral.centerForce,
+      corralForceNoise: this.corral.forceNoise,
+      corralRestitution: this.corral.restitution,
+      corralMaxSpeed: this.corral.maxSpeed,
       corralNormalDamping: this.corral.normalDamping,
       corralTangentialFriction: this.corral.tangentialFriction,
       corralHardEdge: this.corral.hardEdge,
@@ -13108,6 +13133,30 @@ export class App {
     this._syncSimulationUI();
   }
 
+  _syncGlobalOverlayUI() {
+    const simulationActive = !!this.simulation.enabled && this._isMotionBrush();
+    const corralActive = this.activeBrush === 'boid' && (this.corral.enabled || this.corral.editing);
+    const bar = document.getElementById('globalOverlayBar');
+    const collapseButton = document.getElementById('globalOverlayCollapseBtn');
+    bar?.classList.toggle('open', simulationActive || corralActive);
+    bar?.classList.toggle('simulation-active', simulationActive);
+    document.body.classList.toggle('overlays-collapsed', this.overlaysCollapsed);
+    if (collapseButton) {
+      collapseButton.textContent = this.overlaysCollapsed ? '▶ Show overlays' : '◀ Hide overlays';
+      collapseButton.title = this.overlaysCollapsed ? 'Expand all overlays' : 'Collapse all overlays';
+      collapseButton.setAttribute('aria-expanded', this.overlaysCollapsed ? 'false' : 'true');
+    }
+    document.getElementById('globalOverlayRunBtn')?.classList.toggle('active', this.simulation.running);
+    this.simulation.hudCollapsed = this.overlaysCollapsed;
+    this.corral.overlayCollapsed = this.overlaysCollapsed;
+  }
+
+  _setAllOverlaysCollapsed(collapsed) {
+    this.overlaysCollapsed = !!collapsed;
+    this._syncGlobalOverlayUI();
+    this.saveSession();
+  }
+
   _syncSimulationUI() {
     this._syncForceVizUI();
     if (this.activeBrush !== 'ant' && this.simulation.editorTool === 'edge') this.simulation.editorTool = 'spawn';
@@ -13116,7 +13165,6 @@ export class App {
     const btn = document.getElementById('simulationBtn');
     const hud = document.getElementById('simHud');
     const playbackBar = document.getElementById('simPlaybackBar');
-    const hudCollapseBtn = document.getElementById('simHudCollapseBtn');
     const heatmapButtons = [document.getElementById('simHeatmapToggle'), document.getElementById('simDrawerHeatmapToggle')];
     const stepBackButtons = [document.getElementById('simStepBackBtn'), document.getElementById('simDrawerStepBackBtn')];
     const stepForwardButtons = [document.getElementById('simStepForwardBtn'), document.getElementById('simDrawerStepForwardBtn')];
@@ -13146,7 +13194,6 @@ export class App {
     }
     if (hud) {
       hud.classList.toggle('open', showOverlayHud);
-      hud.classList.toggle('collapsed', !!this.simulation.hudCollapsed);
     }
     if (showSimulationDrawer) this._showSimulationControlsDrawer();
     else this._hideSimulationControlsDrawer({ closeIfActive: true });
@@ -13156,11 +13203,6 @@ export class App {
     }
     document.body.classList.remove('sim-topbar-row-open');
     document.body.style.removeProperty('--sim-row-h');
-    if (hudCollapseBtn) {
-      const expanded = !this.simulation.hudCollapsed;
-      hudCollapseBtn.textContent = expanded ? 'Collapse' : 'Expand';
-      hudCollapseBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    }
     if (handle) {
       // Handle is now hidden; simulation tab in rightPanel replaces it
       handle.style.display = 'none';
@@ -13182,6 +13224,7 @@ export class App {
     document.getElementById('simHudRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simDrawerRunBtn')?.classList.toggle('active', this.simulation.running);
     document.getElementById('simPauseBtn')?.classList.toggle('active', this.simulation.paused);
+    this._syncGlobalOverlayUI();
     const ephemeralBtn = document.getElementById('simEphemeralToggle');
     if (ephemeralBtn) {
       const ephemeralOn = !!document.getElementById('simEphemeralMode')?.checked;
@@ -17051,13 +17094,10 @@ export class App {
     const radius = document.getElementById('corralRepulsionRadius');
     const radiusOutput = document.getElementById('corralRepulsionRadiusValue');
     const visibilityButton = document.getElementById('corralVisibilityBtn');
-    const collapseButton = document.getElementById('corralCollapseBtn');
     const showHud = available && (this.corral.enabled || this.corral.editing);
     button?.classList.toggle('active', available && this.corral.editing);
     if (button) button.style.display = available ? '' : 'none';
     hud?.classList.toggle('open', showHud);
-    hud?.classList.toggle('collapsed', this.corral.overlayCollapsed);
-    document.body.classList.toggle('corral-overlay-open', showHud);
     if (enabled) enabled.checked = this.corral.enabled;
     if (strength) strength.value = String(Math.round(this.corral.edgeStrength * 100));
     if (output) output.value = this.corral.edgeStrength.toFixed(2);
@@ -17071,12 +17111,18 @@ export class App {
     };
     syncRange('corralMidpointForce', 'corralMidpointForceValue', Math.round(this.corral.midpointForce * 100), `${Math.round(this.corral.midpointForce * 100)}%`);
     syncRange('corralTangentialForce', 'corralTangentialForceValue', Math.round(this.corral.tangentialForce * 100), this.corral.tangentialForce.toFixed(2));
+    syncRange('corralCenterForce', 'corralCenterForceValue', Math.round(this.corral.centerForce * 100), this.corral.centerForce.toFixed(2));
+    syncRange('corralForceNoise', 'corralForceNoiseValue', Math.round(this.corral.forceNoise * 100), this.corral.forceNoise.toFixed(2));
+    syncRange('corralRestitution', 'corralRestitutionValue', Math.round(this.corral.restitution * 100), this.corral.restitution.toFixed(2));
+    syncRange('corralMaxSpeed', 'corralMaxSpeedValue', Math.round(this.corral.maxSpeed * 10), this.corral.maxSpeed > 0 ? this.corral.maxSpeed.toFixed(1) : 'Off');
     syncRange('corralNormalDamping', 'corralNormalDampingValue', Math.round(this.corral.normalDamping * 100), `${Math.round(this.corral.normalDamping * 100)}%`);
     syncRange('corralTangentialFriction', 'corralTangentialFrictionValue', Math.round(this.corral.tangentialFriction * 100), `${Math.round(this.corral.tangentialFriction * 100)}%`);
     syncRange('corralShapeSmoothing', 'corralShapeSmoothingValue', this.corral.shapeSmoothing, String(this.corral.shapeSmoothing));
     const hardEdge = document.getElementById('corralHardEdge');
+    const interactionMode = document.getElementById('corralInteractionMode');
     const falloff = document.getElementById('corralFalloff');
     if (hardEdge) hardEdge.checked = this.corral.hardEdge;
+    if (interactionMode) interactionMode.value = this.corral.interactionMode;
     if (falloff) falloff.value = this.corral.falloff;
     this._syncCorralDrawer('physics');
     this._syncCorralDrawer('svg');
@@ -17084,10 +17130,27 @@ export class App {
       visibilityButton.textContent = this.corral.visible ? 'Hide Corral' : 'Show Corral';
       visibilityButton.setAttribute('aria-pressed', this.corral.visible ? 'false' : 'true');
     }
-    if (collapseButton) {
-      collapseButton.textContent = this.corral.overlayCollapsed ? 'Expand Overlay' : 'Collapse Overlay';
-      collapseButton.setAttribute('aria-expanded', this.corral.overlayCollapsed ? 'false' : 'true');
+    ['draw', 'edit', 'add'].forEach(tool => {
+      const id = tool === 'draw' ? 'corralDrawBtn' : tool === 'edit' ? 'corralEditBtn' : 'corralAddPointBtn';
+      document.getElementById(id)?.classList.toggle('active', this.corral.editorTool === tool);
+    });
+    const hasSelection = this.corral.selectedAnchor >= 0 && this.corral.selectedAnchor < this.corral.anchors.length;
+    const segmentType = document.getElementById('corralSegmentType');
+    if (segmentType) {
+      segmentType.disabled = !hasSelection;
+      if (hasSelection) segmentType.value = this.corral.anchors[this.corral.selectedAnchor].segment;
     }
+    const deleteButton = document.getElementById('corralDeletePointBtn');
+    if (deleteButton) deleteButton.disabled = !hasSelection || this.corral.anchors.length <= 3;
+    const undoButton = document.getElementById('corralUndoBtn');
+    const redoButton = document.getElementById('corralRedoBtn');
+    const copyButton = document.getElementById('corralCopyBtn');
+    const pasteButton = document.getElementById('corralPasteBtn');
+    if (undoButton) undoButton.disabled = this.corral.undoStack.length === 0;
+    if (redoButton) redoButton.disabled = this.corral.redoStack.length === 0;
+    if (copyButton) copyButton.disabled = this.corral.anchors.length < 3;
+    if (pasteButton) pasteButton.disabled = !this.corral.clipboard?.length;
+    this._syncGlobalOverlayUI();
     this._layoutTopbarOverflow?.();
   }
 
@@ -17121,16 +17184,146 @@ export class App {
     if (this.activeBrush !== 'boid' && force) return;
     this.corral.editing = !!force;
     this.corral.drawing = false;
+    this.corral.dragAnchor = -1;
     this._syncCorralUI();
-    this.showToast(this.corral.editing ? '◯ Draw a closed corral on the canvas' : 'Corral editor closed');
+    this.showToast(this.corral.editing ? '◯ Corral editor ready' : 'Corral editor closed');
+  }
+
+  _captureCorralEditState() {
+    return {
+      anchors: structuredClone(this.corral.anchors),
+      rawPoints: structuredClone(this.corral.rawPoints),
+      selectedAnchor: this.corral.selectedAnchor,
+    };
+  }
+
+  _restoreCorralEditState(state) {
+    this.corral.anchors = normalizeEditableCorral(state?.anchors || state?.rawPoints || []);
+    this.corral.rawPoints = structuredClone(state?.rawPoints || this.corral.anchors);
+    const selectedAnchor = Number(state?.selectedAnchor);
+    this.corral.selectedAnchor = Number.isInteger(selectedAnchor)
+      ? Math.min(selectedAnchor, this.corral.anchors.length - 1)
+      : -1;
+    this._rebuildCorralGeometry();
+    this.invalidateParams();
+    this.saveSession();
+    this._syncCorralUI();
+  }
+
+  _pushCorralUndo() {
+    this.corral.undoStack.push(this._captureCorralEditState());
+    if (this.corral.undoStack.length > 64) this.corral.undoStack.shift();
+    this.corral.redoStack.length = 0;
+  }
+
+  _undoCorralEdit() {
+    const state = this.corral.undoStack.pop();
+    if (!state) return;
+    this.corral.redoStack.push(this._captureCorralEditState());
+    this._restoreCorralEditState(state);
+  }
+
+  _redoCorralEdit() {
+    const state = this.corral.redoStack.pop();
+    if (!state) return;
+    this.corral.undoStack.push(this._captureCorralEditState());
+    this._restoreCorralEditState(state);
+  }
+
+  _rebuildCorralGeometry() {
+    const editablePoints = sampleEditableCorral(this.corral.anchors);
+    this.corral.points = this.corral.shapeSmoothing > 0
+      ? smoothClosedCorral(editablePoints, this.corral.shapeSmoothing)
+      : editablePoints;
+    this.corral.compiled = compileCorral(this.corral.points);
+  }
+
+  _setCorralEditorTool(tool) {
+    if (!['draw', 'edit', 'add'].includes(tool)) return;
+    this.corral.editorTool = tool;
+    this.corral.drawing = false;
+    this.corral.dragAnchor = -1;
+    this._syncCorralUI();
+  }
+
+  _findCorralAnchor(x, y) {
+    const radius = 11 / Math.max(0.2, this.viewZoom || 1);
+    let best = -1;
+    let distance = radius;
+    this.corral.anchors.forEach((point, index) => {
+      const candidate = Math.hypot(x - point.x, y - point.y);
+      if (candidate <= distance) {
+        best = index;
+        distance = candidate;
+      }
+    });
+    return best;
+  }
+
+  _findCorralSegment(x, y) {
+    let best = { index: -1, distance: Infinity };
+    this.corral.anchors.forEach((start, index) => {
+      const end = this.corral.anchors[(index + 1) % this.corral.anchors.length];
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const length2 = dx * dx + dy * dy;
+      const t = length2 ? Math.max(0, Math.min(1, ((x - start.x) * dx + (y - start.y) * dy) / length2)) : 0;
+      const px = start.x + dx * t;
+      const py = start.y + dy * t;
+      const distance = Math.hypot(x - px, y - py);
+      if (distance < best.distance) best = { index, distance };
+    });
+    return best.index;
+  }
+
+  _deleteSelectedCorralAnchor() {
+    const index = this.corral.selectedAnchor;
+    if (index < 0 || this.corral.anchors.length <= 3) return;
+    this._pushCorralUndo();
+    this.corral.anchors.splice(index, 1);
+    this.corral.selectedAnchor = Math.min(index, this.corral.anchors.length - 1);
+    this._rebuildCorralGeometry();
+    this.invalidateParams();
+    this.saveSession();
+    this._syncCorralUI();
+  }
+
+  _copyCorral() {
+    if (this.corral.anchors.length < 3) return;
+    this.corral.clipboard = structuredClone(this.corral.anchors);
+    this._syncCorralUI();
+    this.showToast('Corral copied');
+  }
+
+  _pasteCorral() {
+    if (!this.corral.clipboard?.length) return;
+    this._pushCorralUndo();
+    this.corral.anchors = structuredClone(this.corral.clipboard).map(point => ({
+      ...point,
+      x: Math.min(this.W, point.x + 12),
+      y: Math.min(this.H, point.y + 12),
+      inHandle: point.inHandle ? { x: point.inHandle.x + 12, y: point.inHandle.y + 12 } : null,
+      outHandle: point.outHandle ? { x: point.outHandle.x + 12, y: point.outHandle.y + 12 } : null,
+    }));
+    this.corral.rawPoints = structuredClone(this.corral.anchors);
+    this.corral.selectedAnchor = -1;
+    this._rebuildCorralGeometry();
+    this.invalidateParams();
+    this.saveSession();
+    this._syncCorralUI();
+    this.showToast('Corral pasted');
   }
 
   _resetCorral() {
+    if (this.corral.anchors.length || this.corral.rawPoints.length) this._pushCorralUndo();
+    this.corral.anchors = [];
     this.corral.rawPoints = [];
     this.corral.points = [];
     this.corral.compiled = null;
     this.corral.drawing = false;
     this.corral.editing = true;
+    this.corral.editorTool = 'draw';
+    this.corral.selectedAnchor = -1;
     this.invalidateParams();
     this.saveSession();
     this._syncCorralUI();
@@ -17138,6 +17331,30 @@ export class App {
 
   _handleCorralPointerDown(x, y) {
     if (!this.corral.editing || this.activeBrush !== 'boid') return false;
+    if (this.corral.editorTool === 'edit') {
+      const index = this._findCorralAnchor(x, y);
+      this.corral.selectedAnchor = index;
+      if (index >= 0) {
+        this._pushCorralUndo();
+        this.corral.dragAnchor = index;
+      }
+      this._syncCorralUI();
+      return true;
+    }
+    if (this.corral.editorTool === 'add' && this.corral.anchors.length >= 3) {
+      const segment = this._findCorralSegment(x, y);
+      if (segment >= 0) {
+        this._pushCorralUndo();
+        this.corral.anchors.splice(segment + 1, 0, { x, y, segment: 'spline', inHandle: null, outHandle: null });
+        this.corral.selectedAnchor = segment + 1;
+        this._rebuildCorralGeometry();
+        this.invalidateParams();
+        this.saveSession();
+        this._syncCorralUI();
+      }
+      return true;
+    }
+    this._pushCorralUndo();
     this.corral.drawing = true;
     this.corral.rawPoints = [{ x, y }];
     this.corral.points = [];
@@ -17148,6 +17365,16 @@ export class App {
 
   _handleCorralPointerMove(x, y) {
     if (!this.corral.editing || this.activeBrush !== 'boid') return false;
+    if (this.corral.dragAnchor >= 0) {
+      const anchor = this.corral.anchors[this.corral.dragAnchor];
+      if (anchor) {
+        anchor.x = x;
+        anchor.y = y;
+        this._rebuildCorralGeometry();
+        this.invalidateParams();
+      }
+      return true;
+    }
     if (!this.corral.drawing) return true;
     const previous = this.corral.rawPoints[this.corral.rawPoints.length - 1];
     if (!previous || Math.hypot(x - previous.x, y - previous.y) >= 3) {
@@ -17161,16 +17388,23 @@ export class App {
 
   _handleCorralPointerUp(x, y) {
     if (!this.corral.editing || this.activeBrush !== 'boid') return false;
+    if (this.corral.dragAnchor >= 0) {
+      this.corral.dragAnchor = -1;
+      this.saveSession();
+      this._syncCorralUI();
+      return true;
+    }
     if (!this.corral.drawing) return true;
     this.corral.drawing = false;
     const previous = this.corral.rawPoints[this.corral.rawPoints.length - 1];
     if (!previous || Math.hypot(x - previous.x, y - previous.y) >= 2) {
       this.corral.rawPoints.push({ x, y });
     }
-    this.corral.points = smoothClosedCorral(this.corral.rawPoints, this.corral.shapeSmoothing);
-    this.corral.compiled = compileCorral(this.corral.points);
+    this.corral.anchors = normalizeEditableCorral(this.corral.rawPoints, 'spline');
+    this._rebuildCorralGeometry();
     if (!this.corral.compiled) {
       this.corral.rawPoints = [];
+      this.corral.anchors = [];
       this.corral.points = [];
       this.showToast('⚠ Draw a larger closed shape');
     } else {
@@ -17178,6 +17412,7 @@ export class App {
     }
     this.invalidateParams();
     this.saveSession();
+    this._syncCorralUI();
     return true;
   }
 
@@ -17195,6 +17430,14 @@ export class App {
     ctx.shadowColor = 'rgba(255,43,214,0.35)';
     ctx.shadowBlur = this.corral.editing ? 6 : 2;
     ctx.stroke();
+    if (this.corral.editing && !this.corral.drawing) {
+      this.corral.anchors.forEach((point, index) => {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, index === this.corral.selectedAnchor ? 5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = index === this.corral.selectedAnchor ? '#ffffff' : '#ff2bd6';
+        ctx.fill();
+      });
+    }
     ctx.restore();
   }
 
@@ -17258,9 +17501,10 @@ export class App {
           y: offsetY + (point.y - vy) * scale,
         });
       }
+      this._pushCorralUndo();
       this.corral.rawPoints = rawPoints;
-      this.corral.points = smoothClosedCorral(rawPoints, this.corral.shapeSmoothing);
-      this.corral.compiled = compileCorral(this.corral.points);
+      this.corral.anchors = normalizeEditableCorral(rawPoints, 'line');
+      this._rebuildCorralGeometry();
       if (!this.corral.compiled) throw new Error('SVG path could not form a corral');
       this.corral.enabled = true;
       this.corral.editing = true;
@@ -17433,8 +17677,29 @@ export class App {
       this.saveSession();
       this._syncCorralUI();
     });
-    document.getElementById('corralCollapseBtn')?.addEventListener('click', () => {
-      this.corral.overlayCollapsed = !this.corral.overlayCollapsed;
+    document.getElementById('globalOverlayCollapseBtn')?.addEventListener('click', () => {
+      this._setAllOverlaysCollapsed(!this.overlaysCollapsed);
+    });
+    document.getElementById('globalOverlayRunBtn')?.addEventListener('click', () => {
+      if (this.simulation.paused) this.resumeSimulation();
+      else this.startSimulation();
+    });
+    document.getElementById('globalOverlayStopBtn')?.addEventListener('click', () => this.stopSimulation());
+    document.getElementById('corralDrawBtn')?.addEventListener('click', () => this._setCorralEditorTool('draw'));
+    document.getElementById('corralEditBtn')?.addEventListener('click', () => this._setCorralEditorTool('edit'));
+    document.getElementById('corralAddPointBtn')?.addEventListener('click', () => this._setCorralEditorTool('add'));
+    document.getElementById('corralDeletePointBtn')?.addEventListener('click', () => this._deleteSelectedCorralAnchor());
+    document.getElementById('corralUndoBtn')?.addEventListener('click', () => this._undoCorralEdit());
+    document.getElementById('corralRedoBtn')?.addEventListener('click', () => this._redoCorralEdit());
+    document.getElementById('corralCopyBtn')?.addEventListener('click', () => this._copyCorral());
+    document.getElementById('corralPasteBtn')?.addEventListener('click', () => this._pasteCorral());
+    document.getElementById('corralSegmentType')?.addEventListener('change', event => {
+      const anchor = this.corral.anchors[this.corral.selectedAnchor];
+      if (!anchor) return;
+      this._pushCorralUndo();
+      anchor.segment = event.target.value;
+      this._rebuildCorralGeometry();
+      this.invalidateParams();
       this.saveSession();
       this._syncCorralUI();
     });
@@ -17477,12 +17742,29 @@ export class App {
     };
     bindCorralPercent('corralMidpointForce', 'midpointForce', 0, 1.5);
     bindCorralPercent('corralTangentialForce', 'tangentialForce', -2, 2);
+    bindCorralPercent('corralCenterForce', 'centerForce', -2, 2);
+    bindCorralPercent('corralForceNoise', 'forceNoise', 0, 2);
+    bindCorralPercent('corralRestitution', 'restitution', 0, 1.5);
+    document.getElementById('corralMaxSpeed')?.addEventListener('input', event => {
+      this.corral.maxSpeed = Math.max(0, Math.min(50, (Number(event.target.value) || 0) / 10));
+      this.invalidateParams();
+      this._syncCorralUI();
+    });
+    document.getElementById('corralMaxSpeed')?.addEventListener('change', () => this.saveSession());
     bindCorralPercent('corralNormalDamping', 'normalDamping', 0, 1);
     bindCorralPercent('corralTangentialFriction', 'tangentialFriction', 0, 1);
     document.getElementById('corralHardEdge')?.addEventListener('change', event => {
       this.corral.hardEdge = !!event.target.checked;
       this.invalidateParams();
       this.saveSession();
+    });
+    document.getElementById('corralInteractionMode')?.addEventListener('change', event => {
+      this.corral.interactionMode = ['attract', 'exclude'].includes(event.target.value)
+        ? event.target.value
+        : 'contain';
+      this.invalidateParams();
+      this.saveSession();
+      this._syncCorralUI();
     });
     document.getElementById('corralFalloff')?.addEventListener('change', event => {
       this.corral.falloff = ['linear', 'quadratic'].includes(event.target.value) ? event.target.value : 'smooth';
@@ -17491,8 +17773,7 @@ export class App {
     });
     document.getElementById('corralShapeSmoothing')?.addEventListener('input', event => {
       this.corral.shapeSmoothing = Math.max(0, Math.min(3, Math.round(Number(event.target.value) || 0)));
-      this.corral.points = smoothClosedCorral(this.corral.rawPoints, this.corral.shapeSmoothing);
-      this.corral.compiled = compileCorral(this.corral.points);
+      if (this.corral.anchors.length >= 3) this._rebuildCorralGeometry();
       this.invalidateParams();
       this._syncCorralUI();
     });
@@ -17671,10 +17952,6 @@ export class App {
     });
     ['simStepForwardBtn', 'simDrawerStepForwardBtn'].forEach(id => {
       document.getElementById(id)?.addEventListener('click', () => this._stepSimulationPathPosition(1));
-    });
-    document.getElementById('simHudCollapseBtn')?.addEventListener('click', () => {
-      this.simulation.hudCollapsed = !this.simulation.hudCollapsed;
-      this._syncSimulationUI();
     });
     document.getElementById('simModeSelect')?.addEventListener('change', event => {
       this._setSimulationMode(event.target.value);
@@ -18841,6 +19118,45 @@ export class App {
       const tag = target.tagName;
       const isEditableField = !target.disabled && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
       if (target.isContentEditable || isEditableField) return;
+    }
+    if (this.corral?.editing && this.activeBrush === 'boid') {
+      const command = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (command && key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) this._redoCorralEdit();
+        else this._undoCorralEdit();
+      } else if (command && key === 'y') {
+        e.preventDefault();
+        this._redoCorralEdit();
+      } else if (command && key === 'c') {
+        e.preventDefault();
+        this._copyCorral();
+      } else if (command && key === 'v') {
+        e.preventDefault();
+        this._pasteCorral();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        this._deleteSelectedCorralAnchor();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        if (this.corral.selectedAnchor >= 0) {
+          this.corral.selectedAnchor = -1;
+          this._syncCorralUI();
+        } else {
+          this._toggleCorralEditor(false);
+        }
+      } else if (!command && !e.altKey && key === 'v') {
+        e.preventDefault();
+        this._setCorralEditorTool('edit');
+      } else if (!command && !e.altKey && key === 'a') {
+        e.preventDefault();
+        this._setCorralEditorTool('add');
+      } else if (!command && !e.altKey && key === 'b') {
+        e.preventDefault();
+        this._setCorralEditorTool('draw');
+      }
+      return;
     }
     if (this.motionPath?.editorOpen) {
       if (e.key === 'Escape') {
@@ -21508,11 +21824,16 @@ export class App {
     controls._tilingMode = this.tilingMode;
     controls.corralEnabled = this.corral.enabled;
     controls.corralVisible = this.corral.visible;
-    controls.corralOverlayCollapsed = this.corral.overlayCollapsed;
+    controls.corralOverlayCollapsed = this.overlaysCollapsed;
     controls.corralEdgeStrength = Math.round(this.corral.edgeStrength * 100);
     controls.corralRepulsionRadius = Math.round(this.corral.repulsionRadius);
+    controls.corralInteractionMode = this.corral.interactionMode;
     controls.corralMidpointForce = Math.round(this.corral.midpointForce * 100);
     controls.corralTangentialForce = Math.round(this.corral.tangentialForce * 100);
+    controls.corralCenterForce = Math.round(this.corral.centerForce * 100);
+    controls.corralForceNoise = Math.round(this.corral.forceNoise * 100);
+    controls.corralRestitution = Math.round(this.corral.restitution * 100);
+    controls.corralMaxSpeed = Math.round(this.corral.maxSpeed * 10);
     controls.corralNormalDamping = Math.round(this.corral.normalDamping * 100);
     controls.corralTangentialFriction = Math.round(this.corral.tangentialFriction * 100);
     controls.corralHardEdge = this.corral.hardEdge;
@@ -21521,6 +21842,7 @@ export class App {
     controls.corralPhysicsDrawerOpen = this.corral.physicsDrawerOpen;
     controls.corralSvgDrawerOpen = this.corral.svgDrawerOpen;
     controls._corral = {
+      anchors: this.corral.anchors,
       rawPoints: this.corral.rawPoints,
       points: this.corral.points,
     };
@@ -21536,7 +21858,7 @@ export class App {
       enabled: this.simulation.enabled,
       guidesVisible: this.simulation.guidesVisible !== false,
       heatmapVisible: this.simulation.heatmapVisible === true,
-      hudCollapsed: this.simulation.hudCollapsed,
+      hudCollapsed: this.overlaysCollapsed,
       inspectorCollapsed: this.simulation.inspectorCollapsed,
       inspectorSections: this.simulation.inspectorSections,
       editorTool: this.simulation.editorTool,
@@ -22079,10 +22401,21 @@ export class App {
       if (id === '_stampImageState') continue;
       if (id === '_corral') {
         const rawPoints = Array.isArray(val?.rawPoints) ? val.rawPoints : val?.points;
-        const points = Array.isArray(val?.points) ? val.points : smoothClosedCorral(rawPoints);
+        const hasEditableAnchors = Array.isArray(val?.anchors);
+        const anchors = normalizeEditableCorral(
+          hasEditableAnchors
+            ? val.anchors
+            : (Array.isArray(val?.points) ? val.points : (Array.isArray(rawPoints) ? rawPoints : [])),
+          hasEditableAnchors ? 'spline' : 'line',
+        );
+        this.corral.anchors = anchors;
         this.corral.rawPoints = Array.isArray(rawPoints) ? rawPoints : [];
-        this.corral.points = Array.isArray(points) ? points : [];
-        this.corral.compiled = compileCorral(this.corral.points);
+        if (hasEditableAnchors) {
+          this._rebuildCorralGeometry();
+        } else {
+          this.corral.points = Array.isArray(val?.points) ? val.points : smoothClosedCorral(rawPoints);
+          this.corral.compiled = compileCorral(this.corral.points);
+        }
         continue;
       }
       if (id === 'corralEnabled') {
@@ -22096,7 +22429,8 @@ export class App {
         continue;
       }
       if (id === 'corralOverlayCollapsed') {
-        this.corral.overlayCollapsed = val === true || val === 'true';
+        this.overlaysCollapsed = val === true || val === 'true';
+        this.corral.overlayCollapsed = this.overlaysCollapsed;
         continue;
       }
       if (id === 'corralEdgeStrength') {
@@ -22113,12 +22447,32 @@ export class App {
         if (input) input.value = String(value);
         continue;
       }
+      if (id === 'corralInteractionMode') {
+        this.corral.interactionMode = ['attract', 'exclude'].includes(val) ? val : 'contain';
+        continue;
+      }
       if (id === 'corralMidpointForce') {
         this.corral.midpointForce = Math.max(0, Math.min(1.5, (Number(val) || 0) / 100));
         continue;
       }
       if (id === 'corralTangentialForce') {
         this.corral.tangentialForce = Math.max(-2, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralCenterForce') {
+        this.corral.centerForce = Math.max(-2, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralForceNoise') {
+        this.corral.forceNoise = Math.max(0, Math.min(2, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralRestitution') {
+        this.corral.restitution = Math.max(0, Math.min(1.5, (Number(val) || 0) / 100));
+        continue;
+      }
+      if (id === 'corralMaxSpeed') {
+        this.corral.maxSpeed = Math.max(0, Math.min(50, (Number(val) || 0) / 10));
         continue;
       }
       if (id === 'corralNormalDamping') {
@@ -22183,7 +22537,8 @@ export class App {
         this.simulation.enabled = !!val?.enabled;
         this.simulation.guidesVisible = val?.guidesVisible !== false;
         this.simulation.heatmapVisible = !!val?.heatmapVisible;
-        this.simulation.hudCollapsed = !!val?.hudCollapsed;
+        this.overlaysCollapsed = this.overlaysCollapsed || !!val?.hudCollapsed;
+        this.simulation.hudCollapsed = this.overlaysCollapsed;
         this.simulation.inspectorCollapsed = !!val?.inspectorCollapsed;
         this.simulation.inspectorSections = _normalizeSimulationInspectorSections(val?.inspectorSections);
         if (val?.vars && typeof val.vars === 'object') {

@@ -7,7 +7,9 @@ import {
   corralRepulsionWeight,
   corralToSvg,
   extractClosedSvgPath,
+  normalizeEditableCorral,
   pointInCorral,
+  sampleEditableCorral,
   smoothClosedCorral,
 } from '../corral.js';
 import { isSupportedByGpu } from '../webgpu-boid-sim.js';
@@ -23,6 +25,28 @@ test('smoothClosedCorral creates a bounded closed contour', () => {
   const smoothed = smoothClosedCorral(square, 1);
   assert.equal(smoothed.length, 8);
   assert.ok(smoothed.every(point => point.x >= 0 && point.x <= 100 && point.y >= 0 && point.y <= 100));
+});
+
+test('editable corrals preserve line, curve, and spline segments', () => {
+  const anchors = normalizeEditableCorral([
+    { x: 0, y: 0, segment: 'line' },
+    { x: 100, y: 0, segment: 'curve' },
+    { x: 100, y: 100, segment: 'spline' },
+    { x: 0, y: 100, segment: 'invalid' },
+  ]);
+  assert.deepEqual(anchors.map(point => point.segment), ['line', 'curve', 'spline', 'spline']);
+  const sampled = sampleEditableCorral(anchors, 4);
+  assert.ok(sampled.length > anchors.length);
+  assert.deepEqual(sampled[0], { x: 0, y: 0 });
+  assert.ok(sampled.every(point => Number.isFinite(point.x) && Number.isFinite(point.y)));
+  assert.ok(compileCorral(sampled));
+});
+
+test('legacy point arrays normalize into editable spline anchors', () => {
+  const anchors = normalizeEditableCorral(square);
+  assert.equal(anchors.length, square.length);
+  assert.ok(anchors.every(point => point.segment === 'spline'));
+  assert.equal(pointInCorral(50, 50, sampleEditableCorral(anchors)), true);
 });
 
 test('pointInCorral handles inside and outside points', () => {
@@ -119,6 +143,65 @@ test('hard edge can be disabled independently of interior repulsion', () => {
   });
   assert.equal(buffer[0], 105);
   assert.ok(buffer[2] < 0);
+});
+
+test('edge attraction pulls agents toward the boundary from either side', () => {
+    const compiled = compileCorral(square);
+    const inside = new Float32Array([90, 50, 0, 0]);
+    constrainAgentsToCorral({ buffer: inside, count: 1, stride: 4 }, compiled, {
+      interactionMode: 'attract',
+      edgeStrength: 1,
+      repulsionRadius: 20,
+    });
+    assert.ok(inside[2] > 0);
+    const outside = new Float32Array([110, 50, 0, 0]);
+    constrainAgentsToCorral({ buffer: outside, count: 1, stride: 4 }, compiled, {
+      interactionMode: 'attract',
+      edgeStrength: 1,
+      repulsionRadius: 20,
+    });
+    assert.ok(outside[2] < 0);
+    assert.equal(outside[0], 110);
+});
+
+test('exclusion projects interior agents outside and redirects them away', () => {
+    const compiled = compileCorral(square);
+    const buffer = new Float32Array([90, 50, -4, 0]);
+    constrainAgentsToCorral({ buffer, count: 1, stride: 4 }, compiled, {
+      interactionMode: 'exclude',
+      edgeStrength: 1,
+      repulsionRadius: 20,
+      restitution: 0.5,
+    });
+    assert.equal(pointInCorral(buffer[0], buffer[1], compiled.points), false);
+    assert.ok(buffer[2] > 0);
+});
+
+test('center force, force noise, restitution, and speed limit shape interactions', () => {
+    const compiled = compileCorral(square);
+    const centered = new Float32Array([20, 50, 0, 0]);
+    constrainAgentsToCorral({ buffer: centered, count: 1, stride: 4 }, compiled, {
+      edgeStrength: 0,
+      repulsionRadius: 0,
+      centerForce: 1,
+    });
+    assert.ok(centered[0] === 20 && centered[2] > 0);
+
+    const limited = new Float32Array([50, 50, 30, 40]);
+    constrainAgentsToCorral({ buffer: limited, count: 1, stride: 4 }, compiled, {
+      edgeStrength: 0,
+      repulsionRadius: 0,
+      maxSpeed: 5,
+    });
+    assert.ok(Math.abs(Math.hypot(limited[2], limited[3]) - 5) < 1e-6);
+
+    const noisy = new Float32Array([95, 40, 0, 0]);
+    constrainAgentsToCorral({ buffer: noisy, count: 1, stride: 4 }, compiled, {
+      edgeStrength: 0,
+      repulsionRadius: 20,
+      forceNoise: 1,
+    });
+    assert.notEqual(noisy[3], 0);
 });
 
 test('active corral uses synchronous simulation state', () => {
