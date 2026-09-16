@@ -5,7 +5,8 @@
 use core::f32::consts::PI;
 
 pub const MAX_SENSING_RULES: usize = 4;
-pub const PARAMS_LEN: usize = 88;
+pub const BOID_VARIANCE_COUNT: usize = 21;
+pub const PARAMS_LEN: usize = 88 + BOID_VARIANCE_COUNT * 2;
 const LEGACY_PARAMS_LEN: usize = 68;
 
 #[derive(Clone, Copy, Debug)]
@@ -64,6 +65,7 @@ pub struct AgentParams {
     pub sat_var: f32,
     pub lit_var: f32,
     pub boundary_margin: f32,
+    pub variances: [f32; BOID_VARIANCE_COUNT],
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +139,8 @@ pub struct SimParams {
     pub leader_sat_var: f32,
     pub leader_lit_var: f32,
     pub leader_boundary_margin: f32,
+    pub variances: [f32; BOID_VARIANCE_COUNT],
+    pub leader_variances: [f32; BOID_VARIANCE_COUNT],
 }
 
 impl Default for SimParams {
@@ -211,6 +215,8 @@ impl Default for SimParams {
             leader_sat_var: 0.0,
             leader_lit_var: 0.0,
             leader_boundary_margin: -1.0,
+            variances: [0.0; BOID_VARIANCE_COUNT],
+            leader_variances: [0.0; BOID_VARIANCE_COUNT],
         }
     }
 }
@@ -270,6 +276,7 @@ impl SimParams {
             sat_var: self.leader_sat_var,
             lit_var: self.leader_lit_var,
             boundary_margin: self.leader_boundary_margin,
+            variances: self.leader_variances,
         }
     }
 
@@ -308,6 +315,7 @@ impl SimParams {
             sat_var: self.sat_var,
             lit_var: self.lit_var,
             boundary_margin: self.boundary_margin,
+            variances: self.variances,
         }
     }
 
@@ -320,11 +328,13 @@ impl SimParams {
     }
 
     pub fn max_neighbor_radius(&self) -> f32 {
-        self.neighbor_radius.max(self.leader_neighbor_radius)
+        (self.neighbor_radius * (1.0 + self.variances[18]))
+            .max(self.leader_neighbor_radius * (1.0 + self.leader_variances[18]))
     }
 
     pub fn max_separation_radius(&self) -> f32 {
-        self.separation_radius.max(self.leader_separation_radius)
+        (self.separation_radius * (1.0 + self.variances[19]))
+            .max(self.leader_separation_radius * (1.0 + self.leader_variances[19]))
     }
 
     pub fn from_raw(raw: &[f32]) -> Self {
@@ -400,6 +410,8 @@ impl SimParams {
             sensing_fit_radius: Self::read_nonnegative(raw, 66, 0.0),
             leader_sensing_fit_radius: Self::read_nonnegative(raw, 67, 0.0),
             sensing_rules,
+            variances: Self::read_variances(raw, 88),
+            leader_variances: Self::read_variances(raw, 88 + BOID_VARIANCE_COUNT),
         }
     }
 
@@ -422,5 +434,85 @@ impl SimParams {
             };
         }
         rules
+    }
+
+    fn read_variances(raw: &[f32], start: usize) -> [f32; BOID_VARIANCE_COUNT] {
+        let mut values = [0.0; BOID_VARIANCE_COUNT];
+        for (index, value) in values.iter_mut().enumerate() {
+            *value = Self::read_nonnegative(raw, start + index, 0.0).min(1.0);
+        }
+        values
+    }
+}
+
+impl AgentParams {
+    #[inline]
+    fn varied_value(value: f32, variance: f32, seed: f32) -> f32 {
+        (value * (1.0 + variance * seed)).max(0.0)
+    }
+
+    /// Apply the stable signed seeds stored on one agent. Index order matches
+    /// BOID_VARIANCE_FIELDS in boid-parameter-contract.js.
+    pub fn varied(mut self, seeds: &[f32]) -> Self {
+        let v = &self.variances;
+        self.seek = Self::varied_value(self.seek, v[0], seeds[0]);
+        self.cohesion = Self::varied_value(self.cohesion, v[1], seeds[1]);
+        self.separation = Self::varied_value(self.separation, v[2], seeds[2]);
+        self.alignment = Self::varied_value(self.alignment, v[3], seeds[3]);
+        self.jitter = Self::varied_value(self.jitter, v[4], seeds[4]);
+        self.wander = Self::varied_value(self.wander, v[5], seeds[5]);
+        self.wander_speed = Self::varied_value(self.wander_speed, v[6], seeds[6]);
+        self.max_speed = Self::varied_value(self.max_speed, v[7], seeds[7]);
+        self.damping = Self::varied_value(self.damping, v[8], seeds[8]).min(1.0);
+        self.flow_field = Self::varied_value(self.flow_field, v[9], seeds[9]);
+        self.flow_scale = Self::varied_value(self.flow_scale, v[10], seeds[10]);
+        self.flee_radius = Self::varied_value(self.flee_radius, v[11], seeds[11]);
+        self.fov_rad = Self::varied_value(self.fov_rad, v[12], seeds[12]).min(2.0 * PI);
+        self.quorum_composite_strength =
+            Self::varied_value(self.quorum_composite_strength, v[13], seeds[13]).min(1.0);
+        self.sensing_strength = Self::varied_value(self.sensing_strength, v[14], seeds[14]);
+        self.sensing_radius = Self::varied_value(self.sensing_radius, v[15], seeds[15]);
+        self.sensing_fit_radius = Self::varied_value(self.sensing_fit_radius, v[16], seeds[16]);
+        self.sensing_threshold =
+            Self::varied_value(self.sensing_threshold, v[17], seeds[17]).min(1.0);
+        self.neighbor_radius = Self::varied_value(self.neighbor_radius, v[18], seeds[18]).max(1.0);
+        self.separation_radius =
+            Self::varied_value(self.separation_radius, v[19], seeds[19]).max(1.0);
+        self.boundary_margin = if self.boundary_margin < 0.0 {
+            self.boundary_margin
+        } else {
+            Self::varied_value(self.boundary_margin, v[20], seeds[20])
+        };
+        self
+    }
+}
+
+#[cfg(test)]
+mod variance_tests {
+    use super::*;
+
+    #[test]
+    fn zero_variance_preserves_every_agent_parameter() {
+        let params = SimParams::default().params_for(false);
+        let varied = params.varied(&[1.0; BOID_VARIANCE_COUNT]);
+        assert_eq!(varied.seek, params.seek);
+        assert_eq!(varied.max_speed, params.max_speed);
+        assert_eq!(varied.neighbor_radius, params.neighbor_radius);
+        assert_eq!(varied.boundary_margin, params.boundary_margin);
+    }
+
+    #[test]
+    fn independent_seeds_only_change_their_owned_parameter() {
+        let mut params = SimParams::default().params_for(false);
+        params.variances[0] = 0.5;
+        params.variances[18] = 0.25;
+        let mut seeds = [0.0; BOID_VARIANCE_COUNT];
+        seeds[0] = 1.0;
+        seeds[18] = -1.0;
+        let varied = params.varied(&seeds);
+        assert_eq!(varied.seek, params.seek * 1.5);
+        assert_eq!(varied.neighbor_radius, params.neighbor_radius * 0.75);
+        assert_eq!(varied.cohesion, params.cohesion);
+        assert_eq!(varied.max_speed, params.max_speed);
     }
 }

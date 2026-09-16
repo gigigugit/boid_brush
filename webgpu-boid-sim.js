@@ -1,8 +1,9 @@
 import { BoidSim } from './wasm-bridge.js';
+import { BOID_VARIANCE_FIELDS, writeBoidVariances } from './boid-parameter-contract.js';
 
-const AGENT_STRIDE = 23;
+const AGENT_STRIDE = 44;
 const MAX_SENSING_RULES = 4;
-const PARAMS_LEN = 89;
+const PARAMS_LEN = 131;
 const WORKGROUP_SIZE = 64;
 const BYTES_PER_F32 = 4;
 const STAGING_BUFFER_COUNT = 2;
@@ -97,6 +98,7 @@ function fillParamsArray(target, p, targetX, targetY, time) {
       target[base + 4] = 0;
     }
   }
+  writeBoidVariances(target, p, 89);
 }
 
 function packMeta(agentCount, width, height) {
@@ -344,6 +346,8 @@ const SPD_M : u32 = 16u;
 const SEEK_M : u32 = 17u;
 const COH_M : u32 = 18u;
 const SEP_M : u32 = 19u;
+const VARIANCE_SEED_START : u32 = 23u;
+const VARIANCE_COUNT : u32 = ${BOID_VARIANCE_FIELDS.length}u;
 const FLAG_ALIVE : u32 = 1u;
 const FLAG_LEADER : u32 = 2u;
 const PI : f32 = 3.141592653589793;
@@ -393,6 +397,13 @@ fn agentIndex(agent : u32, field : u32) -> u32 {
 
 fn agentValue(agent : u32, field : u32) -> f32 {
   return inAgents[agentIndex(agent, field)];
+}
+
+fn variedValue(baseValue : f32, varianceIndex : u32, agent : u32, leader : bool) -> f32 {
+  let varianceBase = select(89u, 89u + VARIANCE_COUNT, leader);
+  let amount = clamp(params.values[varianceBase + varianceIndex], 0.0, 1.0);
+  let seed = agentValue(agent, VARIANCE_SEED_START + varianceIndex);
+  return max(baseValue * (1.0 + amount * seed), 0.0);
 }
 
 fn hash1(n : f32) -> f32 {
@@ -484,33 +495,34 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     return;
   }
 
-  let seek = select(params.values[0], params.values[36], isLeader);
-  let cohesion = select(params.values[1], params.values[37], isLeader);
-  let separation = select(params.values[2], params.values[38], isLeader);
-  let alignment = select(params.values[3], params.values[39], isLeader);
-  let jitter = select(params.values[4], params.values[40], isLeader);
-  let wander = select(params.values[5], params.values[41], isLeader);
-  let wanderSpeed = select(params.values[6], params.values[42], isLeader);
-  let maxSpeed = select(params.values[7], params.values[43], isLeader);
-  let damping = select(params.values[8], params.values[44], isLeader);
-  let flowField = select(params.values[9], params.values[45], isLeader);
-  let flowScale = select(params.values[10], params.values[46], isLeader);
-  let fleeRadius = select(params.values[11], params.values[47], isLeader);
-  let fovRad = select(params.values[12], params.values[48], isLeader) * PI / 180.0;
+  let seek = variedValue(select(params.values[0], params.values[36], isLeader), 0u, i, isLeader);
+  let cohesion = variedValue(select(params.values[1], params.values[37], isLeader), 1u, i, isLeader);
+  let separation = variedValue(select(params.values[2], params.values[38], isLeader), 2u, i, isLeader);
+  let alignment = variedValue(select(params.values[3], params.values[39], isLeader), 3u, i, isLeader);
+  let jitter = variedValue(select(params.values[4], params.values[40], isLeader), 4u, i, isLeader);
+  let wander = variedValue(select(params.values[5], params.values[41], isLeader), 5u, i, isLeader);
+  let wanderSpeed = variedValue(select(params.values[6], params.values[42], isLeader), 6u, i, isLeader);
+  let maxSpeed = variedValue(select(params.values[7], params.values[43], isLeader), 7u, i, isLeader);
+  let damping = min(variedValue(select(params.values[8], params.values[44], isLeader), 8u, i, isLeader), 1.0);
+  let flowField = variedValue(select(params.values[9], params.values[45], isLeader), 9u, i, isLeader);
+  let flowScale = variedValue(select(params.values[10], params.values[46], isLeader), 10u, i, isLeader);
+  let fleeRadius = variedValue(select(params.values[11], params.values[47], isLeader), 11u, i, isLeader);
+  let fovRad = min(variedValue(select(params.values[12], params.values[48], isLeader), 12u, i, isLeader) * PI / 180.0, TAU);
   let quorumThreshold = max(select(params.values[14], params.values[50], isLeader), 0.0);
   let quorumEnabled = quorumThreshold >= 2.0;
-  let quorumCompositeStrength = clamp(select(params.values[15], params.values[51], isLeader), 0.0, 1.0);
+  let quorumCompositeStrength = clamp(variedValue(select(params.values[15], params.values[51], isLeader), 13u, i, isLeader), 0.0, 1.0);
   let sensingEnabled = select(params.values[16], params.values[52], isLeader) > 0.5;
   let sensingAttract = select(params.values[17], params.values[53], isLeader) > 0.5;
-  let sensingStrength = select(params.values[18], params.values[54], isLeader);
-  let sensingRadius = select(params.values[19], params.values[55], isLeader);
-  let sensingThreshold = select(params.values[20], params.values[56], isLeader);
-  let sensingFitRadius = max(select(params.values[67], params.values[68], isLeader), 0.0);
+  let sensingStrength = variedValue(select(params.values[18], params.values[54], isLeader), 14u, i, isLeader);
+  let sensingRadius = variedValue(select(params.values[19], params.values[55], isLeader), 15u, i, isLeader);
+  let sensingThreshold = min(variedValue(select(params.values[20], params.values[56], isLeader), 17u, i, isLeader), 1.0);
+  let sensingFitRadius = variedValue(select(params.values[67], params.values[68], isLeader), 16u, i, isLeader);
   let goalPos = vec2f(params.values[21], params.values[22]);
   let time = params.values[23];
-  let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
-  let separationRadius = max(select(params.values[25], params.values[58], isLeader), 1.0);
-  let boundsMargin = select(params.values[33], params.values[66], isLeader);
+  let neighborRadius = max(variedValue(select(params.values[24], params.values[57], isLeader), 18u, i, isLeader), 1.0);
+  let separationRadius = max(variedValue(select(params.values[25], params.values[58], isLeader), 19u, i, isLeader), 1.0);
+  let rawBoundsMargin = select(params.values[33], params.values[66], isLeader);
+  let boundsMargin = select(rawBoundsMargin, variedValue(rawBoundsMargin, 20u, i, isLeader), rawBoundsMargin >= 0.0);
   let simSpeed = max(params.values[34], 0.0);
   let leaderPull = clamp(params.values[35], 0.0, 1.0);
 
@@ -890,6 +902,8 @@ const Y : u32 = 1u;
 const VX : u32 = 2u;
 const VY : u32 = 3u;
 const FLAGS : u32 = 15u;
+const VARIANCE_SEED_START : u32 = 23u;
+const VARIANCE_COUNT : u32 = ${BOID_VARIANCE_FIELDS.length}u;
 const FLAG_ALIVE : u32 = 1u;
 const FLAG_LEADER : u32 = 2u;
 const PI : f32 = 3.141592653589793;
@@ -917,6 +931,12 @@ fn agentIndex(agent : u32, field : u32) -> u32 {
 
 fn agentValue(agent : u32, field : u32) -> f32 {
   return inAgents[agentIndex(agent, field)];
+}
+
+fn variedValue(baseValue : f32, varianceIndex : u32, agent : u32, leader : bool) -> f32 {
+  let varianceBase = select(89u, 89u + VARIANCE_COUNT, leader);
+  return max(baseValue * (1.0 + clamp(params.values[varianceBase + varianceIndex], 0.0, 1.0)
+    * agentValue(agent, VARIANCE_SEED_START + varianceIndex)), 0.0);
 }
 
 fn inFov(xi : f32, yi : f32, vx : f32, vy : f32, ox : f32, oy : f32, fovRad : f32) -> bool {
@@ -957,9 +977,9 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     return;
   }
 
-  let neighborRadius = max(select(params.values[24], params.values[57], isLeader), 1.0);
+  let neighborRadius = max(variedValue(select(params.values[24], params.values[57], isLeader), 18u, i, isLeader), 1.0);
   let neighborRadius2 = neighborRadius * neighborRadius;
-  let fovRad = select(params.values[12], params.values[48], isLeader) * PI / 180.0;
+  let fovRad = min(variedValue(select(params.values[12], params.values[48], isLeader), 12u, i, isLeader) * PI / 180.0, TAU);
   let xi = agentValue(i, X);
   let yi = agentValue(i, Y);
   let vx = agentValue(i, VX);

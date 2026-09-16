@@ -715,6 +715,23 @@ mod tests {
     }
 
     #[test]
+    fn test_variance_identity_is_not_reused_after_swap_remove() {
+        let mut sim = Simulation::new(800, 600, 4);
+        for _ in 0..3 {
+            sim.spawn_one(100.0, 100.0);
+        }
+        sim.remove_agent(0);
+        sim.spawn_one(100.0, 100.0);
+
+        let moved = &sim.buf[boid::VARIANCE_SEED_START
+            ..boid::VARIANCE_SEED_START + boid::VARIANCE_SEED_COUNT];
+        let respawned_base = 2 * STRIDE;
+        let respawned = &sim.buf[respawned_base + boid::VARIANCE_SEED_START
+            ..respawned_base + boid::VARIANCE_SEED_START + boid::VARIANCE_SEED_COUNT];
+        assert_ne!(moved, respawned);
+    }
+
+    #[test]
     fn test_set_leader_range_marks_requested_agents() {
         let mut sim = Simulation::new(120, 80, 8);
         for x in [20.0, 30.0, 40.0, 50.0] {

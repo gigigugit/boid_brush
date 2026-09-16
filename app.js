@@ -7,7 +7,8 @@
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
 import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
-import { buildSidebar, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-10-edge-overlay-cache-bust';
+import { buildSidebar, buildBoidPanel, buildCorralPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, syncBoidPanel, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-14-corral-panel-toolbar';
+import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
@@ -31,7 +32,7 @@ import {
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-14-corral-interactions';
+const APP_BUILD_ID = '2026-09-14-corral-panel-toolbar';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
@@ -81,6 +82,10 @@ const LEADER_FACTORY_DEFAULTS = Object.freeze(LEADER_OVERRIDE_FIELDS.reduce((acc
 }, {
   leaderCount: 0,
   leaderPull: 35,
+  ...Object.fromEntries(BOID_VARIANCE_FIELDS.flatMap(field => [
+    [field.leaderControlId, 0],
+    [field.leaderOverrideId, false],
+  ])),
 }));
 // Controls that own a dedicated localStorage key (and side-effect wiring) —
 // excluded from the generic session snapshot so the dedicated key stays the
@@ -157,6 +162,7 @@ const FACTORY_DEFAULTS = Object.freeze({
   hueVar: 0,
   satVar: 0,
   litVar: 0,
+  ...Object.fromEntries(BOID_VARIANCE_FIELDS.map(field => [field.controlId, 0])),
   maxSpeed: 22,
   damping: 95,
   ...LEADER_FACTORY_DEFAULTS,
@@ -849,10 +855,18 @@ function _readLeaderOverrideConfig({ val, chk, sel }) {
       value: field.readControl({ val, chk, sel }),
     };
   }
+  const varianceOverrides = {};
+  for (const field of BOID_VARIANCE_FIELDS) {
+    varianceOverrides[field.key] = {
+      enabled: chk(field.leaderOverrideId),
+      value: Math.max(0, Math.min(1, val(field.leaderControlId) / 100)),
+    };
+  }
   return {
     count: Math.max(0, Math.round(val('leaderCount') || 0)),
     pull: val('leaderPull') / 100,
     overrides,
+    varianceOverrides,
   };
 }
 
@@ -2749,6 +2763,8 @@ export class App {
 
     // Sidebar UI
     buildSidebar(this);
+    buildBoidPanel(this);
+    buildCorralPanel(this);
     buildFavoritesPanel(this);
     buildSettingsPanel(this);
     buildLayersPanel(this);
@@ -6449,8 +6465,12 @@ export class App {
       antTrailVisible: chk('antTrailVisible'),
       antPheromoneToSensing: chk('antPheromoneToSensing'),
       // Neighbor/separation radii (ant math panel)
-      neighborRadius: val('am_neighborRadius') || 80,
-      separationRadius: val('am_separationRadius') || 25,
+      neighborRadius: val('neighborRadius') || 80,
+      separationRadius: val('separationRadius') || 25,
+      variances: Object.fromEntries(BOID_VARIANCE_FIELDS.map(field => [
+        field.key,
+        Math.max(0, Math.min(1, val(field.controlId) / 100)),
+      ])),
       // Simulation mode
       simSpeed: (val('simSpeed') || 100) / 100,
       simPointStrength: (val('simPointStrength') || 0) / 100,
@@ -10587,7 +10607,7 @@ export class App {
                     <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="layers">
                       ${layerOptions.map(option => `
                         <label>
-                          <input type="checkbox" data-sim-setup-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.layerIds.includes(option.id) ? 'checked' : ''}>
+                          <input type="checkbox" data-sim-setup-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.layerIds.includes(String(option.id)) ? 'checked' : ''}>
                           <span>${_escapeHtml(option.label)}</span>
                         </label>`).join('')}
                     </div>
@@ -10612,7 +10632,7 @@ export class App {
                     <div class="sim-setup-multiList" data-row-key="${rowKey}" data-sim-setup-list="sensing">
                       ${sensingLayerOptions.map(option => `
                         <label>
-                          <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(option.id) ? 'checked' : ''}>
+                          <input type="checkbox" data-sim-setup-sensing-layer-option="${rowKey}" value="${_escapeHtml(option.id)}" ${row.sensingLayerIds.includes(String(option.id)) ? 'checked' : ''}>
                           <span>${_escapeHtml(option.label)}</span>
                         </label>`).join('')}
                     </div>
@@ -11972,8 +11992,8 @@ export class App {
             const playbackStatus = this._getSimulationSavedPlaybackStatus(session);
             const playbackBadgeTone = this._getSimulationSavedPlaybackBadgeTone(playbackStatus);
             const normalizedLayerIds = this._normalizeSimulationLayerIds(row.layerIds, row.sessionIndex);
-            const selectedLayerIdSet = new Set(normalizedLayerIds);
-            const selectedSensingLayerSet = new Set(row.sensingLayerIds);
+            const selectedLayerIdSet = new Set(normalizedLayerIds.map(id => String(id)));
+            const selectedSensingLayerSet = new Set(_normalizeSimulationSensingSourceSelection(row.sensingLayerIds));
             const routeCount = normalizedLayerIds.length;
             const routeSummary = this._buildSimulationSetupLayerSummary(normalizedLayerIds, row.sessionIndex);
             const sensingSummary = this._buildSimulationSetupSensingSummary(row);
@@ -12010,7 +12030,7 @@ export class App {
                     <div class="sim-stage-field-label">Target Layer(s)</div>
                     <div class="sim-stage-checklist">
                       ${stageLayerOptions.map(layer => {
-                        const checked = selectedLayerIdSet.has(layer.id);
+                        const checked = selectedLayerIdSet.has(String(layer.id));
                         return `
                           <label class="sim-stage-check">
                             <input type="checkbox" data-sim-stage-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''}>
@@ -12039,7 +12059,7 @@ export class App {
                     <div class="sim-stage-field-label">Selected Sensing Layers</div>
                     <div class="sim-stage-checklist">
                       ${sensingLayerOptions.map(layer => {
-                        const checked = selectedSensingLayerSet.has(layer.id);
+                        const checked = selectedSensingLayerSet.has(String(layer.id));
                         return `
                           <label class="sim-stage-check">
                             <input type="checkbox" data-sim-stage-sensing-layer="${row.sessionIndex}" value="${_escapeHtml(layer.id)}" ${checked ? 'checked' : ''} ${sensingLayersDisabled ? 'disabled' : ''}>
@@ -17018,6 +17038,18 @@ export class App {
       const shouldShow = allowed.includes(brush);
       el.classList.toggle('brush-hidden', !shouldShow);
     });
+    const visible = brush === 'boid';
+    ['boid', 'corral'].forEach(viewName => {
+      const tab = document.querySelector(`#rightPanelTabs .panel-tab[data-panel-view="${viewName}"]`);
+      const panel = document.querySelector(`#rightPanel .panel-view[data-panel-view="${viewName}"]`);
+      tab?.classList.toggle('panel-tab-hidden', !visible);
+      if (!visible && tab?.classList.contains('active')) {
+        tab.classList.remove('active');
+        panel?.classList.remove('active');
+        document.querySelector('#rightPanelTabs .panel-tab[data-panel-view="brush"]')?.classList.add('active');
+        document.getElementById('sidebar')?.classList.add('active');
+      }
+    });
   }
 
   getCurrentBrush() { return this.brushes[this.activeBrush]; }
@@ -17159,10 +17191,9 @@ export class App {
     const open = isPhysics ? this.corral.physicsDrawerOpen : this.corral.svgDrawerOpen;
     const drawer = document.getElementById(isPhysics ? 'corralPhysicsDrawer' : 'corralSvgDrawer');
     const tab = document.getElementById(isPhysics ? 'corralPhysicsDrawerTab' : 'corralSvgDrawerTab');
-    const label = isPhysics ? 'Physics' : 'SVG & Files';
-    drawer?.classList.toggle('open', open);
+    drawer?.classList.toggle('collapsed', !open);
     if (tab) {
-      tab.textContent = `${label} ${open ? '▲' : '▼'}`;
+      tab.classList.toggle('closed', !open);
       tab.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
   }
@@ -17703,8 +17734,17 @@ export class App {
       this.saveSession();
       this._syncCorralUI();
     });
-    document.getElementById('corralPhysicsDrawerTab')?.addEventListener('click', () => this._toggleCorralDrawer('physics'));
-    document.getElementById('corralSvgDrawerTab')?.addEventListener('click', () => this._toggleCorralDrawer('svg'));
+    const bindCorralSectionToggle = (id, name) => {
+      const toggle = document.getElementById(id);
+      toggle?.addEventListener('click', () => this._toggleCorralDrawer(name));
+      toggle?.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        this._toggleCorralDrawer(name);
+      });
+    };
+    bindCorralSectionToggle('corralPhysicsDrawerTab', 'physics');
+    bindCorralSectionToggle('corralSvgDrawerTab', 'svg');
     document.getElementById('corralResetBtn')?.addEventListener('click', () => this._resetCorral());
     document.getElementById('corralExitBtn')?.addEventListener('click', () => this._toggleCorralEditor(false));
     document.getElementById('corralExportBtn')?.addEventListener('click', () => this._exportCorralSvg());
@@ -21081,7 +21121,7 @@ export class App {
             <div class="sensing-rule-layer-list">
               ${layerOptions.map(option => `
                 <label>
-                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(option.id) ? 'checked' : ''}>
+                  <input type="checkbox" data-sensing-rule-layer="${index}" value="${_escapeHtml(option.id)}" ${rule.layerIds.includes(String(option.id)) ? 'checked' : ''}>
                   <span>${_escapeHtml(option.label)}</span>
                 </label>
               `).join('')}
@@ -21234,7 +21274,7 @@ export class App {
   _getSelectedSensingSourceLayers() {
     const selectedIds = this._serializeSensingSourceSelection();
     const selectedSet = new Set(selectedIds);
-    const layers = this.layers.filter(layer => selectedSet.has(layer.id));
+    const layers = this.layers.filter(layer => selectedSet.has(String(layer.id)));
     if (layers.length !== selectedIds.length) {
       this._setCurrentSensingSourceSelectionState(layers.map(layer => layer.id));
     }
@@ -21316,6 +21356,7 @@ export class App {
       this._renderSensingSourcePicker();
       if (this._sensingSourcePickerAnchor) this._positionSensingSourcePicker(this._sensingSourcePickerAnchor);
     }
+    syncBoidPanel();
   }
 
   _handleSensingSourceChange(nextSource, previousSource = 'below') {
@@ -21371,7 +21412,7 @@ export class App {
       id: layer.id,
       label: layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer'),
       meta: layer.isBackground ? 'Canvas background fill' : `${Math.round(layer.opacity * 100)}% • ${layer.visible ? 'visible' : 'hidden'}`,
-      checked: selected.has(layer.id),
+      checked: selected.has(String(layer.id)),
     }));
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
@@ -21537,14 +21578,14 @@ export class App {
         drawLayer(l);
       }
     } else if (src === 'selected') {
-      const selectedIds = new Set(
+      const selectedIds = new Set(_normalizeSimulationSensingSourceSelection(
         Array.isArray(override?.layerIds) && override.layerIds.length
           ? override.layerIds
           : this._serializeSensingSourceSelection()
-      );
+      ));
       for (let i = this.layers.length - 1; i >= 0; i--) {
         const l = this.layers[i];
-        if (!selectedIds.has(l.id)) continue;
+        if (!selectedIds.has(String(l.id))) continue;
         drawLayer(l);
       }
     }

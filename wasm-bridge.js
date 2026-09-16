@@ -1,3 +1,5 @@
+import { writeBoidVariances } from './boid-parameter-contract.js';
+
 // =============================================================================
 // wasm-bridge.js — Minimal JS integration layer for the boid-sim WASM module
 //
@@ -237,6 +239,7 @@ export class BoidSim {
         v[base + 4] = 0;
       }
     }
+    writeBoidVariances(v, p, 88);
     if (this._handle !== null && typeof this._mod.boid_set_params === 'function') this._mod.boid_set_params(this._handle);
     else this._mod.set_params();
   }
