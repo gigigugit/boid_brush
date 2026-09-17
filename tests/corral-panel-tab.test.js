@@ -9,7 +9,7 @@ const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 test('right drawer exposes a dedicated Corral tab and panel host', () => {
   assert.match(html, /class="panel-tab panel-tab-hidden" data-panel-view="corral" data-panel-target="rightPanel">Corral<\/button>/);
   assert.match(html, /<div id="corralPanel" class="panel-view" data-panel-view="corral"><\/div>/);
-  assert.match(html, /#sidebar,#favoritesPanel,#settingsPanel,#jsonPanel,#boidPanel,#corralPanel/);
+  assert.match(html, /#sidebar,#favoritesPanel,#settingsPanel,#modulationPanel,#jsonPanel,#boidPanel,#corralPanel/);
   assert.match(html, /body:has\(#boidPanel\.active\)\{--right-panel-open-w:min\(92vw,520px\);\}/);
   assert.match(html, /body:has\(#corralPanel\.active\)\{--right-panel-open-w:min\(92vw,520px\);\}/);
 });
@@ -29,6 +29,6 @@ test('corral physics and SVG controls live in the drawer panel, not duplicated i
 
 test('app builds and brush-gates the Corral drawer tab alongside the Boid tab', () => {
   assert.match(app, /buildSidebar\(this\);\s*\n\s*buildBoidPanel\(this\);\s*\n\s*buildCorralPanel\(this\);/);
-  assert.match(app, /\['boid', 'corral'\]\.forEach\(viewName => \{/);
+  assert.match(app, /\['boid', 'corral', 'modulation'\]\.forEach\(viewName => \{/);
   assert.match(app, /data-panel-view="\$\{viewName\}"/);
 });

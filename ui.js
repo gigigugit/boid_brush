@@ -523,11 +523,8 @@ function _syncLeaderOverrideUI() {
 // ── Boid Input Modulation Framework ─────────────────────────
 // Boid-only. The whole modulation matrix lives in ONE hidden JSON control
 // (`#boidModMatrix`) so it rides through the scalar-only preset catalog filter
-// as a string. The sidebar section itself stays compact (intro + live channel
-// monitor + a one-line summary); the full editor — a visual route list plus a
-// detail pane for whichever route is selected — lives in the
-// `#modInputEditorModal` overlay so the sidebar never turns into a wall of
-// per-route controls.
+// as a string. The full editor lives in the dedicated right-side Modulation
+// panel, where routes and their curves can be edited directly.
 //
 // Ownership: the hidden text input is the single source of truth. Every editor
 // control reads it, mutates the parsed matrix, and writes it back — there is no
@@ -542,8 +539,6 @@ const MOD_MATRIX_MAX_JSON_LENGTH = 24000;
 
 let _modSelectedSourceId = 'pressure';
 let _modCurveResizeObservers = [];
-let _modCurvePopupCleanup = null;
-let _modCurvePopupSession = null;
 
 function _modMatrixControl() {
   return document.getElementById('boidModMatrix');
@@ -560,6 +555,7 @@ function _writeModMatrix(app, matrix, { rerender = true } = {}) {
   const control = _modMatrixControl();
   if (!control) return;
   control.value = modMatrixToControlValue(matrix);
+  control.dispatchEvent(new Event('input', { bubbles: true }));
   app.invalidateParams();
   // The summary line is a plain textContent update — cheap, and never steals
   // focus — so it stays current even mid-drag.
@@ -593,7 +589,7 @@ const _MOD_CARD_STYLE = 'margin:6px 0;padding:8px;border:1px solid rgba(255,255,
 const _MOD_ROW_STYLE = 'display:flex;align-items:center;gap:6px;margin:4px 0;font-size:10px;color:#9fb0c6;';
 const _MOD_NUM_STYLE = 'width:52px;flex:0 0 auto;';
 
-/** Input-channel navigation for the modal's left column. */
+/** Input-channel navigation for the Modulation panel. */
 function _buildModSourceChip(channel, count, selected) {
   return `
     <button class="mod-source-chip${selected ? ' active' : ''}" type="button" data-mod-source-chip="${channel.id}" aria-pressed="${selected ? 'true' : 'false'}">
@@ -669,25 +665,19 @@ function _buildModCurveEditorMarkup(route, index, target) {
     ? ' Force Variance and Individuality still apply intentional per-agent variation after this shared value.'
     : '';
   return `
-    <div class="mod-curve-editor" data-mod-curve-editor="${route.id}">
-      <canvas class="mod-curve-canvas" width="240" height="150" aria-label="Route ${index + 1} target value curve"></canvas>
-      <div class="mod-curve-axis"><span>Input 0</span><span>${target ? `${_formatModTargetValue(target, target.min)} … ${_formatModTargetValue(target, target.max)} ${target.label}` : 'Target value'}</span><span>Input 1</span></div>
+    <div class="pressure-curve-editor mod-curve-editor" data-mod-curve-editor="${route.id}">
+      <div class="pressure-curve-header">
+        <span class="pressure-curve-title">${getFeatureChannel(route.source)?.label || route.source} → ${target?.label || route.target}</span>
+        <button type="button" class="pressure-curve-reset" data-mod-route="${route.id}" data-mod-action="reset-curve">Reset</button>
+      </div>
+      <canvas class="pressure-curve-canvas mod-curve-canvas" width="240" height="118" aria-label="Route ${index + 1} target value curve"></canvas>
+      <div class="pressure-curve-axis"><span>Input 0</span><span>${target ? `${_formatModTargetValue(target, target.min)} … ${_formatModTargetValue(target, target.max)} ${target.label}` : 'Target value'}</span><span>Input 1</span></div>
       <div class="mod-curve-point-fields">
         <label>Start output (${target?.label || 'Target'}) <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-endpoint="start"></label>
         <label>End output (${target?.label || 'Target'}) <input type="number" min="${target?.min ?? 0}" max="${target?.max ?? 1}" step="${_modTargetStep(target)}" data-mod-endpoint="end"></label>
       </div>
       <span class="slider-desc">The curve directly sets ${target?.label || 'the target'} in its normal range. Drag or tap to add a point, and double-click an inner point to remove it. Drag the dashed current-setting line by its handle to update the Boid Brush setting.${forceVariationNote}</span>
-      <button type="button" class="mod-curve-reset" data-mod-route="${route.id}" data-mod-action="reset-curve" style="margin-top:4px;">Reset Curve</button>
     </div>
-  `;
-}
-
-function _buildModCurvePreviewMarkup(route, index, target) {
-  return `
-    <button type="button" class="mod-curve-preview" data-open-mod-curve="${route.id}" aria-label="Edit ${getFeatureChannel(route.source)?.label || route.source} to ${target?.label || route.target} curve">
-      <canvas class="mod-curve-canvas" width="240" height="153" aria-hidden="true"></canvas>
-      <span class="mod-curve-preview-cue">Edit curve</span>
-    </button>
   `;
 }
 
@@ -711,7 +701,7 @@ function _buildModRouteCard(route, index, report) {
         ? `<button type="button" data-mod-route="${route.id}" data-mod-action="add-condition" style="width:100%;margin-top:4px;font-size:10px;">+ Condition</button>`
       : ''}` : '';
   const routeVisual = route.valueMode === 'absolute'
-    ? _buildModCurvePreviewMarkup(route, index, target)
+    ? _buildModCurveEditorMarkup(route, index, target)
     : `<div class="mod-legacy-route">
         <strong>Legacy modulation route</strong>
         <span>This route still uses the previous amount-based behavior so saved work remains unchanged. Convert it to approximate its current response with editable target-value points; stepped legacy shapes may need adjustment afterward.</span>
@@ -748,7 +738,7 @@ function _modReconcileSelection() {
   _modSelectedSourceId = _MOD_EDITOR_CHANNELS[0]?.id || '';
 }
 
-/** Rebuild the input-channel navigation (modal, left column). */
+/** Rebuild the input-channel navigation in the Modulation panel. */
 function _renderModRouteList(app) {
   const container = document.getElementById('modRouteList');
   if (!container) return;
@@ -787,15 +777,13 @@ function _renderModRouteDetail(app) {
     ? routes.map(({ route, index }) => _buildModRouteCard(route, index, reports.get(route.id))).join('')
     : '';
   routes.forEach(({ route }) => {
-    if (route.valueMode === 'absolute') _wireModRouteCurveEditor(app, container, route.id, { editable: false });
+    if (route.valueMode === 'absolute') _wireModRouteCurveEditor(app, container, route.id);
   });
 }
 
 /** Wire a route's normalized curve storage to native target-value editing. */
 function _wireModRouteCurveEditor(app, container, routeId, { editable = true, onChange = null } = {}) {
-  const editor = container.querySelector(editable
-    ? `[data-mod-curve-editor="${routeId}"]`
-    : `[data-open-mod-curve="${routeId}"]`);
+  const editor = container.querySelector(`[data-mod-curve-editor="${routeId}"]`);
   const canvas = editor?.querySelector('.mod-curve-canvas');
   if (!canvas) return;
   const startRoute = _readModMatrix().routes.find(entry => entry.id === routeId);
@@ -829,7 +817,7 @@ function _wireModRouteCurveEditor(app, container, routeId, { editable = true, on
   const draw = () => {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const width = Math.max(180, Math.round(canvas.getBoundingClientRect().width || 240));
-    const height = Math.max(100, Math.round(canvas.getBoundingClientRect().height || (editable ? 360 : 153)));
+    const height = Math.max(100, Math.round(canvas.getBoundingClientRect().height || 118));
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -904,7 +892,6 @@ function _wireModRouteCurveEditor(app, container, routeId, { editable = true, on
   resizeObserver.observe(canvas);
   _modCurveResizeObservers.push(resizeObserver);
   draw();
-  if (!editable) return () => resizeObserver.disconnect();
   const baselineYFromValue = () => {
     const rect = canvas.getBoundingClientRect();
     const pad = 12;
@@ -1032,90 +1019,7 @@ function _wireModRouteCurveEditor(app, container, routeId, { editable = true, on
   return () => resizeObserver.disconnect();
 }
 
-function _openModCurveEditor(app, routeId) {
-  const matrix = _readModMatrix();
-  const index = matrix.routes.findIndex(route => route.id === routeId);
-  const route = matrix.routes[index];
-  if (!route || route.valueMode !== 'absolute') return;
-  const target = resolveModTarget(route.target);
-  const modal = document.getElementById('modCurveEditorModal');
-  const content = document.getElementById('modCurveEditorContent');
-  const title = document.getElementById('modCurveEditorTitle');
-  if (!modal || !content) return;
-  _modCurvePopupCleanup?.();
-  _modCurvePopupSession = {
-    app,
-    routeId,
-    target,
-    matrixValue: modMatrixToControlValue(matrix),
-    targetValue: _readModTargetBaseValue(app, target),
-  };
-  if (title) title.textContent = `${getFeatureChannel(route.source)?.label || route.source} to ${target?.label || route.target}`;
-  content.innerHTML = _buildModCurveEditorMarkup(route, index, target);
-  modal.classList.add('open');
-  _modCurvePopupCleanup = _wireModRouteCurveEditor(app, content, route.id, { onChange: _refreshModCurveSaveState });
-  _refreshModCurveSaveState();
-}
-
-function _closeModCurveEditor() {
-  const modal = document.getElementById('modCurveEditorModal');
-  modal?.classList.remove('open');
-  _modCurvePopupCleanup?.();
-  _modCurvePopupCleanup = null;
-  _modCurvePopupSession = null;
-  const content = document.getElementById('modCurveEditorContent');
-  if (content) content.innerHTML = '';
-}
-
-function _modCurveSessionIsDirty() {
-  const session = _modCurvePopupSession;
-  if (!session) return false;
-  const matrixChanged = (_modMatrixControl()?.value || '') !== session.matrixValue;
-  const targetChanged = Math.abs(_readModTargetBaseValue(session.app, session.target) - session.targetValue) > 1e-6;
-  return matrixChanged || targetChanged;
-}
-
-function _refreshModCurveSaveState() {
-  const dirty = _modCurveSessionIsDirty();
-  const state = document.getElementById('modCurveEditorSaveState');
-  if (state) state.textContent = dirty ? 'Unsaved changes' : 'No unsaved changes';
-  const discard = document.getElementById('modCurveEditorDiscard');
-  const apply = document.getElementById('modCurveEditorApply');
-  if (discard) discard.disabled = !dirty;
-  if (apply) apply.disabled = !dirty;
-}
-
-function _applyModCurveChanges(app, { close = false } = {}) {
-  const session = _modCurvePopupSession;
-  if (!session) return;
-  const changed = _modCurveSessionIsDirty();
-  session.matrixValue = _modMatrixControl()?.value || session.matrixValue;
-  session.targetValue = _readModTargetBaseValue(app, session.target);
-  _refreshModCurveSaveState();
-  if (changed) app.showToast('Curve changes applied');
-  if (close) {
-    _closeModCurveEditor();
-    _renderModRouteDetail(app);
-  }
-}
-
-function _discardModCurveChanges() {
-  const session = _modCurvePopupSession;
-  if (!session) return;
-  const changed = _modCurveSessionIsDirty();
-  const { app, target, matrixValue, targetValue } = session;
-  _modCurvePopupCleanup?.();
-  _modCurvePopupCleanup = null;
-  if (changed) {
-    _writeModMatrix(app, parseModMatrix(matrixValue));
-    _writeModTargetBaseValue(app, target, targetValue);
-  }
-  _closeModCurveEditor();
-  if (changed) app.showToast('Curve changes discarded');
-}
-
-/** One-line sidebar summary ("N routes · N active") so the compact section
- *  gives an at-a-glance read without opening the modal. */
+/** One-line Modulation-panel summary ("N routes · N active"). */
 function _renderModSummary(app) {
   const el = document.getElementById('modSummary');
   if (!el) return;
@@ -1162,10 +1066,7 @@ function _renderModChannelTuning(app) {
   }).join('');
 }
 
-/** Static skeleton for the live channel monitor; values are filled in by
- *  `_refreshModulationDebugUi` on the frame loop. Stays in the sidebar
- *  (rather than the modal) since it is a glanceable meter, not a control
- *  surface, and is useful while actively painting. */
+/** Static skeleton for the Modulation panel's live channel monitor. */
 function _buildModChannelMonitor() {
   return FEATURE_CHANNELS.map(channel => `
     <div style="display:flex;align-items:center;gap:6px;margin:2px 0;font-size:10px;" data-mod-monitor-row="${channel.id}" title="${channel.description}">
@@ -1208,9 +1109,7 @@ function _refreshModulationDebugUi(app) {
     sourceEl.textContent = `${getInputSource(features.sourceId).label} · ${(features.capabilities || []).join(', ') || 'no capabilities yet'}`;
   }
   _renderModSummary(app);
-  // The modal's diagnostics/status text only need refreshing while it is
-  // actually open and on-screen.
-  if (document.getElementById('modInputEditorModal')?.classList.contains('open')) {
+  if (document.getElementById('modulationPanel')?.classList.contains('active')) {
     _refreshModulationDiagnostics(app);
   }
 }
@@ -1443,39 +1342,6 @@ export function buildSidebar(app) {
       ${_buildLeaderOverrideRows()}
       <div style="font-weight:700;color:#a9bbd5;margin:10px 0 3px;">Leader variance overrides</div>
       ${_buildLeaderVarianceRows()}
-    </div>
-
-    <!-- Input Modulation (boid only) — compact: the sidebar only shows a live
-         channel monitor and a one-line summary; the full route editor (visual
-         route list + curve editor) opens in #modInputEditorModal so this
-         section never grows into a wall of per-route controls. -->
-    <div class="section-header closed" data-brushes="boid" data-section="inputModulation">Input Modulation <span class="chevron">▼</span></div>
-    <div class="section-body collapsed" data-brushes="boid">
-      <span class="slider-desc">Route live input channels (pressure, tilt, twist, speed, curvature…) onto allow-listed boid parameters. No routes = no modulation, so existing brushes and presets behave exactly as before.</span>
-
-      <div style="font-weight:600;color:#cbd7e6;margin:8px 0 2px;">Live Channels</div>
-      <div id="modMonitorSource" class="slider-desc" style="margin:0 0 4px;">No input sampled yet</div>
-      <div id="modChannelMonitor">${_buildModChannelMonitor()}</div>
-
-      <div id="modSummary" class="slider-desc" style="margin:10px 0 4px;">No routes yet — modulation is inactive.</div>
-      <button id="modOpenEditorBtn" type="button" style="width:100%;">✎ Edit Modulation Routes…</button>
-
-      <div style="display:flex;gap:4px;margin-top:6px;">
-        <button id="modShowJsonBtn" type="button" style="flex:1;">Show JSON</button>
-        <button id="modResetBtn" type="button" style="flex:1;">Reset Routes</button>
-      </div>
-      <span id="modMatrixError" class="slider-desc" style="display:none;color:#ff9d9d;"></span>
-      <!-- Single structured-state control, following the same convention as
-           the pressure-curve editors: a real (non-hidden-type) text input
-           holding JSON. That keeps it inside every existing pipe unchanged —
-           settings catalog, brush/simulation preset capture and apply, session
-           autosave, and workspace export — while the scalar-only preset filter
-           sees an ordinary string. It stays in the sidebar section body (not
-           the modal) so the settings catalog, which only indexes controls
-           inside a section-body container, keeps finding it. -->
-      <label id="modMatrixJsonRow" style="display:none;">Modulation Matrix (JSON)
-        <input type="text" id="boidModMatrix" value="" spellcheck="false" aria-label="Boid modulation matrix JSON" style="width:100%;font-family:ui-monospace,monospace;font-size:10px;">
-      </label>
     </div>
 
     <!-- Motion Path Graph -->
@@ -2063,13 +1929,16 @@ export function buildSidebar(app) {
   _syncLeaderOverrideUI();
 
   // ── Boid Input Modulation Framework ──
-  // One delegated listener per event type over the whole modal: dynamic
+  // One delegated listener per event type over the whole panel: dynamic
   // route/condition/channel controls carry `data-mod-*` attributes instead of
   // ids, so they never enter the settings catalog and never collide with
-  // preset keys. The hidden `#boidModMatrix` control lives outside the modal
-  // (in the sidebar section body, so the settings catalog keeps indexing it)
-  // and is watched separately below.
-  const modModal = document.getElementById('modInputEditorModal');
+  // preset keys. The `#boidModMatrix` control is the persisted source of truth.
+  const modPanel = document.getElementById('modulationPanel');
+  const monitor = document.getElementById('modChannelMonitor');
+  if (monitor) monitor.innerHTML = _buildModChannelMonitor();
+  modPanel?.querySelectorAll('.section-header').forEach(header => {
+    header.addEventListener('click', () => toggleSection(header));
+  });
   const _modApplyControlEdit = (target, { rerender }) => {
     const prop = target.dataset.modProp;
     if (!prop) return false;
@@ -2109,12 +1978,12 @@ export function buildSidebar(app) {
     return true;
   };
 
-  modModal?.addEventListener('input', event => {
+  modPanel?.addEventListener('input', event => {
     const target = event.target;
     if (!target?.dataset?.modProp) return;
     // Live-drag path: update the readout only so the slider keeps focus.
     if (target.type === 'range') {
-      const readout = modModal.querySelector(`[data-mod-readout="${target.dataset.modRoute}:${target.dataset.modProp}"]`);
+      const readout = modPanel.querySelector(`[data-mod-readout="${target.dataset.modRoute}:${target.dataset.modProp}"]`);
       if (readout) readout.textContent = (Number(target.value) / 100).toFixed(2);
       _modApplyControlEdit(target, { rerender: false });
       return;
@@ -2126,7 +1995,7 @@ export function buildSidebar(app) {
     _modApplyControlEdit(target, { rerender: false });
   });
 
-  modModal?.addEventListener('change', event => {
+  modPanel?.addEventListener('change', event => {
     const target = event.target;
     if (!target?.dataset?.modProp) return;
     // Structural edits (source/target/condition op)
@@ -2135,12 +2004,7 @@ export function buildSidebar(app) {
     _modApplyControlEdit(target, { rerender: structural });
   });
 
-  modModal?.addEventListener('click', event => {
-    const curvePreview = event.target.closest('[data-open-mod-curve]');
-    if (curvePreview) {
-      _openModCurveEditor(app, curvePreview.dataset.openModCurve);
-      return;
-    }
+  modPanel?.addEventListener('click', event => {
     const sourceChip = event.target.closest('[data-mod-source-chip]');
     if (sourceChip) {
       _modSelectedSourceId = sourceChip.dataset.modSourceChip;
@@ -2220,35 +2084,6 @@ export function buildSidebar(app) {
     app.invalidateParams();
   });
 
-  const _openModInputEditor = () => {
-    if (!modModal) return;
-    _modReconcileSelection();
-    _renderModRouteList(app);
-    _renderModRouteDetail(app);
-    _renderModChannelTuning(app);
-    _refreshModulationDiagnostics(app);
-    modModal.classList.add('open');
-  };
-  const _closeModInputEditor = () => modModal?.classList.remove('open');
-  document.getElementById('modOpenEditorBtn')?.addEventListener('click', _openModInputEditor);
-  document.getElementById('modInputEditorClose')?.addEventListener('click', _closeModInputEditor);
-  document.getElementById('modInputEditorDone')?.addEventListener('click', _closeModInputEditor);
-  document.getElementById('modInputEditorBackdrop')?.addEventListener('click', _closeModInputEditor);
-  document.getElementById('modCurveEditorClose')?.addEventListener('click', _discardModCurveChanges);
-  document.getElementById('modCurveEditorBackdrop')?.addEventListener('click', _discardModCurveChanges);
-  document.getElementById('modCurveEditorDiscard')?.addEventListener('click', _discardModCurveChanges);
-  document.getElementById('modCurveEditorApply')?.addEventListener('click', () => _applyModCurveChanges(app));
-  document.getElementById('modCurveEditorApplyClose')?.addEventListener('click', () => _applyModCurveChanges(app, { close: true }));
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    if (document.getElementById('modCurveEditorModal')?.classList.contains('open')) {
-      _discardModCurveChanges();
-      return;
-    }
-    if (!modModal?.classList.contains('open')) return;
-    _closeModInputEditor();
-  });
-
   app._refreshModulationDebugUi = () => _refreshModulationDebugUi(app);
   _syncModMatrixUi(app);
 
@@ -2325,6 +2160,9 @@ export function buildSidebar(app) {
 
   // ── Preset buttons ──
   _settingsCatalog = buildSettingsCatalog(sb);
+  buildSettingsCatalog(document.getElementById('modulationPanel')).forEach((entry, id) => {
+    _settingsCatalog.set(id, entry);
+  });
   _favoritesState = loadFavorites();
   _decorateFavoriteControls(app);
   _wireSettingsCatalogSearch(app);
@@ -2546,14 +2384,18 @@ function _wireWorkspaceSettingsPanel(app, panel) {
     // Sidebar control edits are only persisted when another action (stroke,
     // sim edit, explicit save) fires saveSession — with auto-save enabled,
     // debounce-save them here too. Delegated so it survives rebuilds.
-    const sidebarEl = document.getElementById('sidebar');
-    if (sidebarEl) {
-      const onSidebarEdit = event => {
+    for (const controlPanel of [
+      document.getElementById('sidebar'),
+      document.getElementById('modulationPanel'),
+    ]) {
+      if (controlPanel) {
+        const onControlEdit = event => {
         const t = event.target;
         if (t && (t.tagName === 'SELECT' || t.tagName === 'INPUT')) triggerAutoSave();
-      };
-      sidebarEl.addEventListener('input', onSidebarEdit);
-      sidebarEl.addEventListener('change', onSidebarEdit);
+        };
+        controlPanel.addEventListener('input', onControlEdit);
+        controlPanel.addEventListener('change', onControlEdit);
+      }
     }
     // Flush any pending debounced auto-save before the page goes away so the
     // last edits aren't lost to the debounce window. Guarded so a panel

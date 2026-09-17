@@ -17039,7 +17039,7 @@ export class App {
       el.classList.toggle('brush-hidden', !shouldShow);
     });
     const visible = brush === 'boid';
-    ['boid', 'corral'].forEach(viewName => {
+    ['boid', 'corral', 'modulation'].forEach(viewName => {
       const tab = document.querySelector(`#rightPanelTabs .panel-tab[data-panel-view="${viewName}"]`);
       const panel = document.querySelector(`#rightPanel .panel-view[data-panel-view="${viewName}"]`);
       tab?.classList.toggle('panel-tab-hidden', !visible);
@@ -21850,10 +21850,10 @@ export class App {
 
   _captureSessionControls() {
     const controls = {};
-    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel input[type="text"], #settingsPanel select').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="range"], #sidebar input[type="checkbox"], #sidebar input[type="text"], #sidebar select, #settingsPanel input[type="range"], #settingsPanel input[type="checkbox"], #settingsPanel input[type="text"], #settingsPanel select, #modulationPanel input[type="range"], #modulationPanel input[type="checkbox"], #modulationPanel input[type="text"], #modulationPanel select').forEach(el => {
       if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
-    document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"]').forEach(el => {
+    document.querySelectorAll('#sidebar input[type="number"], #settingsPanel input[type="number"], #modulationPanel input[type="number"]').forEach(el => {
       if (el.id && !SELF_PERSISTED_CONTROL_IDS.has(el.id)) controls[el.id] = el.value;
     });
     controls.primaryColor = this.primaryEl.value;
