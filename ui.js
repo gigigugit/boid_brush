@@ -15,6 +15,7 @@ import {
   normalizePreset,
 } from './settings-library.js';
 import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-08-absolute-modulation-curves';
+import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import {
   DEFAULT_MOD_CURVE_POINTS,
   FEATURE_CHANNELS,
@@ -66,28 +67,14 @@ function multRow(id) {
 // ── Built-in presets ────────────────────────────────────────
 const BUILTIN_PRESETS = {
   'Ink Wash': { count:25,seek:40,cohesion:15,separation:50,alignment:20,jitter:0,wander:0,wanderSpeed:30,maxSpeed:8,damping:95,stampSize:6,stampOpacity:15,stampSeparation:0,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:0,spawnRadius:50,brushScale:100 },
-  'baseline': {
-    count: 300,
-    seek: 40,
-    cohesion: 35,
-    separation: 15,
-    alignment: 22,
-    jitter: 0,
-    wander: 6,
-    wanderSpeed: 30,
-    maxSpeed: 11.5,
-    damping: 95,
-    stampSize: 6,
-    stampOpacity: 7,
-    stampSeparation: 0,
-    fov: 120,
-    flowField: 0,
-    flowScale: 10,
-    fleeRadius: 0,
-    individuality: 0,
-    spawnRadius: 50,
-    brushScale: 100
-  },
+  'Charcoal': { count:40,seek:50,cohesion:5,separation:60,alignment:10,jitter:20,wander:10,wanderSpeed:40,maxSpeed:6,damping:90,stampSize:8,stampOpacity:8,stampSeparation:0,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:30,spawnRadius:30,brushScale:100 },
+  'Ribbon': { count:15,seek:60,cohesion:30,separation:30,alignment:40,jitter:0,wander:5,wanderSpeed:20,maxSpeed:12,damping:97,stampSize:4,stampOpacity:20,stampSeparation:5,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:10,spawnRadius:20,brushScale:100 },
+  'Galaxy': { count:80,seek:20,cohesion:40,separation:20,alignment:15,jitter:10,wander:30,wanderSpeed:50,maxSpeed:5,damping:92,stampSize:3,stampOpacity:10,stampSeparation:0,fov:360,flowField:20,flowScale:5,fleeRadius:0,individuality:50,spawnRadius:80,brushScale:100 },
+  'Mist': { count:60,seek:15,cohesion:5,separation:10,alignment:5,jitter:15,wander:40,wanderSpeed:60,maxSpeed:3,damping:85,stampSize:12,stampOpacity:4,stampSeparation:0,fov:360,flowField:10,flowScale:20,fleeRadius:0,individuality:40,spawnRadius:100,brushScale:100 },
+  'Edge Seeker': { count:30,seek:50,cohesion:20,separation:40,alignment:25,jitter:5,wander:10,wanderSpeed:30,maxSpeed:8,damping:93,stampSize:5,stampOpacity:18,stampSeparation:2,fov:180,flowField:0,flowScale:10,fleeRadius:0,individuality:20,spawnRadius:40,brushScale:100 },
+  'Diffuse Burst': { _activeBrush:'fluid', lbmBrushRadius:55, lbmSpawnCount:8, lbmParticleRadius:6, lbmStrokePull:55, lbmStrokeRake:28, lbmStrokeJitter:87, lbmInjectForce:300, lbmVortexStrength:38, lbmBurstStrength:100, lbmChevronStrength:100, lbmUndulateStrength:0 },
+  '3D Fluid Wake': { _activeBrush:'fluid3d', fluid3dBrushRadius:44, fluid3dEmitterCount:6, fluid3dEmissionRate:46, fluid3dEmitterStrength:35, fluid3dEmitterVelocity:22, fluid3dPressure:48, fluid3dMomentum:82, fluid3dVelocityDiffuse:36, fluid3dDrag:28, fluid3dThicknessDecay:14, fluid3dPressureFade:22, fluid3dInfluenceStrength:34, fluid3dMaxVelocity:13, fluid3dFluidScale:120, fluid3dOccupancyBias:8, fluid3dSpreadClamp:78, fluid3dSurfaceTension:24, fluid3dEdgeWidth:48, fluid3dEdgeDrag:18, fluid3dInjectorMode:'swirl', fluid3dInjectorMotion:78, fluid3dInjectorPigment:86, fluid3dInjectorOccupancy:80, fluid3dInjectorSwirl:58, fluid3dRenderMode:'volume' },
+  '3D Fluid Crimson Swirl': { _activeBrush:'fluid3d', _primaryColor:'#ff0000', fluid3dBrushRadius:61, fluid3dEmitterCount:21, fluid3dEmissionRate:100, fluid3dEmitterStrength:100, fluid3dEmitterVelocity:100, fluid3dPressure:100, fluid3dMomentum:100, fluid3dVelocityDiffuse:100, fluid3dDrag:25, fluid3dThicknessDecay:37, fluid3dPigmentDiffusion:30, fluid3dPressureFade:11, fluid3dSettleThreshold:4, fluid3dMaxVelocity:30, fluid3dThicknessFloor:1, fluid3dOccupancyBias:29, fluid3dInfluenceStrength:51, fluid3dInfluenceRadius:105, fluid3dTerrainWeight:64, fluid3dScalarFieldInfluence:100, fluid3dOpacity:77, fluid3dOpacityScale:68, fluid3dResolutionScale:70, fluid3dPreviewScale:50, fluid3dFluidScale:85, fluid3dAdaptiveQuality:false, fluid3dShowField:false, fluid3dRenderMode:'pigment', fluid3dSpreadClamp:76, fluid3dSurfaceTension:28, fluid3dEdgeWidth:34, fluid3dEdgeDrag:24, fluid3dInjectorMode:'swirl', fluid3dInjectorMotion:84, fluid3dInjectorPigment:90, fluid3dInjectorOccupancy:68, fluid3dInjectorSwirl:62, stampOpacity:100, canvasTextureEnabled:false },
 };
 
 let _settingsCatalog = new Map();
@@ -457,10 +444,27 @@ export const LEADER_OVERRIDE_FIELDS = Object.freeze([
   { key: 'sensingRadius', sourceId: 'sensingRadius', id: 'leaderSensingRadius', overrideId: 'leaderOverrideSensingRadius', type: 'range', label: 'Sensing Radius', min: 0, max: 200, defaultValue: 20, readControl: ({ val }) => val('leaderSensingRadius') },
   { key: 'sensingFitRadius', sourceId: 'sensingFitRadius', id: 'leaderSensingFitRadius', overrideId: 'leaderOverrideSensingFitRadius', type: 'range', label: 'Sensing Fit Radius', min: 0, max: 200, defaultValue: 0, readControl: ({ val }) => val('leaderSensingFitRadius') },
   { key: 'sensingThreshold', sourceId: 'sensingThreshold', id: 'leaderSensingThreshold', overrideId: 'leaderOverrideSensingThreshold', type: 'range', label: 'Sensing Threshold', min: 0, max: 100, defaultValue: 10, readControl: ({ val }) => val('leaderSensingThreshold') / 100 },
-  { key: 'neighborRadius', sourceId: 'am_neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
-  { key: 'separationRadius', sourceId: 'am_separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
+  { key: 'neighborRadius', sourceId: 'neighborRadius', id: 'leaderNeighborRadius', overrideId: 'leaderOverrideNeighborRadius', type: 'range', label: 'Neighbor Radius', min: 1, max: 240, defaultValue: 80, readControl: ({ val }) => val('leaderNeighborRadius') || 80 },
+  { key: 'separationRadius', sourceId: 'separationRadius', id: 'leaderSeparationRadius', overrideId: 'leaderOverrideSeparationRadius', type: 'range', label: 'Separation Radius', min: 1, max: 240, defaultValue: 25, readControl: ({ val }) => val('leaderSeparationRadius') || 25 },
   { key: 'simBoundsMargin', sourceId: 'simBoundsMargin', id: 'leaderSimBoundsMargin', overrideId: 'leaderOverrideSimBoundsMargin', type: 'range', label: 'Bounds Margin', min: 0, max: 240, defaultValue: 0, readControl: ({ val }) => Math.max(0, val('leaderSimBoundsMargin') || 0) },
 ]);
+
+function _buildIndependentVarianceRows() {
+  return BOID_VARIANCE_FIELDS.map(field =>
+    sliderRow(field.controlId, `${field.label} ±`, 0, 100, 0, v => (v / 100).toFixed(2),
+      `Stable per-agent relative variation for ${field.label.toLowerCase()}`)).join('');
+}
+
+function _buildLeaderVarianceRows() {
+  return BOID_VARIANCE_FIELDS.map(field => `
+    <div data-leader-variance-field="${field.key}" style="margin:4px 0 8px;padding:6px 8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.03);">
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;">
+        <span>${field.label} ±</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:#9fb0c6;">Override <input type="checkbox" id="${field.leaderOverrideId}" data-leader-target="${field.leaderControlId}" data-leader-source="${field.controlId}"></span>
+      </label>
+      <label style="margin:4px 0 0 0;">Variance <span id="v_${field.leaderControlId}">0.00</span><input type="range" id="${field.leaderControlId}" min="0" max="100" value="0"></label>
+    </div>`).join('');
+}
 
 function _buildLeaderOverrideControl(field) {
   if (field.type === 'checkbox') {
@@ -506,6 +510,14 @@ function _copyLeaderOverrideFromSource(field) {
 
 function _syncLeaderOverrideUI() {
   LEADER_OVERRIDE_FIELDS.forEach(_syncLeaderOverrideControlState);
+  BOID_VARIANCE_FIELDS.forEach(field => {
+    const toggle = document.getElementById(field.leaderOverrideId);
+    const target = document.getElementById(field.leaderControlId);
+    const row = document.querySelector(`[data-leader-variance-field="${field.key}"]`);
+    const enabled = !!toggle?.checked;
+    if (target) target.disabled = !enabled;
+    if (row) row.style.opacity = enabled ? '1' : '0.6';
+  });
 }
 
 // ── Boid Input Modulation Framework ─────────────────────────
@@ -626,8 +638,8 @@ const _MOD_TARGET_UI_SCALE = Object.freeze({
   damping: 100, sensingStrength: 100, sensingThreshold: 100,
 });
 const _MOD_TARGET_CONTROL_ID = Object.freeze({
-  neighborRadius: 'am_neighborRadius',
-  separationRadius: 'am_separationRadius',
+  neighborRadius: 'neighborRadius',
+  separationRadius: 'separationRadius',
 });
 
 function _readModTargetBaseValue(app, target) {
@@ -1389,6 +1401,8 @@ export function buildSidebar(app) {
       ${sliderRow('flowField', 'Flow', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('flowScale', 'Flow Scale', 1, 100, 10, v => (v/1000).toFixed(3))}
       ${sliderRow('fleeRadius', 'Flee R', 0, 150, 0)}
+      ${sliderRow('neighborRadius', 'Neighbor Radius', 10, 240, 80)}
+      ${sliderRow('separationRadius', 'Separation Radius', 5, 240, 25)}
       ${sliderRow('individuality', 'Individ.', 0, 100, 0, v => (v/100).toFixed(2))}
     </div>
 
@@ -1409,6 +1423,9 @@ export function buildSidebar(app) {
       ${sliderRow('hueVar', 'Hue Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('satVar', 'Satur Var', 0, 100, 0, v => (v/100).toFixed(2))}
       ${sliderRow('litVar', 'Light Var', 0, 100, 0, v => (v/100).toFixed(2))}
+      <div style="font-weight:700;color:#a9bbd5;margin:9px 0 3px;">Independent behavior variation</div>
+      <span class="slider-desc">Each value is sampled once per agent and remains stable. Zero preserves the canonical base value.</span>
+      ${_buildIndependentVarianceRows()}
     </div>
 
     <!-- Motion (boid + ant) -->
@@ -1424,6 +1441,8 @@ export function buildSidebar(app) {
       ${sliderRow('leaderPull', 'Leader Pull', 0, 100, 35, v => (v / 100).toFixed(2), 'Extra pull followers feel toward nearby leaders')}
       <span class="slider-desc">The first N boids in each spawned batch become leaders. Enable an override to decouple that leader setting from the main boid controls.</span>
       ${_buildLeaderOverrideRows()}
+      <div style="font-weight:700;color:#a9bbd5;margin:10px 0 3px;">Leader variance overrides</div>
+      ${_buildLeaderVarianceRows()}
     </div>
 
     <!-- Input Modulation (boid only) — compact: the sidebar only shows a live
@@ -1942,6 +1961,7 @@ export function buildSidebar(app) {
       span.textContent = fmt ? fmt(+inp.value) : inp.value;
       app.invalidateParams();
       syncEdgeSliders(app);
+      syncBoidPanel();
     };
     inp.addEventListener('input', update);
   });
@@ -2022,6 +2042,20 @@ export function buildSidebar(app) {
   LEADER_OVERRIDE_FIELDS.forEach(field => {
     document.getElementById(field.overrideId)?.addEventListener('change', (event) => {
       if (event.target.checked) _copyLeaderOverrideFromSource(field);
+      _syncLeaderOverrideUI();
+      app.invalidateParams();
+    });
+  });
+  BOID_VARIANCE_FIELDS.forEach(field => {
+    document.getElementById(field.leaderOverrideId)?.addEventListener('change', event => {
+      if (event.target.checked) {
+        const source = document.getElementById(field.controlId);
+        const target = document.getElementById(field.leaderControlId);
+        if (source && target) {
+          target.value = source.value;
+          document.getElementById(`v_${field.leaderControlId}`).textContent = (+target.value / 100).toFixed(2);
+        }
+      }
       _syncLeaderOverrideUI();
       app.invalidateParams();
     });
@@ -2569,6 +2603,358 @@ export function buildSettingsPanel(app) {
   if (!panel) return;
   panel.innerHTML = _workspaceSettingsMarkup();
   _wireWorkspaceSettingsPanel(app, panel);
+}
+
+const BOID_PANEL_GROUPS = Object.freeze([
+  ['Swarm', ['count', 'spawnRadius', 'spawnAngle', 'spawnJitter']],
+  ['Forces', ['seek', 'cohesion', 'separation', 'alignment', 'jitter', 'wander', 'wanderSpeed', 'flowField', 'flowScale', 'quorumCompositeStrength']],
+  ['Radii', ['neighborRadius', 'separationRadius', 'fleeRadius', 'fov']],
+  ['Motion', ['maxSpeed', 'damping', 'simBoundsMargin']],
+  ['Attributes', ['sizeVar', 'opacityVar', 'hueVar', 'satVar', 'litVar']],
+  ['Legacy aggregate variance', ['individuality', 'speedVar', 'forceVar']],
+  // Consolidated advanced view: every independent-variance control in one
+  // place. Hidden by default (see BOID_VARIANCE_ACCORDION_STORAGE_KEY) since
+  // each of these controls is also inlined as a subordinate sub-setting right
+  // beside/below the base control it modifies (see _boidProxyMarkupWithVariance
+  // and _boidSensingSliderMarkup). This group stays for users who prefer one
+  // consolidated list instead of hunting through every base section.
+  ['Independent variance', BOID_VARIANCE_FIELDS.map(field => field.controlId)],
+  ['Leaders', ['leaderCount', 'leaderPull', ...LEADER_OVERRIDE_FIELDS.flatMap(field => [field.overrideId, field.id]), ...BOID_VARIANCE_FIELDS.flatMap(field => [field.leaderOverrideId, field.leaderControlId])]],
+]);
+
+// Title of the consolidated advanced-variance group above — used to find it
+// again when deciding whether to hide it by default.
+const BOID_VARIANCE_ACCORDION_TITLE = 'Independent variance';
+// Dedicated, self-persisted key (same pattern as bb_showAlphaFeatures etc.):
+// this toggle is local presentation state for the wider Boid drawer only, has
+// no canonical sidebar counterpart, and is intentionally left out of the
+// generic #sidebar/#settingsPanel session-control snapshot.
+const BOID_VARIANCE_ACCORDION_STORAGE_KEY = 'bb_showBoidVarianceAccordion';
+
+function _boidVarianceAccordionVisible() {
+  try { return localStorage.getItem(BOID_VARIANCE_ACCORDION_STORAGE_KEY) === 'true'; }
+  catch { return false; }
+}
+
+function _setBoidVarianceAccordionVisible(visible) {
+  try { localStorage.setItem(BOID_VARIANCE_ACCORDION_STORAGE_KEY, String(!!visible)); }
+  catch { /* ignore persistence errors */ }
+}
+
+// Base control id -> its BOID_VARIANCE_FIELDS entry, so each base slider can
+// grow a subordinate variance sub-setting right beside/below it.
+const _BOID_VARIANCE_FIELD_BY_KEY = new Map(BOID_VARIANCE_FIELDS.map(field => [field.key, field]));
+
+let _boidPanelApp = null;
+
+function _boidControlLabel(source) {
+  const label = source.closest('label');
+  const text = label?.childNodes?.[0]?.textContent?.trim();
+  return text || source.id;
+}
+
+function _boidProxyMarkup(source) {
+  const attrs = `data-boid-control="${source.id}"`;
+  if (source.type === 'checkbox') {
+    return `<label>${escapeHtml(_boidControlLabel(source))}<input type="checkbox" ${attrs}${source.checked ? ' checked' : ''}></label>`;
+  }
+  if (source.tagName === 'SELECT') {
+    return `<label>${escapeHtml(_boidControlLabel(source))}<select ${attrs}>${Array.from(source.options).map(option =>
+      `<option value="${escapeHtml(option.value)}"${option.value === source.value ? ' selected' : ''}>${escapeHtml(option.textContent)}</option>`).join('')}</select></label>`;
+  }
+  const value = Number(source.value);
+  const fmt = _sliderFormats[source.id];
+  return `<label>${escapeHtml(_boidControlLabel(source))}<span data-boid-value="${source.id}">${fmt ? fmt(value) : escapeHtml(source.value)}</span><input type="${source.type}" ${attrs} min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}></label>`;
+}
+
+// If `baseId` is the base control for one of BOID_VARIANCE_FIELDS, render its
+// per-agent variance control as a visually subordinate row (indented, muted,
+// smaller) so it reads as "part of" the base setting instead of a peer.
+function _boidVarianceSubrowMarkup(baseId) {
+  const field = _BOID_VARIANCE_FIELD_BY_KEY.get(baseId);
+  const varianceSource = field ? document.getElementById(field.controlId) : null;
+  if (!varianceSource) return '';
+  return `<div class="boid-variance-subrow" data-boid-variance-for="${baseId}">${_boidProxyMarkup(varianceSource)}</div>`;
+}
+
+// Wraps _boidProxyMarkup with the matching independent-variance sub-setting
+// (if any). Controls with no matching variance field render exactly as
+// _boidProxyMarkup alone, so this is safe to use everywhere in the grid.
+function _boidProxyMarkupWithVariance(source) {
+  const subrow = _boidVarianceSubrowMarkup(source.id);
+  if (!subrow) return _boidProxyMarkup(source);
+  const isAlphaFeature = !!source.closest('[data-alpha-feature]');
+  const alphaClass = isAlphaFeature && !_alphaFeaturesVisible() ? ' alpha-feature-hidden' : '';
+  const alphaAttr = isAlphaFeature ? ' data-alpha-feature' : '';
+  return `<div class="boid-control-with-variance${alphaClass}"${alphaAttr}>${_boidProxyMarkup(source)}${subrow}</div>`;
+}
+
+function _boidSensingSliderMarkup(id, label) {
+  const source = document.getElementById(id);
+  if (!source) return '';
+  const fmt = _sliderFormats[id];
+  const value = Number(source.value);
+  const base = `<label class="boid-sensing-slider">
+    <span>${label}</span>
+    <output data-boid-value="${id}">${fmt ? fmt(value) : escapeHtml(source.value)}</output>
+    <input type="range" data-boid-control="${id}" min="${source.min}" max="${source.max}" step="${source.step || 1}" value="${escapeHtml(source.value)}"${source.disabled ? ' disabled' : ''}>
+  </label>`;
+  const subrow = _boidVarianceSubrowMarkup(id);
+  return subrow ? `<div class="boid-control-with-variance">${base}${subrow}</div>` : base;
+}
+
+function _boidSensingSourceRows(app) {
+  const selected = new Set((app?._serializeSensingSourceSelection?.() || []).map(id => String(id)));
+  return (app?.layers || []).map(layer => {
+    const id = String(layer.id);
+    const isSelected = selected.has(id);
+    const label = layer.isBackground ? 'Background' : (layer.name || 'Unnamed layer');
+    const detail = layer.isBackground
+      ? 'Canvas background fill'
+      : `${Math.round((Number(layer.opacity) || 0) * 100)}% · ${layer.visible ? 'Visible' : 'Hidden'}`;
+    return `<button class="boid-sensing-source-row${isSelected ? ' is-selected' : ''}" type="button" role="checkbox" aria-checked="${isSelected ? 'true' : 'false'}" data-boid-sensing-layer-id="${escapeHtml(id)}">
+      <svg class="boid-sensing-check" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.25"></circle><path d="m6.1 10.1 2.45 2.45 5.35-5.35"></path></svg>
+      <span class="boid-sensing-source-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span>
+    </button>`;
+  }).join('');
+}
+
+function _boidSensingMarkup(app) {
+  const enabled = document.getElementById('sensingEnabled');
+  const mode = document.getElementById('sensingMode');
+  const source = document.getElementById('sensingSource');
+  if (!enabled || !mode || !source) return '';
+  const isAvoid = mode.value !== 'attract';
+  return `<div class="section-header" data-section="boidPanelSensing">Pixel Sensing <span class="chevron">▼</span></div>
+    <div class="section-body boid-sensing-body">
+      <div class="boid-sensing-topline">
+        <span>Pixel sensing</span>
+        <label class="boid-tablet-switch">
+          <input type="checkbox" data-boid-control="sensingEnabled"${enabled.checked ? ' checked' : ''}>
+          <span class="boid-tablet-switch-track" aria-hidden="true"><span></span></span>
+          <span class="boid-tablet-switch-state">${enabled.checked ? 'On' : 'Off'}</span>
+        </label>
+      </div>
+      <div class="boid-sensing-response" role="group" aria-label="Sensing response">
+        <span>Response</span>
+        <div class="boid-sensing-mode-buttons">
+          <button type="button" class="${isAvoid ? 'active' : ''}" data-boid-sensing-mode="avoid" aria-pressed="${isAvoid ? 'true' : 'false'}">Avoid</button>
+          <button type="button" class="${isAvoid ? '' : 'active'}" data-boid-sensing-mode="attract" aria-pressed="${isAvoid ? 'false' : 'true'}">Attract</button>
+        </div>
+      </div>
+      <label class="boid-sensing-select">Channel
+        <select data-boid-control="sensingChannel">${Array.from(document.getElementById('sensingChannel')?.options || []).map(option =>
+          `<option value="${escapeHtml(option.value)}"${option.value === document.getElementById('sensingChannel')?.value ? ' selected' : ''}>${escapeHtml(option.textContent)}</option>`).join('')}</select>
+      </label>
+      <div class="boid-sensing-control-grid">
+        ${_boidSensingSliderMarkup('sensingStrength', 'Strength')}
+        ${_boidSensingSliderMarkup('sensingRadius', 'Detection Radius')}
+        ${_boidSensingSliderMarkup('sensingFitRadius', 'Fit Radius')}
+        ${_boidSensingSliderMarkup('sensingThreshold', 'Threshold')}
+        ${_boidSensingSliderMarkup('sensingUpdateFrames', 'Update Interval')}
+      </div>
+      <label class="boid-sensing-select">Source
+        <select data-boid-control="sensingSource">${Array.from(source.options).map(option =>
+          `<option value="${escapeHtml(option.value)}"${option.value === source.value ? ' selected' : ''}>${escapeHtml(option.textContent)}</option>`).join('')}</select>
+      </label>
+      <div class="boid-sensing-source-table" data-boid-sensing-source-table aria-label="Custom sensing source layers">
+        <div class="boid-sensing-source-table-title">Custom source layers <span>Multi-select</span></div>
+        <div data-boid-sensing-source-rows>${_boidSensingSourceRows(app)}</div>
+      </div>
+    </div>`;
+}
+
+function _syncBoidSensingUi() {
+  const panel = document.getElementById('boidPanel');
+  const app = _boidPanelApp;
+  if (!panel || !app) return;
+  const selected = new Set((app._serializeSensingSourceSelection?.() || []).map(id => String(id)));
+  panel.querySelectorAll('[data-boid-sensing-layer-id]').forEach(row => {
+    const isSelected = selected.has(String(row.dataset.boidSensingLayerId));
+    row.classList.toggle('is-selected', isSelected);
+    row.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+  });
+  const sourceRows = panel.querySelector('[data-boid-sensing-source-rows]');
+  const layerSignature = (app.layers || []).map(layer =>
+    `${String(layer.id)}:${layer.name || ''}:${layer.visible ? 1 : 0}:${Number(layer.opacity) || 0}:${layer.isBackground ? 1 : 0}`).join('|');
+  if (sourceRows && sourceRows.dataset.layerSignature !== layerSignature) {
+    sourceRows.dataset.layerSignature = layerSignature;
+    sourceRows.innerHTML = _boidSensingSourceRows(app);
+  }
+  const mode = document.getElementById('sensingMode')?.value;
+  panel.querySelectorAll('[data-boid-sensing-mode]').forEach(button => {
+    const isActive = button.dataset.boidSensingMode === mode;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  const enabled = document.getElementById('sensingEnabled')?.checked;
+  const enabledState = panel.querySelector('.boid-tablet-switch-state');
+  if (enabledState) enabledState.textContent = enabled ? 'On' : 'Off';
+}
+
+export function syncBoidPanel() {
+  document.querySelectorAll('#boidPanel [data-boid-control]').forEach(proxy => {
+    const source = document.getElementById(proxy.dataset.boidControl);
+    if (!source) return;
+    if (proxy.type === 'checkbox') proxy.checked = source.checked;
+    else proxy.value = source.value;
+    proxy.disabled = source.disabled;
+    const fmt = _sliderFormats[source.id];
+    document.querySelectorAll(`#boidPanel [data-boid-value="${source.id}"]`).forEach(value => {
+      value.textContent = fmt ? fmt(+source.value) : source.value;
+    });
+  });
+  _syncBoidSensingUi();
+}
+
+export function buildBoidPanel(app) {
+  const panel = document.getElementById('boidPanel');
+  if (!panel) return;
+  _boidPanelApp = app;
+  const varianceAccordionVisible = _boidVarianceAccordionVisible();
+  panel.innerHTML = `
+    <div class="sim-card">
+      <div class="sim-hud-header">
+        <div class="sim-label">Boid Parameters</div>
+        <label class="boid-variance-accordion-toggle" title="Independent variance controls already live beside each base setting below. Enable this to also show them consolidated in one advanced accordion.">
+          <input type="checkbox" id="showBoidVarianceAccordion"${varianceAccordionVisible ? ' checked' : ''}>
+          <span>Advanced variance view</span>
+        </label>
+      </div>
+      <div class="sim-hud-body">
+        <span class="slider-desc">A wider categorized view of the canonical brush controls. Changes in either panel edit the same persisted state. Each base setting below carries its own independent-variance sub-setting.</span>
+        ${BOID_PANEL_GROUPS.map(([title, ids], index) => {
+          const controls = ids.map(id => document.getElementById(id)).filter(Boolean);
+          if (!controls.length) return '';
+          const isVarianceAccordion = title === BOID_VARIANCE_ACCORDION_TITLE;
+          const accordionHiddenClass = isVarianceAccordion && !varianceAccordionVisible ? ' boid-variance-accordion-hidden' : '';
+          const accordionAttr = isVarianceAccordion ? ' data-boid-variance-accordion="true"' : '';
+          return `<div class="section-header${index > 2 ? ' closed' : ''}${accordionHiddenClass}" data-section="boidPanel${index}"${accordionAttr}>${title} <span class="chevron">▼</span></div>
+            <div class="section-body${index > 2 ? ' collapsed' : ''}${accordionHiddenClass}"${accordionAttr}><div class="boid-control-grid">${controls.map(_boidProxyMarkupWithVariance).join('')}</div></div>${title === 'Radii' ? _boidSensingMarkup(app) : ''}`;
+        }).join('')}
+      </div>
+    </div>`;
+  panel.querySelectorAll('.section-header').forEach(header => header.addEventListener('click', () => toggleSection(header)));
+  const varianceAccordionToggle = panel.querySelector('#showBoidVarianceAccordion');
+  varianceAccordionToggle?.addEventListener('change', () => {
+    const visible = !!varianceAccordionToggle.checked;
+    _setBoidVarianceAccordionVisible(visible);
+    panel.querySelectorAll('[data-boid-variance-accordion]').forEach(el => el.classList.toggle('boid-variance-accordion-hidden', !visible));
+  });
+  panel.addEventListener('input', event => {
+    const proxy = event.target.closest('[data-boid-control]');
+    if (!proxy) return;
+    const source = document.getElementById(proxy.dataset.boidControl);
+    if (!source) return;
+    if (proxy.type === 'checkbox') source.checked = proxy.checked;
+    else source.value = proxy.value;
+    source.dispatchEvent(new Event('input', { bubbles: true }));
+    if (proxy.type === 'checkbox' || proxy.tagName === 'SELECT') source.dispatchEvent(new Event('change', { bubbles: true }));
+    syncBoidPanel();
+    app.invalidateParams();
+  });
+  panel.addEventListener('click', event => {
+    const modeButton = event.target.closest('[data-boid-sensing-mode]');
+    if (modeButton) {
+      const source = document.getElementById('sensingMode');
+      if (!source) return;
+      source.value = modeButton.dataset.boidSensingMode === 'attract' ? 'attract' : 'avoid';
+      source.dispatchEvent(new Event('input', { bubbles: true }));
+      source.dispatchEvent(new Event('change', { bubbles: true }));
+      syncBoidPanel();
+      app.invalidateParams();
+      return;
+    }
+    const layerRow = event.target.closest('[data-boid-sensing-layer-id]');
+    if (!layerRow) return;
+    const layerId = String(layerRow.dataset.boidSensingLayerId || '');
+    if (!layerId) return;
+    const source = document.getElementById('sensingSource');
+    const selected = new Set((app._serializeSensingSourceSelection?.() || []).map(id => String(id)));
+    if (selected.has(layerId)) selected.delete(layerId);
+    else selected.add(layerId);
+    if (source?.value !== 'selected') {
+      source.value = 'selected';
+      source.dispatchEvent(new Event('input', { bubbles: true }));
+      source.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    app._setSensingSourceSelection?.([...selected]);
+    syncBoidPanel();
+  });
+  const canonicalIds = new Set([
+    ...BOID_PANEL_GROUPS.flatMap(([, ids]) => ids),
+    'sensingEnabled',
+    'sensingMode',
+    'sensingChannel',
+    'sensingStrength',
+    'sensingRadius',
+    'sensingFitRadius',
+    'sensingThreshold',
+    'sensingUpdateFrames',
+    'sensingSource',
+  ]);
+  canonicalIds.forEach(id => {
+    const source = document.getElementById(id);
+    source?.addEventListener('input', syncBoidPanel);
+    source?.addEventListener('change', syncBoidPanel);
+  });
+  syncBoidPanel();
+}
+
+export function buildCorralPanel(app) {
+  const panel = document.getElementById('corralPanel');
+  if (!panel) return;
+  const physicsOpen = !!app?.corral?.physicsDrawerOpen;
+  const svgOpen = !!app?.corral?.svgDrawerOpen;
+  panel.innerHTML = `
+    <div class="sim-card">
+      <div class="sim-hud-header">
+        <div class="sim-label">Corral</div>
+      </div>
+      <div class="sim-hud-body">
+        <span class="slider-desc">Physics and SVG tools below edit the same corral state used by the overlay toolbar, session restore, and workspace save/open flows.</span>
+
+        <div class="section-header${physicsOpen ? '' : ' closed'}" id="corralPhysicsDrawerTab" data-section="corralPhysics" role="button" tabindex="0" aria-expanded="${physicsOpen ? 'true' : 'false'}" aria-controls="corralPhysicsDrawer">Physics <span class="chevron">▼</span></div>
+        <div class="section-body${physicsOpen ? '' : ' collapsed'}" id="corralPhysicsDrawer">
+          <label class="corral-toggle"><input id="corralHardEdge" type="checkbox" checked> Hard edge containment</label>
+          <label class="corral-setting"><span>Interaction</span><select id="corralInteractionMode"><option value="contain">Contain inside</option><option value="attract">Attract to edge</option><option value="exclude">Exclude interior</option></select><output></output></label>
+          <label class="corral-setting"><span>Repulsion force</span><input id="corralEdgeStrength" type="range" min="0" max="200" step="1" value="100"><output id="corralEdgeStrengthValue">1.00</output></label>
+          <label class="corral-setting"><span>Repulsion radius</span><input id="corralRepulsionRadius" type="range" min="0" max="150" step="1" value="32"><output id="corralRepulsionRadiusValue">32px</output></label>
+          <label class="corral-setting"><span>Midpoint force</span><input id="corralMidpointForce" type="range" min="0" max="150" step="1" value="50"><output id="corralMidpointForceValue">50%</output></label>
+          <label class="corral-setting"><span>Tangential force</span><input id="corralTangentialForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralTangentialForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Center force</span><input id="corralCenterForce" type="range" min="-200" max="200" step="1" value="0"><output id="corralCenterForceValue">0.00</output></label>
+          <label class="corral-setting"><span>Force noise</span><input id="corralForceNoise" type="range" min="0" max="200" step="1" value="0"><output id="corralForceNoiseValue">0.00</output></label>
+          <label class="corral-setting"><span>Bounce</span><input id="corralRestitution" type="range" min="0" max="150" step="1" value="100"><output id="corralRestitutionValue">1.00</output></label>
+          <label class="corral-setting"><span>Speed limit</span><input id="corralMaxSpeed" type="range" min="0" max="500" step="1" value="0"><output id="corralMaxSpeedValue">Off</output></label>
+          <label class="corral-setting"><span>Normal damping</span><input id="corralNormalDamping" type="range" min="0" max="100" step="1" value="0"><output id="corralNormalDampingValue">0%</output></label>
+          <label class="corral-setting"><span>Edge friction</span><input id="corralTangentialFriction" type="range" min="0" max="100" step="1" value="0"><output id="corralTangentialFrictionValue">0%</output></label>
+          <label class="corral-setting"><span>Shape smoothing</span><input id="corralShapeSmoothing" type="range" min="0" max="3" step="1" value="2"><output id="corralShapeSmoothingValue">2</output></label>
+          <label class="corral-setting"><span>Falloff</span><select id="corralFalloff"><option value="smooth">Smooth</option><option value="linear">Linear</option><option value="quadratic">Quadratic</option></select><output></output></label>
+        </div>
+
+        <div class="section-header${svgOpen ? '' : ' closed'}" id="corralSvgDrawerTab" data-section="corralSvg" role="button" tabindex="0" aria-expanded="${svgOpen ? 'true' : 'false'}" aria-controls="corralSvgDrawer">SVG &amp; Files <span class="chevron">▼</span></div>
+        <div class="section-body${svgOpen ? '' : ' collapsed'}" id="corralSvgDrawer">
+          <textarea class="corral-path-input" id="corralSvgPathInput" placeholder="Closed SVG path data, e.g. M 0 0 L 100 0 L 100 100 Z" aria-label="SVG path data"></textarea>
+          <div class="corral-drawer-row">
+            <button class="sim-pill" id="corralApplyPathBtn" type="button">Apply Path</button>
+            <button class="sim-pill" id="corralLoadBtn" type="button">Import SVG</button>
+            <button class="sim-pill" id="corralExportBtn" type="button">Download SVG</button>
+          </div>
+          <div class="corral-drawer-row">
+            <button class="sim-pill" id="corralChooseDirectoryBtn" type="button">Choose Folder</button>
+            <button class="sim-pill" id="corralReconnectDirectoryBtn" type="button">Reconnect</button>
+            <button class="sim-pill" id="corralRefreshDirectoryBtn" type="button">Refresh</button>
+          </div>
+          <div class="corral-file-tree" id="corralFileTree" aria-label="Corral SVG files"></div>
+          <div class="corral-drawer-row">
+            <input class="corral-file-name" id="corralFileName" type="text" value="boid-corral.svg" aria-label="SVG filename">
+            <button class="sim-pill" id="corralSaveToDirectoryBtn" type="button">Save to Folder</button>
+          </div>
+          <div class="corral-file-status" id="corralFileStatus">Choose a folder for quick SVG access. Browser permission is requested only when you click.</div>
+          <input id="corralFileInput" type="file" accept=".svg,image/svg+xml" hidden>
+        </div>
+      </div>
+    </div>`;
 }
 
 export function buildSimulationControlsPanel(app) {
@@ -3283,6 +3669,8 @@ const _AM_MIRRORS = [
   ['am_sensingStrength', 'sensingStrength'],
   ['am_sensingRadius', 'sensingRadius'],
   ['am_sensingThreshold', 'sensingThreshold'],
+  ['am_neighborRadius', 'neighborRadius'],
+  ['am_separationRadius', 'separationRadius'],
   ['am_antFollow', 'antFollow'],
   ['am_antPheromoneRate', 'antPheromoneRate'],
   ['am_antPheromoneDecay', 'antPheromoneDecay'],
@@ -3308,9 +3696,8 @@ function _amSlider(id, label, min, max, value, fmt, math) {
  * changing a mirror slider syncs the value back to the main sidebar input
  * and fires its 'input' event so getP() picks up the change.
  *
- * Two sliders are panel-only (no sidebar counterpart):
- *   - am_neighborRadius  → getP().neighborRadius  (was hardcoded 80)
- *   - am_separationRadius → getP().separationRadius (was hardcoded 25)
+ * Every slider is a mirror of a canonical sidebar control. In particular the
+ * two flock radii no longer create a second persisted state in this panel.
  */
 function _buildAntMathPanel(app) {
   const panel = document.getElementById('antMathPanel');
@@ -3333,8 +3720,8 @@ function _buildAntMathPanel(app) {
     ${_amSlider('am_cohesion', 'w_coh', 0, 100, 15, v => (v/100).toFixed(2), 'F_coh = seek(centroid_of_neighbors) · w_c')}
     ${_amSlider('am_separation', 'w_sep', 0, 100, 15, v => (v/100).toFixed(2), 'F_sep = Σ −d̂_ij · w_s (for ‖d‖ < R_sep)')}
     ${_amSlider('am_alignment', 'w_align', 0, 100, 20, v => (v/100).toFixed(2), 'F_align = (avg_neighbor_v − v_i) · w_a')}
-    ${_amSlider('am_neighborRadius', 'R_neighbor', 10, 200, 80, null, 'Radius for cohesion/alignment neighbor scan')}
-    ${_amSlider('am_separationRadius', 'R_sep', 5, 100, 25, null, 'Radius for separation repulsion')}
+    ${_amSlider('am_neighborRadius', 'R_neighbor', 10, 240, 80, null, 'Radius for cohesion/alignment neighbor scan')}
+    ${_amSlider('am_separationRadius', 'R_sep', 5, 240, 25, null, 'Radius for separation repulsion')}
     ${_amSlider('am_fov', 'θ_fov', 30, 360, 115, v => v + '°', 'Field of view angle for neighbor detection')}
 
     <div class="am-section">Flow Field</div>
@@ -3458,6 +3845,7 @@ export function syncUI(app) {
   syncStampImageUI(app);
   syncEdgeSliders(app);
   _syncLeaderOverrideUI();
+  syncBoidPanel();
   _syncModMatrixUi(app);
   _syncSymmetryModeUi();
   app._refreshSensingLayerSourceUi?.();
@@ -3699,6 +4087,10 @@ LEADER_OVERRIDE_FIELDS.forEach(field => {
   if (field.type === 'range' && !_sliderFormats[field.id] && _sliderFormats[field.sourceId]) {
     _sliderFormats[field.id] = _sliderFormats[field.sourceId];
   }
+});
+BOID_VARIANCE_FIELDS.forEach(field => {
+  _sliderFormats[field.controlId] = v => (v / 100).toFixed(2);
+  _sliderFormats[field.leaderControlId] = v => (v / 100).toFixed(2);
 });
 
 let _edgeSliderApp = null;
