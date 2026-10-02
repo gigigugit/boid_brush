@@ -66,14 +66,28 @@ function multRow(id) {
 // ── Built-in presets ────────────────────────────────────────
 const BUILTIN_PRESETS = {
   'Ink Wash': { count:25,seek:40,cohesion:15,separation:50,alignment:20,jitter:0,wander:0,wanderSpeed:30,maxSpeed:8,damping:95,stampSize:6,stampOpacity:15,stampSeparation:0,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:0,spawnRadius:50,brushScale:100 },
-  'Charcoal': { count:40,seek:50,cohesion:5,separation:60,alignment:10,jitter:20,wander:10,wanderSpeed:40,maxSpeed:6,damping:90,stampSize:8,stampOpacity:8,stampSeparation:0,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:30,spawnRadius:30,brushScale:100 },
-  'Ribbon': { count:15,seek:60,cohesion:30,separation:30,alignment:40,jitter:0,wander:5,wanderSpeed:20,maxSpeed:12,damping:97,stampSize:4,stampOpacity:20,stampSeparation:5,fov:360,flowField:0,flowScale:10,fleeRadius:0,individuality:10,spawnRadius:20,brushScale:100 },
-  'Galaxy': { count:80,seek:20,cohesion:40,separation:20,alignment:15,jitter:10,wander:30,wanderSpeed:50,maxSpeed:5,damping:92,stampSize:3,stampOpacity:10,stampSeparation:0,fov:360,flowField:20,flowScale:5,fleeRadius:0,individuality:50,spawnRadius:80,brushScale:100 },
-  'Mist': { count:60,seek:15,cohesion:5,separation:10,alignment:5,jitter:15,wander:40,wanderSpeed:60,maxSpeed:3,damping:85,stampSize:12,stampOpacity:4,stampSeparation:0,fov:360,flowField:10,flowScale:20,fleeRadius:0,individuality:40,spawnRadius:100,brushScale:100 },
-  'Edge Seeker': { count:30,seek:50,cohesion:20,separation:40,alignment:25,jitter:5,wander:10,wanderSpeed:30,maxSpeed:8,damping:93,stampSize:5,stampOpacity:18,stampSeparation:2,fov:180,flowField:0,flowScale:10,fleeRadius:0,individuality:20,spawnRadius:40,brushScale:100 },
-  'Diffuse Burst': { _activeBrush:'fluid', lbmBrushRadius:55, lbmSpawnCount:8, lbmParticleRadius:6, lbmStrokePull:55, lbmStrokeRake:28, lbmStrokeJitter:87, lbmInjectForce:300, lbmVortexStrength:38, lbmBurstStrength:100, lbmChevronStrength:100, lbmUndulateStrength:0 },
-  '3D Fluid Wake': { _activeBrush:'fluid3d', fluid3dBrushRadius:44, fluid3dEmitterCount:6, fluid3dEmissionRate:46, fluid3dEmitterStrength:35, fluid3dEmitterVelocity:22, fluid3dPressure:48, fluid3dMomentum:82, fluid3dVelocityDiffuse:36, fluid3dDrag:28, fluid3dThicknessDecay:14, fluid3dPressureFade:22, fluid3dInfluenceStrength:34, fluid3dMaxVelocity:13, fluid3dFluidScale:120, fluid3dOccupancyBias:8, fluid3dSpreadClamp:78, fluid3dSurfaceTension:24, fluid3dEdgeWidth:48, fluid3dEdgeDrag:18, fluid3dInjectorMode:'swirl', fluid3dInjectorMotion:78, fluid3dInjectorPigment:86, fluid3dInjectorOccupancy:80, fluid3dInjectorSwirl:58, fluid3dRenderMode:'volume' },
-  '3D Fluid Crimson Swirl': { _activeBrush:'fluid3d', _primaryColor:'#ff0000', fluid3dBrushRadius:61, fluid3dEmitterCount:21, fluid3dEmissionRate:100, fluid3dEmitterStrength:100, fluid3dEmitterVelocity:100, fluid3dPressure:100, fluid3dMomentum:100, fluid3dVelocityDiffuse:100, fluid3dDrag:25, fluid3dThicknessDecay:37, fluid3dPigmentDiffusion:30, fluid3dPressureFade:11, fluid3dSettleThreshold:4, fluid3dMaxVelocity:30, fluid3dThicknessFloor:1, fluid3dOccupancyBias:29, fluid3dInfluenceStrength:51, fluid3dInfluenceRadius:105, fluid3dTerrainWeight:64, fluid3dScalarFieldInfluence:100, fluid3dOpacity:77, fluid3dOpacityScale:68, fluid3dResolutionScale:70, fluid3dPreviewScale:50, fluid3dFluidScale:85, fluid3dAdaptiveQuality:false, fluid3dShowField:false, fluid3dRenderMode:'pigment', fluid3dSpreadClamp:76, fluid3dSurfaceTension:28, fluid3dEdgeWidth:34, fluid3dEdgeDrag:24, fluid3dInjectorMode:'swirl', fluid3dInjectorMotion:84, fluid3dInjectorPigment:90, fluid3dInjectorOccupancy:68, fluid3dInjectorSwirl:62, stampOpacity:100, canvasTextureEnabled:false },
+  'baseline': {
+    count: 300,
+    seek: 40,
+    cohesion: 35,
+    separation: 15,
+    alignment: 22,
+    jitter: 0,
+    wander: 6,
+    wanderSpeed: 30,
+    maxSpeed: 11.5,
+    damping: 95,
+    stampSize: 6,
+    stampOpacity: 7,
+    stampSeparation: 0,
+    fov: 120,
+    flowField: 0,
+    flowScale: 10,
+    fleeRadius: 0,
+    individuality: 0,
+    spawnRadius: 50,
+    brushScale: 100
+  },
 };
 
 let _settingsCatalog = new Map();

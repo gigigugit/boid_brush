@@ -1,0 +1,166 @@
+/* ============================================================
+   Boid Brush — Layers Panel
+   ui-components/layers/layers.css
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Component container
+   ------------------------------------------------------------ */
+
+.layers-panel {
+    width: 300px;
+    box-sizing: border-box;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    color: #fff7df;
+    border: 1px solid #888888;
+    border-radius: 10px;
+    background-color: #13005e;
+}
+
+/* ------------------------------------------------------------
+   Section header
+   ------------------------------------------------------------ */
+
+.layers-panel .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    padding: 6px 8px;
+
+    cursor: pointer;
+    user-select: none;
+
+    font-weight: 600;
+}
+
+
+/* ------------------------------------------------------------
+   Section body
+   ------------------------------------------------------------ */
+
+.layers-panel .section-body {
+    padding: 6px 8px;
+}
+
+
+/* ------------------------------------------------------------
+   Layer action buttons
+   ------------------------------------------------------------ */
+
+.layers-panel .layer-actions {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    margin-bottom: 6px;;
+}
+
+.layers-panel button {
+    box-sizing: border-box;
+    border-radius: 5px;
+    border: 1px solid #928b66;
+    background-color: #797355;
+    cursor: pointer;
+}
+
+/* button positioning */
+#btnAddLayer {
+    grid-column: 1 / 3;
+    grid-row: 1 / 3;
+}
+
+#btnLayerUp {
+    grid-column: 3 / 4;
+    grid-row: 1 / 3;
+}
+
+#btnLayerDown {
+    grid-column: 3 / 4;
+    grid-row: 3 / 5;
+}
+
+#btnDelLayer {
+    grid-column: 1 / 2;
+    grid-row: 4 / 5;
+}
+
+#btnDupLayer {
+    grid-column: 1 / 2;
+    grid-row: 3 / 4;
+}
+
+
+
+#btnFlatten {
+    grid-column: 2 / 3;
+    grid-row: 3 / 4;
+}
+
+#btnMergeDown {
+    grid-column: 2 / 3;
+    grid-row: 4 / 5;
+}
+
+*/
+
+/* ------------------------------------------------------------
+   Blend / opacity row
+   ------------------------------------------------------------ */
+
+.layers-panel .blend-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.layers-panel .blend-row label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.layers-panel .blend-row select {
+    flex: 1;
+    min-width: 0;
+}
+
+.layers-panel .blend-row input[type="range"] {
+    flex: 1;
+    min-width: 0;
+}
+
+
+/* ------------------------------------------------------------
+   Layer list
+   ------------------------------------------------------------ */
+
+.layers-panel #layerList {
+    min-height: 100px;
+    border: 1px solid #888;
+    box-sizing: border-box;
+}
+
+
+/* ------------------------------------------------------------
+   Temporary preview layer rows
+   ------------------------------------------------------------ */
+
+.layers-panel .layer-row {
+    padding: 6px 8px;
+    border-bottom: 1px solid #888;
+    cursor: pointer;
+    user-select: none;
+}
+
+.layers-panel .layer-row:last-child {
+    border-bottom: none;
+}
+
+.layers-panel .layer-row.active {
+    font-weight: 600;
+}
+
+

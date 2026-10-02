@@ -11,11 +11,13 @@
     "start:desktop": "node electron/start-desktop.cjs",
     "build:desktop": "electron-builder --dir",
     "package:desktop": "electron-builder",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "dev:ui": "vite"
   },
   "devDependencies": {
     "electron": "^42.3.2",
-    "electron-builder": "^26.15.2"
+    "electron-builder": "^26.15.2",
+    "vite": "^8.3.1"
   },
   "build": {
     "appId": "com.gigigugit.boidbrush",
