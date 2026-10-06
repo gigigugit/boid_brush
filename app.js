@@ -4255,10 +4255,10 @@ export class App {
     return true;
   }
 
-  getLayerRenderCanvas(layer) {
+  getLayerRenderCanvas(layer, { includePreview = false } = {}) {
     if (!layer?.canvas) return null;
     layer._bbCssWidth = this.W;
-    return this._ensureLayerEffectRenderer().resolve(layer).canvas;
+    return this._ensureLayerEffectRenderer().resolve(layer, { includePreview }).canvas;
   }
 
   _allocateLayerId() {
@@ -5987,13 +5987,24 @@ export class App {
     if (lower.isBackground) { this.showToast('Cannot merge into background'); return; }
     this.pushUndo();
     const upper = this.layers[this.activeLayerIdx];
+    const mergedCanvas = document.createElement('canvas');
+    mergedCanvas.width = lower.canvas.width;
+    mergedCanvas.height = lower.canvas.height;
+    const mergedCtx = mergedCanvas.getContext('2d');
+    mergedCtx.drawImage(this.getLayerRenderCanvas(lower), 0, 0);
+    mergedCtx.globalAlpha = upper.opacity;
+    mergedCtx.globalCompositeOperation = getCanvasBlendMode(upper.blend);
+    mergedCtx.drawImage(this.getLayerRenderCanvas(upper), 0, 0);
     lower.ctx.save();
     lower.ctx.setTransform(1, 0, 0, 1, 0, 0);
-    lower.ctx.globalAlpha = upper.opacity;
-    lower.ctx.globalCompositeOperation = getCanvasBlendMode(upper.blend);
-    lower.ctx.drawImage(this.getLayerRenderCanvas(upper), 0, 0);
+    lower.ctx.clearRect(0, 0, lower.canvas.width, lower.canvas.height);
+    lower.ctx.globalAlpha = 1;
+    lower.ctx.globalCompositeOperation = 'source-over';
+    lower.ctx.drawImage(mergedCanvas, 0, 0);
     lower.ctx.restore();
     lower.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+    lower.effects = [];
+    this._ensureLayerEffectRenderer().invalidate(lower);
     this.compositor?.deleteLayerTex(upper);
     lower.dirty = true;
     this.layers.splice(this.activeLayerIdx, 1);
@@ -6064,7 +6075,7 @@ export class App {
     for (const layer of this.layers) {
       if (!layer.effects?.length) continue;
       layer._bbCssWidth = this.W;
-      const resolved = this._ensureLayerEffectRenderer().resolve(layer);
+      const resolved = this._ensureLayerEffectRenderer().resolve(layer, { includePreview: true });
       if (resolved.canvas === layer.canvas) continue;
       if (resolved.changed) {
         layer.dirty = true;

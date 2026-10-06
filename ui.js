@@ -4273,12 +4273,28 @@ function _renderLayerList(app) {
         app.updateLayerEffect(l, effect.id, { enabled: !effect.enabled });
         _renderLayerList(app);
       });
-      effectRow.querySelector('.effect-radius').addEventListener('input', event => {
+      const radiusInput = effectRow.querySelector('.effect-radius');
+      const opacityInput = effectRow.querySelector('.effect-opacity');
+      const wireEffectUndo = input => {
+        let captured = false;
+        const capture = () => {
+          if (captured) return;
+          app.pushUndo();
+          captured = true;
+        };
+        input.addEventListener('pointerdown', capture);
+        input.addEventListener('focus', capture);
+        input.addEventListener('change', () => { captured = false; });
+        input.addEventListener('blur', () => { captured = false; });
+      };
+      wireEffectUndo(radiusInput);
+      wireEffectUndo(opacityInput);
+      radiusInput.addEventListener('input', event => {
         const radius = +event.currentTarget.value;
         event.currentTarget.previousElementSibling.textContent = `${radius}px`;
         app.updateLayerEffect(l, effect.id, { radius });
       });
-      effectRow.querySelector('.effect-opacity').addEventListener('input', event => {
+      opacityInput.addEventListener('input', event => {
         const opacity = +event.currentTarget.value / 100;
         event.currentTarget.previousElementSibling.textContent = `${Math.round(opacity * 100)}%`;
         app.updateLayerEffect(l, effect.id, { opacity });

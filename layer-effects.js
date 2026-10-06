@@ -44,7 +44,7 @@ export class LayerEffectRenderer {
     if (layer) this._cache.delete(layer);
   }
 
-  resolve(layer) {
+  resolve(layer, { includePreview = true } = {}) {
     const effects = normalizeLayerEffects(layer?.effects);
     const active = effects.filter(effect => effect.enabled && effect.opacity > 0 && effect.radius > 0);
     if (!layer?.canvas || !active.length) {
@@ -56,7 +56,7 @@ export class LayerEffectRenderer {
     const signature = active
       .map(effect => `${effect.id}:${effect.radius}:${effect.opacity}`)
       .join('|');
-    const preview = layer.gpuPreviewCanvas || null;
+    const preview = includePreview ? (layer.gpuPreviewCanvas || null) : null;
     const previous = this._cache.get(layer);
     const canReuse = previous
       && previous.signature === signature
