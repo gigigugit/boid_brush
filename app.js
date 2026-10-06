@@ -11,6 +11,7 @@ import { buildSidebar, buildBoidPanel, buildCorralPanel, buildFavoritesPanel, bu
 import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
+import { LayerEffectRenderer, normalizeLayerEffects } from './layer-effects.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
 import { workspaceControlBelongsToBrush, readControlValue, writeControlValue } from './settings-catalog.js';
@@ -34,7 +35,7 @@ const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
 const APP_BUILD_ID = '2026-10-02-recorder-timeline';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
-const WORKSPACE_SETTINGS_VERSION = 3;
+const WORKSPACE_SETTINGS_VERSION = 4;
 const MAX_VIEW_BOOKMARKS = 48;
 const VIEW_BOOKMARK_DEFAULT_NAME = 'View';
 const MAX_VIEW_BOOKMARK_NAME_LENGTH = 80;
@@ -4195,11 +4196,69 @@ export class App {
       glTex: null,
       gpuPreviewCanvas: null,
       alphaLock: false,
+      effects: [],
       ...props,
     };
+    layer.effects = normalizeLayerEffects(layer.effects);
     this._noteLayerId(layer.id);
     canvas._bbLayer = layer;
     return layer;
+  }
+
+  _ensureLayerEffectRenderer() {
+    if (!this._layerEffectRenderer) {
+      this._layerEffectRenderer = new LayerEffectRenderer();
+    }
+    return this._layerEffectRenderer;
+  }
+
+  addBlurEffect(layer = this.getActiveLayer()) {
+    if (!layer || layer.isBackground) return false;
+    this.pushUndo();
+    const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    layer.effects ||= [];
+    layer.effects.push({
+      id: `effect-blur-${suffix}`,
+      type: 'blur',
+      name: 'Blur',
+      enabled: true,
+      opacity: 1,
+      radius: 8,
+    });
+    this._ensureLayerEffectRenderer().invalidate(layer);
+    this._markLayerDirty(layer);
+    this.compositeAllLayers({ forceFull: true });
+    this._renderLayerList?.();
+    return true;
+  }
+
+  updateLayerEffect(layer, effectId, changes = {}) {
+    const effect = layer?.effects?.find(item => item.id === effectId);
+    if (!effect) return false;
+    Object.assign(effect, changes);
+    layer.effects = normalizeLayerEffects(layer.effects);
+    this._ensureLayerEffectRenderer().invalidate(layer);
+    this._markLayerDirty(layer);
+    this.compositeAllLayers({ forceFull: true });
+    return true;
+  }
+
+  removeLayerEffect(layer, effectId) {
+    const index = layer?.effects?.findIndex(effect => effect.id === effectId) ?? -1;
+    if (index < 0) return false;
+    this.pushUndo();
+    layer.effects.splice(index, 1);
+    this._ensureLayerEffectRenderer().invalidate(layer);
+    this._markLayerDirty(layer);
+    this.compositeAllLayers({ forceFull: true });
+    this._renderLayerList?.();
+    return true;
+  }
+
+  getLayerRenderCanvas(layer) {
+    if (!layer?.canvas) return null;
+    layer._bbCssWidth = this.W;
+    return this._ensureLayerEffectRenderer().resolve(layer).canvas;
   }
 
   _allocateLayerId() {
@@ -5880,6 +5939,10 @@ export class App {
       name: src.name + ' copy',
       opacity: src.opacity,
       blend: src.blend,
+      effects: normalizeLayerEffects(src.effects).map(effect => ({
+        ...effect,
+        id: `${effect.id}-copy-${Date.now().toString(36)}`,
+      })),
     }));
     this._syncLayerSwitcher();
     this.compositeAllLayers();
@@ -5928,7 +5991,7 @@ export class App {
     lower.ctx.setTransform(1, 0, 0, 1, 0, 0);
     lower.ctx.globalAlpha = upper.opacity;
     lower.ctx.globalCompositeOperation = getCanvasBlendMode(upper.blend);
-    lower.ctx.drawImage(upper.canvas, 0, 0);
+    lower.ctx.drawImage(this.getLayerRenderCanvas(upper), 0, 0);
     lower.ctx.restore();
     lower.ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     this.compositor?.deleteLayerTex(upper);
@@ -5951,7 +6014,7 @@ export class App {
       if (!l.visible) continue;
       ctx.globalAlpha = l.opacity;
       ctx.globalCompositeOperation = getCanvasBlendMode(l.blend);
-      ctx.drawImage(l.canvas, 0, 0);
+      ctx.drawImage(this.getLayerRenderCanvas(l), 0, 0);
     }
     ctx.restore(); ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
     for (const l of paintLayers) this.compositor?.deleteLayerTex(l);
@@ -5996,7 +6059,36 @@ export class App {
     this._smudgeImageData = null; // invalidate smudge cache
     const p = this._cachedP || this.getP();
     const forceFullComposite = !!(options.forceFull || (p.impasto && p.impastoStrength > 0));
-    this.compositor?.composite(this.layers, this.W, this.H, { forceFull: forceFullComposite });
+    const substitutions = [];
+    let effectsChanged = false;
+    for (const layer of this.layers) {
+      if (!layer.effects?.length) continue;
+      layer._bbCssWidth = this.W;
+      const resolved = this._ensureLayerEffectRenderer().resolve(layer);
+      if (resolved.canvas === layer.canvas) continue;
+      if (resolved.changed) {
+        layer.dirty = true;
+        layer.dirtyTiles = null;
+        effectsChanged = true;
+      }
+      substitutions.push({
+        layer,
+        canvas: layer.canvas,
+        gpuPreviewCanvas: layer.gpuPreviewCanvas,
+      });
+      layer.canvas = resolved.canvas;
+      if (resolved.includesPreview) layer.gpuPreviewCanvas = null;
+    }
+    try {
+      this.compositor?.composite(this.layers, this.W, this.H, {
+        forceFull: forceFullComposite || effectsChanged,
+      });
+    } finally {
+      for (const substitution of substitutions) {
+        substitution.layer.canvas = substitution.canvas;
+        substitution.layer.gpuPreviewCanvas = substitution.gpuPreviewCanvas;
+      }
+    }
 
     // Impasto: recompute lighting overlay from height map when dirty, then draw
     if (p.impasto && p.impastoStrength > 0) {
@@ -6102,7 +6194,8 @@ export class App {
           : null,
         id: l.id,
         name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
-        isBackground: !!l.isBackground
+        isBackground: !!l.isBackground,
+        effects: normalizeLayerEffects(l.effects),
       })),
       simulation: this._captureSimulationUndoState(),
     };
@@ -6134,6 +6227,7 @@ export class App {
         opacity: s.opacity,
         blend: s.blend,
         isBackground: !!s.isBackground,
+        effects: normalizeLayerEffects(s.effects),
       });
     });
     if (this.activeLayerIdx >= this.layers.length) this.activeLayerIdx = this.layers.length - 1;
@@ -21707,7 +21801,7 @@ export class App {
       if (!l.visible) continue;
       ctx.globalAlpha = l.opacity;
       ctx.globalCompositeOperation = getCanvasBlendMode(l.blend);
-      ctx.drawImage(l.canvas, 0, 0);
+      ctx.drawImage(this.getLayerRenderCanvas(l), 0, 0);
     }
     ctx.restore();
     return canvas;
@@ -22284,6 +22378,7 @@ export class App {
         blend: typeof layer.blend === 'string' ? layer.blend : 'source-over',
         alphaLock: !!layer.alphaLock,
         isBackground: !!layer.isBackground,
+        effects: normalizeLayerEffects(layer.effects),
         dataUrl: layer.canvas.toDataURL('image/png'),
       })),
     };
@@ -22316,6 +22411,7 @@ export class App {
         blend: typeof layerState.blend === 'string' ? layerState.blend : 'source-over',
         alphaLock: !!layerState.alphaLock,
         isBackground: !!layerState.isBackground,
+        effects: normalizeLayerEffects(layerState.effects),
       });
       if (typeof layerState.dataUrl === 'string' && layerState.dataUrl.startsWith('data:image/')) {
         const sourceCanvas = await this._canvasFromDataUrl(layerState.dataUrl);

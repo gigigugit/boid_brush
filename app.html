@@ -336,6 +336,12 @@ body:has(#corralPanel.active){--right-panel-open-w:min(92vw,520px);}
 #layersPanel .layer-item .lock-btn.locked{color:#e8a030;}
 .layer-item .layer-name{flex:1;overflow:hidden;text-overflow:ellipsis;}
 .layer-item .layer-opacity{font-size:9px;color:var(--ink-3);width:28px;text-align:right;font-variant-numeric:tabular-nums;}
+.effect-layer-item{margin-left:20px;width:calc(100% - 20px);min-height:32px;padding:4px 6px;grid-template-columns:auto auto minmax(42px,1fr) 54px 54px auto;gap:5px;border-radius:5px;background:rgba(90,125,205,0.08);border-color:rgba(117,162,255,0.2);}
+.effect-layer-item .effect-attachment{align-self:start;margin-top:-11px;color:var(--accent-c);font-size:18px;line-height:1;}
+.effect-layer-item .effect-value{display:grid;gap:1px;color:var(--ink-3);font-size:8px;text-align:center;text-transform:none;letter-spacing:0;}
+.effect-layer-item .effect-value input{width:52px;height:10px;margin:0;}
+.effect-layer-item .effect-remove{padding:0 3px;background:none;border:0;color:var(--ink-3);font-size:14px;}
+.effect-layer-item .effect-remove:hover{color:#ef7777;background:none;}
 .view-bookmark-list{display:grid;gap:6px;}
 .view-bookmark-item,.view-bookmark-lastchange{display:grid;gap:6px;padding:8px;border:1px solid var(--line-0);border-radius:var(--rad-1);background:rgba(255,255,255,0.04);}
 .view-bookmark-item.active{border-color:rgba(117,162,255,0.45);background:rgba(58,106,232,0.16);}

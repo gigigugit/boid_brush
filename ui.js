@@ -3552,6 +3552,7 @@ export function buildLayersPanel(app) {
     <div class="section-body">
       <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px;">
         <button id="btnAddLayer">+ Add</button>
+        <button id="btnAddBlurEffect">+ Blur FX</button>
         <button id="btnDupLayer">⧉ Dup</button>
         <button id="btnDelLayer">✕ Del</button>
         <button id="btnLayerUp">▲</button>
@@ -3593,6 +3594,10 @@ export function buildLayersPanel(app) {
 
   // Layer buttons
   document.getElementById('btnAddLayer')?.addEventListener('click', () => { app.addLayer(); _refreshLayers(app); });
+  document.getElementById('btnAddBlurEffect')?.addEventListener('click', () => {
+    app.addBlurEffect();
+    _refreshLayers(app);
+  });
   document.getElementById('btnDupLayer')?.addEventListener('click', () => { app.duplicateLayer(); _refreshLayers(app); });
   document.getElementById('btnDelLayer')?.addEventListener('click', () => { app.removeLayer(); _refreshLayers(app); });
   document.getElementById('btnLayerUp')?.addEventListener('click', () => { app.moveLayerUp(); _refreshLayers(app); });
@@ -4244,6 +4249,52 @@ function _renderLayerList(app) {
       if (n) { l.name = n; app._syncLayerSwitcher(); _renderLayerList(app); }
     });
     list.appendChild(div);
+
+    for (const effect of (l.effects || [])) {
+      const effectRow = document.createElement('div');
+      effectRow.className = 'layer-item effect-layer-item';
+      effectRow.dataset.effectId = effect.id;
+      effectRow.innerHTML = `
+        <button class="vis-btn${effect.enabled ? '' : ' hidden'}" title="Show/hide effect">${effect.enabled ? '👁' : '⬚'}</button>
+        <span class="effect-attachment" title="Attached to ${l.name}">↰</span>
+        <span class="layer-name">${effect.name || 'Blur'}</span>
+        <label class="effect-value" title="Blur radius">
+          <span>${Math.round(effect.radius)}px</span>
+          <input class="effect-radius" type="range" min="0" max="64" step="1" value="${effect.radius}">
+        </label>
+        <label class="effect-value" title="Effect opacity">
+          <span>${Math.round(effect.opacity * 100)}%</span>
+          <input class="effect-opacity" type="range" min="0" max="100" step="1" value="${Math.round(effect.opacity * 100)}">
+        </label>
+        <button class="effect-remove" title="Remove effect">×</button>
+      `;
+      effectRow.querySelector('.vis-btn').addEventListener('click', () => {
+        app.pushUndo();
+        app.updateLayerEffect(l, effect.id, { enabled: !effect.enabled });
+        _renderLayerList(app);
+      });
+      effectRow.querySelector('.effect-radius').addEventListener('input', event => {
+        const radius = +event.currentTarget.value;
+        event.currentTarget.previousElementSibling.textContent = `${radius}px`;
+        app.updateLayerEffect(l, effect.id, { radius });
+      });
+      effectRow.querySelector('.effect-opacity').addEventListener('input', event => {
+        const opacity = +event.currentTarget.value / 100;
+        event.currentTarget.previousElementSibling.textContent = `${Math.round(opacity * 100)}%`;
+        app.updateLayerEffect(l, effect.id, { opacity });
+      });
+      effectRow.querySelector('.effect-remove').addEventListener('click', () => {
+        app.removeLayerEffect(l, effect.id);
+      });
+      effectRow.querySelector('.layer-name').addEventListener('dblclick', () => {
+        const name = prompt('Effect name:', effect.name || 'Blur');
+        if (!name?.trim()) return;
+        app.pushUndo();
+        app.updateLayerEffect(l, effect.id, { name: name.trim() });
+        _renderLayerList(app);
+      });
+      list.appendChild(effectRow);
+    }
   });
 
   // Allow the list container itself to accept drops (for reordering to end of list)

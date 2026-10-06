@@ -84,7 +84,7 @@ export async function exportPSD(app) {
       copy.width = w;
       copy.height = h;
       const copyCtx = copy.getContext('2d');
-      copyCtx.drawImage(layer.canvas, 0, 0);
+      copyCtx.drawImage(app.getLayerRenderCanvas?.(layer) || layer.canvas, 0, 0);
 
       children.push({
         name:      layer.name || 'Layer',
