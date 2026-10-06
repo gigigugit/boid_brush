@@ -31,8 +31,9 @@ test('corral overlay is a horizontal toolbar directly below the top bar', () => 
 test('corral control delivery uses a build-matched current cache token', () => {
   const assetVersion = html.match(/const assetVersion = '([^']+)'/)?.[1];
   const appBuildId = app.match(/const APP_BUILD_ID = '([^']+)'/)?.[1];
-  assert.equal(assetVersion, '2026-09-14-corral-panel-toolbar');
+  assert.equal(assetVersion, '2026-10-02-recorder-timeline');
   assert.equal(appBuildId, assetVersion);
+  assert.ok(app.includes(`from './brushes.js?v=${assetVersion}'`));
 });
 
 test('enabled corral keeps controls visible outside editor mode', () => {

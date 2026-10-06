@@ -361,7 +361,7 @@ body:has(#corralPanel.active){--right-panel-open-w:min(92vw,520px);}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
 /* Simulation HUD */
-#globalOverlayBar{position:fixed;left:14px;top:calc(var(--topbar-h) + 14px);z-index:32;display:none;align-items:center;gap:6px;padding:6px;border:1px solid var(--line-0);border-radius:12px;background:rgba(17,20,29,.9);backdrop-filter:blur(14px);box-shadow:var(--shadow-lg);}
+#globalOverlayBar{position:fixed;left:36px;top:var(--topbar-h);z-index:32;display:none;align-items:center;gap:6px;padding:4px;border:1px solid var(--line-0);border-top:none;border-radius:0 0 12px 12px;background:rgba(17,20,29,.94);backdrop-filter:blur(14px);box-shadow:0 10px 24px rgba(0,0,0,.4);}
 #globalOverlayBar.open{display:flex;}
 #globalOverlayBar .sim-pill{min-height:30px;padding:5px 9px;}
 #globalOverlayBar .compact-sim-control{display:none;}
@@ -1986,7 +1986,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
 <!-- ══════════ Scripts ══════════ -->
 <script type="module">
-const assetVersion = '2026-09-14-corral-panel-toolbar';
+    const assetVersion = '2026-10-02-recorder-timeline';
 const reloadToken = new URLSearchParams(window.location.search).get('bb_reload');
 const appModuleUrl = reloadToken
   ? `./app.js?v=${assetVersion}&bb_reload=${encodeURIComponent(reloadToken)}`

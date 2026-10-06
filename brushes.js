@@ -2225,8 +2225,9 @@ export class BoidBrush {
     if (_applyCorral(this, p, this.sim.readAgents())) this.sim.markStateDirty?.();
   }
 
-  onDown(x, y, pressure) {
+  onDown(x, y, pressure, deferRecorderSpawn = false) {
     if (!this._ready) return;
+    this._recorderStamping = deferRecorderSpawn ? false : null;
     const p = this.app.getP();
     if (!this.app.simulation?.enabled) _resetSimulationSpawnAppearance(this);
     // Fresh stroke — spawn index ranges from the previous stroke no longer apply.
@@ -2271,7 +2272,7 @@ export class BoidBrush {
     } : null;
     const strokeP = this._spawnOverrides ? { ...p, ...this._spawnOverrides } : p;
 
-    this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
+    if (!deferRecorderSpawn) this._applyLifecycleAction(p.boidTouchAction, strokeP, x, y, pressure, false);
     // Touch-down ends any prior hover preview; the stroke now owns agent motion.
     this._hoverSpawned = false;
     this._resetInterpolationState();
@@ -2290,7 +2291,7 @@ export class BoidBrush {
     }
 
     // Push undo on first stroke frame that actually stamps
-    if (!this.app.undoPushedThisStroke) {
+    if (!deferRecorderSpawn && !this.app.undoPushedThisStroke) {
       this.app.pushUndo();
       this.app.undoPushedThisStroke = true;
     }
@@ -2334,43 +2335,79 @@ export class BoidBrush {
     // faster than one frame), isDrawing goes false before onFrame runs and no
     // paint is ever deposited. In flat-stroke mode the composite path in onFrame
     // is required, so this initial stamp is omitted there.
-    if (!this._flatActive) {
-      const guideState = _collectSimulationGuides(this, p);
-      const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
-      this.sim.writeParams(simP, x, y, 0);
-      this.sim.step(1 / 60);
-      const { buffer, count, stride } = this.sim.readAgents();
-      const read = { buffer, count, stride };
-      const guidesChanged = _applySimulationGuides(this, p, read, guideState, gpuGuideSupport);
-      const corralChanged = _applyCorral(this, p, read);
-      if (guidesChanged || corralChanged) {
-        this.sim.markStateDirty?.();
-      }
-      if (count > 0) {
-        const layer = this.app.getActiveLayer();
-        const batchSupport = this._getBatchRendererSupport(p, false);
-        if (batchSupport.ok) {
-          const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
-            flat: false,
-            pressure,
-            interpolate: false,
-            applySkip: false,
-          });
-          if (!this._renderBatchToTarget(layer.ctx, batch, p, { allowAlphaLock: true })) {
-            this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
-              flat: false,
-              reason: this.renderer.legacyReason,
-            });
-          }
-        } else {
+    if (!this._flatActive && !deferRecorderSpawn) {
+      this._stampInitialAgents(x, y, pressure, p, simP);
+    }
+  }
+
+  spawnFromRecorder(x, y, pressure, { deferStamp = false } = {}) {
+    if (!this._ready) throw new Error('Boid Brush is not ready.');
+    const p = this.app.getP();
+    const strokeP = this._spawnOverrides ? { ...p, ...this._spawnOverrides } : p;
+    this._clearAgents();
+    if (!this._applyLifecycleAction('spawn', strokeP, x, y, pressure, false)) {
+      throw new Error('Boid spawn produced no agents.');
+    }
+    this._recorderStamping = !deferStamp;
+    if (deferStamp) return;
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    if (!this._flatActive) this._stampInitialAgents(x, y, pressure, p, this._applySimVars(p));
+  }
+
+  startRecorderStamp(x, y, pressure) {
+    if (!this._ready) throw new Error('Boid Brush is not ready.');
+    if (this._recorderStamping !== false) throw new Error('Recorder stamp is not pending.');
+    const read = this.sim.readAgents();
+    const { count } = read;
+    if (!count) throw new Error('Recorder spawn produced no agents.');
+    const p = this.app.getP();
+    this._recorderStamping = true;
+    if (!this.app.undoPushedThisStroke) {
+      this.app.pushUndo();
+      this.app.undoPushedThisStroke = true;
+    }
+    this._renderAgentRead(read, p, { forceStamp: true });
+  }
+
+  _stampInitialAgents(x, y, pressure, p, simP) {
+    const guideState = _collectSimulationGuides(this, p);
+    const gpuGuideSupport = _syncSimulationGuidesToGpu(this, guideState);
+    this.sim.writeParams(simP, x, y, 0);
+    this.sim.step(1 / 60);
+    const { buffer, count, stride } = this.sim.readAgents();
+    const read = { buffer, count, stride };
+    const guidesChanged = _applySimulationGuides(this, p, read, guideState, gpuGuideSupport);
+    const corralChanged = _applyCorral(this, p, read);
+    if (guidesChanged || corralChanged) {
+      this.sim.markStateDirty?.();
+    }
+    if (count > 0) {
+      const layer = this.app.getActiveLayer();
+      const batchSupport = this._getBatchRendererSupport(p, false);
+      if (batchSupport.ok) {
+        const batch = this._buildRenderBatch({ buffer, count, stride }, p, {
+          flat: false,
+          pressure,
+          interpolate: false,
+          applySkip: false,
+        });
+        if (!this._renderBatchToTarget(layer.ctx, batch, p, { allowAlphaLock: true })) {
           this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
             flat: false,
-            reason: batchSupport.reason,
+            reason: this.renderer.legacyReason,
           });
         }
-        layer.dirty = true;
-        this.app.compositeAllLayers();
+      } else {
+        this._renderAgentsLegacy(layer.ctx, { buffer, count, stride }, p, pressure, {
+          flat: false,
+          reason: batchSupport.reason,
+        });
       }
+      layer.dirty = true;
+      this.app.compositeAllLayers();
     }
   }
 
@@ -2400,6 +2437,7 @@ export class BoidBrush {
     this._applyLifecycleAction(p.boidUntouchAction, p, x, y, 1, false);
     this._hoverSpawned = false;
     this._spawnOverrides = null;
+    this._recorderStamping = null;
   }
 
   configureSimulation(data, p) {
@@ -2759,6 +2797,7 @@ export class BoidBrush {
     const corralChanged = _applyCorral(this, p, read);
     if (guidesChanged || corralChanged) this.sim.markStateDirty?.();
     if (app.simulation?.mode === 'forceVisualization') this._updateTransientSnapshot(read);
+    if (this._recorderStamping === false) return;
     this._renderAgentRead(read, p, {
       forceStamp: !!app.isDrawing || !!app.simulation?.running,
     });
