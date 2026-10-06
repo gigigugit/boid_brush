@@ -6,14 +6,14 @@
 // =============================================================================
 
 import { Compositor, getCanvasBlendMode } from './compositor.js';
-import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js';
+import { BoidBrush, AntBrush, BristleBrush, FluidBrush, ThreeDFluidBrush, SimpleBrush, EraserBrush, MotionPathBrush, SpawnShapes } from './brushes.js?v=2026-10-02-recorder-timeline';
 import { buildSidebar, buildBoidPanel, buildCorralPanel, buildFavoritesPanel, buildSettingsPanel, buildSimulationControlsPanel, buildGuidesPanel, buildLayersPanel, syncUI, syncBoidPanel, initEdgeSliders, syncEdgeSliders, renderSimulationSessionCard, refreshWorkspaceSettingsUi, LEADER_OVERRIDE_FIELDS, EDGE_OVERLAY_CONTROLS, AUTOSAVE_STORAGE_KEY } from './ui.js?v=2026-09-14-corral-panel-toolbar';
 import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import { SelectionManager } from './selection.js';
 import { exportPSD, importPSD } from './psd-io.js';
 import { BlobStroke } from './blob-stroke.js';
 import { BUILTIN_STAMP_IMAGE_PRESETS, DEFAULT_STAMP_PRESET_ID, getBuiltinStampPreset } from './stamp-presets.js';
-import { workspaceControlBelongsToBrush } from './settings-catalog.js';
+import { workspaceControlBelongsToBrush, readControlValue, writeControlValue } from './settings-catalog.js';
 import {
   compileCorral,
   corralToSvg,
@@ -32,7 +32,7 @@ import {
 
 const STORAGE_KEY = 'bb_session_v1';
 const BUILD_ID_STORAGE_KEY = 'bb_lastLoadedBuildId';
-const APP_BUILD_ID = '2026-09-14-corral-panel-toolbar';
+const APP_BUILD_ID = '2026-10-02-recorder-timeline';
 const WORKSPACE_SETTINGS_FORMAT = 'boid-brush-workspace';
 const WORKSPACE_SETTINGS_VERSION = 3;
 const MAX_VIEW_BOOKMARKS = 48;
@@ -647,6 +647,32 @@ const PERF_RECENT_EVENT_LIMIT = 10;
 const DIRTY_TILE_SIZE = 256;
 const DIRTY_TILE_MAX_COVERAGE = 0.45;
 const STAMP_IMAGE_DISABLED_BRUSHES = new Set(['fluid', 'fluid3d']);
+
+// Brush Scale + Stamp section controls: kept independent per active brush (see
+// setBrush()) so adjusting opacity/size/etc. while using one brush does not
+// bleed into another. Values match each control's declared HTML default.
+const PER_BRUSH_STAMP_CONTROL_IDS = Object.freeze([
+  'brushScale', 'stampSize', 'stampOpacity', 'stampSeparation', 'smudge', 'smudgeOnly',
+  'skipStamps', 'pressureSize', 'pressureOpacity', 'flatStroke', 'stabilizer',
+  'strokeWaveType', 'strokeWaveAmplitude', 'strokeWaveLength', 'strokeWavePhase',
+]);
+const STAMP_SETTINGS_FACTORY_DEFAULTS = Object.freeze({
+  brushScale: 100,
+  stampSize: 10,
+  stampOpacity: 15,
+  stampSeparation: 0,
+  smudge: 0,
+  smudgeOnly: false,
+  skipStamps: 0,
+  pressureSize: true,
+  pressureOpacity: true,
+  flatStroke: false,
+  stabilizer: 0,
+  strokeWaveType: 'none',
+  strokeWaveAmplitude: 0,
+  strokeWaveLength: 80,
+  strokeWavePhase: 0,
+});
 
 function _clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -2133,6 +2159,8 @@ export class App {
     this.sharedMotionSimPromise = null;
     this.sharedMotionSimEpoch = 0;
     this.activeBrush = 'boid';
+    this._perBrushStampSettings = {};
+    this._restoringControlState = false;
 
     // Drawing state
     this.isDrawing = false;
@@ -2188,6 +2216,9 @@ export class App {
     this._pinchStartMidY = 0;
     this._pinchAnchor = { x: 0, y: 0 };
     this._activePointers = new Map();
+    this._recorderPlaybackActive = false;
+    this._recorderSpawnPending = false;
+    this._recorderStampStarted = null;
 
     // Flip view
     this.viewFlipped = false;
@@ -17008,6 +17039,7 @@ export class App {
     // Deactivate current
     const cur = this.brushes[this.activeBrush];
     if (cur && cur.deactivate) cur.deactivate();
+    if (!this._restoringControlState) this._captureStampSettingsForBrush(this.activeBrush);
     this.activeBrush = name;
     // Update brush dropdown button
     const brushLabels = { boid: '🐦 Boid', ant: '🐜 Ant', bristle: '🖊 Bristle', motionPath: '🧭 Motion Path', fluid: '🌊 LBM Fluid', fluid3d: '💧 3D Fluid', simple: '🖌 Simple', eraser: '◻ Eraser' };
@@ -17023,6 +17055,7 @@ export class App {
     });
     // Toggle brush-specific sections
     this._toggleBrushSections(name);
+    if (!this._restoringControlState) this._applyStampSettingsForBrush(name);
     if (!this._isMotionBrush(name)) this.simulation.enabled = false;
     this._ensureSimulationSpawns(name);
     this._syncSimulationUI();
@@ -17030,6 +17063,30 @@ export class App {
     this._syncMotionPathUI();
     this._refreshSettingsManagementUi?.();
     this._paramsDirty = true;
+  }
+
+  // Snapshot the Brush Scale + Stamp controls for `brush` so switching away
+  // and back restores its own values instead of leaking into other brushes.
+  _captureStampSettingsForBrush(brush) {
+    if (!brush) return;
+    const values = {};
+    for (const id of PER_BRUSH_STAMP_CONTROL_IDS) {
+      const value = readControlValue(document.getElementById(id));
+      if (value !== undefined) values[id] = value;
+    }
+    this._perBrushStampSettings[brush] = values;
+  }
+
+  // Restore `brush`'s last-captured Brush Scale + Stamp values, falling back
+  // to factory defaults the first time a brush is used.
+  _applyStampSettingsForBrush(brush) {
+    const stored = this._perBrushStampSettings[brush] || STAMP_SETTINGS_FACTORY_DEFAULTS;
+    for (const id of PER_BRUSH_STAMP_CONTROL_IDS) {
+      if (!(id in stored)) continue;
+      writeControlValue(document.getElementById(id), stored[id]);
+    }
+    if (document.getElementById('sidebar')) syncUI(this);
+    this.invalidateParams();
   }
 
   _toggleBrushSections(brush) {
@@ -17641,6 +17698,48 @@ export class App {
     ic.addEventListener('pointerup', e => this._onPointerUp(e));
     ic.addEventListener('pointercancel', e => this._onPointerUp(e));
     ic.addEventListener('pointerleave', e => this._onPointerLeave(e));
+    ic.addEventListener('boid-brush:recorder-check', event => {
+      event.detail.reason = this.activeBrush !== 'boid' ? 'Select Boid Brush.'
+        : this.simulation?.enabled ? 'Exit Simulation mode before direct Boid replay.'
+          : this.activeTool !== 'brush' ? 'Select the Brush tool.'
+            : this.isDrawing ? 'Finish the current stroke first.'
+              : !this.getCurrentBrush()?._ready ? 'Boid Brush is still loading; retry shortly.'
+                : '';
+      event.detail.accepted = !event.detail.reason;
+      if (event.detail.accepted) this._recorderPlaybackActive = true;
+    });
+    ic.addEventListener('boid-brush:recorder-end', () => {
+      this._recorderPlaybackActive = false;
+      this._recorderSpawnPending = false;
+      this._recorderStampStarted = null;
+    });
+    ic.addEventListener('boid-brush:recorder-spawn', event => {
+      const { clientX, clientY, deferStamp = false } = event.detail || {};
+      if (!this._recorderSpawnPending || !this.isDrawing || this.activeTool !== 'brush'
+        || this.activeBrush !== 'boid' || this.simulation?.enabled
+        || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+        event.detail.reason = 'Deferred Boid stroke is no longer active.';
+        return;
+      }
+      const { x, y } = this._getEventCoords({ clientX, clientY });
+      this.getCurrentBrush()?.spawnFromRecorder(x, y, this.pressure, { deferStamp: deferStamp === true });
+      this._recorderSpawnPending = false;
+      this._recorderStampStarted = deferStamp !== true;
+      event.detail.accepted = true;
+    });
+    ic.addEventListener('boid-brush:recorder-stamp', event => {
+      const { clientX, clientY } = event.detail || {};
+      if (!this._recorderPlaybackActive || this._recorderSpawnPending || this._recorderStampStarted !== false
+        || !this.isDrawing || this.activeTool !== 'brush' || this.activeBrush !== 'boid'
+        || this.simulation?.enabled || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+        event.detail.reason = 'Deferred Boid stamp is no longer active.';
+        return;
+      }
+      const { x, y } = this._getEventCoords({ clientX, clientY });
+      this.getCurrentBrush()?.startRecorderStamp(x, y, this.pressure);
+      this._recorderStampStarted = true;
+      event.detail.accepted = true;
+    });
 
     // Touch events for pinch zoom/rotate (on canvasArea to capture all fingers)
     const area = document.getElementById('canvasArea');
@@ -18915,7 +19014,10 @@ export class App {
     this.leaderY = waveStart.y;
 
     const brush = this.getCurrentBrush();
-    if (brush) brush.onDown(this.leaderX, this.leaderY, this.pressure);
+    this._recorderSpawnPending = this.activeBrush === 'boid' && !this.simulation?.enabled
+      && e.recorderDeferSpawn === true;
+    this._recorderStampStarted = this._recorderSpawnPending ? false : null;
+    if (brush) brush.onDown(this.leaderX, this.leaderY, this.pressure, this._recorderSpawnPending);
   }
 
   _onPointerMove(e) {
@@ -18974,7 +19076,7 @@ export class App {
       this.leaderY = y;
       // Notify brush of hover for Apple Pencil hover preview/spawn
       // Skip during taper — hover would clear the tapering boids
-      if (!this.isTapering && !(this.simulation.enabled && this._isMotionBrush())) {
+      if (!this._recorderPlaybackActive && !this.isTapering && !(this.simulation.enabled && this._isMotionBrush())) {
         const brush = this.getCurrentBrush();
         if (brush && brush.onHover) brush.onHover(x, y);
       }
@@ -19013,6 +19115,8 @@ export class App {
   }
 
   _onPointerUp(e) {
+    const recorderStampSuppressed = this._recorderPlaybackActive && this._recorderStampStarted === false;
+    this._recorderSpawnPending = false;
     this._activePointers.delete(e.pointerId);
     if ((e.pointerType || this.pointerType) === 'touch') {
       const { x, y } = this._getEventCoords(e);
@@ -19071,13 +19175,14 @@ export class App {
     this.recordLastChangeMarker('Stroke');
 
     // Start taper if configured
-    if (p.taperLength > 0) {
+    if (!recorderStampSuppressed && p.taperLength > 0) {
       this.isTapering = true;
       this.taperFrame = 0;
       this.taperTotal = p.taperLength;
     } else {
       this._clearSymmetryStrokeState();
     }
+    this._recorderStampStarted = null;
   }
 
   _onPointerLeave(e) {
@@ -19153,12 +19258,8 @@ export class App {
   }
 
   _onKeyDown(e) {
-    const target = e.target;
-    if (target instanceof HTMLElement) {
-      const tag = target.tagName;
-      const isEditableField = !target.disabled && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
-      if (target.isContentEditable || isEditableField) return;
-    }
+    if ((e.composedPath?.() || [e.target]).some(target => target instanceof HTMLElement &&
+      (target.isContentEditable || (!target.disabled && target.matches('input, textarea, select'))))) return;
     if (this.corral?.editing && this.activeBrush === 'boid') {
       const command = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
@@ -22420,6 +22521,12 @@ export class App {
   }
 
   _applyControlState(controls = {}) {
+    // Suppress per-brush stamp capture/restore in setBrush() while this bulk
+    // restore runs — the loop below already writes the exact saved DOM values
+    // directly, and applying factory defaults for not-yet-captured brushes
+    // here would clobber them.
+    this._restoringControlState = true;
+    try {
     const normalizedControls = { ...controls };
     const hasLegacyEdgeOverlayState = Object.prototype.hasOwnProperty.call(controls, 'edgeOverlayPlacement')
       || EDGE_OVERLAY_CONTROLS.some(control =>
@@ -22669,6 +22776,9 @@ export class App {
     this._normalizeSimulationSessionBindings();
     if (this.simulation.activeSessionIndex >= 0) {
       this._applySimulationSessionToDraft(this.simulation.sessions[this.simulation.activeSessionIndex]);
+    }
+    } finally {
+      this._restoringControlState = false;
     }
   }
 
