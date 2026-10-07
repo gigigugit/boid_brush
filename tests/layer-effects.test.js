@@ -104,6 +104,12 @@ test('effect renderer caches committed blur but refreshes live preview frames', 
   assert.equal(cached.canvas, first.canvas);
   assert.equal(cached.changed, false);
 
+  renderer.invalidate(layer);
+  const refreshed = renderer.resolve(layer);
+  assert.equal(refreshed.changed, true);
+  assert.equal(created.length, 2);
+  layer.dirty = false;
+
   layer.gpuPreviewCanvas = new FakeCanvas(200, 100);
   const previewFrame = renderer.resolve(layer);
   assert.equal(previewFrame.includesPreview, true);
@@ -138,6 +144,11 @@ test('very large blur downsamples work while preserving a full-size output', () 
   assert.equal(downsampled[0].height, MAX_NATIVE_BLUR_RADIUS / 2);
   assert.equal(downsampled[1].context.draws.at(-1).filter, `blur(${MAX_NATIVE_BLUR_RADIUS}px)`);
   assert.equal(result.canvas.context.draws.at(-1).alpha, 0.75);
+
+  layer.effects[0].radius = MAX_BLUR_RADIUS - 1;
+  renderer.invalidate(layer);
+  renderer.resolve(layer);
+  assert.equal(created.length, 4);
 });
 
 test('application wiring persists effects and renders attached effect controls', () => {

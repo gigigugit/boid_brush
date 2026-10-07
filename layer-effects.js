@@ -56,7 +56,8 @@ export class LayerEffectRenderer {
   }
 
   invalidate(layer) {
-    if (layer) this._cache.delete(layer);
+    const cached = layer ? this._cache.get(layer) : null;
+    if (cached) cached.invalidated = true;
   }
 
   resolve(layer, { includePreview = true } = {}) {
@@ -77,6 +78,7 @@ export class LayerEffectRenderer {
       && previous.signature === signature
       && previous.width === layer.canvas.width
       && previous.height === layer.canvas.height
+      && !previous.invalidated
       && !layer.dirty
       && !preview
       && !previous.hadPreview;
@@ -119,7 +121,8 @@ export class LayerEffectRenderer {
         targetCtx.filter = `blur(${deviceRadius}px)`;
         targetCtx.drawImage(source, 0, 0);
       } else {
-        const scale = MAX_NATIVE_BLUR_RADIUS / deviceRadius;
+        const downsampleSteps = Math.ceil(Math.log2(deviceRadius / MAX_NATIVE_BLUR_RADIUS));
+        const scale = 2 ** -downsampleSteps;
         const scaledWidth = Math.max(1, Math.ceil(width * scale));
         const scaledHeight = Math.max(1, Math.ceil(height * scale));
         if (!blurSource || blurSource.width !== scaledWidth || blurSource.height !== scaledHeight) {
@@ -139,7 +142,7 @@ export class LayerEffectRenderer {
         blurTargetCtx.clearRect(0, 0, scaledWidth, scaledHeight);
         blurTargetCtx.globalAlpha = 1;
         blurTargetCtx.globalCompositeOperation = 'source-over';
-        blurTargetCtx.filter = `blur(${MAX_NATIVE_BLUR_RADIUS}px)`;
+        blurTargetCtx.filter = `blur(${deviceRadius * scale}px)`;
         blurTargetCtx.drawImage(blurSource, 0, 0);
         blurTargetCtx.filter = 'none';
         targetCtx.filter = 'none';
@@ -160,6 +163,7 @@ export class LayerEffectRenderer {
       blurTarget,
       output: source,
       hadPreview: !!preview,
+      invalidated: false,
     });
     return { canvas: source, includesPreview: !!preview, changed: true };
   }
