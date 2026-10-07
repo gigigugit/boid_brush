@@ -17,6 +17,11 @@ import {
 import { evaluatePressureCurve } from './pressure-curve.js?v=2026-09-08-absolute-modulation-curves';
 import { BOID_VARIANCE_FIELDS } from './boid-parameter-contract.js';
 import {
+  BLUR_SLIDER_MAX,
+  blurRadiusFromSlider,
+  blurRadiusToSlider,
+} from './layer-effects.js';
+import {
   DEFAULT_MOD_CURVE_POINTS,
   FEATURE_CHANNELS,
   MAX_CHANNEL_DEADZONE,
@@ -4260,7 +4265,7 @@ function _renderLayerList(app) {
         <span class="layer-name">${effect.name || 'Blur'}</span>
         <label class="effect-value" title="Blur radius">
           <span>${Math.round(effect.radius)}px</span>
-          <input class="effect-radius" type="range" min="0" max="64" step="1" value="${effect.radius}">
+          <input class="effect-radius" type="range" min="0" max="${BLUR_SLIDER_MAX}" step="1" value="${blurRadiusToSlider(effect.radius)}">
         </label>
         <label class="effect-value" title="Effect opacity">
           <span>${Math.round(effect.opacity * 100)}%</span>
@@ -4289,10 +4294,17 @@ function _renderLayerList(app) {
       };
       wireEffectUndo(radiusInput);
       wireEffectUndo(opacityInput);
+      let radiusFrame = 0;
+      let pendingRadius = effect.radius;
       radiusInput.addEventListener('input', event => {
-        const radius = +event.currentTarget.value;
+        const radius = blurRadiusFromSlider(event.currentTarget.value);
         event.currentTarget.previousElementSibling.textContent = `${radius}px`;
-        app.updateLayerEffect(l, effect.id, { radius });
+        pendingRadius = radius;
+        if (radiusFrame) return;
+        radiusFrame = requestAnimationFrame(() => {
+          radiusFrame = 0;
+          app.updateLayerEffect(l, effect.id, { radius: pendingRadius });
+        });
       });
       opacityInput.addEventListener('input', event => {
         const opacity = +event.currentTarget.value / 100;

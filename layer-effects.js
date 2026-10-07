@@ -1,4 +1,7 @@
-const MAX_BLUR_RADIUS = 64;
+const MAX_BLUR_RADIUS = 512;
+const MAX_NATIVE_BLUR_RADIUS = 64;
+const BLUR_SLIDER_MAX = 256;
+const BLUR_SLIDER_LINEAR_MAX = 64;
 
 function clamp(value, min, max, fallback) {
   const numeric = Number(value);
@@ -27,6 +30,18 @@ export function normalizeLayerEffects(effects) {
 export function hasActiveLayerEffects(layer) {
   return normalizeLayerEffects(layer?.effects)
     .some(effect => effect.enabled && effect.opacity > 0 && effect.radius > 0);
+}
+
+export function blurRadiusFromSlider(position) {
+  const value = clamp(position, 0, BLUR_SLIDER_MAX, 0);
+  if (value <= BLUR_SLIDER_LINEAR_MAX) return Math.round(value);
+  return Math.round(BLUR_SLIDER_LINEAR_MAX * (2 ** ((value - BLUR_SLIDER_LINEAR_MAX) / 64)));
+}
+
+export function blurRadiusToSlider(radius) {
+  const value = clamp(radius, 0, MAX_BLUR_RADIUS, 0);
+  if (value <= BLUR_SLIDER_LINEAR_MAX) return Math.round(value);
+  return Math.round(BLUR_SLIDER_LINEAR_MAX + 64 * Math.log2(value / BLUR_SLIDER_LINEAR_MAX));
 }
 
 export class LayerEffectRenderer {
@@ -74,6 +89,8 @@ export class LayerEffectRenderer {
     const dpr = Math.max(1, width / Math.max(1, layer._bbCssWidth || width));
     let source = previous?.source;
     let target = previous?.target;
+    let blurSource = previous?.blurSource;
+    let blurTarget = previous?.blurTarget;
     if (!source || source.width !== width || source.height !== height) {
       source = this._createCanvas(width, height);
       target = this._createCanvas(width, height);
@@ -97,8 +114,37 @@ export class LayerEffectRenderer {
       targetCtx.filter = 'none';
       targetCtx.drawImage(source, 0, 0);
       targetCtx.globalAlpha = effect.opacity;
-      targetCtx.filter = `blur(${effect.radius * dpr}px)`;
-      targetCtx.drawImage(source, 0, 0);
+      const deviceRadius = effect.radius * dpr;
+      if (deviceRadius <= MAX_NATIVE_BLUR_RADIUS) {
+        targetCtx.filter = `blur(${deviceRadius}px)`;
+        targetCtx.drawImage(source, 0, 0);
+      } else {
+        const scale = MAX_NATIVE_BLUR_RADIUS / deviceRadius;
+        const scaledWidth = Math.max(1, Math.ceil(width * scale));
+        const scaledHeight = Math.max(1, Math.ceil(height * scale));
+        if (!blurSource || blurSource.width !== scaledWidth || blurSource.height !== scaledHeight) {
+          blurSource = this._createCanvas(scaledWidth, scaledHeight);
+          blurTarget = this._createCanvas(scaledWidth, scaledHeight);
+        }
+        const blurSourceCtx = blurSource.getContext('2d');
+        blurSourceCtx.setTransform(1, 0, 0, 1, 0, 0);
+        blurSourceCtx.clearRect(0, 0, scaledWidth, scaledHeight);
+        blurSourceCtx.filter = 'none';
+        blurSourceCtx.globalAlpha = 1;
+        blurSourceCtx.globalCompositeOperation = 'source-over';
+        blurSourceCtx.drawImage(source, 0, 0, width, height, 0, 0, scaledWidth, scaledHeight);
+
+        const blurTargetCtx = blurTarget.getContext('2d');
+        blurTargetCtx.setTransform(1, 0, 0, 1, 0, 0);
+        blurTargetCtx.clearRect(0, 0, scaledWidth, scaledHeight);
+        blurTargetCtx.globalAlpha = 1;
+        blurTargetCtx.globalCompositeOperation = 'source-over';
+        blurTargetCtx.filter = `blur(${MAX_NATIVE_BLUR_RADIUS}px)`;
+        blurTargetCtx.drawImage(blurSource, 0, 0);
+        blurTargetCtx.filter = 'none';
+        targetCtx.filter = 'none';
+        targetCtx.drawImage(blurTarget, 0, 0, scaledWidth, scaledHeight, 0, 0, width, height);
+      }
       targetCtx.filter = 'none';
       targetCtx.globalAlpha = 1;
       [source, target] = [target, source];
@@ -110,6 +156,8 @@ export class LayerEffectRenderer {
       height,
       source,
       target,
+      blurSource,
+      blurTarget,
       output: source,
       hadPreview: !!preview,
     });
@@ -117,4 +165,4 @@ export class LayerEffectRenderer {
   }
 }
 
-export { MAX_BLUR_RADIUS };
+export { BLUR_SLIDER_MAX, MAX_BLUR_RADIUS, MAX_NATIVE_BLUR_RADIUS };

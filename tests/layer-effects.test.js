@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import {
+  BLUR_SLIDER_MAX,
   LayerEffectRenderer,
+  MAX_BLUR_RADIUS,
+  MAX_NATIVE_BLUR_RADIUS,
+  blurRadiusFromSlider,
+  blurRadiusToSlider,
   hasActiveLayerEffects,
   normalizeLayerEffect,
   normalizeLayerEffects,
@@ -59,6 +64,19 @@ test('blur effect normalization clamps persisted values and rejects unknown effe
   assert.equal(normalizeLayerEffect({ type: 'shadow' }), null);
   assert.deepEqual(normalizeLayerEffects([null, { type: 'shadow' }]), []);
   assert.equal(hasActiveLayerEffects({ effects: [{ type: 'blur', radius: 8, opacity: 1 }] }), true);
+  assert.equal(normalizeLayerEffect({ type: 'blur', radius: 9999 }).radius, MAX_BLUR_RADIUS);
+});
+
+test('blur slider preserves exact low values and expands smoothly to the high maximum', () => {
+  for (let radius = 0; radius <= 64; radius += 1) {
+    assert.equal(blurRadiusFromSlider(radius), radius);
+    assert.equal(blurRadiusToSlider(radius), radius);
+  }
+  assert.equal(blurRadiusFromSlider(BLUR_SLIDER_MAX), MAX_BLUR_RADIUS);
+  assert.equal(blurRadiusToSlider(MAX_BLUR_RADIUS), BLUR_SLIDER_MAX);
+  for (let position = 1; position <= BLUR_SLIDER_MAX; position += 1) {
+    assert.ok(blurRadiusFromSlider(position) >= blurRadiusFromSlider(position - 1));
+  }
 });
 
 test('effect renderer caches committed blur but refreshes live preview frames', () => {
@@ -95,6 +113,31 @@ test('effect renderer caches committed blur but refreshes live preview frames', 
   const committed = renderer.resolve(layer, { includePreview: false });
   assert.equal(committed.includesPreview, false);
   assert.equal(committed.changed, true);
+});
+
+test('very large blur downsamples work while preserving a full-size output', () => {
+  const created = [];
+  const renderer = new LayerEffectRenderer((width, height) => {
+    const canvas = new FakeCanvas(width, height);
+    created.push(canvas);
+    return canvas;
+  });
+  const layer = {
+    canvas: new FakeCanvas(1024, 512),
+    dirty: true,
+    _bbCssWidth: 512,
+    effects: [{ id: 'blur', type: 'blur', radius: MAX_BLUR_RADIUS, opacity: 0.75 }],
+  };
+
+  const result = renderer.resolve(layer);
+  assert.equal(result.canvas.width, 1024);
+  assert.equal(result.canvas.height, 512);
+  const downsampled = created.filter(canvas => canvas.width < 1024);
+  assert.equal(downsampled.length, 2);
+  assert.equal(downsampled[0].width, MAX_NATIVE_BLUR_RADIUS);
+  assert.equal(downsampled[0].height, MAX_NATIVE_BLUR_RADIUS / 2);
+  assert.equal(downsampled[1].context.draws.at(-1).filter, `blur(${MAX_NATIVE_BLUR_RADIUS}px)`);
+  assert.equal(result.canvas.context.draws.at(-1).alpha, 0.75);
 });
 
 test('application wiring persists effects and renders attached effect controls', () => {
